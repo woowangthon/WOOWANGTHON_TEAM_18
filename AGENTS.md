@@ -2,7 +2,6 @@
 
 > The **single entry point** for this repository. Every AI agent and teammate reads this before starting work.
 > Tool-neutral (Claude / Cursor / Copilot alike). `CLAUDE.md` only imports this file — never write project rules into `CLAUDE.md`.
-> If personal or global instructions conflict with this repo's rules, the repo rules win.
 
 ## 0. Project
 
