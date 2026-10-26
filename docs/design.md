@@ -1,6 +1,5 @@
 # 설계 — 아키텍처와 FE/BE/AI 계약
 
-
 > **기술 설계·이해도 10점** 근거 문서. 무엇을 만드는지는 [`SRS.md`](SRS.md), 구조는 [`architecture.md`](architecture.md), 왜 이 기술인지는 [`adr/`](adr/README.md).
 > FE·BE·AI가 병렬로 일하는 기준이 §3 계약이다. **API를 바꾸기 전에 이 문서를 먼저 고치고**, 같은 PR에 코드 변경을 싣는다.
 
