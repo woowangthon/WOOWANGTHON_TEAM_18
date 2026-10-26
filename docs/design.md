@@ -15,17 +15,17 @@
 
 1. 학생이 웹사이트(web)에 프로젝트를 올린다.
 2. api가 LLM API로 코드를 분석해 실행 방식을 분류하고, 위험한 코드를 표시한다.
-3. api가 k3s에 빌드 Job을 만든다. Job은 rootless BuildKit으로 결과물을 만든다.
-4. 분류 결과에 따라 다르게 처리한다.
+3. 분류 결과에 따라 다르게 처리한다. 빌드가 필요한 경우에만 api가 k3s에 빌드 Job을 만들고, Job은 rootless BuildKit으로 결과물을 만든다.
 
 | 실행 방식 | 처리 | 실행 위치 |
 | --- | --- | --- |
-| 정적 | 파일을 R2에 올려 학생 결과물 도메인으로 바로 공개한다 | R2 |
+| 정적 | 빌드 없이 api가 파일을 그대로 R2에 올려 학생 결과물 도메인으로 바로 공개한다 | R2 |
 | 브라우저 실행 | 빌드 Job이 빌드한 결과를 R2에 올려 공개한다 | R2 |
 | 서버 필요 | 빌드 Job이 이미지를 만들어 GHCR에 올리고, k3s 서버가 Deployment·Ingress로 배치한다 | 학교 PC 우선, 없으면 클라우드 VM |
 
+4. 빌드와 실행 상태는 api가 k3s에서 Job·Pod 로그와 상태를 읽어 web에 흘려준다(전송 방식은 §3 계약에서 정한다). 학생은 web에서 "빌드 중 → 배포됨 → 실패"를 본다.
 5. 사용자 요청은 VM의 Traefik이 받아 Tailscale 위로 해당 Pod에 전달한다. 학교 PC가 꺼지면 k3s가 감지해 다른 노드로 재배치한다(복구 시간은 §7 11번).
-6. 학교 PC도 VM 자리도 없으면 R2에 저장해 둔 정적 미리보기만 보여준다.
+6. Pod가 없을 때(학교 PC도 VM 자리도 없거나, §7 5번으로 내려가 있을 때) 그 프로젝트의 Ingress는 api의 안내 페이지로 간다. 안내 페이지가 깨우기를 시도하고, 깨울 수 없으면 R2에 저장해 둔 정적 미리보기로 보낸다. Traefik → api 선이 이 경로다.
 
 ### 1.2 영역과 구성 요소
 
@@ -33,20 +33,21 @@
 | --- | --- | --- |
 | 개발 영역 | 개발자 (팀원 3명) | 코드 작성, PR |
 | | GitHub | 모노레포 `WOOWANGTHON_TEAM_18` (폴더 구조는 [ADR-001](adr/001-stack.md)) |
-| | GitHub Actions | 테스트, 빌드. web은 Vercel로, api 이미지는 GHCR로, 클러스터 배포는 Tailscale 위 `kubectl`로 |
-| | GHCR | api 이미지와 학생 프로젝트 이미지 (private). 노드마다 k3s `registries.yaml`의 읽기 전용 토큰으로 받는다 |
+| | GitHub Actions | 테스트, 빌드. web은 Vercel CLI로 Vercel에, api 이미지는 GHCR로, 클러스터 배포는 Tailscale 위 `kubectl`로(러너가 임시 인증 키로 Tailscale에 붙는다). 배포 URL 업타임 cron도 여기서 돈다([ADR-001](adr/001-stack.md) §결과) |
+| | GHCR | api 이미지와 학생 프로젝트 이미지 (private, 한도에 닿으면 public — [ADR-002](adr/002-system-architecture.md) 배치 규칙). 노드마다 k3s `registries.yaml`의 읽기 전용 토큰으로 받는다. VM 노드는 api 이미지와 예비 Pod 이미지를 클라우드 쪽 인터넷으로 받는다 |
 | Vercel | web (React) | 우리 서비스 웹사이트 |
-| 클라우드 VM – Main (항상 켜짐) · k3s 서버 노드 | k3s 서버 | 클러스터 관리, Pod 배치, 노드 상태 |
-| | Traefik (k3s 내장) | Ingress, TLS, 요청 분배 (api, 학생 앱) |
-| | api (FastAPI) Pod | 업로드 처리, 분석 요청, 빌드 Job·Deployment·Ingress 생성. VM 노드에 고정 |
+| 클라우드 VM – Main (항상 켜짐) · k3s 서버 노드 | k3s 서버 | 클러스터 관리, Pod 배치, 노드 상태. 학교 PC가 참여 스크립트로 조인하는 대상 |
+| | Traefik (k3s 내장) | Ingress, TLS, 요청 분배 (api, 학생 앱). Pod가 없는 프로젝트의 요청은 api의 안내 페이지로 보낸다(§1.1 6번) |
+| | api (FastAPI) Pod | 업로드 처리, 분석 요청, 빌드 Job·Deployment·Ingress 생성·수정, 노드 상태·로그 조회(RBAC: 학생 네임스페이스의 `jobs`·`deployments`·`ingresses`·`pods/log`, 클러스터의 `nodes` 읽기). 정적 프로젝트는 직접 R2에 올린다. VM 노드에 고정 |
 | | 빌드 Job (rootless BuildKit) | 학생 코드 → 이미지(GHCR) 또는 정적 결과물(R2). VM 노드에 고정 |
 | | 빌드 egress 프록시 | 빌드 Job의 나가는 연결을 전부 받는 허용 목록 HTTP 프록시(GHCR, Docker Hub, 패키지 저장소, R2). Job에는 `HTTP_PROXY`/`HTTPS_PROXY`로 넣는다. VM 노드에 고정, 구성도에는 그리지 않았다 |
 | | 학생 프로젝트 Pod (예비) | 학교 PC가 하나도 없을 때만. api가 toleration을 붙여 배치하고, PC가 돌아오면 되돌린다 |
 | 외부 서비스 | Supabase | PostgreSQL(사용자, 프로젝트, 실행 기록), Auth(로그인) |
 | | LLM API | 코드 분석, 실행 방식 분류, 위험 코드 표시 |
 | | Cloudflare R2 | 정적 결과물, 미리보기. 학생 결과물 도메인으로 공개 |
-| Tailscale 사설망 | — | VM과 학교 PC를 잇는 통로. 학교 PC는 방화벽 안이라 밖에서 들어오는 다른 길이 없고, k3s는 `--node-ip`를 Tailscale 주소로, `--flannel-iface`를 `tailscale0`으로 줘서 노드 간 통신을 이 위로 보낸다. 설정은 `infra/`에 둔다 |
-| 학교 실습실 PC · k3s 에이전트 노드 (켜져 있을 때만 참여) | k3s 에이전트 | 지시받은 Pod 실행, 노드 상태 보고 |
+| | Docker Hub · 패키지 저장소 | 빌드 Job이 받는 베이스 이미지와 의존성(npm, PyPI 등). egress 프록시를 통해서만 나간다 |
+| Tailscale 사설망 | — | VM과 학교 PC를 잇는 통로. 학교 PC는 방화벽 안이라 밖에서 들어오는 다른 길이 없고, k3s는 `--node-ip`를 Tailscale 주소로, `--flannel-iface`를 `tailscale0`으로 줘서 노드 간 통신을 이 위로 보낸다(MTU 문제는 §7 17번). 설정은 `infra/`에 둔다 |
+| 학교 실습실 PC · k3s 에이전트 노드 (켜져 있을 때만 참여) | k3s 에이전트 | 참여 스크립트가 Tailscale 로그인 → k3s 에이전트 조인 → `registries.yaml` 생성 순서로 붙인다. 지시받은 Pod 실행, 노드 상태 보고 |
 | | 학생 프로젝트 Pod ×N | 서버 필요 프로젝트. GHCR 이미지는 학교망에서 직접 받는다 |
 
 #### Vercel과 R2의 차이
@@ -64,18 +65,19 @@
 
 | 색 | 흐름 | 경로 |
 | --- | --- | --- |
-| 검정 | 사용자 요청 | 브라우저 → web(Vercel) / 브라우저 → Traefik → api / 브라우저 → Traefik → (Tailscale) → 학생 Pod (학교 PC 또는 VM 예비) / 브라우저 → R2 (정적 프로젝트, 미리보기) |
-| 파랑 | 코드 배포 (CI/CD) | 개발자 → GitHub → GitHub Actions → web(Vercel), GHCR(api 이미지), k3s 서버(배포) |
+| 검정 | 사용자 요청 | 브라우저 → web(Vercel) / 브라우저 → Traefik → api (서비스 API, Pod 없는 프로젝트의 깨우기·미리보기 안내) / 브라우저 → Traefik → (Tailscale) → 학생 Pod (학교 PC 또는 VM 예비) / 브라우저 → R2 (정적 프로젝트, 미리보기) |
+| 파랑 | 코드 배포 (CI/CD) | 개발자 → GitHub → GitHub Actions → web(Vercel CLI), GHCR(api 이미지), k3s 서버(배포, Tailscale 위 `kubectl`) |
 | 주황 | AI 분석 | api ↔ LLM API |
-| 초록 | 학생 프로젝트 실행 | api → k3s 서버(Job·Deployment·Ingress 생성) / k3s 서버 → 빌드 Job → (egress 프록시) → GHCR(이미지 올림) / k3s 서버 → (Tailscale) → 학교 PC(우선 배치) / k3s 서버 → VM 예비 Pod(학교 PC 없을 때) / 학교 PC → GHCR(이미지 받음, 학교망 직접) |
-| 보라 | 데이터 | api ↔ Supabase / 빌드 Job → (egress 프록시) → R2 |
-| 회색 점선 | 상태 확인 | 학교 PC → k3s 서버 (노드 Ready) |
+| 초록 | 학생 프로젝트 실행 | api → k3s 서버(Job·Deployment·Ingress 생성·수정, 노드 상태·로그 조회) / k3s 서버 → 빌드 Job → (egress 프록시) → GHCR(이미지 올림) / 빌드 Job → (egress 프록시) → Docker Hub·패키지 저장소(베이스 이미지·의존성 받음) / k3s 서버 → (Tailscale) → 학교 PC(우선 배치) / k3s 서버 → VM 예비 Pod(학교 PC 없을 때) / 학교 PC → GHCR(이미지 받음, 학교망 직접) / VM → GHCR(api·예비 Pod 이미지 받음) |
+| 보라 | 데이터 | api ↔ Supabase / api → R2(정적 프로젝트, 빌드 없음) / 빌드 Job → (egress 프록시) → R2 |
+| 회색 점선 | 상태 확인 | 학교 PC → k3s 서버 (참여 조인, 노드 Ready) |
 
 ### 1.4 구성도 참고
 
 - 학교 PC 쪽 화살표는 PC마다 긋지 않고 실습실 영역 테두리에 연결했다.
 - Traefik → 학생 Pod 화살표는 학교 PC와 VM 예비 Pod 둘 다를 뜻한다. 구성도에는 실습실 쪽 하나만 그렸다.
-- draw.io 내장 라이브러리에 아이콘이 없어 회색 점선 상자로 자리만 잡아 둔 구성 요소: GitHub Actions, GHCR, React, Traefik, Cloudflare R2, LLM API.
+- draw.io 내장 라이브러리에 아이콘이 없어 회색 점선 상자로 자리만 잡아 둔 구성 요소: GitHub Actions, GHCR, React, Traefik, Cloudflare R2, LLM API, Docker Hub · 패키지 저장소.
+- 빌드 egress 프록시는 그리지 않았다. 빌드 Job에서 밖으로 나가는 선은 전부 프록시를 거친다.
 
 ## 2. 컴포넌트 책임
 
