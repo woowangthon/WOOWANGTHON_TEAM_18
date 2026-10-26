@@ -24,7 +24,7 @@
 | 서버 필요 | 빌드 Job이 이미지를 만들어 GHCR에 올리고, k3s 서버가 Deployment·Ingress로 배치한다 | 학교 PC 우선, 없으면 클라우드 VM |
 
 4. 빌드와 실행 상태는 api가 k3s에서 Job·Pod 로그와 상태를 읽어 web에 흘려준다(전송 방식은 §3 계약에서 정한다). 학생은 web에서 "빌드 중 → 배포됨 → 실패"를 본다.
-5. 사용자 요청은 VM의 Traefik이 받아 Tailscale 위로 해당 Pod에 전달한다. 학교 PC가 꺼지면 k3s가 감지해 다른 노드로 재배치한다(복구 시간은 §7 11번).
+5. 사용자 요청은 VM의 Traefik이 받아 Tailscale 위로 해당 Pod에 전달한다. 학교 PC가 꺼지면 k3s가 감지해 다른 학교 PC로 재배치하고, 학교 PC가 하나도 없으면 api가 VM으로 돌린다([ADR-002](adr/002-system-architecture.md) 배치 규칙, 복구 시간은 §7 11번).
 6. Pod가 없을 때(학교 PC도 VM 자리도 없거나, §7 5번으로 내려가 있을 때) 그 프로젝트의 Ingress는 api의 안내 페이지로 간다. 안내 페이지가 깨우기를 시도하고, 깨울 수 없으면 R2에 저장해 둔 정적 미리보기로 보낸다. Traefik → api 선이 이 경로다.
 
 ### 1.2 영역과 구성 요소
@@ -47,7 +47,7 @@
 | | Cloudflare R2 | 정적 결과물, 미리보기. 학생 결과물 도메인으로 공개 |
 | | Docker Hub · 패키지 저장소 | 빌드 Job이 받는 베이스 이미지와 의존성(npm, PyPI 등). egress 프록시를 통해서만 나간다 |
 | Tailscale 사설망 | — | VM과 학교 PC를 잇는 통로. 학교 PC는 방화벽 안이라 밖에서 들어오는 다른 길이 없고, k3s는 `--node-ip`를 Tailscale 주소로, `--flannel-iface`를 `tailscale0`으로 줘서 노드 간 통신을 이 위로 보낸다(MTU 문제는 §7 17번). 설정은 `infra/`에 둔다 |
-| 학교 실습실 PC · k3s 에이전트 노드 (켜져 있을 때만 참여) | k3s 에이전트 | 참여 스크립트가 Tailscale 로그인 → k3s 에이전트 조인 → `registries.yaml` 생성 순서로 붙인다. 지시받은 Pod 실행, 노드 상태 보고 |
+| 학교 실습실 PC · k3s 에이전트 노드 (켜져 있을 때만 참여) | k3s 에이전트 | 참여 스크립트가 Tailscale 로그인 → `registries.yaml` 생성 → k3s 에이전트 조인 순서로 붙인다(k3s는 `registries.yaml`을 시작할 때 읽는다). 지시받은 Pod 실행, 노드 상태 보고 |
 | | 학생 프로젝트 Pod ×N | 서버 필요 프로젝트. GHCR 이미지는 학교망에서 직접 받는다 |
 
 #### Vercel과 R2의 차이

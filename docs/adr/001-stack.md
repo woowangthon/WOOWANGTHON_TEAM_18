@@ -45,7 +45,7 @@ TBD — 아래 표를 채우고 상태를 `채택됨`으로 바꾼다.
 | 배포 (BE) | Render 같은 PaaS | 서버 관리가 필요 없다 | k3s 서버와 Tailscale은 호스트 권한이 있는 VM이 필요한데 PaaS는 VM을 주지 않는다([ADR-002](002-system-architecture.md)). 무료 플랜은 15분간 요청이 없으면 잠들고 다음 요청이 1분 가까이 걸리므로, 심사위원의 첫 클릭이 그 지연을 맞는다 |
 | 빌드 도구 | Docker (`docker build`), VM 호스트에서 | 가장 단순하다 | 학생 Dockerfile의 `RUN`이 메인 VM에서 root Docker 데몬으로 실행된다 ([ADR-002](002-system-architecture.md) 대안) |
 | 빌드 도구 | Kaniko | Docker 데몬 없이 Pod 안에서 이미지를 빌드한다. 같은 용도 | 2025년 6월 저장소가 보관(archived) 처리돼 유지보수가 멈췄다. BuildKit은 `docker build`와 같은 엔진이라 Dockerfile 호환이 가장 넓다 |
-| 배포 (FE) | 클라우드 VM의 Nginx로 직접 서빙 | 배포처가 하나로 줄어든다 | Vercel은 main 머지 때 자동 배포하고 PR마다 미리보기 URL을 준다 |
+| 배포 (FE) | 클라우드 VM의 Nginx로 직접 서빙 | 배포처가 하나로 줄어든다 | Vercel은 main 머지 때 자동 배포하고 CDN·TLS가 따라온다. PR마다 미리보기 URL이 생기는 건 Git 연동일 때고, 결정 표의 CLI 배포에서는 main 기준만 뜬다 |
 
 ## 결과
 
