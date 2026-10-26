@@ -31,12 +31,50 @@
 5. 요청은 VM의 Traefik이 받아 Tailscale 위로 Pod에 보낸다. 학교 PC가 꺼지면 k3s가 다른 학교 PC로 옮기고, 전부 없으면 api가 VM으로 돌린다 (복구 시간은 §7 11번).
 6. Pod가 없는 프로젝트의 요청은 api 안내 페이지로 간다. 깨울 수 있으면 깨우고(§7 5번), 아니면 R2 미리보기로 보낸다.
 
-### 1.3 구성 요소
+### 1.3 운영 규칙 ([ADR-002](adr/002-system-architecture.md) 세부)
+
+**어디에 띄우나**
+
+- VM 한 대가 클러스터를 관리하고, 학교 PC는 일만 받는다. 학교 PC가 하나도 없을 때는 VM이 학생 Pod도 받는다.
+- 우리 것(api, Traefik, 빌드 Job)은 항상 VM에 둔다 (`nodeSelector`).
+- 학생 Pod는 학교 PC에만 둔다 (`required nodeAffinity`). VM은 평소에 학생 Pod를 거부한다 (`NoSchedule` taint). 켜진 학교 PC가 하나도 없으면 api가 그 Pod의 조건을 VM으로 바꾸고, 학교 PC가 돌아오면 되돌린다. "되도록 학교 PC"(`preferred`)는 학교 PC가 있어도 VM에 갈 수 있어서 안 쓴다.
+- 학교 PC가 꺼지면 30초 뒤부터 그 Pod를 다른 데로 옮긴다 (`tolerationSeconds` 30, 기본 5분). 실제로 몇 초 걸리는지는 §7 11번.
+- PC가 켜졌는지는 k3s가 보는 노드 상태(Ready)를 그대로 쓴다. api가 따로 핑하지 않는다.
+- PC 한 대에 학생 Pod 여러 개. 16GB PC에서 사용자 몫(§7 3번)을 빼면 약 9GB가 남고, Pod 하나 256Mi면 약 36개. 노드당 40개 상한 (`max-pods`). 값은 §7 4번.
+
+**이미지는 어떻게 받나**
+
+- GHCR는 비공개. 노드는 읽기 토큰으로 받고(참여 스크립트가 넣고 교체), 빌드 Job만 쓰기 토큰을 가진다 (Secret).
+- 토큰을 바꿀 때는 새 Secret을 넣고 이전 토큰을 GitHub에서 폐기한다. 토큰 값은 레포에 안 넣는다.
+- 무료 한도에 닿으면 학생 이미지를 공개로 돌린다. 그러면 코드가 보이니 업로드 화면에서 미리 알린다. 숫자는 §7 13번.
+
+**학생 코드를 어떻게 가두나**
+
+- 학생 Pod는 root가 아니고, 호스트에 손대지 못하고, 권한을 올리지 못한다 (Pod Security Admission `restricted`).
+- 클러스터 API 토큰을 안 주고(`automountServiceAccountToken: false`), 권한 없는 ServiceAccount를 쓰고, Pod끼리 통신을 막는다 (NetworkPolicy).
+- 밖으로는 DNS와 인터넷만 나간다. 클러스터 안, Tailscale 안, 클라우드 메타데이터 주소(169.254.169.254)는 막는다. Pod가 자기 PC로 가는 길은 PC의 방화벽(nftables)으로 막고, 실제로 막히는지 확인한다 (§7 6번).
+- 커널은 같이 쓰니 완전한 격리는 아니다. 샌드박스 런타임(gVisor)은 나중에.
+
+**학생 코드를 어떻게 빌드하나**
+
+- Dockerfile의 `RUN`은 아무 코드나 실행하는 자리다. 그래서 VM의 Docker가 아니라 k3s Job 안에서 root 없이 빌드한다 (rootless BuildKit).
+- 빌드 Job도 학생 Pod와 같은 제한을 받는다. 밖으로 나가는 연결은 허용 목록 프록시(GHCR, Docker Hub, 패키지 저장소, R2)만 거친다.
+- 빌드 Job이 가진 비밀은 GHCR 쓰기 토큰과 R2 쓰기 키 둘. `RUN` 안에서 안 보이는지 확인한다 (§7 6번).
+- 빌드가 전부 VM IP 하나로 나가서 Docker Hub의 비로그인 pull 제한에 걸린다. 로그인 정보를 Secret으로 넣고, 모자라면 VM에 캐시(pull-through)를 둔다.
+
+**어디를 열어 두나**
+
+- VM은 80/443만 밖에 연다. SSH, k3s API(6443), kubelet(10250), flannel(8472/UDP)은 Tailscale에서만.
+- 학교 PC도 같은 포트를 Tailscale에서만. k3s는 Tailscale 주소를 노드 주소로 쓴다 (`--node-ip`, `--flannel-iface tailscale0`).
+- 참여 스크립트 순서: Tailscale 로그인 → `registries.yaml` → k3s 에이전트 조인.
+- 둘 다 `infra/` 스크립트가 만든다.
+
+### 1.4 구성 요소
 
 | 어디 | 무엇 | 역할 |
 | --- | --- | --- |
 | 개발 | GitHub · GitHub Actions | 모노레포([ADR-001](adr/001-stack.md)). Actions가 web은 Vercel CLI로, api 이미지는 GHCR로, 클러스터는 Tailscale 위 `kubectl`로 배포. 업타임 cron도 여기 |
-| | GHCR | api·학생 프로젝트 이미지. private, 한도에 닿으면 public (§1.5) |
+| | GHCR | api·학생 프로젝트 이미지. private, 한도에 닿으면 public (§1.3) |
 | Vercel | web (React) | 우리 서비스 웹사이트. 학생 코드는 안 들어간다 |
 | 클라우드 VM (항상 켜짐) | k3s 서버 | 클러스터 관리, 배치, 노드 상태. 학교 PC가 조인하는 대상 |
 | | Traefik (k3s 내장) | Ingress·TLS. api와 학생 앱 라우팅. Pod 없는 프로젝트는 api 안내 페이지로 |
@@ -50,7 +88,7 @@
 | Tailscale | — | VM과 학교 PC를 잇는 사설망. 학교 PC는 방화벽 안이라 이 길뿐 (MTU는 §7 17번) |
 | 학교 실습실 PC (켜져 있을 때만) | k3s 에이전트 · 학생 Pod ×N | 서버 필요 프로젝트 실행. 이미지는 학교망에서 직접 받는다. 한 PC에 여러 Pod |
 
-### 1.4 구성도 색
+### 1.5 구성도 색
 
 | 색 | 흐름 |
 | --- | --- |
@@ -62,44 +100,6 @@
 | 회색 점선 | 학교 PC → k3s (조인, Ready) |
 
 학교 PC 선은 실습실 테두리에 묶었다. Traefik → 학생 Pod 선은 VM 예비 Pod도 뜻한다. 회색 점선 상자는 아이콘이 없어 자리만 잡은 것이다. 빌드 egress 프록시는 그리지 않았고, 빌드 Job에서 나가는 선은 전부 프록시를 거친다.
-
-### 1.5 운영 규칙 ([ADR-002](adr/002-system-architecture.md) 세부)
-
-**배치**
-
-- VM = k3s 서버 + 예비 워커. 학교 PC = 에이전트 노드.
-- api·Traefik·빌드 Job은 `nodeSelector`로 VM 고정.
-- 학생 Pod는 `required nodeAffinity`로 학교 PC만, VM은 `NoSchedule` taint. Ready인 학교 PC가 없을 때만 api가 affinity를 VM 조건으로 바꾸고 toleration을 붙인다. 돌아오면 되돌린다. `preferred`는 학교 PC가 있어도 VM에 갈 수 있어 안 쓴다.
-- NotReady면 `tolerationSeconds` 30초(기본 5분). 전체 복구 시간은 §7 11번.
-- 켜짐 여부는 노드 Ready 그대로. api는 읽기만.
-- 한 PC에 여러 Pod. 16GB에서 예약분(§7 3번)을 빼면 allocatable ≈ 9GB, 256Mi Pod 약 36개, `max-pods` 40. 값은 §7 4번.
-
-**GHCR**
-
-- private. 노드는 `registries.yaml`의 읽기 토큰(참여 스크립트가 만들고 교체), 빌드 Job만 쓰기 토큰 Secret.
-- 교체는 새 Secret + 이전 토큰을 GitHub에서 폐기. 값은 레포에 안 넣는다.
-- 무료 한도에 닿으면 학생 이미지를 public으로 돌리고, 업로드 화면에서 미리 알린다. 숫자는 §7 13번.
-
-**실행 격리**
-
-- 학생 네임스페이스에 PSA `restricted`(non-root, 호스트 접근 금지, capabilities drop, seccomp `RuntimeDefault`).
-- `automountServiceAccountToken: false`, 권한 없는 ServiceAccount, Pod 간 통신 차단 NetworkPolicy.
-- egress는 DNS(53)와 인터넷만. 클러스터·Tailscale 대역과 169.254.169.254는 차단. Pod → 자기 노드는 노드 nftables로 막고 확인(§7 6번).
-- 커널은 공유라 완전 격리는 아니다. gVisor는 이후.
-
-**빌드 격리**
-
-- 학생 Dockerfile `RUN`은 임의 코드 실행이라 호스트 Docker 대신 k3s Job 안 rootless BuildKit.
-- Job에도 같은 격리 기준과 requests/limits. egress는 허용 목록 HTTP 프록시(GHCR, Docker Hub, 패키지 저장소, R2)만.
-- Job의 비밀은 GHCR 쓰기 토큰과 R2 쓰기 키. `RUN` 안에서 안 보이는지 확인(§7 6번).
-- 빌드가 VM IP 하나로 나가 Docker Hub 비로그인 제한에 걸린다. 로그인 `config.json` Secret, 모자라면 pull-through 캐시.
-
-**네트워크 경계**
-
-- VM: 80/443만 공개. SSH·6443·10250·8472/UDP는 Tailscale 인터페이스만.
-- 학교 PC: 같은 포트를 Tailscale 인터페이스만. k3s는 `--node-ip`를 Tailscale 주소, `--flannel-iface`를 `tailscale0`으로.
-- 참여 스크립트 순서: Tailscale 로그인 → `registries.yaml` → k3s 에이전트 조인.
-- 둘 다 `infra/` 스크립트가 만든다.
 
 ## 2. 컴포넌트 책임
 
@@ -166,7 +166,7 @@ FE가 BE를, BE가 AI를 기다리지 않도록 **요청·응답 모양을 먼�
 | 3 | PC 사용자 몫 | 수업 중에는 사람이 쓴다. 느려지면 학교가 참여를 막는다 | `system-reserved` CPU 2코어·메모리 6GB, `kube-reserved` 0.5GB, `eviction-hard` 500Mi. 측정 후 조정 |
 | 4 | Pod 자원 기본값 | 없으면 무한루프 하나가 옆 프로젝트를 죽인다. 메모리 limits가 requests보다 크면 노드가 터진다 | 메모리 requests = limits = 256Mi, CPU 100m/500m, 노드당 `max-pods` 40. 측정 후 조정 |
 | 5 | 안 쓰는 프로젝트 내리기 | 켜 두면 낭비다. replicas 0이면 깨울 길이 따로 필요하고, "마지막 접속"을 누가 기록하는지도 정해야 한다 | Traefik `forwardAuth`로 api가 접속 시각을 기록. 30분 지나면 replicas 0, Ingress를 깨우기 페이지로. 접속 오면 1로 올리고 되돌린다 |
-| 6 | 격리 수준 | 커널은 공유한다 | §1.5 기준을 매니페스트에 박는다. 메타데이터 주소·Tailscale 대역·자기 노드가 막히는지, 빌드 Job Secret이 `RUN` 안에서 안 보이는지 Pod 안에서 확인. gVisor는 시기만 정한다 |
+| 6 | 격리 수준 | 커널은 공유한다 | §1.3 기준을 매니페스트에 박는다. 메타데이터 주소·Tailscale 대역·자기 노드가 막히는지, 빌드 Job Secret이 `RUN` 안에서 안 보이는지 Pod 안에서 확인. gVisor는 시기만 정한다 |
 | 7 | 위험 코드 처리 | 실행을 막는지 경고만 하는지 | 팀 논의 |
 | 8 | AI 역할 범위 | 분류만 할지 실행 계획(Dockerfile·빌드 명령·포트·환경변수)까지 제안할지. LLM 입력 범위·비용 상한·외부 전송 고지도 없다 | 실행 계획까지, 학생이 승인. 입력은 파일 목록 + 설정 파일 + 진입점 몇 개, 토큰 상한. 업로드 화면에 외부 LLM 전송 고지, [`ai-scope.md`](ai-scope.md) §5에 적는다 |
 | 9 | VM 예비 용량 | VM 크기와 동시 학생 Pod 상한 | 네임스페이스 ResourceQuota. VM 정한 뒤 |
@@ -179,4 +179,4 @@ FE가 BE를, BE가 AI를 기다리지 않도록 **요청·응답 모양을 먼�
 | 16 | 빌드 동시 실행과 시간 제한 | `npm install` 하나가 1~2GB. 상한 없으면 VM이 먼저 죽는다 | Job `activeDeadlineSeconds` 600, 메모리 2Gi, ResourceQuota로 동시 2개. 넘치면 api가 큐에 쌓는다 |
 | 17 | flannel over Tailscale MTU | `tailscale0`(1280) 위에 vxlan을 얹으면 큰 응답이 조각난다 | k3s `--vpn-auth` 연동을 먼저. 안 되면 flannel MTU 1230 이하. 1MB 응답으로 확인 |
 | 18 | 학생 프로젝트의 범위 | 볼륨이 없어 상태가 사라진다. DB가 따로 필요한 프로젝트는 Pod 하나로 못 돌리고, raw TCP는 Traefik이 못 받는다 | "서버 필요"는 HTTP/WS 단일 컨테이너, 상태 비보존으로 정의. 그 밖은 "지원 범위 밖" 표시 + 미리보기만. [`SRS.md`](SRS.md) 범위 밖에 적는다 |
-| 19 | 비밀값·환경 변수, 로그인 경로 | 비밀값이 아홉 종류다. web에 Supabase anon key가 있다는 건 브라우저가 Auth를 직접 부른다는 뜻인데 구성도에 그 선이 없다 | ADR-001 채택 시 §6으로 옮기고 [`.env.example`](../.env.example)과 맞춘다. web `VITE_API_URL`·`VITE_SUPABASE_URL`·`VITE_SUPABASE_ANON_KEY` / api `SUPABASE_URL`·`SUPABASE_SERVICE_ROLE_KEY`·`LLM_API_KEY`·`R2_ACCOUNT_ID`·`R2_ACCESS_KEY_ID`·`R2_SECRET_ACCESS_KEY`·`R2_BUCKET`·`STUDENT_DOMAIN` / 빌드 Job `GHCR_WRITE_TOKEN`·R2 키·`DOCKERHUB_CONFIG_JSON` / Traefik `CF_DNS_API_TOKEN`(15번에 따라) / 노드: GHCR 읽기 토큰, Tailscale 키, k3s 노드 토큰 / Actions `VERCEL_TOKEN`·`VERCEL_ORG_ID`·`VERCEL_PROJECT_ID`·`TAILSCALE_OAUTH_*`·`KUBECONFIG`. 로그인 경로는 정하면 구성도와 §1.4에 반영 |
+| 19 | 비밀값·환경 변수, 로그인 경로 | 비밀값이 아홉 종류다. web에 Supabase anon key가 있다는 건 브라우저가 Auth를 직접 부른다는 뜻인데 구성도에 그 선이 없다 | ADR-001 채택 시 §6으로 옮기고 [`.env.example`](../.env.example)과 맞춘다. web `VITE_API_URL`·`VITE_SUPABASE_URL`·`VITE_SUPABASE_ANON_KEY` / api `SUPABASE_URL`·`SUPABASE_SERVICE_ROLE_KEY`·`LLM_API_KEY`·`R2_ACCOUNT_ID`·`R2_ACCESS_KEY_ID`·`R2_SECRET_ACCESS_KEY`·`R2_BUCKET`·`STUDENT_DOMAIN` / 빌드 Job `GHCR_WRITE_TOKEN`·R2 키·`DOCKERHUB_CONFIG_JSON` / Traefik `CF_DNS_API_TOKEN`(15번에 따라) / 노드: GHCR 읽기 토큰, Tailscale 키, k3s 노드 토큰 / Actions `VERCEL_TOKEN`·`VERCEL_ORG_ID`·`VERCEL_PROJECT_ID`·`TAILSCALE_OAUTH_*`·`KUBECONFIG`. 로그인 경로는 정하면 구성도와 §1.5에 반영 |
