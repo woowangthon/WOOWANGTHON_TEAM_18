@@ -7,7 +7,7 @@
 
 - **What**: TBD — one sentence on the product. Full requirements: [`docs/SRS.md`](docs/SRS.md).
 - **Who**: Team 18 왕가네식구들 (`@woowangthon/18`), 2026 AI 우왕톤 — theme *"AI는 동료가 될 수 있을까?"*
-- **Stack**: TBD — decided in [`docs/adr/001-stack.md`](docs/adr/001-stack.md). Architecture and the FE/BE/AI contract: [`docs/design.md`](docs/design.md).
+- **Stack**: TBD — decided in [`docs/adr/001-stack.md`](docs/adr/001-stack.md). Architecture: [`docs/architecture.md`](docs/architecture.md). FE/BE/AI contract: [`docs/design.md`](docs/design.md).
 - **Repo**: [`woowangthon/WOOWANGTHON_TEAM_18`](https://github.com/woowangthon/WOOWANGTHON_TEAM_18) (`upstream`, judged) — one monorepo. Code under `apps/*` (TBD), docs under `docs/`, task notes under `tasks/`.
 - **Notion devlog DB**: TBD — the URL the [`devlog`](.claude/skills/devlog/SKILL.md) skill writes to.
 
@@ -61,7 +61,9 @@ Checkable rules: [`docs/conventions.md`](docs/conventions.md).
 | --- | --- | --- |
 | Hackathon rules, schedule, scoring, submissions | [`docs/hackathon.md`](docs/hackathon.md) | KO |
 | What to build, priorities, demo scenario | [`docs/SRS.md`](docs/SRS.md) | KO |
-| Architecture, FE/BE/AI API contract | [`docs/design.md`](docs/design.md) | KO |
+| Architecture, operating rules, diagram | [`docs/architecture.md`](docs/architecture.md) | KO |
+| FE/BE/AI API contract, data model, deployment | [`docs/design.md`](docs/design.md) | KO |
+| Open design questions | [`docs/open-questions.md`](docs/open-questions.md) | KO |
 | Why a technical choice was made | [`docs/adr/`](docs/adr/README.md) | KO |
 | Code rules, markers, commits | [`docs/conventions.md`](docs/conventions.md) | EN |
 | What is AI / mock / external / unverified | [`docs/ai-scope.md`](docs/ai-scope.md) | KO |
