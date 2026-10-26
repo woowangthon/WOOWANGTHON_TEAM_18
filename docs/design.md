@@ -128,14 +128,10 @@ FE가 BE를, BE가 AI를 기다리지 않도록 **요청·응답 모양을 먼�
 
 | 컴포넌트 | 배포처 | URL | 환경 변수 |
 | --- | --- | --- | --- |
-| web | Vercel | TBD (§7 2번) | `VITE_API_URL`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` |
-| api | VM k3s (Deployment, Secret) | TBD | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `LLM_API_KEY`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `STUDENT_DOMAIN`. k3s 접근은 ServiceAccount 토큰이라 변수 없음 |
-| 빌드 Job | VM k3s (빌드 네임스페이스 Secret) | — | `GHCR_WRITE_TOKEN`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `DOCKERHUB_CONFIG_JSON`, `HTTP_PROXY`/`HTTPS_PROXY`(비밀 아님) |
-| Traefik | VM k3s | — | TLS 방식에 따라 `CF_DNS_API_TOKEN`(DNS-01) 또는 없음(Cloudflare 프록시 + origin 인증서, §7 15번) |
-| 노드 (VM·학교 PC) | `infra/` 스크립트가 파일로 생성 | — | `registries.yaml`의 `GHCR_READ_TOKEN`, Tailscale 인증 키(학교 PC용, 태그 붙은 재사용 키), k3s 노드 토큰 |
-| GitHub Actions | 레포 Secrets | — | `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`, `TAILSCALE_OAUTH_CLIENT_ID`/`SECRET`(러너용 임시 키), `KUBECONFIG`(배포 전용 ServiceAccount), `GITHUB_TOKEN`(GHCR push, 기본 제공) |
+| FE | | | |
+| BE | | | |
 
-비밀값은 배포처 환경 변수에만 둔다. 여기에는 **변수 이름만** 적는다. 로컬 개발용 이름은 [`.env.example`](../.env.example)에 같은 이름으로 둔다.
+비밀값은 배포처 환경 변수에만 둔다. 여기에는 **변수 이름만** 적는다. [ADR-001](adr/001-stack.md) 채택 뒤에 채운다. 제안 단계의 목록은 §7 19번.
 
 ## 7. 정해야 할 것
 
@@ -161,3 +157,4 @@ FE가 BE를, BE가 AI를 기다리지 않도록 **요청·응답 모양을 먼�
 | 16 | 빌드 동시 실행과 시간 제한 | `npm install` 하나가 1~2GB를 쓴다. 상한이 없으면 업로드 몇 개가 겹칠 때 VM이 먼저 죽는다. 9번은 예비 Pod만 다룬다 | Job에 `activeDeadlineSeconds` 600, 메모리 requests = limits = 2Gi, 빌드 네임스페이스 ResourceQuota로 동시 2개. 넘치면 api가 큐에 쌓고 순서를 web에 보여준다. VM 크기 정한 뒤 숫자 조정 |
 | 17 | flannel over Tailscale MTU | `tailscale0`(MTU 1280) 위에 vxlan을 얹으면 큰 응답이 조각나서 끊길 수 있다 | k3s 내장 `--vpn-auth`(Tailscale) 연동을 먼저 시험한다. 그게 MTU를 맞춰 준다. 안 되면 flannel MTU를 1230 아래로 수동 지정. 샘플 앱에서 1MB 응답으로 확인 |
 | 18 | 학생 프로젝트의 범위 | Pod에 볼륨이 없어 PC가 꺼지면 SQLite·업로드 파일이 사라진다. DB가 따로 필요한 프로젝트(예: Django + Postgres)는 Pod 하나로 못 돌린다. Traefik은 HTTP/WebSocket만 받고 raw TCP는 안 된다 | "서버 필요"는 HTTP/WS를 듣는 단일 컨테이너, 상태는 재시작 때 사라진다고 정의한다. LLM 분류가 그 밖(별도 DB, TCP 포트)을 감지하면 "지원 범위 밖"으로 표시하고 미리보기만 만든다. [`SRS.md`](SRS.md) 범위 밖에 적는다 |
+| 19 | 비밀값과 환경 변수 목록 | 지금 설계만으로 비밀값이 아홉 종류다. 이름을 미리 정해 두지 않으면 세팅하는 날 하나씩 찾는다. ADR-001이 채택되면 §6 표로 옮기고 [`.env.example`](../.env.example)과 이름을 맞춘다 | web(Vercel): `VITE_API_URL`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` / api(k3s Secret): `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `LLM_API_KEY`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `STUDENT_DOMAIN`(k3s 접근은 ServiceAccount 토큰) / 빌드 Job(빌드 네임스페이스 Secret): `GHCR_WRITE_TOKEN`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `DOCKERHUB_CONFIG_JSON`, `HTTP_PROXY`/`HTTPS_PROXY`(비밀 아님) / Traefik: 15번에 따라 `CF_DNS_API_TOKEN` 또는 없음 / 노드(VM·학교 PC, `infra/` 스크립트가 파일로 생성): `registries.yaml`의 GHCR 읽기 토큰, Tailscale 인증 키(태그 붙은 재사용 키), k3s 노드 토큰 / GitHub Actions(레포 Secrets): `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`, `TAILSCALE_OAUTH_CLIENT_ID`/`SECRET`(러너용 임시 키), `KUBECONFIG`(배포 전용 ServiceAccount), `GITHUB_TOKEN`(GHCR push, 기본 제공) |
