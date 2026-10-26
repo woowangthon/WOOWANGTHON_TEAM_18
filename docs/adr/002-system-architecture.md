@@ -3,13 +3,13 @@
 - **상태**: `제안됨` (제안자: @seren-wib)
 - **날짜**: 2026-10-26
 - **결정자**: TBD
-- **관련**: [`001-stack.md`](001-stack.md), [`design.md`](../design.md) §1 (구성도·구성 요소·흐름), [`hackathon.md`](../hackathon.md)
+- **관련**: [`001-stack.md`](001-stack.md), [`architecture.md`](../architecture.md) (구성도·흐름·구성 요소와 규칙), [`hackathon.md`](../hackathon.md)
 
 ## 맥락
 
 서비스는 학교 실습실에서 놀고 있는 PC를 묶어 학생 프로젝트를 대신 실행한다. 실행 위치와 연결 방식을 정해야 하는 이유는 다섯 가지다.
 
-- 학교 PC는 학교 방화벽 안에 있어 밖에서 바로 접속할 수 없다. 나가는 연결(443, 가능하면 UDP)은 열려 있다고 가정한다. 이 가정과 PC 관리자 권한·복원 프로그램 여부는 학교에 확인한다([`design.md`](../design.md) §1.4 12번).
+- 학교 PC는 학교 방화벽 안에 있어 밖에서 바로 접속할 수 없다. 나가는 연결(443, 가능하면 UDP)은 열려 있다고 가정한다. 이 가정과 PC 관리자 권한·복원 프로그램 여부는 학교에 확인한다([`open-questions.md`](../open-questions.md) 12번).
 - 학교 PC는 리눅스다. k3s는 Windows 노드를 지원하지 않으므로 이 전제가 깨지면 이 ADR을 다시 쓴다.
 - 학교 PC는 수업 시간에만 켜져 있고, 수업 중에는 사람이 쓴다. 학교가 24시간 켜 두는 데 동의하더라도 정전, 업데이트 재부팅, 누가 끄는 것, 학교망 장애는 우리가 막을 수 없다. 그래서 학교 PC만으로는 아래 배포 URL 유지를 걸 수 없고, 학교 밖에 항상 켜진 자리(클라우드 VM)를 하나 둔다.
 - 학생 코드는 신뢰할 수 없는 코드다. 실행할 때만이 아니라 빌드할 때도 그렇고, 한 PC에 여러 학생의 코드가 같이 돈다.
@@ -29,14 +29,14 @@
 | 사용자 요청 | VM의 Traefik(k3s 내장 Ingress)이 받아 Tailscale 위로 Pod에 보낸다 | VM |
 | 우리 api (FastAPI) | 같은 클러스터 안에서 돌린다 | VM 노드 고정 |
 
-규칙 네 가지. 세부는 [`design.md`](../design.md) §1.2.
+규칙 네 가지. 세부는 [`architecture.md`](../architecture.md) §2.
 
 - **배치**: 학생 Pod는 `required nodeAffinity`로 학교 PC에만. VM은 taint. Ready인 학교 PC가 하나도 없을 때만 api가 affinity를 바꿔 VM에 두고, 돌아오면 되돌린다.
 - **이미지**: GHCR private. 노드는 읽기 토큰, 빌드 Job만 쓰기 토큰 Secret. 무료 한도에 닿으면 학생 이미지를 public으로.
 - **격리**: 학생 네임스페이스는 PSA `restricted` + NetworkPolicy. 빌드는 k3s Job 안 rootless BuildKit, 나가는 연결은 허용 목록 프록시만.
 - **경계**: VM은 80/443만 공개. 나머지 포트는 Tailscale 인터페이스에서만.
 
-구성도, 구성 요소별 역할, 흐름, 아직 정하지 않은 항목은 [`design.md`](../design.md) §1에 있다. 레포 구성과 작업 방식은 [`hackathon.md`](../hackathon.md)와 [`AGENTS.md`](../../AGENTS.md) §5, 기술 선택과 폴더 구조는 [ADR-001](001-stack.md)에서 다룬다.
+구성도, 흐름, 구성 요소별 역할은 [`architecture.md`](../architecture.md)에, 아직 정하지 않은 항목은 [`open-questions.md`](../open-questions.md)에 있다. 레포 구성과 작업 방식은 [`hackathon.md`](../hackathon.md)와 [`AGENTS.md`](../../AGENTS.md) §5, 기술 선택과 폴더 구조는 [ADR-001](001-stack.md)에서 다룬다.
 
 ## 대안
 
@@ -54,5 +54,5 @@
 ## 결과
 
 - **쉬워지는 것**: 서버가 필요 없는 프로젝트는 학교 PC 상태와 상관없이 항상 보인다. 학교 PC가 전부 꺼져도 VM에서 시연이 된다. 배치, 재배치, 라우팅, TLS를 전부 k3s 리소스(Deployment + Ingress)로 다루므로 api 코드가 단순하다. PC를 추가해도 설정이 거의 늘지 않는다.
-- **어려워지는 것**: 팀이 k3s 리소스(Job, Deployment, Ingress, NetworkPolicy, affinity/taint)를 다뤄야 한다. 격리 값, PC 사용자 몫, 예비 노드 상한은 측정 뒤에 정해야 한다. 미정 항목은 [`design.md`](../design.md) §1.4.
+- **어려워지는 것**: 팀이 k3s 리소스(Job, Deployment, Ingress, NetworkPolicy, affinity/taint)를 다뤄야 한다. 격리 값, PC 사용자 몫, 예비 노드 상한은 측정 뒤에 정해야 한다. 미정 항목은 [`open-questions.md`](../open-questions.md).
 - **다시 볼 조건**: 학교가 실습실 PC 사용을 허가하지 않거나 시연 환경에서 학교 PC를 쓸 수 없으면, 같은 클러스터에서 VM 노드만으로 운영한다. 구조는 그대로고 노드만 줄어든다. 학교 PC가 리눅스가 아니거나 재부팅마다 복원되는 PC라면 에이전트 노드 방식 자체를 다시 본다(WSL2·리눅스 VM 안의 k3s는 네트워크와 자원 계산이 달라진다).
