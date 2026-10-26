@@ -40,6 +40,7 @@
 | | Traefik (k3s 내장) | Ingress, TLS, 요청 분배 (api, 학생 앱) |
 | | api (FastAPI) Pod | 업로드 처리, 분석 요청, 빌드 Job·Deployment·Ingress 생성. VM 노드에 고정 |
 | | 빌드 Job (rootless BuildKit) | 학생 코드 → 이미지(GHCR) 또는 정적 결과물(R2). VM 노드에 고정 |
+| | 빌드 egress 프록시 | 빌드 Job의 나가는 연결을 전부 받는 허용 목록 HTTP 프록시(GHCR, Docker Hub, 패키지 저장소, R2). Job에는 `HTTP_PROXY`/`HTTPS_PROXY`로 넣는다. VM 노드에 고정, 구성도에는 그리지 않았다 |
 | | 학생 프로젝트 Pod (예비) | 학교 PC가 하나도 없을 때만. api가 toleration을 붙여 배치하고, PC가 돌아오면 되돌린다 |
 | 외부 서비스 | Supabase | PostgreSQL(사용자, 프로젝트, 실행 기록), Auth(로그인) |
 | | LLM API | 코드 분석, 실행 방식 분류, 위험 코드 표시 |
@@ -66,8 +67,8 @@
 | 검정 | 사용자 요청 | 브라우저 → web(Vercel) / 브라우저 → Traefik → api / 브라우저 → Traefik → (Tailscale) → 학생 Pod (학교 PC 또는 VM 예비) / 브라우저 → R2 (정적 프로젝트, 미리보기) |
 | 파랑 | 코드 배포 (CI/CD) | 개발자 → GitHub → GitHub Actions → web(Vercel), GHCR(api 이미지), k3s 서버(배포) |
 | 주황 | AI 분석 | api ↔ LLM API |
-| 초록 | 학생 프로젝트 실행 | api → k3s 서버(Job·Deployment·Ingress 생성) / k3s 서버 → 빌드 Job → GHCR(이미지 올림) / k3s 서버 → (Tailscale) → 학교 PC(우선 배치) / k3s 서버 → VM 예비 Pod(학교 PC 없을 때) / 학교 PC → GHCR(이미지 받음, 학교망 직접) |
-| 보라 | 데이터 | api ↔ Supabase / 빌드 Job → R2 |
+| 초록 | 학생 프로젝트 실행 | api → k3s 서버(Job·Deployment·Ingress 생성) / k3s 서버 → 빌드 Job → (egress 프록시) → GHCR(이미지 올림) / k3s 서버 → (Tailscale) → 학교 PC(우선 배치) / k3s 서버 → VM 예비 Pod(학교 PC 없을 때) / 학교 PC → GHCR(이미지 받음, 학교망 직접) |
+| 보라 | 데이터 | api ↔ Supabase / 빌드 Job → (egress 프록시) → R2 |
 | 회색 점선 | 상태 확인 | 학교 PC → k3s 서버 (노드 Ready) |
 
 ### 1.4 구성도 참고
