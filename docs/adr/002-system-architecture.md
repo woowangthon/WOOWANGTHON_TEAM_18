@@ -19,20 +19,12 @@
 
 업로드된 프로젝트를 LLM이 분석해 정적 / 브라우저 실행 / 서버 필요로 분류하고 위험 코드를 표시한다. 빌드가 필요하면 k3s 빌드 Job(rootless BuildKit)이 맡는다. 정적 프로젝트는 빌드 없이 api가 파일을 그대로, 브라우저 실행 프로젝트는 빌드 Job이 빌드 결과를 Cloudflare R2에 올려 학생 결과물 도메인으로 바로 공개한다. 서버 필요 프로젝트는 이미지를 GHCR에 올리고, k3s 서버가 Deployment와 Ingress를 만들어 켜져 있는 학교 PC에 우선 배치한다. 학교 PC가 하나도 없으면 클라우드 VM 노드에 배치한다. 요청은 VM의 Traefik(k3s 내장 Ingress)이 받아 Tailscale 사설망 위로 Pod에 전달한다. 우리 서비스의 api(FastAPI)도 같은 클러스터 안에서 VM 노드에 고정해 돌린다.
 
-배치 규칙:
+세부 규칙(배치, 실행 격리, 빌드 격리, 네트워크 경계)은 [`design.md`](../design.md) §1.5에 있다. 핵심만 적으면 이렇다.
 
-- VM은 k3s 서버이면서 예비 워커다. 학교 PC는 전부 에이전트 노드다.
-- api, Traefik, 빌드 Job은 `nodeSelector`로 VM 노드에 고정한다.
-- 학생 Pod는 `required nodeAffinity`로 학교 PC 노드에만 배치한다. VM 노드에는 `NoSchedule` taint를 두고 학생 Pod는 기본적으로 이를 허용하지 않는다. Ready인 학교 PC가 하나도 없을 때만 api가 그 Deployment의 affinity를 학교 PC 조건에서 VM 노드 조건으로 교체하고 VM toleration을 붙인다(둘을 같이 두면 조건이 충돌해 어디에도 배치되지 않는다). 학교 PC가 돌아오면 api의 주기 작업이 affinity를 학교 PC 조건으로 되돌리고 toleration을 뗀다. `preferred nodeAffinity`는 점수일 뿐이라 학교 PC가 있어도 VM에 갈 수 있어 쓰지 않는다.
-- GHCR는 private이다. 모든 노드의 k3s `registries.yaml`에 읽기 전용 토큰(`read:packages`)을 넣어 노드 단위로 인증한다. 학교 PC 참여 스크립트가 이 파일을 만들고, 토큰 교체도 같은 스크립트를 다시 돌려서 한다. 이미지를 올리는 쪽은 따로다. 빌드 네임스페이스에 `write:packages` 토큰을 담은 Secret을 두고 빌드 Job에만 마운트한다. 토큰은 VM을 세팅하는 사람이 GitHub에서 만들어 `kubectl create secret`으로 넣고, 교체는 새 토큰으로 Secret을 다시 만든 뒤 이전 토큰을 GitHub에서 폐기하는 것으로 한다(Secret만 바꿔서는 이전 토큰이 살아 있다). 서비스를 접을 때는 Secret과 토큰을 둘 다 지운다. 노드 토큰은 읽기 전용으로 유지하고, 값은 어느 쪽도 레포에 커밋하지 않는다. private 패키지에는 플랜별 무료 한도가 있다(Free 기준 저장 500MB, 전송 월 1GB로 알고 있고, GitHub Actions 밖에서 받는 pull이 전송량에 든다 — 값은 요금 페이지에서 확인해 [`design.md`](../design.md) §7 13번에 적는다). 한도에 닿으면 학생 이미지 패키지를 public으로 바꾼다. 그러면 학생 코드가 담긴 이미지가 공개되므로 업로드 화면에서 미리 알린다.
-- 노드가 NotReady가 되면 `tolerationSeconds`를 30초로 줄여 eviction을 빨리 시작한다(기본 5분). 이건 전체 복구 시간이 아니다. NotReady 감지(기본 40초), 재스케줄, 이미지 pull, readiness까지 더한 실제 복구 시간은 PC를 실제로 꺼서 재고 [`design.md`](../design.md) §7에 적는다.
-- 학교 PC 켜짐 여부는 k3s 노드의 Ready 상태를 그대로 쓴다. api는 이 값을 읽기만 하고 따로 핑을 보내지 않는다.
-
-실행 격리: 학생 코드가 도는 네임스페이스에 Pod Security Admission `restricted`를 강제한다. 그러면 non-root, 호스트 네임스페이스·호스트 경로 금지, 권한 상승 금지, capabilities 전부 drop, seccomp `RuntimeDefault`가 필수가 된다. 거기에 `automountServiceAccountToken: false`, 권한 없는 ServiceAccount, Pod 간 통신을 막는 NetworkPolicy를 더한다. 학생 Pod의 egress는 클러스터 DNS(53)와 인터넷만 허용하고, 클러스터 내부 대역·Tailscale 대역·클라우드 메타데이터 주소(169.254.169.254)는 NetworkPolicy의 `ipBlock`/`except`로 막는다. Pod가 자기 노드로 가는 경로는 NetworkPolicy가 보장하지 않으므로 노드의 호스트 방화벽(nftables)에서 Pod 대역 → 노드 주소를 따로 막고, 실제로 막히는지는 측정한다([`design.md`](../design.md) §7 6번). 커널은 공유하므로 완전한 격리는 아니고, gVisor 같은 샌드박스 런타임은 이후 확장이다.
-
-빌드 격리: 학생 Dockerfile의 `RUN`은 임의 코드 실행이다. 그래서 빌드를 VM 호스트의 Docker 데몬에서 돌리지 않고 k3s Job 안의 rootless BuildKit으로 돌린다. Job에도 학생 Pod와 같은 실행 격리 기준과 requests/limits를 걸고, egress는 클러스터 DNS(53), GHCR, Docker Hub(베이스 이미지), 패키지 저장소, R2 엔드포인트만 허용한다. 이 목록은 도메인 단위인데 NetworkPolicy는 IP만 다루므로, 빌드 네임스페이스에 허용 목록을 가진 HTTP 프록시를 두고 Job의 `HTTP_PROXY`/`HTTPS_PROXY`로 모든 나가는 연결을 그리로 보낸다. NetworkPolicy는 프록시와 DNS 외의 egress를 전부 막는 데만 쓴다. 빌드 Job이 밖에 쓸 때 필요한 자격 증명은 GHCR `write:packages` 토큰과 R2 쓰기 키 둘이고, 둘 다 빌드 네임스페이스의 Secret으로 Job에만 들어간다. BuildKit은 Dockerfile의 `RUN`을 별도 컨테이너에서 돌리므로 Job Pod의 환경 변수와 마운트가 `RUN` 안에서 보이지 않아야 하는데, 이건 실제로 `RUN env; ls /run/secrets`를 넣은 Dockerfile로 확인한다([`design.md`](../design.md) §7 6번). 빌드가 전부 VM의 공인 IP 하나로 나가므로 Docker Hub의 비로그인 pull 제한에 걸린다. 프록시 뒤의 BuildKit에 Docker Hub 계정으로 로그인한 `config.json`을 Secret으로 넣고, 그래도 모자라면 VM에 pull-through 캐시(`registry:2` mirror)를 둔다.
-
-네트워크 경계: VM 호스트 방화벽은 80/443만 공개하고, SSH와 k3s API(6443), kubelet(10250), flannel(8472/UDP)은 Tailscale 인터페이스에서만 받는다. 학교 PC는 밖에서 들어오는 길이 없으므로 같은 포트를 Tailscale 인터페이스로만 연다. 두 규칙 다 `infra/`의 세팅 스크립트가 만든다.
+- 학생 Pod는 `required nodeAffinity`로 학교 PC에만 간다. VM은 taint를 두고, Ready인 학교 PC가 하나도 없을 때만 api가 affinity를 바꿔 VM에 배치하고 돌아오면 되돌린다.
+- GHCR는 private이다. 노드는 읽기 토큰, 빌드 Job은 쓰기 토큰 Secret. 무료 한도에 닿으면 학생 이미지를 public으로 돌린다.
+- 학생 네임스페이스는 Pod Security Admission `restricted` + NetworkPolicy. 빌드는 k3s Job 안의 rootless BuildKit이고 나가는 연결은 허용 목록 프록시만 거친다.
+- VM 호스트는 80/443만 공개하고 나머지는 Tailscale 인터페이스에서만 받는다.
 
 구성도, 구성 요소별 역할, 흐름, 아직 정하지 않은 항목은 [`design.md`](../design.md) §1과 §7에 있다. 레포 구성과 작업 방식은 [`hackathon.md`](../hackathon.md)와 [`AGENTS.md`](../../AGENTS.md) §5, 기술 선택과 폴더 구조는 [ADR-001](001-stack.md)에서 다룬다.
 
