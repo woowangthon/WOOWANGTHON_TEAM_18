@@ -1,0 +1,35 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: ko-KR
+
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  auto_review:
+    enabled: true
+    drafts: false
+  path_instructions:
+    - path: "**/*"
+      instructions: |
+        Flag any API key, token, password or secret value committed in code or config. The repo is public.
+    - path: "apps/**"
+      instructions: |
+        Hackathon rules forbid presenting a fixed result as live behavior (docs/hackathon.md).
+        - Flag code that catches an AI/API failure and returns a canned or empty result that looks like success,
+          unless it carries a `MOCK(<id>)` marker (docs/conventions.md F-1).
+        - Every new `MOCK(<id>)` / `SAMPLE(<id>)` marker needs a matching row in docs/ai-scope.md §3 in the same PR.
+        - Adding, swapping or removing an AI model, external API, library or dataset needs docs/ai-scope.md updated in the same PR.
+        - A changed request/response shape between FE, BE and AI needs docs/design.md §3 updated.
+        Prefer the simplest code that makes the demo path work; flag speculative abstractions (docs/conventions.md F-2).
+    - path: "docs/**"
+      instructions: |
+        Korean team documents. Check that facts (dates, scores, submission rules) match docs/hackathon.md,
+        and that FR-xx IDs referenced elsewhere exist in docs/SRS.md. Do not nitpick wording.
+
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - "AGENTS.md"
+      - "docs/conventions.md"

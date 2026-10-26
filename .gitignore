@@ -1,0 +1,16 @@
+# Secrets — the repo is public. Only the example file is committed.
+.env*
+!.env.example
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Claude Code: personal settings and worktrees stay local
+.claude/settings.local.json
+.claude/worktrees/
+
+# Stack-specific entries (node_modules/, __pycache__/, build/ …) are added with docs/adr/001-stack.md
