@@ -1,13 +1,23 @@
 # 설계 — 아키텍처와 FE/BE/AI 계약
 
-상태: `제안됨`(제안자: @seren-wib)
 
 > **기술 설계·이해도 10점** 근거 문서. 무엇을 만드는지는 [`SRS.md`](SRS.md), 구조는 [`architecture.md`](architecture.md), 왜 이 기술인지는 [`adr/`](adr/README.md).
 > FE·BE·AI가 병렬로 일하는 기준이 §3 계약이다. **API를 바꾸기 전에 이 문서를 먼저 고치고**, 같은 PR에 코드 변경을 싣는다.
 
 ## 1. 아키텍처
 
-[`architecture.md`](architecture.md)에 있다. 이 문서는 그 구조 안의 컴포넌트, FE/BE/AI 계약, 데이터 모델, 배포(상세 설계)를 다룬다.
+[`architecture.md`](architecture.md)에 전체 구조가 있다. 이 문서는 그 구조 안의 컴포넌트, FE/BE/AI 계약, 데이터 모델, 배포(상세 설계)를 다룬다.
+
+```mermaid
+flowchart LR
+  user([사용자]) --> fe[FE: TBD]
+  fe -->|REST/JSON| be[BE: TBD]
+  be --> ai[AI: TBD]
+  be --> db[(DB: TBD)]
+  ai --> llm[[외부 모델/API: TBD]]
+```
+
+스택은 [`adr/001-stack.md`](adr/001-stack.md)에서 정한다. 정해지면 위 다이어그램의 TBD를 채운다.
 
 ## 2. 컴포넌트 책임
 
