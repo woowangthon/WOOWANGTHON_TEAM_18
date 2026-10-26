@@ -29,7 +29,7 @@
 | 사용자 요청 | VM의 Traefik(k3s 내장 Ingress)이 받아 Tailscale 위로 Pod에 보낸다 | VM |
 | 우리 api (FastAPI) | 같은 클러스터 안에서 돌린다 | VM 노드 고정 |
 
-규칙 네 가지. 세부는 [`design.md`](../design.md) §1.5.
+규칙 네 가지. 세부는 [`design.md`](../design.md) §1.3.
 
 - **배치**: 학생 Pod는 `required nodeAffinity`로 학교 PC에만. VM은 taint. Ready인 학교 PC가 하나도 없을 때만 api가 affinity를 바꿔 VM에 두고, 돌아오면 되돌린다.
 - **이미지**: GHCR private. 노드는 읽기 토큰, 빌드 Job만 쓰기 토큰 Secret. 무료 한도에 닿으면 학생 이미지를 public으로.
