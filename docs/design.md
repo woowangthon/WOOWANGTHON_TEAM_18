@@ -44,7 +44,7 @@
 | 외부 서비스 | Supabase | PostgreSQL(사용자, 프로젝트, 실행 기록), Auth(로그인) |
 | | LLM API | 코드 분석, 실행 방식 분류, 위험 코드 표시 |
 | | Cloudflare R2 | 정적 결과물, 미리보기. 학생 결과물 도메인으로 공개 |
-| Tailscale 사설망 | — | VM과 학교 PC를 잇는 유일한 통로. k3s 노드 간 통신(flannel)이 이 위로만 흐른다 |
+| Tailscale 사설망 | — | VM과 학교 PC를 잇는 통로. 학교 PC는 방화벽 안이라 밖에서 들어오는 다른 길이 없고, k3s는 `--node-ip`를 Tailscale 주소로, `--flannel-iface`를 `tailscale0`으로 줘서 노드 간 통신을 이 위로 보낸다. 설정은 `infra/`에 둔다 |
 | 학교 실습실 PC · k3s 에이전트 노드 (켜져 있을 때만 참여) | k3s 에이전트 | 지시받은 Pod 실행, 노드 상태 보고 |
 | | 학생 프로젝트 Pod ×N | 서버 필요 프로젝트. GHCR 이미지는 학교망에서 직접 받는다 |
 
@@ -57,7 +57,7 @@
 
 #### 학교 PC 한 대에 여러 프로젝트
 
-구성도는 PC마다 학생 프로젝트 Pod를 하나씩 그렸지만, 실제로는 PC 한 대에 여러 개가 돈다. 학생 프로젝트 하나가 Pod 하나이고, k3s 서버가 각 PC의 남은 CPU·메모리를 보고 자리가 있는 PC에 배치한다. 작은 웹 서버는 128-512MB면 충분하므로, 16GB PC에서 학생 몫을 10GB로 잡으면 한 대에 20~40개가 들어간다.
+구성도는 PC마다 학생 프로젝트 Pod를 하나씩 그렸지만, 실제로는 PC 한 대에 여러 개가 돈다. 학생 프로젝트 하나가 Pod 하나이고, k3s 서버가 각 PC의 남은 자원(requests 합)을 보고 자리가 있는 PC에 배치한다. 수용량은 requests로 센다. 16GB PC에서 `system-reserved` 6GB(수업 중 사용자 몫), `kube-reserved` 0.5GB, eviction 여유 0.5GB를 빼면 allocatable은 약 9GB다. 학생 Pod의 메모리를 requests = limits = 256Mi로 두면(Guaranteed QoS, 오버커밋 없음) 한 대에 약 36개가 들어가고, 전부 limit까지 써도 합이 allocatable을 넘지 않는다. 여기에 `max-pods` 40으로 노드당 개수 상한을 건다. 512Mi 등급을 고른 프로젝트는 자리를 두 개 쓴다. 실제 값은 샘플 앱을 띄워 재고 §7 4번에서 조정한다.
 
 ### 1.3 흐름 (구성도 색 기준)
 
@@ -137,12 +137,12 @@ FE가 BE를, BE가 AI를 기다리지 않도록 **요청·응답 모양을 먼�
 | --- | --- | --- | --- |
 | 1 | "정적 미리보기"의 정의 | 서버 필요 프로젝트의 미리보기가 화면 스크린샷인지, 백엔드 없이 프론트만 띄운 것인지. 스크린샷이면 누가 언제 찍는지 | 정해지면 구성도에 반영 |
 | 2 | 학생 결과물 도메인 구성 | 서비스(`app.example.com`)와 학생 결과물(`example-usercontent.com`)은 분리한다. 정적(R2 커스텀 도메인)과 서버 필요(`<프로젝트>.` 와일드카드 → Traefik)를 한 도메인 아래 어떻게 나눌지, 도메인 구매와 DNS를 누가 맡을지 | Cloudflare DNS 하나로 관리. `static.`은 R2, `*.`는 VM Traefik |
-| 3 | PC 사용자 몫 예약 값 | 수업 중에는 사람이 PC를 쓴다. 학생 프로젝트가 PC를 느리게 만들면 학교가 참여를 막을 수 있다 | `system-reserved`로 CPU 2코어·메모리 6GB부터 시작해 측정 후 조정 |
-| 4 | Pod 자원 기본값 | requests/limits가 없으면 무한루프 하나가 같은 PC의 다른 프로젝트까지 죽인다 | 기본 requests 100m·128Mi, limits 500m·512Mi. 측정 후 조정 |
+| 3 | PC 사용자 몫 예약 값 | 수업 중에는 사람이 PC를 쓴다. 학생 프로젝트가 PC를 느리게 만들면 학교가 참여를 막을 수 있다 | `system-reserved` CPU 2코어·메모리 6GB, `kube-reserved` 0.5GB, `eviction-hard` memory.available<500Mi부터 시작해 측정 후 조정 |
+| 4 | Pod 자원 기본값 | requests/limits가 없으면 무한루프 하나가 같은 PC의 다른 프로젝트까지 죽인다. 메모리는 limits가 requests보다 크면 스케줄러가 센 수보다 실제 사용이 커져 노드가 터질 수 있다 | 메모리 requests = limits = 256Mi(Guaranteed), CPU requests 100m · limits 500m(CPU는 넘쳐도 느려질 뿐이라 오버커밋 허용). 노드당 `max-pods` 40. 측정 후 조정 |
 | 5 | 안 쓰는 프로젝트 내리기 | 아무도 보지 않는 프로젝트를 계속 켜 두면 자원 낭비다. replicas가 0이면 그 주소로 온 요청을 받을 Pod가 없으므로 깨우는 경로가 따로 있어야 한다 | 마지막 접속 후 30분이 지나면 api가 학생 Deployment의 replicas를 0으로 내리고 그 Ingress를 api의 깨우기 페이지로 돌린다. 접속이 오면 그 페이지가 replicas를 1로 올리고, 준비되면 Ingress를 원래대로 되돌린다 (몇 초에서 수십 초) |
 | 6 | 격리 수준 | 한 PC에 서로 다른 학생의 코드가 같이 돈다. ADR-002의 실행 격리 기준(PSA `restricted`, ServiceAccount 토큰 비마운트, NetworkPolicy)을 걸어도 커널은 공유한다 | 그 기준을 최소선으로 매니페스트에 박는다. gVisor 같은 샌드박스 런타임을 넣을지, 넣는다면 언제인지 정한다 |
 | 7 | 위험 코드 처리 | LLM이 위험 코드를 표시한 뒤 실행을 막는지, 경고만 하는지 | 팀 논의 |
 | 8 | AI 역할 범위 | 분류와 위험 표시만 할지, 실행 계획(Dockerfile·빌드 명령·포트·환경변수)까지 제안하고 학생이 승인하게 할지. 주제 "AI는 동료가 될 수 있을까?"의 답이 이 흐름에 들어간다 | 실행 계획까지. [`SRS.md`](SRS.md) "AI 동료의 역할 경계"와 함께 정한다 |
 | 9 | VM 예비 노드 용량 | VM 크기와, 학교 PC가 없을 때 VM에 동시에 띄울 학생 Pod 수 상한 | 네임스페이스 ResourceQuota로 상한. 값은 VM 업체·크기 정한 뒤 |
-| 10 | 심사 기간 운영 | 11.15~11.21은 학교 PC가 꺼져 있다고 가정하고 VM만으로 시연이 되어야 한다. Supabase 무료 플랜은 지난 7일간 DB 활동이 충분하지 않으면 프로젝트를 일시 정지한다. 공식 문서는 "하루에 몇 번의 요청이면 보통 충분"이라고 하고, 정지 일주일 전에 경고 메일이 온다 ([문서](https://supabase.com/docs/guides/platform/free-project-pausing)) | 시연용 프로젝트는 VM에 미리 띄워 둔다. api가 한 시간에 한 번 DB에 가벼운 쿼리를 보내는 작업을 돌리고, 경고 메일이 오면 대시보드에서 바로 확인한다. 불안하면 심사 주간만 Pro 플랜으로 올린다 |
+| 10 | 심사 기간 운영 | 2026-11-15 제출 마감부터 11.16–20 사전 심사, 11.21 본선까지([`hackathon.md`](hackathon.md) §일정) 학교 PC가 꺼져 있다고 가정하고 VM만으로 시연이 되어야 한다. Supabase 무료 플랜은 지난 7일간 DB 활동이 충분하지 않으면 프로젝트를 일시 정지한다. 공식 문서는 "하루에 몇 번의 요청이면 보통 충분"이라고 하고, 정지 일주일 전에 경고 메일이 온다 ([문서](https://supabase.com/docs/guides/platform/free-project-pausing), 2026-10-26 확인) | 시연용 프로젝트는 VM에 미리 띄워 둔다. api가 한 시간에 한 번 DB에 가벼운 쿼리를 보내는 작업을 돌리고, 경고 메일이 오면 대시보드에서 바로 확인한다. 불안하면 심사 주간만 Pro 플랜으로 올린다 |
 | 11 | 노드 장애 복구 시간 | NotReady 감지 → eviction → 재스케줄 → 이미지 pull → readiness. `tolerationSeconds` 30초는 그중 한 구간이다 | 시연 전에 PC를 실제로 꺼서 끝에서 끝까지 시간을 재고 목표를 정한다 |
