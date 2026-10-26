@@ -140,7 +140,7 @@ FE가 BE를, BE가 AI를 기다리지 않도록 **요청·응답 모양을 먼�
 | 3 | PC 사용자 몫 예약 값 | 수업 중에는 사람이 PC를 쓴다. 학생 프로젝트가 PC를 느리게 만들면 학교가 참여를 막을 수 있다 | `system-reserved` CPU 2코어·메모리 6GB, `kube-reserved` 0.5GB, `eviction-hard` memory.available<500Mi부터 시작해 측정 후 조정 |
 | 4 | Pod 자원 기본값 | requests/limits가 없으면 무한루프 하나가 같은 PC의 다른 프로젝트까지 죽인다. 메모리는 limits가 requests보다 크면 스케줄러가 센 수보다 실제 사용이 커져 노드가 터질 수 있다 | 메모리 requests = limits = 256Mi(Guaranteed), CPU requests 100m · limits 500m(CPU는 넘쳐도 느려질 뿐이라 오버커밋 허용). 노드당 `max-pods` 40. 측정 후 조정 |
 | 5 | 안 쓰는 프로젝트 내리기 | 아무도 보지 않는 프로젝트를 계속 켜 두면 자원 낭비다. replicas가 0이면 그 주소로 온 요청을 받을 Pod가 없으므로 깨우는 경로가 따로 있어야 한다 | 마지막 접속 후 30분이 지나면 api가 학생 Deployment의 replicas를 0으로 내리고 그 Ingress를 api의 깨우기 페이지로 돌린다. 접속이 오면 그 페이지가 replicas를 1로 올리고, 준비되면 Ingress를 원래대로 되돌린다 (몇 초에서 수십 초) |
-| 6 | 격리 수준 | 한 PC에 서로 다른 학생의 코드가 같이 돈다. ADR-002의 실행 격리 기준(PSA `restricted`, ServiceAccount 토큰 비마운트, NetworkPolicy)을 걸어도 커널은 공유한다 | 그 기준을 최소선으로 매니페스트에 박는다. gVisor 같은 샌드박스 런타임을 넣을지, 넣는다면 언제인지 정한다 |
+| 6 | 격리 수준 | 한 PC에 서로 다른 학생의 코드가 같이 돈다. ADR-002의 실행 격리 기준(PSA `restricted`, ServiceAccount 토큰 비마운트, NetworkPolicy)을 걸어도 커널은 공유한다 | 그 기준을 최소선으로 매니페스트에 박는다. NetworkPolicy와 호스트 방화벽이 메타데이터 주소·Tailscale 대역·자기 노드를 실제로 막는지 학생 Pod 안에서 `curl`로 확인한다. gVisor 같은 샌드박스 런타임을 넣을지, 넣는다면 언제인지 정한다 |
 | 7 | 위험 코드 처리 | LLM이 위험 코드를 표시한 뒤 실행을 막는지, 경고만 하는지 | 팀 논의 |
 | 8 | AI 역할 범위 | 분류와 위험 표시만 할지, 실행 계획(Dockerfile·빌드 명령·포트·환경변수)까지 제안하고 학생이 승인하게 할지. 주제 "AI는 동료가 될 수 있을까?"의 답이 이 흐름에 들어간다 | 실행 계획까지. [`SRS.md`](SRS.md) "AI 동료의 역할 경계"와 함께 정한다 |
 | 9 | VM 예비 노드 용량 | VM 크기와, 학교 PC가 없을 때 VM에 동시에 띄울 학생 Pod 수 상한 | 네임스페이스 ResourceQuota로 상한. 값은 VM 업체·크기 정한 뒤 |
