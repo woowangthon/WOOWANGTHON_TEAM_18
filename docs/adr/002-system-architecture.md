@@ -22,11 +22,14 @@
 
 - VM은 k3s 서버이면서 예비 워커다. 학교 PC는 전부 에이전트 노드다.
 - api, Traefik, 빌드 Job은 `nodeSelector`로 VM 노드에 고정한다.
-- 학생 Pod는 학교 PC를 우선하는 `preferred nodeAffinity`를 걸고, VM 노드에는 taint를 둬서 학교 PC가 없을 때만 들어간다.
-- 노드가 NotReady가 되면 `tolerationSeconds`를 30초로 줄여 바로 다른 노드로 재배치한다. 기본값 5분은 수업 끝나고 PC가 꺼지는 상황에 너무 길다.
-- 학교 PC 켜짐 여부는 k3s 노드의 Ready 상태를 그대로 쓴다. api가 따로 감시하지 않는다.
+- 학생 Pod는 `required nodeAffinity`로 학교 PC 노드에만 배치한다. VM 노드에는 `NoSchedule` taint를 두고 학생 Pod는 기본적으로 이를 허용하지 않는다. Ready인 학교 PC가 하나도 없을 때만 api가 그 Deployment에 VM toleration과 nodeSelector를 붙여 VM에 배치하고, 학교 PC가 돌아오면 api의 주기 작업이 이를 떼어 되돌린다. `preferred nodeAffinity`는 점수일 뿐이라 학교 PC가 있어도 VM에 갈 수 있어 쓰지 않는다.
+- GHCR는 private이다. 모든 노드의 k3s `registries.yaml`에 읽기 전용 토큰(`read:packages`)을 넣어 노드 단위로 인증한다. 학교 PC 참여 스크립트가 이 파일을 만들고, 토큰 교체도 같은 스크립트를 다시 돌려서 한다.
+- 노드가 NotReady가 되면 `tolerationSeconds`를 30초로 줄여 eviction을 빨리 시작한다(기본 5분). 이건 전체 복구 시간이 아니다. NotReady 감지(기본 40초), 재스케줄, 이미지 pull, readiness까지 더한 실제 복구 시간은 PC를 실제로 꺼서 재고 [`design.md`](../design.md) §7에 적는다.
+- 학교 PC 켜짐 여부는 k3s 노드의 Ready 상태를 그대로 쓴다. api는 이 값을 읽기만 하고 따로 핑을 보내지 않는다.
 
-빌드 격리: 학생 Dockerfile의 `RUN`은 임의 코드 실행이다. 그래서 빌드를 VM 호스트의 Docker 데몬에서 돌리지 않고 k3s Job 안의 rootless BuildKit으로 돌린다. Job에도 학생 Pod와 같은 requests/limits와 NetworkPolicy(GHCR·패키지 저장소만 허용)를 건다.
+실행 격리: 학생 코드가 도는 네임스페이스에 Pod Security Admission `restricted`를 강제한다. 그러면 non-root, 호스트 네임스페이스·호스트 경로 금지, 권한 상승 금지, capabilities 전부 drop, seccomp `RuntimeDefault`가 필수가 된다. 거기에 `automountServiceAccountToken: false`, 권한 없는 ServiceAccount, Pod 간 통신을 막는 NetworkPolicy를 더한다. 커널은 공유하므로 완전한 격리는 아니고, gVisor 같은 샌드박스 런타임은 이후 확장이다.
+
+빌드 격리: 학생 Dockerfile의 `RUN`은 임의 코드 실행이다. 그래서 빌드를 VM 호스트의 Docker 데몬에서 돌리지 않고 k3s Job 안의 rootless BuildKit으로 돌린다. Job에도 학생 Pod와 같은 실행 격리 기준과 requests/limits를 걸고, egress는 GHCR·패키지 저장소·R2 엔드포인트만 허용한다.
 
 구성도, 구성 요소별 역할, 흐름, 아직 정하지 않은 항목은 [`design.md`](../design.md) §1과 §7에 있다. 레포 구성과 작업 방식은 [`hackathon.md`](../hackathon.md)와 [`AGENTS.md`](../../AGENTS.md) §5, 기술 선택과 폴더 구조는 [ADR-001](001-stack.md)에서 다룬다.
 

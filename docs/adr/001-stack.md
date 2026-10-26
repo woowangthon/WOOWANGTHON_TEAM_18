@@ -42,7 +42,7 @@ TBD — 아래 표를 채우고 상태를 `채택됨`으로 바꾼다.
 | BE | Spring Boot | 타입 안정성, 국내 백엔드 표준 | 설정과 보일러플레이트가 많아 3주 해커톤에 무겁다 |
 | DB | Firebase (Firestore) | 인증·실시간 기능 내장, 서버 없이 쓸 수 있다 | 사용자–프로젝트–실행 기록은 서로 참조하는 관계형 데이터라 조인과 제약 조건이 필요하다 |
 | DB | 클라우드 VM에 PostgreSQL 직접 설치 | 무료 티어의 일시 정지·용량 제한이 없다 | 백업·업데이트·접속 관리를 직접 해야 한다 |
-| 배포 (BE) | Render 같은 PaaS | 서버 관리가 필요 없다 | k3s 서버는 항상 켜진 VM에서 돌아야 한다([ADR-002](002-system-architecture.md)). Render 무료 플랜은 15분간 요청이 없으면 잠들어 배포 URL을 11.21까지 살려 두는 조건과 맞지 않는다 |
+| 배포 (BE) | Render 같은 PaaS | 서버 관리가 필요 없다 | k3s 서버와 Tailscale은 호스트 권한이 있는 VM이 필요한데 PaaS는 VM을 주지 않는다([ADR-002](002-system-architecture.md)). 무료 플랜은 15분간 요청이 없으면 잠들고 다음 요청이 1분 가까이 걸리므로, 심사위원의 첫 클릭이 그 지연을 맞는다 |
 | 빌드 도구 | Docker (`docker build`), VM 호스트에서 | 가장 단순하다 | 학생 Dockerfile의 `RUN`이 메인 VM에서 root Docker 데몬으로 실행된다 ([ADR-002](002-system-architecture.md) 대안) |
 | 빌드 도구 | Kaniko | Docker 데몬 없이 Pod 안에서 이미지를 빌드한다. 같은 용도 | 2025년 6월 저장소가 보관(archived) 처리돼 유지보수가 멈췄다. BuildKit은 `docker build`와 같은 엔진이라 Dockerfile 호환이 가장 넓다 |
 | 배포 (FE) | 클라우드 VM의 Nginx로 직접 서빙 | 배포처가 하나로 줄어든다 | Vercel은 main 머지 때 자동 배포하고 PR마다 미리보기 URL을 준다 |

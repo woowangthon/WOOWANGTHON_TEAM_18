@@ -24,7 +24,7 @@
 | 브라우저 실행 | 빌드 Job이 빌드한 결과를 R2에 올려 공개한다 | R2 |
 | 서버 필요 | 빌드 Job이 이미지를 만들어 GHCR에 올리고, k3s 서버가 Deployment·Ingress로 배치한다 | 학교 PC 우선, 없으면 클라우드 VM |
 
-5. 사용자 요청은 VM의 Traefik이 받아 Tailscale 위로 해당 Pod에 전달한다. 학교 PC가 꺼지면 30초 안에 다른 노드로 재배치한다.
+5. 사용자 요청은 VM의 Traefik이 받아 Tailscale 위로 해당 Pod에 전달한다. 학교 PC가 꺼지면 k3s가 감지해 다른 노드로 재배치한다(복구 시간은 §7 11번).
 6. 학교 PC도 VM 자리도 없으면 R2에 저장해 둔 정적 미리보기만 보여준다.
 
 ### 1.2 영역과 구성 요소
@@ -34,13 +34,13 @@
 | 개발 영역 | 개발자 (팀원 3명) | 코드 작성, PR |
 | | GitHub | 모노레포 `WOOWANGTHON_TEAM_18` (폴더 구조는 [ADR-001](adr/001-stack.md)) |
 | | GitHub Actions | 테스트, 빌드. web은 Vercel로, api 이미지는 GHCR로, 클러스터 배포는 Tailscale 위 `kubectl`로 |
-| | GHCR | api 이미지와 학생 프로젝트 이미지 (private) |
+| | GHCR | api 이미지와 학생 프로젝트 이미지 (private). 노드마다 k3s `registries.yaml`의 읽기 전용 토큰으로 받는다 |
 | Vercel | web (React) | 우리 서비스 웹사이트 |
 | 클라우드 VM – Main (항상 켜짐) · k3s 서버 노드 | k3s 서버 | 클러스터 관리, Pod 배치, 노드 상태 |
 | | Traefik (k3s 내장) | Ingress, TLS, 요청 분배 (api, 학생 앱) |
 | | api (FastAPI) Pod | 업로드 처리, 분석 요청, 빌드 Job·Deployment·Ingress 생성. VM 노드에 고정 |
 | | 빌드 Job (rootless BuildKit) | 학생 코드 → 이미지(GHCR) 또는 정적 결과물(R2). VM 노드에 고정 |
-| | 학생 프로젝트 Pod (예비) | 학교 PC가 하나도 없을 때만 |
+| | 학생 프로젝트 Pod (예비) | 학교 PC가 하나도 없을 때만. api가 toleration을 붙여 배치하고, PC가 돌아오면 되돌린다 |
 | 외부 서비스 | Supabase | PostgreSQL(사용자, 프로젝트, 실행 기록), Auth(로그인) |
 | | LLM API | 코드 분석, 실행 방식 분류, 위험 코드 표시 |
 | | Cloudflare R2 | 정적 결과물, 미리보기. 학생 결과물 도메인으로 공개 |
@@ -139,9 +139,10 @@ FE가 BE를, BE가 AI를 기다리지 않도록 **요청·응답 모양을 먼�
 | 2 | 학생 결과물 도메인 구성 | 서비스(`app.example.com`)와 학생 결과물(`example-usercontent.com`)은 분리한다. 정적(R2 커스텀 도메인)과 서버 필요(`<프로젝트>.` 와일드카드 → Traefik)를 한 도메인 아래 어떻게 나눌지, 도메인 구매와 DNS를 누가 맡을지 | Cloudflare DNS 하나로 관리. `static.`은 R2, `*.`는 VM Traefik |
 | 3 | PC 사용자 몫 예약 값 | 수업 중에는 사람이 PC를 쓴다. 학생 프로젝트가 PC를 느리게 만들면 학교가 참여를 막을 수 있다 | `system-reserved`로 CPU 2코어·메모리 6GB부터 시작해 측정 후 조정 |
 | 4 | Pod 자원 기본값 | requests/limits가 없으면 무한루프 하나가 같은 PC의 다른 프로젝트까지 죽인다 | 기본 requests 100m·128Mi, limits 500m·512Mi. 측정 후 조정 |
-| 5 | 안 쓰는 프로젝트 내리기 | 아무도 보지 않는 프로젝트를 계속 켜 두면 자원 낭비다 | 마지막 접속 후 30분이 지나면 api가 replicas를 0으로, 다시 접속하면 1로 (재시작에 몇 초 걸림) |
-| 6 | 격리 수준 | 한 PC에 서로 다른 학생의 코드가 같이 돈다. 컨테이너는 커널을 공유하므로 완전한 격리는 아니다 | non-root 실행, NetworkPolicy로 Pod 간 통신 차단, 호스트 폴더 마운트 금지. 빌드 Job도 같은 규칙. 이후 gVisor 같은 샌드박스 런타임으로 확장 가능 |
+| 5 | 안 쓰는 프로젝트 내리기 | 아무도 보지 않는 프로젝트를 계속 켜 두면 자원 낭비다. replicas가 0이면 그 주소로 온 요청을 받을 Pod가 없으므로 깨우는 경로가 따로 있어야 한다 | 마지막 접속 후 30분이 지나면 api가 학생 Deployment의 replicas를 0으로 내리고 그 Ingress를 api의 깨우기 페이지로 돌린다. 접속이 오면 그 페이지가 replicas를 1로 올리고, 준비되면 Ingress를 원래대로 되돌린다 (몇 초에서 수십 초) |
+| 6 | 격리 수준 | 한 PC에 서로 다른 학생의 코드가 같이 돈다. ADR-002의 실행 격리 기준(PSA `restricted`, ServiceAccount 토큰 비마운트, NetworkPolicy)을 걸어도 커널은 공유한다 | 그 기준을 최소선으로 매니페스트에 박는다. gVisor 같은 샌드박스 런타임을 넣을지, 넣는다면 언제인지 정한다 |
 | 7 | 위험 코드 처리 | LLM이 위험 코드를 표시한 뒤 실행을 막는지, 경고만 하는지 | 팀 논의 |
 | 8 | AI 역할 범위 | 분류와 위험 표시만 할지, 실행 계획(Dockerfile·빌드 명령·포트·환경변수)까지 제안하고 학생이 승인하게 할지. 주제 "AI는 동료가 될 수 있을까?"의 답이 이 흐름에 들어간다 | 실행 계획까지. [`SRS.md`](SRS.md) "AI 동료의 역할 경계"와 함께 정한다 |
 | 9 | VM 예비 노드 용량 | VM 크기와, 학교 PC가 없을 때 VM에 동시에 띄울 학생 Pod 수 상한 | 네임스페이스 ResourceQuota로 상한. 값은 VM 업체·크기 정한 뒤 |
-| 10 | 심사 기간 운영 | 11.15~11.21은 학교 PC가 꺼져 있다고 가정하고 VM만으로 시연이 되어야 한다. Supabase 무료 플랜은 7일 동안 활동이 없으면 일시 정지된다(공식 문서로 확인 필요) | 시연용 프로젝트는 VM에 미리 띄워 둔다. api가 하루 한 번 DB를 건드리는 작업을 돌린다 |
+| 10 | 심사 기간 운영 | 11.15~11.21은 학교 PC가 꺼져 있다고 가정하고 VM만으로 시연이 되어야 한다. Supabase 무료 플랜은 지난 7일간 DB 활동이 충분하지 않으면 프로젝트를 일시 정지한다. 공식 문서는 "하루에 몇 번의 요청이면 보통 충분"이라고 하고, 정지 일주일 전에 경고 메일이 온다 ([문서](https://supabase.com/docs/guides/platform/free-project-pausing)) | 시연용 프로젝트는 VM에 미리 띄워 둔다. api가 한 시간에 한 번 DB에 가벼운 쿼리를 보내는 작업을 돌리고, 경고 메일이 오면 대시보드에서 바로 확인한다. 불안하면 심사 주간만 Pro 플랜으로 올린다 |
+| 11 | 노드 장애 복구 시간 | NotReady 감지 → eviction → 재스케줄 → 이미지 pull → readiness. `tolerationSeconds` 30초는 그중 한 구간이다 | 시연 전에 PC를 실제로 꺼서 끝에서 끝까지 시간을 재고 목표를 정한다 |
