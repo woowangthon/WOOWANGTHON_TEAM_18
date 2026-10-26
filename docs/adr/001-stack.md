@@ -27,7 +27,7 @@ TBD — 아래 표를 채우고 상태를 `채택됨`으로 바꾼다.
 | BE | FastAPI | |
 | AI 모델 / API | LLM API — 업체·모델 미정. API 서버가 직접 호출하며 별도 AI 서버는 없다 | |
 | DB | PostgreSQL (Supabase) | |
-| 배포 | web: Vercel / api·Traefik·빌드 Job·k3s 서버: 클라우드 VM 위 k3s (업체 미정) / CI·CD: GitHub Actions | |
+| 배포 | web: Vercel (GitHub Actions에서 Vercel CLI로 올린다) / api·Traefik·빌드 Job·k3s 서버: 클라우드 VM 위 k3s (업체 미정) / CI·CD: GitHub Actions | 조직 레포라 Vercel Git 연동에는 조직 앱 설치 권한(운영진)이 필요하다. CLI 배포는 토큰 하나면 되고 fork PR에는 토큰이 없어 미리보기도 main 기준으로만 뜬다 |
 | 패키지 매니저 · 폴더 구조 | 모노레포. 배포 단위로 `apps/web`(React), `apps/api`(FastAPI, LLM 호출은 `api` 안의 모듈), 설정은 `infra/`(VM·k8s·학교 PC 스크립트) | 따로 배포되는 것만 `apps/`에 둔다. 별도 AI 서버가 없으므로 `ai/` 앱은 두지 않는다 |
 | 빌드 도구 (학생 프로젝트) | BuildKit (rootless) — k3s 빌드 Job 안에서 실행, Dockerfile 호환 | |
 
