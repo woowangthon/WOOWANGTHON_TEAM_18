@@ -1,0 +1,25 @@
+# Architecture diagrams — lessons
+
+## Log
+
+- 2026-10-30: Spare PCs (24h, club-room wired LAN) replace the classroom PCs; stack decided in chat. Tabs 5-6 left on the old premise on purpose and kept out of this PR.
+- 2026-10-30: Each tab is its own `.drawio.svg` and its own source; edit it in draw.io (web) and save with "include a copy of my diagram" on.
+- 2026-10-30: No domain yet, so student-service URLs use the tunnel provider's temporary subdomain; this conflicts with NFR-OPS-01 until a domain is bought.
+- 2026-10-30: Added the ②-2 monitoring tab (project-keyed resource view, rule-only auto actions, cost estimate left as a dotted go/no-go item). Re-saving an SVG in draw.io web renames cell ids, so edits must find cells by text, not by id.
+- 2026-10-30: ②-1 rebuilt around a review packet for the operator and a student fix loop (re-review button, new SHA = new round). Static web stays on k3s (SRS §1.3 decision kept); leader pulls images from ECR, the server only sends digest + desired state.
+- 2026-10-30: Student-service DB added (MySQL first). External DB is out of MVP because student Pods have no egress; "workers cannot go out" in tabs 5-6 was a consequence of the old private-switch design, not physics, so it is now a NetworkPolicy choice. DB backup = consistent dump by a platform-owned job to S3; restore on the other worker instead of a live replica.
+- 2026-10-30: Backup now goes worker DB -> leader job -> platform server -> S3, so workers keep no egress and AWS write credentials stay on the server. Palette rule: green only for Kafka, red only for human decisions, teal for cluster/Pod/Running, magenta for the fix loop, purple for data stores; dashed only for TBD/design-only.
+- 2026-10-31: Operations scope narrowed to a cut line (items 1-9: observe, restart, stop/resume, new version with operator approval, rollback, env vars, MySQL DB, delete, cost estimate) for the 11/15 freeze. Stop = release CPU/memory, keep volume/DB/image. Platform stays on AWS for now; moving it to the leader node is planned one component at a time after the cluster works. draw.io web saves can rename the tab (user1-deployer became "페이지-2") and shift coordinates; re-check tab names after every save.
+- 2026-10-31: Operator tab redone around two screens (project hub, infra view). Edges collapsed by grouping boxes into zones (console zone, data-source zone) so one edge replaces many. Forced stop/isolate/delete and account suspension are thin wrappers over the student control path (account ban needs a per-request status check because issued JWTs stay valid). Vulnerability scanning belongs in the AI review pipeline as a deterministic tool, not in ECR scan or LLM-only.
+- 2026-10-31: Final pass over the five tabs: one name per thing (외부 클라우드 (AWS), 외부 서비스 (AWS 제외), k3s 클러스터 — 리더 1 + 워커 2, 플랫폼 서비스 서버 (Nest), User/Admin Page (React + TypeScript), 자원 천장 80%, 학생 서비스 Pod (proj-<id>), 봇 PR); titles start with the tab name; overlaps fixed. Text-prefix matching caught an unintended cell once (a subtitle that also starts with ①) — match whole labels or check counts.
+- 2026-10-31: ⑤ ⑥ redrawn on the new premise by editing cells by id (the original layout kept). A box moved inside a zone vanished because the zone was drawn after it; moving a box into a zone also means moving it later in the cell order. Running a patch script twice added a duplicate cell that draw.io silently renamed to id "2" — patch scripts must be safe to rerun or never imported.
+
+## Lessons
+
+- **Each tab is its own `.drawio.svg` and its own source.** Editing in draw.io web is easy, but a web save renames cell ids, can rename the tab (it became "페이지-2" once) and shifts coordinates. Scripted edits must find cells by their text and assert how many matched; match whole labels, not prefixes. Check tab names after every save. *(Pitfalls candidate)*
+- **Exporting with the draw.io CLI rewrites the whole file**, so a one-label change shows as a full-file diff and the file can grow (overview went 142 KB → 1.6 MB). Re-save in draw.io web if size matters. *(Pitfalls candidate)*
+- **One color = one meaning, dashed = undecided or design-only, one shared legend.** Reusing a color for two meanings (green for both Kafka and Running) is what made the diagrams hard to read.
+- **Group boxes into zones and point one edge at the zone** instead of drawing one edge per box; that is what untangled the operator tab.
+- **Write decisions, assumptions and open questions in separate places.** Keeping open questions out of the diagram (dashed boxes only for undecided products, text boxes for later work) kept chat decisions from leaking into the diagrams as facts.
+- **Narrow scope with an explicit cut line and rough sizes** before drawing more features; with the 11/15 freeze, items below the line go to a text box, not a dashed box.
+- **Premises from an old design hide in many places** (40%, 라이브 USB, "workers cannot go out"). When a premise changes, grep for it and say which tabs you deliberately leave stale (here ⑤ ⑥).
