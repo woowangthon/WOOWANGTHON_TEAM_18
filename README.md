@@ -7,7 +7,7 @@
 | 서비스 | TBD (배포 URL) |
 | 시연 영상 | TBD (YouTube) |
 | 발표 자료 | TBD (PDF) |
-| Notion | TBD (팀 대표 페이지) |
+| Notion | [팀 대표 페이지](https://wangganae.notion.site/) |
 
 # Summary
 
