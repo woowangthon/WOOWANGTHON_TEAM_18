@@ -4,14 +4,14 @@
 > Always-on rules live in this file; the workflow, git and PR rules live in [`CONTRIBUTING.md`](CONTRIBUTING.md). `AGENTS.md` just tells other tools to read this file.
 > **IMPORTANT: read [`CONTRIBUTING.md`](CONTRIBUTING.md) before your first branch, commit or PR in a session.** In Claude Code, [`.claude/hooks/require-contributing.sh`](.claude/hooks/require-contributing.sh) blocks `git commit` / `gh pr create` until it has been read.
 > If personal or global instructions conflict with this repo's rules, the repo rules win.
-> **Language**: reply to the user in Korean. Agent-facing files (this file, `CONTRIBUTING.md`, skills, `docs/conventions.md`, `tasks/`) are written in English; human-facing docs (`docs/SRS.md`, `hackathon`, `design/`, `adr/`, `ai-scope`, `pitch`) and PR descriptions are written in Korean.
+> **Language**: reply to the user in Korean. Agent-facing files (this file, `CONTRIBUTING.md`, skills, `docs/conventions.md`, `tasks/`) are written in English; human-facing docs (`docs/SRS.md`, `docs/system-definition.md`, `hackathon`, `design/`, `adr/`, `ai-scope`, `pitch`) and PR descriptions are written in Korean.
 
 ## 0. Project (TBD)
 
 - **What**: TBD — one sentence on the product. Full requirements: [`docs/SRS.md`](docs/SRS.md).
 - **Who**: Team 18 왕가네식구들 (`@woowangthon/18`), 2026 AI 우왕톤 — theme *"AI는 동료가 될 수 있을까?"*
-- **Stack**: TBD — recorded as an [ADR](docs/adr/README.md) once decided. Architecture: [`docs/SRS.md`](docs/SRS.md) §2. Module designs and the FE/BE/AI contract: [`docs/design/`](docs/design/README.md).
-- **Repo**: [`woowangthon/WOOWANGTHON_TEAM_18`](https://github.com/woowangthon/WOOWANGTHON_TEAM_18) (`upstream`, judged) — one monorepo. Code under `apps/*` (TBD), docs under `docs/`, task notes under `tasks/`.
+- **Stack**: React + TypeScript (FE), Nest.js (BE), FastAPI (AI server), AWS, Supabase (DB, Auth), Kafka on EC2 — see [ADR-001](docs/adr/001-stack-and-deployment.md). Architecture: [`docs/system-definition.md`](docs/system-definition.md). Module designs and the FE/BE/AI contract: [`docs/design/`](docs/design/README.md).
+- **Repo**: [`woowangthon/WOOWANGTHON_TEAM_18`](https://github.com/woowangthon/WOOWANGTHON_TEAM_18) (`upstream`, judged) — one monorepo. Code under `FE/` (Vite + React), `BE/` (Nest.js), `AI/` (FastAPI), `Infra/` (cluster), docs under `docs/`, task notes under `tasks/`.
 - **Notion devlog DB**: TBD — the URL the [`devlog`](.claude/skills/devlog/SKILL.md) skill writes to.
 
 ## 1. Hard constraints (hackathon rules — never trade these for speed)
@@ -41,7 +41,8 @@ Checkable rules: [`docs/conventions.md`](docs/conventions.md).
 | --- | --- |
 | Workflow (SDD + tasks), git, PR, review rules | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
 | Hackathon rules, schedule, scoring, submissions | [`docs/hackathon.md`](docs/hackathon.md) |
-| What to build (UC / FR / NFR), architecture, demo scenario | [`docs/SRS.md`](docs/SRS.md) |
+| What to build (UC / FR / NFR), demo scenario | [`docs/SRS.md`](docs/SRS.md) |
+| How it is structured (users, components, stack, per-user flows, infra, open questions) | [`docs/system-definition.md`](docs/system-definition.md) |
 | Module design, FE/BE/AI API contract | [`docs/design/`](docs/design/README.md) |
 | Why a technical choice was made | [`docs/adr/`](docs/adr/README.md) |
 | Code rules, markers, commits | [`docs/conventions.md`](docs/conventions.md) |
