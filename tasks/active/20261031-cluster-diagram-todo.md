@@ -32,4 +32,4 @@ Draw in layers and check each layer against a fact list extracted from the plan 
 - [x] every line of the fact checklist appears as a label
 - [x] none of: 40%, 80%, 스티키, ECR, SQLite, 공용 MySQL, 임시 서브도메인, 공유기 LAN, 리더만 밖으로
 - [x] no technology names (Tailscale, Cloudflare, Longhorn, R2, GHCR, Nest.js, Prometheus …), ports or node IPs in any label
-- [ ] SVG renders on GitHub (draw.io re-export verified locally; GitHub render checked after push) and reopens in draw.io
+- [x] SVG renders on GitHub and reopens in draw.io (checked on the fork after push, 2026-11-02)
