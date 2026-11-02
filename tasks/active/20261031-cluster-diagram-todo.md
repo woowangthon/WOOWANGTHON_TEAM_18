@@ -29,7 +29,7 @@ Draw in layers and check each layer against a fact list extracted from the plan 
 ## Done when
 
 - [x] one file, one tab named "⑤ 클러스터"
-- [x] every line of the fact checklist appears as a label
+- [x] every line of the component checklist (59 component names, scratch `facts-structure.txt`; replaced the v67 fact list and the 76-line structural list) appears as a label
 - [x] none of: 40%, 80%, 스티키, ECR, SQLite, 공용 MySQL, 임시 서브도메인, 공유기 LAN, 리더만 밖으로
 - [x] no technology names (Tailscale, Cloudflare, Longhorn, R2, GHCR, Nest.js, Prometheus …), ports or node IPs in any label
 - [x] SVG renders on GitHub and reopens in draw.io (checked on the fork after push, 2026-11-02)
