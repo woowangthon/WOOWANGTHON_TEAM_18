@@ -16,7 +16,8 @@
 | 외부 기술 | React + TypeScript (Vite), Nest.js, FastAPI (버전 TBD) | 구현 전. 프레임워크 사용 |
 | 외부 기술 | LangChain (배포 전 검토 파이프라인. 복잡해지면 LangGraph로 확장) | 구현 전. 체인 구성과 프롬프트는 직접 설계 |
 | 외부 API | LLM API (업체·모델 미정) | 구현 전. 호출 하네스와 시스템 프롬프트는 직접 구현 |
-| 외부 기술 | AWS — CodeBuild, ECR, S3, CloudFront(웹), EC2(Nest · FastAPI · Kafka 브로커) | 구현 전. 설정·연동 |
+| 외부 기술 | AWS — CodeBuild, S3, CloudFront(웹), EC2(Nest · FastAPI · Kafka 브로커) | 구현 전. 설정·연동 |
+| 외부 기술 | GHCR (학생 앱 이미지 레지스트리, 이미지 공개. [ADR-003](adr/003-registry-ghcr.md)) | 구현 전. 설정·연동 |
 | 외부 기술 | Apache Kafka (EC2 단일 브로커) | 구현 전. 설정·연동 |
 | 외부 기술 | Supabase (PostgreSQL, GitHub OAuth) | 구현 전. 설정·연동 |
 | 외부 기술 | MySQL (학생 서비스 DB 애드온, PostgreSQL은 여유가 있을 때) | 구현 전. 프로젝트별 인스턴스 배치 · 접속 정보 주입 · 덤프 백업은 직접 구현 |
