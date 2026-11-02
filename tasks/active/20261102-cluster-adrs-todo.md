@@ -7,7 +7,7 @@
 
 ## Plan
 
-Record the cluster decisions that are already made and expensive to reverse as ADRs, one decision (one question) per file: registry and server link (Discord 2026-11-01), the k3s cluster layout (10/29 meeting + infra owner) and metrics storage (Discord 2026-11-01). ADR-001 bundles the whole stack and names ECR, so the registry ADR replaces only that item: ADR-001 keeps its body and its status line becomes `유효 (일부 대체: 레지스트리 → 003)`. That status is added to the ADR rules by #19, which merges first. The ADR rules require the §3 component table to change in the same PR, and CLAUDE.md §1-3 requires ai-scope to follow any external technology change.
+Record the cluster decisions that are already made and expensive to reverse as ADRs, one decision per file (#19): registry and server link (Discord 2026-11-01), the k3s cluster layout (10/29 meeting + infra owner) and metrics storage (Discord 2026-11-01). ADR-001 bundles the whole stack and names ECR, so the registry ADR replaces only that item: ADR-001 keeps its body and its status line becomes `유효 (일부 대체: 레지스트리 → 003)`. That status is added to the ADR rules by #19, which merges first. The ADR rules require the §3 component table to change in the same PR, and CLAUDE.md §1-3 requires ai-scope to follow any external technology change.
 
 Out of scope: the volume ADR (after the PC spec check, plan stages 02 / 08′; it will also replace ADR-001's S3 item), the `physical-network.drawio.svg` link swap (#16), the per-project resource cap value (`docs/design/cluster.md`), the rest of §3 / §4 / §5 (#16).
 
