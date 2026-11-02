@@ -24,7 +24,7 @@
 | 외부 API | GitHub API — 봇 계정의 fork·PR 생성, OAuth 로그인 | 구현 전. 연동 |
 | 외부 기술 | k3s (Traefik Ingress 포함), Prometheus (node-exporter · cAdvisor · kube-state-metrics · blackbox-exporter), Grafana | 구현 전. 설정·연동 |
 | 외부 기술 | Tailscale (플랫폼 서버 ↔ 리더 연결, 운영자 원격 접속. [ADR-004](adr/004-server-cluster-link-tailscale.md)) | 구현 전. 설정·연동 |
-| 외부 기술 | 시계열 DB · 로그 수집기 · 저장소 (제품 미정) | 미정 |
+| 외부 기술 | 로그 수집기 · 저장소 (제품 미정. 시계열 DB는 두지 않는다, [ADR-006](adr/006-metrics-on-leader-prometheus.md)) | 결정 전 |
 | 외부 기술 | 취약점 스캐너 (후보: Trivy · OSV-Scanner) | 후보. 구현할 때 하나 고르고 확정되면 여기 올린다 |
 | 외부 기술 | 아웃바운드 터널 (제공자 미정) | 미정 |
 
