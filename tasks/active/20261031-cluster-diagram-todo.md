@@ -20,7 +20,8 @@ Draw in layers and check each layer against a fact list extracted from the plan 
 - [x] Layer 4: three networks per node (Wi-Fi, switch static IP, tailscale0)
 - [x] Layer 5: numbered flows 1–9 + flow table
 - [x] Layer 6: failure / secrets / priority text boxes, legend
-- [x] Delete `docs/architecture/physical-network.drawio.svg`; drop the untracked `docs/k3s-cluster.drawio.svg`
+- [ ] Delete `docs/architecture/physical-network.drawio.svg` — moved to #14 (`docs/system-definition.md` §5.1 still embeds it)
+- [x] Drop the untracked `docs/k3s-cluster.drawio.svg`
 - [x] Render PNG, stale-word check, checklist check
 - [x] Slim the diagram to structure only after review loops 1–4 (plan v72); detail goes to docs/design/cluster.md at plan stage 04
 
