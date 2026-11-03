@@ -1,6 +1,6 @@
 # ADR-001: 플랫폼은 React+TS / Nest / FastAPI를 AWS에서 운영하고, DB·인증은 Supabase, 큐는 EC2 위 Kafka로 둔다
 
-- **상태**: 유효
+- **상태**: 유효 (일부 대체: 레지스트리 → [003](003-registry-ghcr.md))
 - **날짜**: 26-10-29
 - **결정자**: 태진, 유성, 현식
 - **관련**: [시스템 정의서](../system-definition.md)
