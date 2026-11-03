@@ -9,7 +9,7 @@
 
 `docs/system-definition.md` and `docs/ai-scope.md` still describe the PR 8 cluster design (leader agent + WebSocket, ECR + leader mirror, sticky local volumes + S3 copies, DB dumps through the server, 80% ceiling, remote_write, temporary subdomains, idle lab PCs, router LAN, SQLite). Rewrite the infra parts to match the build plan and the 2026-11-01 Discord agreements, following the §7 rule: technology only in the §3 table, §4 names components only, mechanism in §5. One PR for both issues (유성, 2026-11-03), branched from #21 and merged after it.
 
-Decisions applied here (유성, 2026-11-03): the public entry stays on the leader for now; moving the tunnel client to the workers and the workers' backups to off-cluster storage are the very last priority. Leader-side outbound links keep their priority.
+Decisions applied here (유성, 2026-11-03): the public entry stays on the leader for now; moving the tunnel client to the workers and the workers' backups to off-cluster storage are 후순위 (after the 3rd-priority items in the build plan). Leader-side outbound links keep their priority.
 
 Not decided yet, written as such: student volume method (PC spec, volume ADR), OS install path, log storage (proposal pending), domain scope. On-site checks happen 2026-11-04; §5 values from them land in a follow-up commit or PR.
 
