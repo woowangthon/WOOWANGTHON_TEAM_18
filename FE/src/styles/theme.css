@@ -1,0 +1,71 @@
+@import 'tailwindcss';
+
+/* 라이트가 기본, 다크는 prefers-color-scheme으로 값만 바꾼다. 색은 아래 @theme inline이 이 변수를 가리킨다. */
+:root {
+  --bg: #ffffff;
+  --surface: #f4f4f4;
+  --fg: #0a0a0a;
+  --muted: #666666;
+  --line: #e5e5e5;
+  --line-strong: #8f8f8f;
+  --ok: #0a7d33;
+  --warn: #a15c00;
+  --err: #c4210f;
+  --info: #0059c8;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #000000;
+    --surface: #141414;
+    --fg: #ededed;
+    --muted: #a1a1a1;
+    --line: #262626;
+    --line-strong: #6e6e6e;
+    --ok: #3ecf6e;
+    --warn: #f5a524;
+    --err: #ff6166;
+    --info: #52a8ff;
+  }
+}
+
+/* Tailwind 기본 팔레트 · 글자 크기 · 모서리 · 그림자를 비우고 우리 토큰만 남긴다 (bg-indigo-500 같은 클래스가 없다). */
+@theme {
+  --color-*: initial;
+  --text-*: initial;
+  --radius-*: initial;
+  --shadow-*: initial;
+  --font-*: initial;
+
+  --font-sans: 'NSN', 'Apple SD Gothic Neo', 'Malgun Gothic', system-ui, sans-serif;
+  --font-mono: 'Nanum Gothic Coding', ui-monospace, Consolas, monospace;
+
+  --text-xs: 0.75rem;
+  --text-xs--line-height: 1rem;
+  --text-sm: 0.8125rem;
+  --text-sm--line-height: 1.25rem;
+  --text-base: 0.875rem;
+  --text-base--line-height: 1.375rem;
+  --text-lg: 1rem;
+  --text-lg--line-height: 1.5rem;
+  --text-xl: 1.25rem;
+  --text-xl--line-height: 1.75rem;
+  --text-2xl: 1.75rem;
+  --text-2xl--line-height: 2.25rem;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-err: var(--err);
+  --color-info: var(--info);
+}
