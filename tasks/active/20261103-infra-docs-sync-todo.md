@@ -13,13 +13,14 @@ Decisions applied here (유성, 2026-11-03): the public entry stays on the leade
 
 Planned, waiting for the PC spec: the student-volume tier (Longhorn 2 copies / 1 copy / local-path by worker memory, agreed with 태진; the volume ADR records the pick). Not decided yet, written as such: OS install path, log storage (proposal pending), domain scope. On-site checks happen 2026-11-04; §5 values from them land in a follow-up commit or PR.
 
-Out of scope: the five flow diagrams (#17); `cluster.drawio.svg` still draws worker tunnel connectors and backup priorities (follow-up with #17); SRS terms that still say replica / volume copy (SRS sync PR); `docs/design/cluster.md`.
+Out of scope: the five flow diagrams (#17); `cluster.drawio.svg` still draws worker tunnel connectors and backup priorities (follow-up with #17); `docs/design/cluster.md`.
 
 ## Todo
 
 - [x] §3: remaining infra rows (object storage, student volume, outbound tunnel), terms, Kafka scope, leader migration plan; ai-scope rows for the same technologies — files: `docs/system-definition.md`, `docs/ai-scope.md`
 - [x] §4: mechanism sentences → §3 component names — files: `docs/system-definition.md`
 - [x] §5: physical / network and cluster layout per the build plan; §5.1 points at `cluster.drawio.svg`; delete `physical-network.drawio.svg` — files: `docs/system-definition.md`, `docs/architecture/physical-network.drawio.svg`
+- [x] SRS §1.3 / §1.5 / §1.6 / §1.7: failover re-schedules one copy (no standby replica), volume copies live on the other worker, no off-cluster copy; slot term in §3 matches — files: `docs/SRS.md`, `docs/system-definition.md`
 - [x] §6 infra items and ai-scope §5 limits — files: `docs/system-definition.md`, `docs/ai-scope.md`
 
 ## Done when
