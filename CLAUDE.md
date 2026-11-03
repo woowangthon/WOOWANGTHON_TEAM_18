@@ -66,6 +66,7 @@ FE (run in `FE/`, Node 22 or 24, [pnpm](https://pnpm.io) — the version is pinn
 | Test ([Vitest](https://vitest.dev)) | `pnpm test` |
 | Build | `pnpm build` |
 | Verify (lint → test → build, stops at the first failure; `build` runs `tsc -b`, so typecheck is included; run before every commit) | `pnpm verify` |
+| Container image (run from the repo root; local dev only, production is S3 + CloudFront) | `docker build -t fe FE` |
 
 BE, AI and the mutation-test command: TBD — added with each stack.
 

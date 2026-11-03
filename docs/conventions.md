@@ -77,7 +77,7 @@ The rule in [`CONTRIBUTING.md`](../CONTRIBUTING.md) §1 step 4 stands — code a
 Decided for FE:
 
 - Test library: Vitest with `@testing-library/react` on jsdom (`pnpm test` in `FE/`).
-- Test files sit next to the code they test: `FE/src/**/*.test.ts(x)`, named after the unit or group they cover (`App.test.tsx`).
+- Test files sit next to the code they test: `FE/src/**/*.test.ts(x)`, named after the unit or group they cover (`theme.test.ts`, `ui.test.tsx`).
 
 Fill in once the stack is decided (BE, AI, and the mutation tool for all):
 

@@ -1,0 +1,21 @@
+/* 나눔스퀘어 네오 — 네이버 공식 CDN. 파일은 저장소에 넣지 않는다. */
+@font-face {
+  font-family: 'NSN';
+  font-weight: 400;
+  font-display: swap;
+  src: url('https://hangeul.pstatic.net/hangeul_static/webfont/NanumSquareNeo/NanumSquareNeoTTF-bRg.woff') format('woff');
+}
+
+@font-face {
+  font-family: 'NSN';
+  font-weight: 700;
+  font-display: swap;
+  src: url('https://hangeul.pstatic.net/hangeul_static/webfont/NanumSquareNeo/NanumSquareNeoTTF-cBd.woff') format('woff');
+}
+
+@font-face {
+  font-family: 'NSN';
+  font-weight: 800;
+  font-display: swap;
+  src: url('https://hangeul.pstatic.net/hangeul_static/webfont/NanumSquareNeo/NanumSquareNeoTTF-dEb.woff') format('woff');
+}
