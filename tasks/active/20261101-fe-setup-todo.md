@@ -26,5 +26,5 @@ CI runs on every PR (a docs-only PR must not hang if it is made a required check
 - [x] History is 8 commits by category (`.gitignore`, scaffold, ESLint, Vitest, CI, docs, SRS, task docs); each code commit passes on its own
 - [x] `cd FE && pnpm install --frozen-lockfile && pnpm verify` passes
 - [x] `pnpm dev` serves an empty page without console errors
-- [ ] CI workflow runs green on GitHub — never executed yet; the first run is the draft PR
+- [x] CI workflow runs green on GitHub — first green run was the `push` to `main` after #23 merged; the fork PR itself ran no workflow (#24 is the first PR run)
 - [x] tests added (smoke test); mutation testing not run — no mutation tool chosen yet (conventions §6), noted in the PR body
