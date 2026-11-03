@@ -20,7 +20,7 @@ Diagrams (#17) joined this PR after #21 merged (유성: a change and the files i
 - [x] §3: remaining infra rows (object storage, student volume, outbound tunnel), terms, Kafka scope, leader migration plan; ai-scope rows for the same technologies — files: `docs/system-definition.md`, `docs/ai-scope.md`
 - [x] §4: mechanism sentences → §3 component names — files: `docs/system-definition.md`
 - [x] §5: physical / network and cluster layout per the build plan; §5.1 points at `cluster.drawio.svg`; delete `physical-network.drawio.svg` — files: `docs/system-definition.md`, `docs/architecture/physical-network.drawio.svg`
-- [x] SRS §1.3 / §1.5 / §1.6 / §1.7: failover re-schedules one copy (no standby replica), volume copies live on the other worker, no off-cluster copy; slot term in §3 matches — files: `docs/SRS.md`, `docs/system-definition.md`
+- [x] SRS §1.3 / §1.5 / §1.6 / §1.7: failover re-schedules one copy (no standby replica), volume copies live on the other worker, off-cluster backup is 후순위 (stated with what is lost until then); slot term in §3 matches — files: `docs/SRS.md`, `docs/system-definition.md`
 - [x] Diagrams: the five flow diagrams and `cluster.drawio.svg` use §3 component names; removed boxes (time-series DB, DB backup job, Grafana boxes) and their arrows; off-cluster backup drawn dashed (후순위); leader-side tunnel client added, worker tunnel connectors dashed. Edited the embedded XML by script and re-exported with the draw.io CLI (`--embed-diagram`) — files: `docs/architecture/*.drawio.svg`
 - [x] Ingress runs on the workers (build plan): §5.2 node table and SRS §1.7 terms — files: `docs/system-definition.md`, `docs/SRS.md`
 - [x] §6 infra items and ai-scope §5 limits — files: `docs/system-definition.md`, `docs/ai-scope.md`

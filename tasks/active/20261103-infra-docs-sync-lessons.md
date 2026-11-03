@@ -8,7 +8,12 @@
 - 2026-11-03: Consistency pass before the PR. Found the §3 slot term still counting standby replicas, and SRS §1.3 / §1.5 / §1.6 / §1.7 still describing standby replicas and off-cluster volume copies (plus the dead `system-architecture.drawio.svg` link). Fixed both here so the PR leaves no doc contradicting another; the Notion SRS needs the same edit. Diagrams stay with #17.
 - 2026-11-03: Three places said off-cluster backup is not done; the build plan has it as 후순위 (after 3순위), so they now say it is deferred and what is lost until it lands.
 - 2026-11-03: #21 merged; merged upstream/main and resolved both conflicts with the branch side (the squash equals the old #21 branch, checked by tree diff). Folded #17 in: labels edited in the embedded XML by script (each fragment asserted by match count; fragments must include inline <b> tags as they appear), then re-exported with the draw.io CLI so the PNG fallbacks match. Also found §5.2 had Ingress on the leader while the build plan pins it to the workers; fixed with SRS §1.7.
+- 2026-11-03: PC spec arrived (i7-13700K, 125GiB, NVMe, OS persists on reboot; all three similar), so the volume tier is Longhorn 2 copies and the USB branch is gone. Final review (docs and diagrams, two reviewers) found: a replica written as a backup, the DB StatefulSet needing the node-down pod deletion setting, "leader does control only" wording, two definitions of 후순위, a leftover restore path, an undeclared registry cache, tech names in §4/§5, and in diagrams a push-style metrics arrow, 3순위 wording and a leader-routing label. All fixed except diagram layout gaps and a leader-to-Ingress arrow (left for a hand edit in draw.io).
 
 ## Lessons
 
-<filled when done>
+- **A priority word means what the plan says, nothing more.** 후순위 was written as 최후순위, then as "not done"; 예정 was written as 결정 전. Before writing a status, check the plan's legend. *(Pitfalls candidate)*
+- **A copy is not a backup.** Replication survives a dead disk, not a delete or corruption; say both whenever a doc mentions copies.
+- **An undecided input makes every dependent sentence conditional.** The volume tier hung on the PC spec, so the text had to describe three tiers; once the spec arrived most of that collapsed. Write the dependency once (§5.2) and point to it instead of repeating it everywhere.
+- **Diagram labels hide inline tags.** Scripted edits must match the raw HTML (`<b>①</b>`, double spaces) and re-export with the draw.io CLI, or the PNG fallback keeps the old text.
+- **Run reviewers on different axes** (text consistency vs. diagram render and labels): each found issues the other could not see.
