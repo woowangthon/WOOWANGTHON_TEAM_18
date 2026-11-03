@@ -16,7 +16,7 @@
 | 외부 기술 | React + TypeScript (Vite), Nest.js, FastAPI (버전 TBD) | 구현 전. 프레임워크 사용 |
 | 외부 기술 | LangChain (배포 전 검토 파이프라인. 복잡해지면 LangGraph로 확장) | 구현 전. 체인 구성과 프롬프트는 직접 설계 |
 | 외부 API | LLM API (업체·모델 미정) | 구현 전. 호출 하네스와 시스템 프롬프트는 직접 구현 |
-| 외부 기술 | AWS — CodeBuild, S3, CloudFront(웹), EC2(Nest · FastAPI · Kafka 브로커) | 구현 전. 설정·연동 |
+| 외부 기술 | AWS — CodeBuild(빌드), S3 + CloudFront(웹 정적 파일), EC2(Nest · FastAPI · Kafka 브로커) | 구현 전. 설정·연동 |
 | 외부 기술 | GHCR (학생 앱 이미지 레지스트리, 이미지 공개. [ADR-003](adr/003-registry-ghcr.md)) | 구현 전. 설정·연동 |
 | 외부 기술 | Apache Kafka (EC2 단일 브로커) | 구현 전. 설정·연동 |
 | 외부 기술 | Supabase (PostgreSQL, GitHub OAuth) | 구현 전. 설정·연동 |
@@ -26,7 +26,8 @@
 | 외부 기술 | Tailscale (플랫폼 서버 ↔ 리더 연결, 운영자 원격 접속. [ADR-004](adr/004-server-cluster-link-tailscale.md)) | 구현 전. 설정·연동 |
 | 외부 기술 | 로그 수집기 · 저장소 (제품 미정. 시계열 DB는 두지 않는다, [ADR-006](adr/006-metrics-on-leader-prometheus.md)) | 결정 전 |
 | 외부 기술 | 취약점 스캐너 (후보: Trivy · OSV-Scanner) | 후보. 구현할 때 하나 고르고 확정되면 여기 올린다 |
-| 외부 기술 | 아웃바운드 터널 (제공자 미정) | 미정 |
+| 외부 기술 | Cloudflare Tunnel (학생 서비스 공개 진입, 리더에서 실행) | 예정. 학교망이 터널 포트를 통과시키는지 현장에서 확인한 뒤 확정 |
+| 외부 기술 | 학생 볼륨 (후보: Longhorn / 노드 로컬 볼륨. 워커 메모리로 고른다) | 결정 전. PC 사양 확인 뒤 ADR로 정한다 |
 
 ## 2. AI 기능
 
