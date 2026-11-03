@@ -70,14 +70,17 @@ genuinely wanted, it is a `MOCK(<id>)` and gets declared.
 - Message language: Korean or English, whichever the author writes faster.
 - Branch `<type>/<slug>`; PR into `main`; squash merge. See [`CONTRIBUTING.md`](../CONTRIBUTING.md) §2.
 
-## 6. Tests and mutation testing (TBD)
+## 6. Tests and mutation testing
 
-Pending the stack ADR ([`adr/README.md`](adr/README.md)): the test library and the mutation tool are chosen with the stack.
-Until then the rule in [`CONTRIBUTING.md`](../CONTRIBUTING.md) §1 step 4 stands — code and tests are a pair, and mutation testing runs on the changed code before the PR.
+The rule in [`CONTRIBUTING.md`](../CONTRIBUTING.md) §1 step 4 stands — code and tests are a pair, and mutation testing runs on the changed code before the PR.
 
-Fill in once the stack is decided:
+Decided for FE:
 
-- Test file location and naming.
-- Mutation tool, and its scope (changed files only, to keep it fast).
+- Test library: Vitest with `@testing-library/react` on jsdom (`pnpm test` in `FE/`).
+- Test files sit next to the code they test: `FE/src/**/*.test.ts(x)`, named after the unit or group they cover (`App.test.tsx`).
+
+Fill in once the stack is decided (BE, AI, and the mutation tool for all):
+
+- Mutation tool, and its scope (changed files only, to keep it fast). Until one is chosen, say "mutation testing not run: no tool chosen" in the PR body.
 - What counts as an acceptable surviving mutant.
 - How test doubles relate to `MOCK(<id>)` markers (§1) — a fake used only inside tests is not a demo-path mock; state where the line is.

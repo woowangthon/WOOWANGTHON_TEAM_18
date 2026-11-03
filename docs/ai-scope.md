@@ -13,7 +13,7 @@
 | 구분 | 무엇 | 우리가 한 일 |
 | --- | --- | --- |
 | 직접 구현 | 검토 하네스(입력 구성 · 프롬프트 · 결과 형식 · 실패 처리), 리뷰 패킷, 플랫폼 서버의 배포 매니페스트 생성과 쿠버네티스 호출 모듈, 스파이크 판정 규칙, 클러스터 구성(`Infra/`: 학생 공간 틀 · 권한 · 네트워크 정책) | 우리가 설계 · 구현 |
-| 외부 기술 | React + TypeScript (Vite), Nest.js, FastAPI (버전 TBD) | 구현 전. 프레임워크 사용 |
+| 외부 기술 | React + TypeScript (Vite), Nest.js, FastAPI (버전 TBD) | FE는 `FE/`에 Vite 템플릿으로 세팅하고 데모 코드를 제거함(패키지 매니저는 pnpm이고 버전은 `FE/package.json`의 `packageManager`로 고정. lint는 ESLint(typescript-eslint, jsx-a11y), 테스트는 Vitest + Testing Library + jsdom. TypeScript는 typescript-eslint가 7을 지원하지 않아 6.0으로 고정). BE · AI는 구현 전. 프레임워크 사용 |
 | 외부 기술 | LangChain (배포 전 검토 파이프라인. 복잡해지면 LangGraph로 확장) | 구현 전. 체인 구성과 프롬프트는 직접 설계 |
 | 외부 API | LLM API (업체·모델 미정) | 구현 전. 호출 하네스와 시스템 프롬프트는 직접 구현 |
 | 외부 기술 | AWS — CodeBuild(빌드), S3 + CloudFront(웹 정적 파일), EC2(Nest · FastAPI · Kafka 브로커) | 구현 전. 설정·연동 |
