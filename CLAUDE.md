@@ -55,7 +55,7 @@ Link to docs with plain paths, never `@path` — an `@` import loads the whole f
 
 ## Commands
 
-FE (run in `FE/`, Node 22, [pnpm](https://pnpm.io) — the version is pinned in `FE/package.json` `packageManager`; `corepack enable` picks it up):
+FE (run in `FE/`, Node 22 or 24, [pnpm](https://pnpm.io) — the version is pinned in `FE/package.json` `packageManager`; `corepack enable` picks it up, but Node 25+ no longer bundles corepack, so run `npm i -g corepack` first there):
 
 | Task | Command |
 | --- | --- |
