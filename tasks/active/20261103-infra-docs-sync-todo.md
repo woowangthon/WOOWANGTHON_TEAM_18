@@ -11,7 +11,7 @@
 
 Decisions applied here (유성, 2026-11-03): the public entry stays on the leader for now; moving the tunnel client to the workers and the workers' backups to off-cluster storage are 후순위 (after the 3rd-priority items in the build plan). Leader-side outbound links keep their priority.
 
-Not decided yet, written as such: student volume method (PC spec, volume ADR), OS install path, log storage (proposal pending), domain scope. On-site checks happen 2026-11-04; §5 values from them land in a follow-up commit or PR.
+Planned, waiting for the PC spec: the student-volume tier (Longhorn 2 copies / 1 copy / local-path by worker memory, agreed with 태진; the volume ADR records the pick). Not decided yet, written as such: OS install path, log storage (proposal pending), domain scope. On-site checks happen 2026-11-04; §5 values from them land in a follow-up commit or PR.
 
 Out of scope: the five flow diagrams (#17); `cluster.drawio.svg` still draws worker tunnel connectors and backup priorities (follow-up with #17); SRS terms that still say replica / volume copy (SRS sync PR); `docs/design/cluster.md`.
 
