@@ -14,6 +14,9 @@
 | --- | --- | --- |
 | 직접 구현 | 검토 하네스(입력 구성 · 프롬프트 · 결과 형식 · 실패 처리), 리뷰 패킷, 플랫폼 서버의 배포 매니페스트 생성과 쿠버네티스 호출 모듈, 스파이크 판정 규칙, 클러스터 구성(`Infra/`: 학생 공간 틀 · 권한 · 네트워크 정책) | 우리가 설계 · 구현 |
 | 외부 기술 | React + TypeScript (Vite), Nest.js, FastAPI (FE 버전은 `FE/package.json`에 고정, BE · AI는 TBD) | FE는 `FE/`에 Vite 템플릿으로 세팅하고 데모 코드를 제거함(패키지 매니저는 pnpm이고 버전은 `FE/package.json`의 `packageManager`로 고정. lint는 ESLint(typescript-eslint, jsx-a11y), 테스트는 Vitest + Testing Library + jsdom. TypeScript는 typescript-eslint가 7을 지원하지 않아 6.0으로 고정). BE · AI는 구현 전. 프레임워크 사용 |
+| 외부 기술 | Tailwind CSS v4 (`@tailwindcss/vite`) | 스타일링 도구. 기본 팔레트를 비우고 흑백 토큰만 `@theme`에 선언. 컴포넌트 6종(Button · Input · Badge · Table · Card · LogBlock)은 직접 구현하고 기성 컴포넌트 키트는 쓰지 않음 |
+| 외부 기술 | eslint-plugin-better-tailwindcss (FE devDependency, MIT) | 개발 도구. 린트에서 `theme.css`에 정의되지 않은 Tailwind 클래스(`bg-white` 등)를 막는다. 앱 번들에는 들어가지 않음. `no-unknown-classes`(없는 클래스)와 `no-restricted-classes`(임의값 · 로드하지 않은 굵기 · 그림자 계열) 두 규칙만 켰다 |
+| 외부 기술 | Docker 이미지 `node:22-bookworm-slim` (빌드), `nginx:1.27-alpine` (정적 서빙) | `FE/Dockerfile`로 로컬 컨테이너 개발용 이미지를 만든다. 운영 배포는 S3 + CloudFront라 이 이미지는 쓰지 않는다. 이미지 빌드와 nginx 동작(SPA 경로, 캐시 헤더, gzip)은 2026-11-03에 로컬에서 확인했고, CI에서는 이미지를 빌드하지 않는다 |
 | 외부 기술 | LangChain (배포 전 검토 파이프라인. 복잡해지면 LangGraph로 확장) | 구현 전. 체인 구성과 프롬프트는 직접 설계 |
 | 외부 API | LLM API (업체·모델 미정) | 구현 전. 호출 하네스와 시스템 프롬프트는 직접 구현 |
 | 외부 기술 | AWS — CodeBuild(빌드), S3 + CloudFront(웹 정적 파일), EC2(Nest · FastAPI · Kafka 브로커) | 구현 전. 설정·연동 |
@@ -72,6 +75,8 @@
 | 기존 서비스 비교 조사 (Cloudtype, KT·NHN·Naver Cloud, Coolify 등) | [Coolify CVE-2026-34057](https://nvd.nist.gov/vuln/detail/CVE-2026-34057) 외 각 제품 문서·블로그. 2026-10-31 조사, **2차 출처가 많다** | 공개 정보. 가격·기능은 발표 전 공식 문서로 재확인한다 | [SRS](SRS.md) §1.4 비교 (AI 기능이 아님) |
 | LLM 코드 리뷰어 우회 사례 (큰 파일에 악성 로직을 묻으면 탐지율이 떨어진다는 보도) | [Security Brief Asia](https://securitybrief.asia/story/cloudflare-warns-of-ai-code-review-prompt-injection) — **2차 보도, 원문 미확인** | 공개 기사 | §5 "AI 검토는 단독 판정자가 아니다"의 근거 |
 | 무료 코드 실행 환경 남용 사례 (Heroku 무료 플랜 폐지) | [TechCrunch 2022-08-25](https://techcrunch.com/2022/08/25/heroku-announces-plans-to-eliminate-free-plans-blaming-fraud-and-abuse) | 공개 기사 | 승인 게이트의 필요성 근거 |
+| 나눔스퀘어 네오 (글꼴) | [네이버 한글한글아름답게 글꼴 안내](https://hangeul.naver.com/font), 웹폰트 CSS `hangeul.pstatic.net/hangeul_static/css/nanum-square-neo.css` | 안내 페이지 기준: 무료, 글꼴 자체를 판매하는 경우를 뺀 상업적 사용 가능, 출처 표기 권장. 라이선스 전문(OFL)은 직접 열어 보지 않았다 | 본문 · 제목 (FE, CDN으로 불러오며 저장소에 파일을 넣지 않음) |
+| 나눔고딕코딩 (글꼴) | [Google Fonts](https://fonts.google.com/specimen/Nanum+Gothic+Coding) (소스: `google/fonts` 저장소 `ofl/nanumgothiccoding/OFL.txt`가 존재함을 확인) | SIL OFL 1.1. 전문 내용은 직접 읽지 않았다 | 로그 · 코드 블록 (FE, CDN) |
 | | | | |
 
 [`SRS.md`](SRS.md) §1.1 문제 근거의 출처도 여기에 함께 올린다.
