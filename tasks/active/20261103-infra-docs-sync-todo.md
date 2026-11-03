@@ -30,4 +30,4 @@ Diagrams (#17) joined this PR after #21 merged (유성: a change and the files i
 - [x] `docs/system-definition.md` has none of: 에이전트, WebSocket (except the deferred option), ECR, 스티키, 덤프 복원, 80%, remote_write, 임시 서브도메인, 유휴 PC, 공유기 LAN, SQLite
 - [x] §4 names components only; infra mechanism is in §5
 - [x] §3, §5, ADR-003–006 and ai-scope say the same thing
-- [ ] merged after #21
+- [x] merged after #21
