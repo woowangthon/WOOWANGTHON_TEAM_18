@@ -13,4 +13,11 @@ Thumbs.db
 .claude/settings.local.json
 .claude/worktrees/
 
-# Stack-specific entries (node_modules/, __pycache__/, build/ …) are added with the stack ADR (docs/adr/README.md)
+# Build output and dependencies
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Other stack-specific entries (__pycache__/ …) are added with each stack
+
