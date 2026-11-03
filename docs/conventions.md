@@ -79,7 +79,12 @@ Decided for FE:
 - Test library: Vitest with `@testing-library/react` on jsdom (`pnpm test` in `FE/`).
 - Test files sit next to the code they test: `FE/src/**/*.test.ts(x)`, named after the unit or group they cover (`theme.test.ts`, `ui.test.tsx`).
 
-Fill in once the stack is decided (BE, AI, and the mutation tool for all):
+Decided for BE:
+
+- Test library: Vitest (Nest 12's default template, same tool as FE) with `@nestjs/testing` and supertest; `pnpm test` in `BE/` runs unit and e2e tests together.
+- Unit tests sit next to the code as `BE/src/**/*.spec.ts` (Nest's naming, what `nest g` generates). Tests that boot the app go in `BE/test/*.e2e.spec.ts` (Vitest's default pattern, so there is no test config file) and call `setupApp` the way `main.ts` does, so they run with the real prefix and CORS settings.
+
+Fill in once the stack is decided (AI, and the mutation tool for all):
 
 - Mutation tool, and its scope (changed files only, to keep it fast). Until one is chosen, say "mutation testing not run: no tool chosen" in the PR body.
 - What counts as an acceptable surviving mutant.

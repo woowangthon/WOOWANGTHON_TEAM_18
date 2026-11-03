@@ -68,7 +68,20 @@ FE (run in `FE/`, Node 22 or 24, [pnpm](https://pnpm.io) — the version is pinn
 | Verify (lint → test → build, stops at the first failure; `build` runs `tsc -b`, so typecheck is included; run before every commit) | `pnpm verify` |
 | Container image (run from the repo root; local dev only, production is S3 + CloudFront) | `docker build -t fe FE` |
 
-BE, AI and the mutation-test command: TBD — added with each stack.
+BE (run in `BE/`, Node 22.22.3+ or 24.15+ — the range is `BE/package.json` `engines`; pnpm as for FE). Settings come from `BE/.env` (copy `BE/.env.example`); a bad value stops the server at boot:
+
+| Task | Command |
+| --- | --- |
+| Install (CI-exact) | `pnpm install --frozen-lockfile` |
+| Dev server (watch, port 3000, routes under `/api`) | `pnpm dev` |
+| Lint ([ESLint](https://eslint.org) — type-aware) | `pnpm lint` |
+| Typecheck | `pnpm typecheck` |
+| Test ([Vitest](https://vitest.dev) — unit `src/**/*.spec.ts` and e2e `test/*.e2e.spec.ts`) | `pnpm test` |
+| Build / run the build | `pnpm build` / `pnpm start` |
+| Verify (lint → test → build, stops at the first failure; `build` runs `tsc --noEmit` over the tests too, so typecheck is included; run before every commit) | `pnpm verify` |
+| Container image (run from the repo root; local dev only, production is EC2) | `docker build -t be BE` |
+
+AI and the mutation-test command: TBD — added with each stack.
 
 ## Pitfalls
 
