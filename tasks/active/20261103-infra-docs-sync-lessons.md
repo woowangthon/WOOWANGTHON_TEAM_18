@@ -7,6 +7,7 @@
 - 2026-11-03: Student volume first went in as 결정 전; the build plan marks it 예정 (the tier rule is agreed, only the PC spec is missing). Corrected to 예정 across §3, §4, §5.2 and ai-scope. A pending ADR does not make a decision undecided when the rule is already agreed.
 - 2026-11-03: Consistency pass before the PR. Found the §3 slot term still counting standby replicas, and SRS §1.3 / §1.5 / §1.6 / §1.7 still describing standby replicas and off-cluster volume copies (plus the dead `system-architecture.drawio.svg` link). Fixed both here so the PR leaves no doc contradicting another; the Notion SRS needs the same edit. Diagrams stay with #17.
 - 2026-11-03: Three places said off-cluster backup is not done; the build plan has it as 후순위 (after 3순위), so they now say it is deferred and what is lost until it lands.
+- 2026-11-03: #21 merged; merged upstream/main and resolved both conflicts with the branch side (the squash equals the old #21 branch, checked by tree diff). Folded #17 in: labels edited in the embedded XML by script (each fragment asserted by match count; fragments must include inline <b> tags as they appear), then re-exported with the draw.io CLI so the PNG fallbacks match. Also found §5.2 had Ingress on the leader while the build plan pins it to the workers; fixed with SRS §1.7.
 
 ## Lessons
 

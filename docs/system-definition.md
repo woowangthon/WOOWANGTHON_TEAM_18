@@ -340,8 +340,8 @@ AI가 하는 일 · 사람이 결정하는 일은 [`SRS.md`](SRS.md) §1.3과 [`
 
 | 노드 | 구성 |
 | --- | --- |
-| 워커 ×2 | k3s agent(kubelet · containerd · kube-proxy), 지표 수집의 노드 · Pod 수집기, CoreDNS(워커마다 하나, 복제본 2), 학생 서비스 Pod · DB(MySQL), 학생 볼륨. 학생용 라벨이 붙어 학생 Pod는 워커에만 뜬다 |
-| 리더 ×1 | k3s server(kube-apiserver · scheduler · controller, 내장 etcd), taint로 학생 Pod를 받지 않는다. 학생 공간의 ResourceQuota · LimitRange(프로젝트 자원 상한) · NetworkPolicy, Ingress(k3s 기본 Traefik) · TLS, 아웃바운드 터널 클라이언트, 레지스트리 캐시, 지표 수집 · 대시보드(2주 보관), 로그 저장(결정 전). 리더에 두는 볼륨은 리더 로컬 디스크를 쓴다 |
+| 워커 ×2 | k3s agent(kubelet · containerd · kube-proxy), 지표 수집의 노드 · Pod 수집기, CoreDNS · Ingress(k3s 기본 Traefik) · TLS(워커마다 하나씩, 복제본 2), 학생 서비스 Pod · DB(MySQL), 학생 볼륨. 학생용 라벨이 붙어 학생 Pod는 워커에만 뜬다 |
+| 리더 ×1 | k3s server(kube-apiserver · scheduler · controller, 내장 etcd), taint로 학생 Pod를 받지 않는다. 학생 공간의 ResourceQuota · LimitRange(프로젝트 자원 상한) · NetworkPolicy, 아웃바운드 터널 클라이언트(목적지는 워커의 Ingress), 레지스트리 캐시, 지표 수집 · 대시보드(2주 보관), 로그 저장(결정 전). 리더에 두는 볼륨은 리더 로컬 디스크를 쓴다 |
 
 **바깥으로 나가는 연결** (전부 학교 안에서 밖으로 건다):
 
@@ -354,7 +354,7 @@ AI가 하는 일 · 사람이 결정하는 일은 [`SRS.md`](SRS.md) §1.3과 [`
 | ⑤ | 클러스터 상태 스냅샷 보관 | 리더 | 후순위. 리더 디스크가 죽었을 때 클러스터를 되살리기 위해 내장 etcd 스냅샷을 클러스터 밖에 둔다. 보관처는 정할 때 §3에 올린다 |
 
 - **플랫폼 서버의 권한**: 프로젝트 공간(`proj-<id>`) 안의 자원 쓰기와 네임스페이스 만들기 · 삭제만 준다. 쓰기와 삭제는 `proj-` 공간에서만 통과시키는 검사 규칙을 겹치고, Secret은 쓰기만 한다. 세부는 `docs/design/cluster.md`.
-- **리더가 꺼지면** 새 배포 · 재배치 · 서버 연결 · 지표 조회 · 공개 진입이 멈춘다. 학생 Pod는 워커에서 계속 돌고 클러스터 DNS도 워커에 있어 Pod끼리는 통신하지만, 터널이 리더에 있어 방문자는 들어오지 못한다. 리더 무응답은 플랫폼 서버가 API 실패로 알아채 알린다.
+- **리더가 꺼지면** 새 배포 · 재배치 · 서버 연결 · 지표 조회 · 공개 진입이 멈춘다. 학생 Pod는 워커에서 계속 돌고 클러스터 DNS · Ingress도 워커에 있어 Pod끼리는 통신하지만, 터널이 리더에 있어 방문자는 들어오지 못한다. 리더 무응답은 플랫폼 서버가 API 실패로 알아채 알린다.
 - **워커가 꺼지면** 약 40초 뒤 NotReady가 되고, 포기 대기(기본 5분을 30초로 줄인다)가 지나면 리더가 그 프로젝트를 남은 워커에 다시 띄운다. 앱 복제본은 1개라 그동안 접속이 끊긴다(3~5분 예상, 현장에서 잰다).
 - **학생 볼륨 (예정)**: 워커 메모리로 단계를 고른다(구축 계획, 태진과 합의). 워커 메모리 8GB 이상이면 두 워커에 사본 2(워커가 꺼져도 데이터가 따라간다), 4~8GB면 사본 1, 그 아래면 노드 로컬 볼륨(데이터는 따라가지 않고 앱만 다시 뜬다)이다. PC 사양을 확인해 고른 결과는 볼륨 ADR로 남긴다. 클러스터 밖 백업은 후순위라, 그것이 들어가기 전까지는 두 워커의 디스크가 함께 죽으면 데이터를 잃는다.
 - Admin Page · User Page의 화면 내용은 [§4.3](#43-user2-운영자-흐름)([`user2-operator.drawio.svg`](architecture/user2-operator.drawio.svg)) · [§4.2](#42-user1-모니터링-흐름)([`user1-monitoring.drawio.svg`](architecture/user1-monitoring.drawio.svg))가 정의한다. 이 도식은 데이터가 어디서 어디로 가는지만 보여 준다.

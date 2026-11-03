@@ -3,7 +3,7 @@
 - **SRS**: none (structure docs; SRS UC/FR still empty)
 - **Owner**: 유성 (seren-wib)
 - **Branch**: docs/infra-docs-sync
-- **Issues**: https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/16, https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/18
+- **Issues**: https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/16, https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/18, https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/17
 
 ## Plan
 
@@ -13,7 +13,7 @@ Decisions applied here (유성, 2026-11-03): the public entry stays on the leade
 
 Planned, waiting for the PC spec: the student-volume tier (Longhorn 2 copies / 1 copy / local-path by worker memory, agreed with 태진; the volume ADR records the pick). Not decided yet, written as such: OS install path, log storage (proposal pending), domain scope. On-site checks happen 2026-11-04; §5 values from them land in a follow-up commit or PR.
 
-Out of scope: the five flow diagrams (#17); `cluster.drawio.svg` still draws worker tunnel connectors and backup priorities (follow-up with #17); `docs/design/cluster.md`.
+Diagrams (#17) joined this PR after #21 merged (유성: a change and the files it affects go in one PR). Out of scope: `docs/design/cluster.md`.
 
 ## Todo
 
@@ -21,6 +21,8 @@ Out of scope: the five flow diagrams (#17); `cluster.drawio.svg` still draws wor
 - [x] §4: mechanism sentences → §3 component names — files: `docs/system-definition.md`
 - [x] §5: physical / network and cluster layout per the build plan; §5.1 points at `cluster.drawio.svg`; delete `physical-network.drawio.svg` — files: `docs/system-definition.md`, `docs/architecture/physical-network.drawio.svg`
 - [x] SRS §1.3 / §1.5 / §1.6 / §1.7: failover re-schedules one copy (no standby replica), volume copies live on the other worker, no off-cluster copy; slot term in §3 matches — files: `docs/SRS.md`, `docs/system-definition.md`
+- [x] Diagrams: the five flow diagrams and `cluster.drawio.svg` use §3 component names; removed boxes (time-series DB, DB backup job, Grafana boxes) and their arrows; off-cluster backup drawn dashed (후순위); leader-side tunnel client added, worker tunnel connectors dashed. Edited the embedded XML by script and re-exported with the draw.io CLI (`--embed-diagram`) — files: `docs/architecture/*.drawio.svg`
+- [x] Ingress runs on the workers (build plan): §5.2 node table and SRS §1.7 terms — files: `docs/system-definition.md`, `docs/SRS.md`
 - [x] §6 infra items and ai-scope §5 limits — files: `docs/system-definition.md`, `docs/ai-scope.md`
 
 ## Done when
