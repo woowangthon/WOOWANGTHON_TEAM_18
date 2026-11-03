@@ -17,14 +17,14 @@ Out of scope: the five flow diagrams (#17); `cluster.drawio.svg` still draws wor
 
 ## Todo
 
-- [ ] §3: remaining infra rows (object storage, student volume, outbound tunnel), terms, Kafka scope, leader migration plan; ai-scope rows for the same technologies — files: `docs/system-definition.md`, `docs/ai-scope.md`
-- [ ] §4: mechanism sentences → §3 component names — files: `docs/system-definition.md`
-- [ ] §5: physical / network and cluster layout per the build plan; §5.1 points at `cluster.drawio.svg`; delete `physical-network.drawio.svg` — files: `docs/system-definition.md`, `docs/architecture/physical-network.drawio.svg`
-- [ ] §6 infra items and ai-scope §5 limits — files: `docs/system-definition.md`, `docs/ai-scope.md`
+- [x] §3: remaining infra rows (object storage, student volume, outbound tunnel), terms, Kafka scope, leader migration plan; ai-scope rows for the same technologies — files: `docs/system-definition.md`, `docs/ai-scope.md`
+- [x] §4: mechanism sentences → §3 component names — files: `docs/system-definition.md`
+- [x] §5: physical / network and cluster layout per the build plan; §5.1 points at `cluster.drawio.svg`; delete `physical-network.drawio.svg` — files: `docs/system-definition.md`, `docs/architecture/physical-network.drawio.svg`
+- [x] §6 infra items and ai-scope §5 limits — files: `docs/system-definition.md`, `docs/ai-scope.md`
 
 ## Done when
 
-- [ ] `docs/system-definition.md` has none of: 에이전트, WebSocket (except the deferred option), ECR, 스티키, 덤프 복원, 80%, remote_write, 임시 서브도메인, 유휴 PC, 공유기 LAN, SQLite
-- [ ] §4 names components only; infra mechanism is in §5
-- [ ] §3, §5, ADR-003–006 and ai-scope say the same thing
+- [x] `docs/system-definition.md` has none of: 에이전트, WebSocket (except the deferred option), ECR, 스티키, 덤프 복원, 80%, remote_write, 임시 서브도메인, 유휴 PC, 공유기 LAN, SQLite
+- [x] §4 names components only; infra mechanism is in §5
+- [x] §3, §5, ADR-003–006 and ai-scope say the same thing
 - [ ] merged after #21
