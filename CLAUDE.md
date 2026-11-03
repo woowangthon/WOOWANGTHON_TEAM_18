@@ -55,7 +55,19 @@ Link to docs with plain paths, never `@path` — an `@` import loads the whole f
 
 ## Commands
 
-TBD — once the stack is decided, list install, dev server, lint, test, mutation-test and build commands here.
+FE (run in `FE/`, Node 22 or 24, [pnpm](https://pnpm.io) — the version is pinned in `FE/package.json` `packageManager`; `corepack enable` picks it up, but Node 25+ no longer bundles corepack, so run `npm i -g corepack` first there):
+
+| Task | Command |
+| --- | --- |
+| Install (CI-exact) | `pnpm install --frozen-lockfile` |
+| Dev server | `pnpm dev` |
+| Lint ([ESLint](https://eslint.org) — type-aware and a11y rules) | `pnpm lint` |
+| Typecheck | `pnpm typecheck` |
+| Test ([Vitest](https://vitest.dev)) | `pnpm test` |
+| Build | `pnpm build` |
+| Verify (lint → test → build, stops at the first failure; `build` runs `tsc -b`, so typecheck is included; run before every commit) | `pnpm verify` |
+
+BE, AI and the mutation-test command: TBD — added with each stack.
 
 ## Pitfalls
 

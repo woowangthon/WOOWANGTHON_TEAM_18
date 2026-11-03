@@ -1,0 +1,46 @@
+name: FE
+
+on:
+  # PR은 경로와 상관없이 돌린다. 필수 상태 체크로 걸어도 문서만 바꾼 PR이 대기에 걸리지 않는다.
+  pull_request:
+  push:
+    branches: [main]
+    paths:
+      - 'FE/**'
+      - '.github/workflows/fe.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  # main 푸시는 실행마다 별도 그룹이다. 같은 그룹이면 대기 중인 실행이 새 실행에 밀려 커밋 하나가 검사되지 않는다.
+  group: fe-${{ github.event_name == 'push' && github.run_id || github.ref }}
+  # PR에서만 앞 실행을 취소한다.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: FE
+    steps:
+      # 액션은 태그가 아니라 커밋 SHA로 고정한다. 올릴 때는 손으로 바꾼다(Dependabot 없음).
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      # pnpm 버전은 FE/package.json의 packageManager에서 읽는다(여기에 따로 적지 않는다).
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          package_json_file: FE/package.json
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: FE/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm test
+      # build가 tsc -b(타입 검사)를 먼저 돌리므로 typecheck를 따로 두지 않는다.
+      - run: pnpm build
