@@ -1,0 +1,42 @@
+name: FE
+
+on:
+  # PR은 경로와 상관없이 돌린다. 필수 상태 체크로 걸어도 문서만 바꾼 PR이 대기에 걸리지 않는다.
+  pull_request:
+  push:
+    branches: [main]
+    paths:
+      - 'FE/**'
+      - '.github/workflows/fe.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fe-${{ github.ref }}
+  # main에 연달아 푸시해도 앞 커밋의 검사가 취소되지 않게 PR에서만 취소한다.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: FE
+    steps:
+      - uses: actions/checkout@v4
+      # pnpm 버전은 FE/package.json의 packageManager에서 읽는다(여기에 따로 적지 않는다).
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: FE/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: FE/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm test
+      # build가 tsc -b(타입 검사)를 먼저 돌리므로 typecheck를 따로 두지 않는다.
+      - run: pnpm build
