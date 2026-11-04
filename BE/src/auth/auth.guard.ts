@@ -62,7 +62,8 @@ export class AuthGuard implements CanActivate {
         audience: 'authenticated',
         // algorithms는 따로 막지 않는다. jose는 토큰의 alg에 맞는 종류의 키만 키 목록에서 고르고,
         // 공개 키 목록에는 HMAC 키가 없으며 alg none은 늘 거부한다(테스트로 확인).
-        requiredClaims: ['sub', 'email'],
+        // jose는 exp가 있을 때만 만료를 본다. 없으면 영원히 유효한 토큰이 되므로 필수로 둔다.
+        requiredClaims: ['sub', 'email', 'exp'],
       })
       return { id: payload.sub, email: payload.email, isAdmin: payload.app_metadata?.role === 'admin' }
     } catch (err) {

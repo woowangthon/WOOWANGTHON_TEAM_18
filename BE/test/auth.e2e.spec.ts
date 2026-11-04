@@ -109,6 +109,7 @@ describe('401 INVALID_TOKEN', () => {
     ],
     ['no sub', () => token({ sub: undefined })],
     ['no email', () => token({ email: undefined })],
+    ['no exp (a token that never expires)', () => token({ exp: undefined })],
     ['garbage', () => 'not-a-jwt'],
   ])('for %s', async (_name, make) => {
     const res = await me(`Bearer ${await make()}`).expect(401)
