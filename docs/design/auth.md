@@ -5,7 +5,7 @@
 
 ## 범위
 
-- **한다**: Supabase Auth가 발급한 로그인 토큰(access token)을 플랫폼 서버가 검증하고, 요청마다 누가 불렀는지(`id`, `email`, `isAdmin`)를 정한다. 헬스 체크를 뺀 모든 API에 적용한다.
+- **한다**: Supabase Auth가 발급한 로그인 토큰(access token)을 플랫폼 서버가 검증하고, 요청마다 누가 불렀는지(`id`, `email`, `isAdmin`)를 정한다. 로그인 없이 열기로 정한 API(헬스 체크, 나중에 만들 Playground 공개 조회 — [시스템 정의서](../system-definition.md) §4.4)를 뺀 모든 API에 적용한다.
 - **하지 않는다**: 로그인 · 가입 · 비밀번호 재설정 · 토큰 갱신. FE가 supabase-js로 Supabase에 직접 하고, 플랫폼 서버에는 로그인 API가 없다. 플랫폼 서버는 이 단계에서 Supabase 비밀키를 갖지 않는다.
 - **예정**: GitHub 연동과 레포 소유 확인(아래 [GitHub 연동](#github-연동-예정)).
 
