@@ -30,6 +30,11 @@ it('routes live under /api only', async () => {
   await http.get('/health').expect(404)
 })
 
+it('answers an unknown route in the common error shape', async () => {
+  const http = await start()
+  await http.get('/api/nope').expect(404, { error: { code: 'NOT_FOUND', message: 'Cannot GET /api/nope' } })
+})
+
 describe('CORS', () => {
   const allowed = 'http://allowed.test'
 
