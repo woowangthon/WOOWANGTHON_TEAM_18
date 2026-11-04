@@ -68,7 +68,7 @@ FE (run in `FE/`, Node 22 or 24, [pnpm](https://pnpm.io) — the version is pinn
 | Verify (lint → test → build, stops at the first failure; `build` runs `tsc -b`, so typecheck is included; run before every commit) | `pnpm verify` |
 | Container image (run from the repo root; local dev only, production is S3 + CloudFront) | `docker build -t fe FE` |
 
-BE (run in `BE/`, Node 22.22.3+ or 24.15+ — the range is `BE/package.json` `engines`; pnpm as for FE). Settings come from `BE/.env` (copy `BE/.env.example`); a bad value stops the server at boot:
+BE (run in `BE/`, Node 22 (22.22.3+), 24 (24.15+) or 26+ — not 23 or 25; the range is `BE/package.json` `engines`; pnpm as for FE). Settings come from `BE/.env` (copy `BE/.env.example`); a bad value stops the server at boot:
 
 | Task | Command |
 | --- | --- |
