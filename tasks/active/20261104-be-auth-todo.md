@@ -22,7 +22,7 @@ This PR records the decision (ADR-007, partial supersede of ADR-001 auth and ADR
 
 - [x] History is 5 commits (ADR, design, error filter, auth, task docs); each code commit passes `pnpm install --frozen-lockfile && pnpm verify` on its own
 - [x] Running against the real project: `/api/me` without a token → `401 AUTH_REQUIRED`; a token signed by another key with the real `kid` → `401 INVALID_TOKEN` (the real key set was fetched); unreachable auth server → `503`; missing `SUPABASE_URL` stops boot. Same in the container
-- [ ] A real login token from a test account → `200` from `/api/me` — TaeTaeJin runs it locally (`curl -H "Authorization: Bearer <token>" …/api/me`); no tokens in chat
+- [x] A real login token from a test account → `200` from `/api/me`; the same token with a signature byte flipped, or with `app_metadata.role` changed to admin, → `401 INVALID_TOKEN`
 - [x] CI green on GitHub (#28)
 - [ ] Notion SRS synced (NFR-SEC-03, §2.4) — TaeTaeJin keeps Notion in step with the repo docs
 - [x] Tests added (filter unit tests, env unit tests, auth e2e for every 401 / 503 path and admin); mutation testing not run with a tool — none chosen yet (conventions §6); hand-made mutants on the guard, see lessons
