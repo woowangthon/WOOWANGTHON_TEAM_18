@@ -24,6 +24,6 @@ The app has one route, `GET /api/health`, for container and ops checks — not a
 
 - [x] History is 6 commits by category (scaffold, env + CORS, Docker, CI, docs, task docs); each code commit passes `pnpm install --frozen-lockfile && pnpm verify` on its own
 - [x] `docker build -t be BE` → container answers `GET /api/health`, runs as a non-root user, exits on a bad `PORT`
-- [ ] CI workflow runs green on GitHub (fork PRs may not trigger it; the first `push` to `main` after merge counts)
-- [ ] Notion SRS synced with the NFR-OPS-02 change
+- [x] CI workflow runs green on GitHub — unlike #23, the fork PR (#26) ran both workflows; BE passed install → lint → test → build
+- [ ] Notion SRS synced with the NFR-OPS-02 change — TaeTaeJin keeps Notion in step with the repo docs
 - [x] tests added (env unit tests, e2e for health · prefix · CORS); mutation testing not run — no mutation tool chosen yet (conventions §6); a manual spot check of 10 hand-made mutants killed all of them
