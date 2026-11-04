@@ -1,6 +1,6 @@
 # 인증 — 설계
 
-- **상태**: 초안
+- **상태**: 구현됨 (로그인 토큰 검증. GitHub 연동은 예정)
 - **관련**: SRS NFR-SEC-03 · [ADR-007](../adr/007-login-email-password-github-link.md) · [API 계약](api.md)의 인증 그룹
 
 ## 범위
@@ -15,8 +15,9 @@
 2. FE는 플랫폼 서버를 부를 때마다 `Authorization: Bearer <access token>`을 붙인다.
 3. 플랫폼 서버의 전역 가드가 토큰을 검증한다.
    - 서명: Supabase의 공개 키 목록(JWKS, `<SUPABASE_URL>/auth/v1/.well-known/jwks.json`)으로 확인한다. 공개 키는 처음 필요할 때 받아 두고, 모르는 `kid`가 오면 다시 받는다. 그래서 Supabase에서 키를 교체해도 재배포 없이 따라간다.
-   - 알고리즘은 비대칭 키(`ES256` · `RS256`)만 받는다. 토큰이 스스로 적은 `alg`(`HS256`, `none`)를 믿지 않기 위해서다.
-   - 발급자 `iss = <SUPABASE_URL>/auth/v1`, 대상 `aud = authenticated`, 만료 `exp`, 사용자 `sub`가 있어야 한다.
+   - 알고리즘 허용 목록은 따로 두지 않는다. jose는 토큰의 `alg`에 맞는 종류의 키만 키 목록에서 고르는데, 공개 키 목록에는 HMAC 키가 있을 수 없고 `alg: none`은 항상 거부한다. 그래서 `alg`를 `HS256` · `none`으로 바꾼 토큰은 통과하지 못한다(자동 테스트). 목록을 따로 두어도 결과가 같다는 것을 뮤턴트로 확인했다.
+   - 발급자 `iss = <SUPABASE_URL>/auth/v1`, 대상 `aud = authenticated`, 만료 `exp`가 맞아야 하고 `sub` · `email`이 있어야 한다.
+   - 공개 키를 받지 못하는 경우는 jose 오류 종류로 가린다: 응답이 200이 아니거나 JSON이 아님(`JOSEError` 자체), 시간 초과(`JWKSTimeout`, 기본 5초), 키 목록 형식 오류(`JWKSInvalid`), 네트워크 오류(JOSE 오류가 아닌 `TypeError`). 이 네 경우가 `503`이고, 나머지 JOSE 오류는 토큰 문제라 `401`이다.
 4. 통과하면 요청에 사용자 `{ id: sub, email, isAdmin }`을 붙인다. 컨트롤러는 `@CurrentUser()`로 읽고, 로그인 없이 열어 둘 라우트에는 `@Public()`을 붙인다.
 
 ### 관리자
@@ -41,7 +42,7 @@
 | 상황 | 응답 |
 | --- | --- |
 | `Authorization` 헤더가 없거나 `Bearer <토큰>` 형식이 아님 | `401 AUTH_REQUIRED` |
-| 서명 · 알고리즘 · 발급자 · 대상 · 만료 · `sub` 중 하나라도 틀림 | `401 INVALID_TOKEN` |
+| 서명 · 알고리즘 · 발급자 · 대상 · 만료가 틀리거나 `sub` · `email`이 없음 (이메일 없는 전화번호 · 익명 로그인 토큰도 여기 해당. 우리는 이메일 로그인만 쓴다) | `401 INVALID_TOKEN` |
 | 공개 키를 받지 못함 (Supabase 장애 · 네트워크 · 시간 초과) | `503 AUTH_UNAVAILABLE` |
 
 `503`을 따로 두는 이유: 인증 서버 쪽 장애를 "토큰이 틀렸다"(`401`)로 돌려주면 FE가 멀쩡한 사용자를 로그아웃시킨다. 그렇다고 검증 없이 통과시키지도 않는다([`conventions.md`](../conventions.md) F-1).
@@ -67,4 +68,5 @@
 ## 알려진 한계
 
 - 토큰은 수명(기본 1시간) 동안 유효하다. 로그아웃 · 계정 정지 · 관리자 해제가 플랫폼 서버에 바로 반영되지 않는다. 계정 정지 기능을 만들 때 DB 확인을 더할지 다시 본다.
+- `alg` 처리와 401 · 503 구분은 jose의 동작과 오류 종류에 기대고 있다. jose를 올리거나 바꾸면 `BE/test/auth.e2e.spec.ts`가 이를 다시 확인한다.
 - 자동 테스트는 테스트에서 만든 키로 서명한 토큰으로 검증 경로를 확인한다. 실제 Supabase 토큰은 테스트 계정으로 로그인해 직접(`curl`) 확인한다.

@@ -82,10 +82,12 @@ Decided for FE:
 Decided for BE:
 
 - Test library: Vitest (Nest 12's default template, same tool as FE) with `@nestjs/testing` and supertest; `pnpm test` in `BE/` runs unit and e2e tests together.
-- Unit tests sit next to the code as `BE/src/**/*.spec.ts` (Nest's naming, what `nest g` generates). Tests that boot the app go in `BE/test/*.e2e.spec.ts` (Vitest's default pattern, so there is no test config file) and call `setupApp` the way `main.ts` does, so they run with the real prefix and CORS settings.
+- Unit tests sit next to the code as `BE/src/**/*.spec.ts` (Nest's naming, what `nest g` generates). Tests that boot the app go in `BE/test/*.e2e.spec.ts` (Vitest's default pattern) and start it with `BE/test/start-app.ts`, which calls `setupApp` the way `main.ts` does, so they run with the real prefix, CORS, error filter and auth guard.
+- `BE/vitest.config.ts` only sets the required env (`SUPABASE_URL`, a fake origin) because `ConfigModule` validates env when it is imported. Tests never reach the network: the auth tests stub `fetch` to serve a key set generated in the test.
 
 Fill in once the stack is decided (AI, and the mutation tool for all):
 
 - Mutation tool, and its scope (changed files only, to keep it fast). Until one is chosen, say "mutation testing not run: no tool chosen" in the PR body.
 - What counts as an acceptable surviving mutant.
-- How test doubles relate to `MOCK(<id>)` markers (§1) — a fake used only inside tests is not a demo-path mock; state where the line is.
+
+Test doubles and `MOCK(<id>)` markers (§1): a fake that lives only in test files (a stubbed `fetch`, keys generated in a test) never runs in the app and is not marked. A canned value in `src/` that the running app can return is a mock and needs the marker and an `ai-scope.md` row.
