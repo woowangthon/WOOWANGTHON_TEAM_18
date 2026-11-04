@@ -23,9 +23,9 @@
 | 외부 기술 | AWS — CodeBuild(빌드), S3 + CloudFront(웹 정적 파일), EC2(Nest · FastAPI · Kafka 브로커) | 구현 전. 설정·연동 |
 | 외부 기술 | GHCR (학생 앱 이미지 레지스트리, 이미지 공개. [ADR-003](adr/003-registry-ghcr.md)) | 구현 전. 설정·연동 |
 | 외부 기술 | Apache Kafka (EC2 단일 브로커) | 구현 전. 설정·연동 |
-| 외부 기술 | Supabase (PostgreSQL, GitHub OAuth) | 구현 전. 설정·연동 |
+| 외부 기술 | Supabase (PostgreSQL, Auth — 이메일 · 비밀번호 로그인, GitHub 계정 연동. [ADR-007](adr/007-login-email-password-github-link.md)) | 구현 전. 설정·연동 |
 | 외부 기술 | MySQL (학생 서비스 DB 애드온, PostgreSQL은 여유가 있을 때) | 구현 전. 프로젝트별 인스턴스 배치 · 접속 정보 주입은 직접 구현. 워커 장애는 학생 볼륨 사본(사본 2)이 견디고 클러스터 밖 백업은 후순위다. 사본은 백업이 아니다 ([시스템 정의서](system-definition.md) §5.2) |
-| 외부 API | GitHub API — 봇 계정의 fork·PR 생성, OAuth 로그인 | 구현 전. 연동 |
+| 외부 API | GitHub API — 봇 계정의 fork·PR 생성, 계정 연동(OAuth, Supabase Auth가 처리), 레포 소유자 조회 | 구현 전. 연동 |
 | 외부 기술 | k3s (Traefik Ingress 포함), Prometheus (node-exporter · cAdvisor · kube-state-metrics · blackbox-exporter), Grafana | 구현 전. 설정·연동 |
 | 외부 기술 | Tailscale (플랫폼 서버 ↔ 리더 연결, 운영자 원격 접속. [ADR-004](adr/004-server-cluster-link-tailscale.md)) | 구현 전. 설정·연동 |
 | 외부 기술 | 로그 수집기 · 저장소 (제품 미정. 시계열 DB는 두지 않는다, [ADR-006](adr/006-metrics-on-leader-prometheus.md)) | 결정 전 |
