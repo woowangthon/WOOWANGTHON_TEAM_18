@@ -11,9 +11,13 @@
 - 2026-11-04: `/simplify` (4 reviewers): applied — the test token helper builds one default payload and merges overrides (`undefined` drops a claim) instead of 7 options and a `null` flag; the test issuer is read from `process.env.SUPABASE_URL` instead of a second copy; the 503 code set uses jose's `errors.X.code` instead of string literals. Skipped — a longer `cacheMaxAge` / shorter `timeoutDuration` (tuning away from library defaults with no measured need); `APP_FILTER` instead of `setupApp` (style only, every app goes through `setupApp`); `!value` in `env.ts` (kept like `PORT`). Mutants re-run after the test rewrite: all killed.
 - 2026-11-04: `/code-review` at low effort: no code bugs; one doc gap — `auth.md`'s error table named only `sub` as required while the guard also requires `email` (a phone-only or anonymous token gets 401). Fixed in the auth commit.
 - 2026-11-04: Live against the real project (local and in the container): no token → 401 `AUTH_REQUIRED`; a token with the real `kid` signed by our key → 401 `INVALID_TOKEN`, which needs the real key set to have been fetched; unreachable auth server → 503; no `SUPABASE_URL` → boot stops.
+- 2026-11-04: Opened #28 (linked to #27, which tracks login + GitHub linking; this PR is the login half). CodeRabbit: (1) jose checks `exp` only when the claim is present, so a correctly signed token without `exp` never expired — a test added first returned 200 on the old code; `exp` is now in `requiredClaims` and the mutant dropping it is killed. (2) `.env.example` held the real Project URL, but conventions §3 says empty values — emptied (boot stops until it is set). (3) Notion SRS sync — already a merge condition; TaeTaeJin answered in the thread.
+- 2026-11-04: On the Windows-mounted checkout (`/mnt/c`), the first e2e test in a file can pass Vitest's 5 s timeout while the app boots (6.2 s seen); on the Linux file system and in CI it is well under. Not changed in this PR.
 
 ## Lessons
 
 - Read the library's error paths before mapping its errors to status codes; class names alone (`JWKSTimeout`) suggested a split the code does not make.
 - Stub at the I/O edge (`fetch`) rather than replacing the component, so the test also covers how the component is wired.
+- "Validated" in a JWT library can mean "validated if present": list every claim the check depends on in `requiredClaims`.
+- Check `docs/conventions.md` before making an exception for convenience (the `.env.example` value); a public value is still a rule break.
 - A security option that a mutant shows to be equivalent is still dead code; keep the test that proves the attack fails, drop the option.
