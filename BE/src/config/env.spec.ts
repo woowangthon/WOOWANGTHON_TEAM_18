@@ -43,7 +43,14 @@ describe('CORS_ORIGINS', () => {
 describe('SUPABASE_URL', () => {
   it('accepts a project origin', () => {
     expect(validateEnv(base).SUPABASE_URL).toBe('https://abc.supabase.co')
-    expect(validateEnv({ SUPABASE_URL: 'http://127.0.0.1:54321' }).SUPABASE_URL).toBe('http://127.0.0.1:54321')
+  })
+
+  it.each(['http://127.0.0.1:54321', 'http://localhost:54321', 'http://[::1]:54321'])('allows http for a local Supabase (%s)', (url) => {
+    expect(validateEnv({ SUPABASE_URL: url }).SUPABASE_URL).toBe(url)
+  })
+
+  it.each(['http://abc.supabase.co', 'http://10.0.0.5:8000', 'ftp://abc.supabase.co'])('requires https for "%s"', (url) => {
+    expect(() => validateEnv({ SUPABASE_URL: url })).toThrow(/must use https/)
   })
 
   it.each([undefined, ''])('is required (%s)', (url) => {

@@ -38,7 +38,13 @@ function parseSupabaseUrl(value: string | undefined): string {
   if (value === undefined || value === '') {
     throw new Error('SUPABASE_URL is required, like https://<project>.supabase.co')
   }
-  return checkOrigin(value, `SUPABASE_URL "${value}"`)
+  checkOrigin(value, `SUPABASE_URL "${value}"`)
+  // 공개 키 목록을 여기서 받는다. 평문 HTTP면 중간에서 키를 바꿔 위조 토큰을 통과시킬 수 있어, HTTP는 로컬 Supabase(loopback)만 허용한다.
+  const { protocol, hostname } = new URL(value)
+  if (protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(hostname)) {
+    throw new Error(`SUPABASE_URL "${value}" must use https (http is allowed only for localhost)`)
+  }
+  return value
 }
 
 // "*"나 경로 · 끝 슬래시가 붙은 값은 막는다. 브라우저가 보내는 Origin, 토큰의 발급자와 글자 그대로 맞아야 한다.

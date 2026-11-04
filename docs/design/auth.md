@@ -14,7 +14,7 @@
 1. FE가 이메일 · 비밀번호로 Supabase에 로그인해 access token(JWT, 기본 수명 1시간)과 refresh token을 받는다. 갱신은 supabase-js가 한다.
 2. FE는 플랫폼 서버를 부를 때마다 `Authorization: Bearer <access token>`을 붙인다.
 3. 플랫폼 서버의 전역 가드가 토큰을 검증한다.
-   - 서명: Supabase의 공개 키 목록(JWKS, `<SUPABASE_URL>/auth/v1/.well-known/jwks.json`)으로 확인한다. 공개 키는 처음 필요할 때 받아 두고, 모르는 `kid`가 오면 다시 받는다. 그래서 Supabase에서 키를 교체해도 재배포 없이 따라간다.
+   - 서명: Supabase의 공개 키 목록(JWKS, `<SUPABASE_URL>/auth/v1/.well-known/jwks.json`)으로 확인한다. 공개 키는 처음 필요할 때 받아 두고, 모르는 `kid`가 오면 다시 받는다. 그래서 Supabase에서 키를 교체해도 재배포 없이 따라간다. 키를 받는 주소라 `SUPABASE_URL`은 `https`여야 한다(평문이면 중간에서 키를 바꿔 위조 토큰을 통과시킬 수 있다. 로컬 Supabase용 loopback 주소만 `http`를 허용한다).
    - 알고리즘 허용 목록은 따로 두지 않는다. jose는 토큰의 `alg`에 맞는 종류의 키만 키 목록에서 고르는데, 공개 키 목록에는 HMAC 키가 있을 수 없고 `alg: none`은 항상 거부한다. 그래서 `alg`를 `HS256` · `none`으로 바꾼 토큰은 통과하지 못한다(자동 테스트). 목록을 따로 두어도 결과가 같다는 것을 뮤턴트로 확인했다.
    - 발급자 `iss = <SUPABASE_URL>/auth/v1`, 대상 `aud = authenticated`, 만료 `exp`가 지나지 않아야 하고 `sub` · `email` · `exp`가 있어야 한다. jose는 `exp`가 없으면 만료를 보지 않으므로 `exp`도 필수로 둔다.
    - 공개 키를 받지 못하는 경우는 jose 오류 종류로 가린다: 응답이 200이 아니거나 JSON이 아님(`JOSEError` 자체), 시간 초과(`JWKSTimeout`, 기본 5초), 키 목록 형식 오류(`JWKSInvalid`), 네트워크 오류(JOSE 오류가 아닌 `TypeError`). 이 네 경우가 `503`이고, 나머지 JOSE 오류는 토큰 문제라 `401`이다.
