@@ -13,20 +13,19 @@
 | 구분 | 무엇 | 우리가 한 일 |
 | --- | --- | --- |
 | 직접 구현 | 검토 하네스(입력 구성 · 프롬프트 · 결과 형식 · 실패 처리), 리뷰 패킷, 플랫폼 서버의 배포 매니페스트 생성과 쿠버네티스 호출 모듈, 스파이크 판정 규칙, 클러스터 구성(`Infra/`: 학생 공간 틀 · 권한 · 네트워크 정책) | 우리가 설계 · 구현 |
-| 외부 기술 | React + TypeScript (Vite), Nest.js, FastAPI (FE · BE 버전은 각각 `FE/package.json` · `BE/package.json`에 고정, AI는 TBD) | FE는 `FE/`에 Vite 템플릿으로 세팅하고 데모 코드를 제거함(패키지 매니저는 pnpm이고 버전은 `FE/package.json`의 `packageManager`로 고정. lint는 ESLint(typescript-eslint, jsx-a11y), 테스트는 Vitest + Testing Library + jsdom. TypeScript는 typescript-eslint가 7을 지원하지 않아 6.0으로 고정). BE는 `BE/`에 Nest 12(ESM)로 세팅함(pnpm. lint는 ESLint 10(typescript-eslint), 테스트는 Vitest + `@nestjs/testing` + supertest, 설정 읽기는 `@nestjs/config`이고 값 검증은 직접 구현. 헬스 체크 `GET /api/health`, CORS 허용 목록, 오류 응답 형식, 로그인 토큰 검증과 `GET /api/me`(아래 jose 행)가 있고 그 밖의 기능은 구현 전). AI는 구현 전. 프레임워크 사용 |
+| 외부 기술 | React + TypeScript (Vite), Nest.js, FastAPI (FE · BE 버전은 각각 `FE/package.json` · `BE/package.json`에 고정, AI는 TBD) | FE는 `FE/`에 Vite 템플릿으로 세팅하고 데모 코드를 제거함(패키지 매니저는 pnpm이고 버전은 `FE/package.json`의 `packageManager`로 고정. lint는 ESLint(typescript-eslint, jsx-a11y), 테스트는 Vitest + Testing Library + jsdom. TypeScript는 typescript-eslint가 7을 지원하지 않아 6.0으로 고정). BE는 `BE/`에 Nest 12(ESM)로 세팅함(pnpm. lint는 ESLint 10(typescript-eslint), 테스트는 Vitest + `@nestjs/testing` + supertest, 설정 읽기는 `@nestjs/config`이고 값 검증은 직접 구현. 헬스 체크 `GET /api/health`와 CORS 허용 목록만 있고 기능은 구현 전). AI는 구현 전. 프레임워크 사용 |
 | 외부 기술 | Tailwind CSS v4 (`@tailwindcss/vite`) | 스타일링 도구. 기본 팔레트를 비우고 흑백 토큰만 `@theme`에 선언. 컴포넌트 6종(Button · Input · Badge · Table · Card · LogBlock)은 직접 구현하고 기성 컴포넌트 키트는 쓰지 않음 |
 | 외부 기술 | eslint-plugin-better-tailwindcss (FE devDependency, MIT) | 개발 도구. 린트에서 `theme.css`에 정의되지 않은 Tailwind 클래스(`bg-white` 등)를 막는다. 앱 번들에는 들어가지 않음. `no-unknown-classes`(없는 클래스)와 `no-restricted-classes`(임의값 · 로드하지 않은 굵기 · 그림자 계열) 두 규칙만 켰다 |
 | 외부 기술 | Docker 이미지 `node:22-bookworm-slim` (빌드), `nginx:1.27-alpine` (정적 서빙) | `FE/Dockerfile`로 로컬 컨테이너 개발용 이미지를 만든다. 운영 배포는 S3 + CloudFront라 이 이미지는 쓰지 않는다. 이미지 빌드와 nginx 동작(SPA 경로, 캐시 헤더, gzip)은 2026-11-03에 로컬에서 확인했고, CI에서는 이미지를 빌드하지 않는다 |
 | 외부 기술 | Docker 이미지 `node:22-bookworm-slim` (BE 빌드 · 실행) | `BE/Dockerfile`로 로컬 컨테이너 개발용 이미지를 만든다. 운영 배포는 EC2다. 이미지 빌드, 헬스 체크 응답, CORS 헤더, root가 아닌 사용자로 실행, 잘못된 설정에서 부팅 중단은 2026-11-04에 로컬에서 확인했고, CI에서는 이미지를 빌드하지 않는다 |
-| 외부 기술 | jose (BE에서 Supabase 로그인 토큰 서명 검증, 공개 키 목록 받기 · 캐시) | 라이브러리 사용. 전역 가드(`@Public()` 예외, 401 · 503 구분, 관리자 판단)는 직접 구현. 테스트에서 만든 키로 서명한 토큰으로 위조 · 만료 · 발급자 · 대상 · 관리자 판단 · 인증 서버 장애 경로를 자동 테스트했다. 2026-11-04에 실제 Supabase 프로젝트로 띄워(로컬 · 컨테이너) 공개 키 목록을 받아 위조 토큰을 401로 거부하는 것과, 인증 서버에 닿지 못하면 503인 것을 확인했다. 같은 날 개발용 테스트 계정의 진짜 로그인 토큰으로 `GET /api/me`가 `200`을 주고, 서명이나 `app_metadata`를 바꾼 토큰은 `401`인 것을 확인했다 |
 | 외부 기술 | LangChain (배포 전 검토 파이프라인. 복잡해지면 LangGraph로 확장) | 구현 전. 체인 구성과 프롬프트는 직접 설계 |
 | 외부 API | LLM API (업체·모델 미정) | 구현 전. 호출 하네스와 시스템 프롬프트는 직접 구현 |
 | 외부 기술 | AWS — CodeBuild(빌드), S3 + CloudFront(웹 정적 파일), EC2(Nest · FastAPI · Kafka 브로커) | 구현 전. 설정·연동 |
 | 외부 기술 | GHCR (학생 앱 이미지 레지스트리, 이미지 공개. [ADR-003](adr/003-registry-ghcr.md)) | 구현 전. 설정·연동 |
 | 외부 기술 | Apache Kafka (EC2 단일 브로커) | 구현 전. 설정·연동 |
-| 외부 기술 | Supabase (PostgreSQL, Auth — 이메일 · 비밀번호 로그인, GitHub 계정 연동. [ADR-007](adr/007-login-email-password-github-link.md)) | 구현 전. 설정·연동 |
+| 외부 기술 | Supabase (PostgreSQL, GitHub OAuth) | 구현 전. 설정·연동 |
 | 외부 기술 | MySQL (학생 서비스 DB 애드온, PostgreSQL은 여유가 있을 때) | 구현 전. 프로젝트별 인스턴스 배치 · 접속 정보 주입은 직접 구현. 워커 장애는 학생 볼륨 사본(사본 2)이 견디고 클러스터 밖 백업은 후순위다. 사본은 백업이 아니다 ([시스템 정의서](system-definition.md) §5.2) |
-| 외부 API | GitHub API — 봇 계정의 fork·PR 생성, 계정 연동(OAuth, Supabase Auth가 처리), 레포 소유자 조회 | 구현 전. 연동 |
+| 외부 API | GitHub API — 봇 계정의 fork·PR 생성, OAuth 로그인 | 구현 전. 연동 |
 | 외부 기술 | k3s (Traefik Ingress 포함), Prometheus (node-exporter · cAdvisor · kube-state-metrics · blackbox-exporter), Grafana | 구현 전. 설정·연동 |
 | 외부 기술 | Tailscale (플랫폼 서버 ↔ 리더 연결, 운영자 원격 접속. [ADR-004](adr/004-server-cluster-link-tailscale.md)) | 구현 전. 설정·연동 |
 | 외부 기술 | 로그 수집기 · 저장소 (제품 미정. 시계열 DB는 두지 않는다, [ADR-006](adr/006-metrics-on-leader-prometheus.md)) | 결정 전 |

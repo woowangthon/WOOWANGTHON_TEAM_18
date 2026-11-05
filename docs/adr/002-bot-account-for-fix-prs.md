@@ -1,6 +1,6 @@
 # ADR-002: 수정 제안은 봇 이름의 별도 GitHub 계정이 fork → PR로 올린다
 
-- **상태**: 유효 (일부 대체: 학생 로그인 · 소유 확인 → [007](007-login-email-password-github-link.md))
+- **상태**: 유효
 - **날짜**: 26-10-29
 - **결정자**: 태진, 유성, 현식
 - **관련**: [시스템 정의서 §4.1](../system-definition.md#41-user1-배포자-흐름)(봇 PR · Dockerfile 행), [ADR-001](001-stack-and-deployment.md)

@@ -1,8 +1,0 @@
-import { defineConfig } from 'vitest/config'
-
-export default defineConfig({
-  test: {
-    // ConfigModule이 import될 때 env를 검증하므로 필수값을 테스트 시작 전에 넣는다. 가짜 주소라 네트워크로 나가지 않는다.
-    env: { SUPABASE_URL: 'https://test.supabase.co' },
-  },
-})
