@@ -1,18 +1,13 @@
 import type { INestApplication } from '@nestjs/common'
-import { Test } from '@nestjs/testing'
 import request from 'supertest'
 import type { App } from 'supertest/types.js'
 import { afterEach, describe, expect, it } from 'vitest'
-import { AppModule } from '../src/app.module.js'
-import { setupApp } from '../src/app.setup.js'
+import { startApp } from './start-app.js'
 
 let app: INestApplication<App>
 
 async function start(corsOrigins: string[] = []) {
-  const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile()
-  app = moduleRef.createNestApplication()
-  setupApp(app, corsOrigins)
-  await app.init()
+  app = await startApp(corsOrigins)
   return request(app.getHttpServer())
 }
 
@@ -20,7 +15,7 @@ afterEach(async () => {
   await app.close()
 })
 
-it('GET /api/health answers ok', async () => {
+it('GET /api/health answers ok without a login token', async () => {
   const http = await start()
   await http.get('/api/health').expect(200, { status: 'ok' })
 })
@@ -28,6 +23,11 @@ it('GET /api/health answers ok', async () => {
 it('routes live under /api only', async () => {
   const http = await start()
   await http.get('/health').expect(404)
+})
+
+it('answers an unknown route in the common error shape', async () => {
+  const http = await start()
+  await http.get('/api/nope').expect(404, { error: { code: 'NOT_FOUND', message: 'Cannot GET /api/nope' } })
 })
 
 describe('CORS', () => {
