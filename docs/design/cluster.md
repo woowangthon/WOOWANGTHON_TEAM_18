@@ -61,7 +61,7 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 
 - 리더: `k3s server`에 `--node-ip`(노드 주소), `--tls-san`(리더의 Tailscale 주소. 플랫폼 서버가 이 주소로 API를 부른다), `--cluster-init`(내장 etcd. 서버는 하나지만 후순위인 스냅샷 복구를 할 여지를 남긴다), `--disable coredns`(아래), 버전 고정.
 - 워커: `k3s agent`에 `--node-ip`(노드 주소), 리더의 노드 주소로 조인한다.
-- 세 노드 모두 `--flannel-iface=enp4s0`. 랜 카드에 학교 주소가 먼저 있어서, flannel이 학교 주소로 VXLAN을 맺으면 방화벽이 그 출발지를 막아 노드 사이 Pod 통신이 끊긴다. 설치 뒤 각 노드의 `flannel.alpha.coreos.com/public-ip` 값이 `192.168.77.x`인지 확인한다.
+- 세 노드 모두 `--flannel-iface=enp4s0`. 랜 카드에 학교 주소가 먼저 있어서, flannel이 학교 주소로 VXLAN을 맺으면 방화벽이 그 출발지를 막아 노드 사이 Pod 통신이 끊긴다. 다만 `--flannel-iface`는 랜 카드만 고르고, 그 카드에서 어느 주소를 쓸지는 k3s 버전마다 다를 수 있다(카드의 첫 주소를 고르는 버전이 있다). 그래서 설치할 버전에서 `--node-ip`가 flannel 주소로도 쓰이는지 먼저 확인하고, 아니면 그 버전의 flannel 주소 지정 옵션으로 노드 주소를 강제한다. 첫 노드 설치 직후 `flannel.alpha.coreos.com/public-ip`가 `192.168.77.x`가 아니면 다음 노드로 가지 않고 거기서 멈춰 고친다(확인만으로는 설정이 바뀌지 않는다).
 - 노드가 꺼졌을 때 기다리는 시간은 Pod마다 넣지 않고 API 서버에서 한 번에 줄인다: `--kube-apiserver-arg=default-not-ready-toleration-seconds=30`, `--kube-apiserver-arg=default-unreachable-toleration-seconds=30`(기본 300초).
 - 배치 규칙: 워커에 학생용 라벨, 리더에 `NoSchedule` taint. 학생 Pod는 라벨로 워커에 가고, 서버 양식이 nodeSelector를 빠뜨려도 taint가 막는다. 리더에는 toleration을 단 운영 도구만 뜬다.
 - CoreDNS는 k3s 기본을 끄고 직접 띄운다: 워커 둘에 하나씩(복제본 2), 클러스터 DNS 주소는 k3s 기본값. k3s 기본은 복제본 1이라 리더에 뜰 수 있고, k3s가 시작할 때마다 기본 설정으로 되돌린다.
@@ -81,6 +81,7 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 | --- | --- |
 | 이름 | `proj-<id>` |
 | 보안 등급 | Pod Security `enforce=baseline`, `warn=restricted`. restricted로 강제하면 root로 도는 공식 이미지(nginx · node 등)가 거절된다 |
+| 컨테이너 권한 | 모든 컨테이너에서 `NET_RAW` capability를 뺀다(`securityContext.capabilities.drop: ["NET_RAW"]`). baseline은 이걸 빼지 않아, 같은 워커의 학생 Pod가 ARP 스푸핑으로 다른 Pod 통신을 가로챌 수 있다. 서버 양식에 넣고, 검사 규칙(§8)이 빠진 Pod를 거절한다 |
 | 배치 | 워커에만(라벨 + 리더 taint). 앱 복제본 1 |
 | 프로젝트 자원 상한 (ResourceQuota) | **제안** CPU 요청 4 · 상한 8, 메모리 요청 16Gi · 상한 32Gi, 볼륨 요청 합계 20Gi, Pod 10개. 워커 하나(24스레드 · 125GiB)의 절반 아래로, 워커가 하나 꺼져 두 프로젝트가 한 워커에 떠도 시스템 몫이 남는다. 플랫폼 서버 담당과 확인한 뒤 확정한다 |
 | 컨테이너 기본값 (LimitRange) | **제안** 요청 CPU 250m · 메모리 256Mi, 상한 CPU 2 · 메모리 4Gi(스펙에 값이 없을 때) |
@@ -101,8 +102,8 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 
 두 겹으로 막는다.
 
-1. **권한(RBAC)**: ServiceAccount 하나. 공간 안 자원(Deployment · Service · Ingress · ConfigMap · PVC 쓰기, Secret 만들기 · 고치기만)과 읽기(노드 · Pod 상태, 로그, Prometheus 프록시)를 준다. 클러스터 범위 쓰기는 네임스페이스 만들기 · 삭제 둘뿐이다. Secret은 `get` · `list` · `watch`를 주지 않는다.
-2. **검사 규칙(ValidatingAdmissionPolicy)**: 공간 안 쓰기 · 삭제는 `proj-`로 시작하는 공간에서만, 네임스페이스는 이름이 `proj-`로 시작하고 보안 등급 라벨이 붙었을 때만 만들어지며 그 라벨은 지울 수 없다. RBAC만으로는 네임스페이스 이름 조건을 걸 수 없어서 겹친다.
+1. **권한(RBAC)**: ServiceAccount 하나. 공간 안 자원 쓰기(Deployment · StatefulSet · Service · Ingress · ConfigMap · PVC, Secret은 만들기 · 고치기만)와 읽기(노드 · Pod 상태, 로그, Prometheus 프록시)를 준다. ResourceQuota · LimitRange · NetworkPolicy는 **만들기만** 준다. 서버가 자기 공간의 상한과 차단 규칙을 고치거나 지울 수 있으면, 서버 계정이 털렸을 때 그 제한부터 풀린다. 클러스터 범위 쓰기는 네임스페이스 만들기 · 삭제 둘뿐이다. Secret은 `get` · `list` · `watch`를 주지 않는다.
+2. **검사 규칙(ValidatingAdmissionPolicy)**: 공간 안 쓰기 · 삭제는 `proj-`로 시작하는 공간에서만 통과한다. 네임스페이스는 이름이 `proj-`로 시작하고 보안 등급 라벨이 붙었을 때만 만들어지고, **삭제도 이름이 `proj-`로 시작할 때만** 통과하며, 그 라벨은 지울 수 없다. 서버가 만드는 Pod는 `NET_RAW`를 뺀 것만 통과한다. ResourceQuota · LimitRange · NetworkPolicy는 §6 양식과 같은 값일 때만 만들어진다. RBAC만으로는 네임스페이스 이름 조건을 걸 수 없어서 겹친다.
 
 사설망 접근 규칙(Tailscale ACL)은 서버 태그 → 리더 `:6443`만, SSH는 운영자 기기만 허용한다. 서버 접속 정보는 AWS의 비밀 설정에만 둔다.
 
@@ -156,4 +157,5 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 - 사설망이 지금 중계(DERP)로 붙어 서버 → 리더 API 응답이 직접 연결보다 느리다.
 - 나가는 443은 목적지를 가리지 않는다. 워커 호스트가 뚫리면 443으로는 어디든 나갈 수 있다.
 - 클러스터 밖 백업이 후순위라, 그것이 들어가기 전까지 두 워커의 디스크가 함께 죽으면 학생 데이터를 잃는다. 볼륨 사본은 백업이 아니다(지운 데이터도 복제된다).
+- Secret을 "쓰기만" 줘도 간접 읽기는 막지 못한다. 서버 계정이 털리면 `proj-` 공간에 그 Secret을 마운트하는 Pod를 띄우고 로그로 값을 읽을 수 있다. 서버가 넣는 Secret은 그 학생 앱의 접속 정보뿐이라 한 프로젝트 안으로 피해가 묶이고, 다른 공간과 시스템 Secret은 검사 규칙으로 닿지 않는다. 서버 접속 정보를 AWS 비밀 설정에만 두는 것이 1차 방어다.
 - 위의 **제안** 값(프로젝트 자원 상한, 컨테이너 기본값, 볼륨 크기)은 플랫폼 서버 담당과 확인 전이다.
