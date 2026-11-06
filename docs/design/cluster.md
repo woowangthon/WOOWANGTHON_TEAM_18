@@ -24,7 +24,7 @@
 - OS는 Ubuntu 24.04.5 LTS minimized 서버판이다. 원래 OS · 계정 위에 설치하고, 손대기 전에 세 대의 내장 디스크를 통째로 이미지로 떠 두었다(반납 때 되돌린다).
 - 호스트 이름은 `hostnamectl`로 바꾸고 `/etc/hosts`의 `127.0.1.1` 줄도 같이 바꿨다. cloud-init이 재부팅 때 이름을 되돌리지 않게 `/etc/cloud/cloud.cfg.d/99-wanggane-preserve-hostname.cfg`(`preserve_hostname: true`)를 둔다.
 - 시간대는 Asia/Seoul, 시간 동기화는 켜져 있다. 절전은 막았고, BIOS는 정전 뒤 자동으로 켜진다.
-- 원격 관리는 Tailscale 위 SSH로만 한다. SSH는 키 접속만 받는다(`/etc/ssh/sshd_config.d/10-wanggane-keys-only.conf`. 번호가 앞서야 `50-cloud-init.conf`보다 먼저 읽힌다). 원격 설치를 위해 계정에 비밀번호 없는 sudo 파일이 하나 있다(반납 때 지운다).
+- 원격 관리는 Tailscale 위 SSH로만 한다. SSH는 키 접속만 받는다(`/etc/ssh/sshd_config.d/10-wanggane-keys-only.conf`. 번호가 앞서야 `50-cloud-init.conf`보다 먼저 읽힌다).
 
 ### 2. 노드 망 (구현됨)
 
@@ -51,9 +51,9 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 | 나감 (리더만) | 7844 (tcp · udp) | Cloudflare Tunnel |
 
 - 나가는 쪽을 도메인이 아니라 포트로 거르는 것은 ufw가 도메인을 모르고, 레지스트리 · 패키지 저장소 · Tailscale이 CDN 뒤라 IP가 바뀌기 때문이다.
-- 학생 Pod의 바깥 통신은 호스트의 나가는 규칙(OUTPUT)이 아니라 Pod 네트워크 정책(§6)이 막는다.
+- 이 표는 **호스트 프로세스**(containerd, k3s, Tailscale, apt 등)에만 걸린다. Pod에서 나가는 통신은 NAT 뒤 FORWARD 체인을 타서 이 표가 적용되지 않는다. 그래서 학생 Pod는 NetworkPolicy(§6)로 막고, 운영 도구 Pod(cloudflared · 이미지 캐시 · CoreDNS의 바깥 DNS 질의)는 05에서 FORWARD가 실제로 어떻게 동작하는지 본 뒤 필요한 목적지 · 포트만 여는 NetworkPolicy로 따로 묶는다. 그 전까지 "리더만 7844"는 호스트 기준이다.
 - 확인한 것(2026-11-06): 사설망으로 세 대 SSH 됨, 노드 주소로는 22번이 열리고 학교 주소로는 막힘, DNS · HTTPS · GHCR · `apt update` · 시간 동기화 · Tailscale 됨, 8080 같은 다른 포트와 워커의 7844는 막힘, 부팅 때 ufw가 켜짐.
-- k3s 설치(§4) 때 볼 것: ufw의 FORWARD 기본값이 DROP이라 Pod 사이 통신이 막히지 않는지(flannel이 자기 허용 규칙을 넣는다), 이미 깔린 Docker가 ufw를 우회하는 규칙을 넣지 않는지.
+- k3s 설치(§4) 때 볼 것: ufw의 FORWARD 기본값이 DROP이라 Pod 사이 통신과 운영 도구 Pod의 바깥 통신이 막히지 않는지, 반대로 flannel의 FORWARD 허용 규칙 때문에 Pod 바깥 통신이 통째로 열리지 않는지, 이미 깔린 Docker가 ufw를 우회하는 규칙을 넣지 않는지.
 
 **원격으로 접속을 끊을 수 있는 변경**(네트워크 · sshd · 방화벽)은 한 대씩(w2 → w1 → 리더) 하고, 먼저 되돌리기를 예약한다: `systemd-run --on-active=150 <되돌리는 명령>` → 적용 → 바깥에서 다시 접속 → `systemctl stop <유닛>.timer`. 다시 붙지 못하면 150초 뒤 저절로 원래대로 돌아온다.
 
@@ -61,6 +61,8 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 
 - 리더: `k3s server`에 `--node-ip`(노드 주소), `--tls-san`(리더의 Tailscale 주소. 플랫폼 서버가 이 주소로 API를 부른다), `--cluster-init`(내장 etcd. 서버는 하나지만 후순위인 스냅샷 복구를 할 여지를 남긴다), `--disable coredns`(아래), 버전 고정.
 - 워커: `k3s agent`에 `--node-ip`(노드 주소), 리더의 노드 주소로 조인한다.
+- 세 노드 모두 `--flannel-iface=enp4s0`. 랜 카드에 학교 주소가 먼저 있어서, flannel이 학교 주소로 VXLAN을 맺으면 방화벽이 그 출발지를 막아 노드 사이 Pod 통신이 끊긴다. 설치 뒤 각 노드의 `flannel.alpha.coreos.com/public-ip` 값이 `192.168.77.x`인지 확인한다.
+- 노드가 꺼졌을 때 기다리는 시간은 Pod마다 넣지 않고 API 서버에서 한 번에 줄인다: `--kube-apiserver-arg=default-not-ready-toleration-seconds=30`, `--kube-apiserver-arg=default-unreachable-toleration-seconds=30`(기본 300초).
 - 배치 규칙: 워커에 학생용 라벨, 리더에 `NoSchedule` taint. 학생 Pod는 라벨로 워커에 가고, 서버 양식이 nodeSelector를 빠뜨려도 taint가 막는다. 리더에는 toleration을 단 운영 도구만 뜬다.
 - CoreDNS는 k3s 기본을 끄고 직접 띄운다: 워커 둘에 하나씩(복제본 2), 클러스터 DNS 주소는 k3s 기본값. k3s 기본은 복제본 1이라 리더에 뜰 수 있고, k3s가 시작할 때마다 기본 설정으로 되돌린다.
 - Traefik(k3s 기본 Ingress)은 `HelmChartConfig`로 워커에만, 복제본 2로 둔다. 하나뿐이면 그 워커가 죽을 때 터널이 보낼 곳이 없다.
@@ -84,13 +86,13 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 | 컨테이너 기본값 (LimitRange) | **제안** 요청 CPU 250m · 메모리 256Mi, 상한 CPU 2 · 메모리 4Gi(스펙에 값이 없을 때) |
 | 들어오는 통신 (NetworkPolicy) | 같은 공간, Ingress(Traefik)에서만 |
 | 나가는 통신 (NetworkPolicy) | 같은 공간(옆에 뜬 DB), 클러스터 DNS만. 인터넷 · 학교망 · 사설 대역 · 다른 학생 공간은 막는다 |
-| 노드가 꺼졌을 때 | `tolerationSeconds` 30초(기본 5분)로 줄여 남은 워커에 빨리 다시 띄운다 |
+| 노드가 꺼졌을 때 | 30초 뒤 남은 워커에 다시 띄운다(기본 5분). 값은 API 서버에서 한 번에 준다(§4). 서버 양식에 따로 넣지 않는다 |
 | DB | 프로젝트마다 MySQL StatefulSet 하나 + 학생 볼륨 + 접속 정보 Secret(환경 변수로 주입). 밖으로 열지 않는다 |
 
 ### 7. 학생 볼륨 (예정)
 
 - Longhorn, 사본 2, 사본은 워커 둘에만(리더 제외). 기본 저장 클래스로 둔다. 그래서 리더에 두는 것(이미지 캐시, Prometheus, Grafana)은 저장 클래스를 `local-path`로 적어야 워커로 가지 않는다.
-- 노드가 꺼졌을 때: Longhorn 설정 "Pod Deletion Policy When Node is Down"을 `delete-deployment-pod`로 둔다. 기본값(do-nothing)이면 죽은 노드의 Pod가 Terminating에 멈춘 채 볼륨을 붙들고 있어 반대쪽 워커에서 다시 뜨지 못한다.
+- 노드가 꺼졌을 때: Longhorn 설정 "Pod Deletion Policy When Node is Down"을 `delete-both-statefulset-and-deployment-pod`로 둔다. 학생 DB는 StatefulSet이고 앱은 Deployment라 둘 다 지워야 한다(`delete-deployment-pod`는 DB를 놓친다). 기본값(do-nothing)이면 죽은 노드의 Pod가 Terminating에 멈춘 채 볼륨을 붙들고 있어 반대쪽 워커에서 다시 뜨지 못한다.
 - 볼륨 하나 크기 상한: **제안** 10Gi(프로젝트 합계는 위 볼륨 요청 20Gi). 워커 디스크 여유 약 800GB 기준.
 - 세 노드에 `open-iscsi`가 필요하다(이미 깔려 있다. Longhorn 관리 Pod는 리더에도 뜬다).
 - 설치 · 페일오버 시험 뒤 볼륨 방식 ADR을 쓴다.
@@ -106,7 +108,7 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 
 ### 9. 공개 진입 (예정)
 
-- Cloudflare Tunnel. 와일드카드 `*.stairnoworks.com`을 터널로 보내고, 학생 주소는 `이름.stairnoworks.com`(소문자 영숫자 · 하이픈만). 예약 이름(`www` · `api` · `admin` · `mail` 등)은 학생이 못 쓴다.
+- Cloudflare Tunnel. 와일드카드 도메인을 터널로 보내고 학생 주소는 `이름.<도메인>`(소문자 영숫자 · 하이픈만)으로 연다. 도메인은 구축 담당이 가진 `stairnoworks.com`을 쓸 계획이지만, 연결 범위 · 비용은 [시스템 정의서 §6](../system-definition.md#열린-질문) 열린 질문 5에서 팀이 정한다. 예약 이름(`www` · `api` · `admin` · `mail` 등)은 학생이 못 쓴다.
 - 터널 클라이언트(cloudflared)는 지금은 리더에서 돈다. 그래서 리더가 꺼지면 방문자도 끊긴다. 워커 둘로 옮겨(같은 터널에 커넥터 둘) 리더가 꺼져도 열리게 하는 것은 후순위다. 그때 워커의 나가는 규칙에 7844를 더한다.
 - 목적지는 워커의 Traefik이다. 터널 토큰은 클러스터 Secret에만 둔다.
 
@@ -132,7 +134,7 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 ### 12. 반납
 
 1. Cloudflare 와일드카드 · 터널 삭제, 위 비밀값 폐기, 서버 기기를 사설망에서 뺀다.
-2. 현장에서 한 대씩, 손대기 전에 떠 둔 디스크 이미지로 내장 디스크를 통째로 덮어쓴다. k3s, 학생 데이터, 공개키, sudo 파일, Tailscale, 이 문서의 설정 파일이 한 번에 사라진다.
+2. 현장에서 한 대씩, 손대기 전에 떠 둔 디스크 이미지로 내장 디스크를 통째로 덮어쓴다. k3s, 학생 데이터, 공개키, 원격 설치용 설정, Tailscale, 이 문서의 설정 파일이 한 번에 사라진다.
 3. BIOS를 바꾸기 전에 찍어 둔 사진대로 되돌리고 장비(스위치 · 랜선)를 회수한다.
 
 ## 결정과 대안
