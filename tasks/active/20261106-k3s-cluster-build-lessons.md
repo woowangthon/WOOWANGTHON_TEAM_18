@@ -10,6 +10,8 @@
 - 2026-11-06: Stage 03 done. Hostnames set with `hostnamectl`, `/etc/hosts` 127.0.1.1 line renamed, and a cloud-init drop-in `preserve_hostname: true` added because `cloud.cfg` had `preserve_hostname: false` with `update_hostname`. Timezone Asia/Seoul. Rebooted w2 → w1 → leader; each came back with no local login.
 - 2026-11-06: Stage 04 done in three blocks, each PC with a 150 s auto-revert armed first. (1) Node addresses in a separate netplan file; `netplan generate` showed both addresses and the single school gateway before applying. iperf3 ~941 Mbit/s on all pairs. (2) SSH keys only (password try returns `Permission denied (publickey)`), then ufw with allow rules first and deny incoming; node addresses reach :22, school addresses do not. (3) Deny outgoing with a port allowlist; DNS, HTTPS, GHCR, apt, NTP and Tailscale still work, other ports (e.g. 8080) are blocked, worker 7844 is blocked.
 
+- 2026-11-06: Wrote `docs/design/cluster.md`. Writing it showed that system-definition §5.1 still described Wi-Fi per node and an isolated switch, which the design doc would contradict, so the §5.1 site values moved into the same PR (repo rule: a change and the doc it affects go together). Diagrams carry the same old premise and follow in their own PR.
+
 ## Lessons
 
 - **Arm the undo before a change that can cut remote access.** `systemd-run --on-active=150 <undo>`, then apply, reconnect from outside, then `systemctl stop <unit>.timer`. Used for netplan, sshd and both ufw switches; none needed it, but a mistake would have cost a trip to the club room. *(Pitfalls candidate)*

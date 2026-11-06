@@ -3,6 +3,7 @@
 - **SRS**: no FR yet (infra; SRS FR table still empty) — serves NFR-OPS-01 (student URLs reachable until judging ends) and NFR-SEC-01 (no secrets in the repo)
 - **Owner**: 유성 (seren-wib)
 - **Branch**: docs/cluster-design (first PR: `docs/design/cluster.md` + this task pair); cluster code later goes under `Infra/` on its own branches
+- **Issue**: https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/30
 - **Decisions**: [ADR-003](../../docs/adr/003-registry-ghcr.md) registry, [ADR-004](../../docs/adr/004-server-cluster-link-tailscale.md) server link, [ADR-005](../../docs/adr/005-k3s-cluster-on-school-pcs.md) cluster, [ADR-006](../../docs/adr/006-metrics-on-leader-prometheus.md) metrics
 
 ## Plan
@@ -27,6 +28,11 @@ Priorities: the demo path first. Deferred (후순위): moving cloudflared from t
   - [x] ufw: deny incoming; allow in on `tailscale0` and from `192.168.77.0/24`, `10.42.0.0/16`, `10.43.0.0/16`
   - [x] ufw: deny outgoing; allow out to the same networks plus 53, 123/udp, 80/tcp, 443/tcp, 41641/udp, 3478/udp; leader also 7844
   - [ ] `docs/design/cluster.md` PR (repo rule: design doc before implementation) — files: `docs/design/cluster.md`, this task pair
+    - [x] write `docs/design/cluster.md` (implemented parts with the real values; stage 05+ as designed; resource cap and volume size as proposals)
+    - [x] `docs/system-definition.md` §5.1 site values (wall-port uplink, firewall by source address, outbound ports, 7844 open, OS, return image), §5.2 and §6 pointers to the design doc
+    - [x] `docs/ai-scope.md`: Tailscale remote access in use, node OS tools row, tunnel port checked
+    - [ ] open the PR (issue first), then confirm the proposed cap values with the server owner
+    - [ ] follow-up PR: `docs/architecture/*.drawio.svg` still say Wi-Fi per node / no uplink (cluster, overview, user3-visitor)
 - [ ] 05 k3s install — leader with embedded etcd (`--cluster-init`), node IP on the node network, Tailscale address in the API cert, default CoreDNS off, versions pinned; workers join; labels + leader taint; CoreDNS on both workers. Check: ufw FORWARD default DROP does not block pod traffic; Docker does not bypass ufw
 - [ ] 06 Reboot tests — each worker, then the leader, then a full power cut
 - [ ] 07 Image pulls — GHCR pull-through cache on the leader (local-path), nodes fall back to GHCR directly
