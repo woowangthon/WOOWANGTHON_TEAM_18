@@ -4,7 +4,7 @@
 - **Owner**: 유성 (seren-wib)
 - **Branch**: docs/cluster-design (first PR: `docs/design/cluster.md` + this task pair); cluster code later goes under `Infra/` on its own branches
 - **Issue**: https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/30
-- **Decisions**: [ADR-003](../../docs/adr/003-registry-ghcr.md) registry, [ADR-004](../../docs/adr/004-server-cluster-link-tailscale.md) server link, [ADR-005](../../docs/adr/005-k3s-cluster-on-school-pcs.md) cluster, [ADR-006](../../docs/adr/006-metrics-on-leader-prometheus.md) metrics
+- **Decisions**: [ADR-003](../../docs/adr/003-registry-ghcr.md) registry, [ADR-004](../../docs/adr/004-server-cluster-link-tailscale.md) server link, [ADR-005](../../docs/adr/005-k3s-cluster-on-school-pcs.md) cluster, [ADR-006](../../docs/adr/006-metrics-on-leader-prometheus.md) metrics, [ADR-008](../../docs/adr/008-node-network-on-school-wired-lan.md) node network
 
 ## Plan
 
@@ -39,12 +39,12 @@ Priorities: the demo path first. Deferred (후순위): moving cloudflared from t
 - [ ] 08 Student namespace template — `proj-<id>`, Pod Security baseline enforced, resource cap under half a worker, NetworkPolicy (same namespace + Ingress in, same namespace + DNS out)
 - [ ] 08′ Student volume and DB failover — Longhorn 2 replicas on the workers, MySQL per project, node-down pod deletion policy, failover timing
 - [ ] 09 Server link — Tailscale tag and ACL, server ServiceAccount + RBAC + ValidatingAdmissionPolicy, Secret write-only
-- [ ] 10 Public entry — Cloudflare Tunnel from the leader, Traefik (2 replicas) on the workers, `demo.stairnoworks.com` over HTTPS
+- [ ] 10 Public entry — Cloudflare Tunnel from the leader, Traefik (2 replicas) on the workers, the demo student address over HTTPS
 - [ ] 11 Monitoring — Prometheus + Grafana on the leader (local-path), server queries Prometheus, Discord alerts
 - [ ] 12 Return — Clonezilla restore of all three disks, BIOS back to the photos, secrets revoked
 
 ## Done when
 
-- [ ] demo path on the cluster: the server deploys a test app into `proj-demo` and `demo.stairnoworks.com` opens over HTTPS with one worker powered off
+- [ ] demo path on the cluster: the server deploys a test app into `proj-demo` and the demo student address (`demo.<domain>`, domain still an open team question) opens over HTTPS with one worker powered off
 - [ ] `docs/design/cluster.md`, ADRs and `docs/ai-scope.md` match what is installed
 - [ ] the three PCs are returned in their original state (stage 12)

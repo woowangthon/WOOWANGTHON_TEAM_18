@@ -1,7 +1,7 @@
 # 클러스터 — 설계
 
 - **상태**: 일부 구현됨 (노드 · 네트워크 · 방화벽, 2026-11-06). k3s 설치부터는 초안
-- **관련**: SRS NFR-OPS-01 · NFR-SEC-01 · [ADR-003](../adr/003-registry-ghcr.md) 레지스트리 · [ADR-004](../adr/004-server-cluster-link-tailscale.md) 서버 연결 · [ADR-005](../adr/005-k3s-cluster-on-school-pcs.md) 클러스터 구성 · [ADR-006](../adr/006-metrics-on-leader-prometheus.md) 지표 · [시스템 정의서 §5](../system-definition.md#5-인프라) · 구축 task [`20261106-k3s-cluster-build`](../../tasks/active/20261106-k3s-cluster-build-todo.md)
+- **관련**: SRS NFR-OPS-01 · NFR-SEC-01 · [ADR-003](../adr/003-registry-ghcr.md) 레지스트리 · [ADR-004](../adr/004-server-cluster-link-tailscale.md) 서버 연결 · [ADR-005](../adr/005-k3s-cluster-on-school-pcs.md) 클러스터 구성 · [ADR-006](../adr/006-metrics-on-leader-prometheus.md) 지표 · [ADR-008](../adr/008-node-network-on-school-wired-lan.md) 노드망 · [시스템 정의서 §5](../system-definition.md#5-인프라) · 구축 task [`20261106-k3s-cluster-build`](../../tasks/active/20261106-k3s-cluster-build-todo.md)
 
 ## 범위
 
