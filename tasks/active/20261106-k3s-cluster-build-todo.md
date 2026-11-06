@@ -12,7 +12,7 @@ Build a leader + 2 worker k3s cluster on the three lent school PCs, stage by sta
 
 Rules for remote changes that can cut access (network, sshd, firewall): one PC at a time, w2 → w1 → leader, and arm an automatic revert first (`systemd-run --on-active=150 <undo>`), apply, reconnect from outside, then cancel the revert timer.
 
-Priorities: the demo path first. Deferred (후순위): moving cloudflared from the leader to both workers, Longhorn backups and etcd snapshots to R2, Ansible playbooks. The AI teammate's v14 deploy redesign (GPU + vLLM on the leader, GoCD Agent, maybe in-cluster build, maybe external student DB) is not decided; if adopted it is done after stage 11 as a separate add-on.
+Priorities: the demo path first. Deferred (후순위): moving cloudflared from the leader to both workers, etcd snapshots to R2, Ansible playbooks. The AI teammate's deploy redesign (v15, settled 2026-11-07): build stays on AWS CodeBuild, students bring their own DB, backend + AI server + GoCD server on one EC2, Qwen3-8B-AWQ on the leader GPU. Its cluster work is folded into the stages below (GPU toolkit first in 05, 06′, 09′, extra items in 11).
 
 ## Todo
 
@@ -33,12 +33,14 @@ Priorities: the demo path first. Deferred (후순위): moving cloudflared from t
     - [x] `docs/ai-scope.md`: Tailscale remote access in use, node OS tools row, tunnel port checked
     - [ ] open the PR (issue first), then confirm the proposed cap values with the server owner
     - [ ] follow-up PR: `docs/architecture/*.drawio.svg` still say Wi-Fi per node / no uplink (cluster, overview, user3-visitor)
-- [ ] 05 k3s install — leader with embedded etcd (`--cluster-init`), node IP on the node network, Tailscale address in the API cert, default CoreDNS off, versions pinned; workers join; labels + leader taint; CoreDNS on both workers. Check: ufw FORWARD default DROP does not block pod traffic; Docker does not bypass ufw
+- [ ] 05 k3s install — nvidia-container-toolkit on the leader first (so k3s picks up the nvidia runtime without a restart); leader with embedded etcd (`--cluster-init`), node IP on the node network, Tailscale address in the API cert, default CoreDNS off, versions pinned; workers join; labels + leader taint; CoreDNS on both workers. Check: ufw FORWARD default DROP does not block pod traffic; Docker does not bypass ufw
 - [ ] 06 Reboot tests — each worker, then the leader, then a full power cut
+- [ ] 06′ Leader GPU + vLLM — NVIDIA device plugin, Qwen/Qwen3-8B-AWQ on vLLM (16K context, 3 concurrent, API key in a leader Secret), no public route; measure GPU memory
 - [ ] 07 Image pulls — GHCR pull-through cache on the leader (local-path), nodes fall back to GHCR directly
-- [ ] 08 Student namespace template — `proj-<id>`, Pod Security baseline enforced, resource cap under half a worker, NetworkPolicy (same namespace + Ingress in, same namespace + DNS out)
-- [ ] 08′ Student volume and DB failover — Longhorn 2 replicas on the workers, MySQL per project, node-down pod deletion policy, failover timing
+- [ ] 08 Student namespace template — `proj-<id>`, Pod Security baseline enforced, resource cap under half a worker, NetworkPolicy (same namespace + Ingress in; same namespace + DNS + internet out, school LAN / cluster / node / tailnet / private ranges / other projects blocked)
+- [x] ~~08′ Student volume and DB failover~~ — dropped 2026-11-07: students bring their own DB (deploy workflow v15), so no platform MySQL or Longhorn; 08 opens student Pod egress to the internet instead
 - [ ] 09 Server link — Tailscale tag and ACL, server ServiceAccount + RBAC + ValidatingAdmissionPolicy, Secret write-only
+- [ ] 09′ GoCD Agent on the leader — connects to the GoCD server on the EC2 over Tailscale, deploy rights move to its ServiceAccount, Verify path through Traefik; docs (cluster.md, ADRs, ai-scope) for the AI parts
 - [ ] 10 Public entry — Cloudflare Tunnel from the leader, Traefik (2 replicas) on the workers, the demo student address over HTTPS
 - [ ] 11 Monitoring — Prometheus + Grafana on the leader (local-path), server queries Prometheus, Discord alerts
 - [ ] 12 Return — Clonezilla restore of all three disks, BIOS back to the photos, secrets revoked

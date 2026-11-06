@@ -12,6 +12,7 @@
 
 - 2026-11-06: Wrote `docs/design/cluster.md`. Writing it showed that system-definition §5.1 still described Wi-Fi per node and an isolated switch, which the design doc would contradict, so the §5.1 site values moved into the same PR (repo rule: a change and the doc it affects go together). Diagrams carry the same old premise and follow in their own PR.
 - 2026-11-06: Self review of #31 before marking it ready. Fixed: Longhorn node-down policy must also delete StatefulSet pods (the student DB), host egress rules do not cover Pod traffic (FORWARD), pin flannel to `enp4s0` so VXLAN uses the node address, set the node-down wait once on the API server instead of per Pod, the domain stays an open team question, and the switch reason no longer cites Wi-Fi isolation.
+- 2026-11-07: v15 answers settled the redesign: AWS CodeBuild build, students bring their own DB (08′ dropped, student Pod egress opened to the internet), one EC2 for backend + AI server + GoCD server, Qwen3-8B-AWQ (6.1 GB weights, 16K fits 10 GB by estimate). AI cluster work folded into the stage order instead of an add-on after 11. cluster.md / system-definition / ai-scope updated for the DB change in PR #31.
 
 ## Lessons
 
