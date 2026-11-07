@@ -34,7 +34,15 @@ Priorities: the demo path first. Deferred (후순위): moving cloudflared from t
     - [x] open the PR (issue first) — #30 / #31
     - [ ] confirm the proposed cap values with the server owner (#31 merged without it; needed before 08)
     - [x] follow-up PR: `docs/architecture/*.drawio.svg` still said Wi-Fi per node / no uplink and showed student volumes (cluster, overview, user3-visitor) — #33 / #34
-- [ ] 05 k3s install — nvidia-container-toolkit on the leader first (so k3s picks up the nvidia runtime without a restart); leader with embedded etcd (`--cluster-init`), node IP on the node network, Tailscale address in the API cert, default CoreDNS off, versions pinned; workers join; labels + leader taint; CoreDNS on both workers. Check: ufw FORWARD default DROP does not block pod traffic; Docker does not bypass ufw
+- [x] 05 k3s install (2026-11-07) — k3s v1.37.2+k3s1, options in `/etc/rancher/k3s/config.yaml` (`Infra/k3s/server.yaml`, `agent.yaml`)
+  - [x] nvidia-container-toolkit on the leader (1.20.1 already there as received; k3s registered the `nvidia` runtime)
+  - [x] leader: embedded etcd, node IP + API cert names, CoreDNS and ServiceLB off, Secrets encryption, control-plane taint, 30 s tolerations, NodePorts on the node network only
+  - [x] flannel `host-gw` with the node address as next hop (VXLAN used the school address)
+  - [x] workers joined with `wanggane/pool=student`
+  - [x] own CoreDNS on both workers (`Infra/coredns/coredns.yaml`)
+  - [x] checks: 3 nodes Ready, cross-worker Pod traffic, DNS, Pod HTTPS out, school-side 6443/80/443 closed, Docker rules only on `docker0`, `ufw route allow` for the Pod CIDR
+  - [ ] k3s token into the team shared vault
+  - [ ] repo PR (issue #35): `Infra/k3s/*`, `Infra/coredns/coredns.yaml`, `docs/design/cluster.md` §3–4, `docs/ai-scope.md`, `docs/system-definition.md` §5.1 ports (this log went in with #34)
 - [ ] 06 Reboot tests — each worker, then the leader, then a full power cut
 - [ ] 06′ Leader GPU + vLLM — NVIDIA device plugin, Qwen/Qwen3-8B-AWQ on vLLM (16K context, 3 concurrent, API key in a leader Secret), no public route; measure GPU memory
 - [ ] 07 Image pulls — GHCR pull-through cache on the leader (local-path), nodes fall back to GHCR directly
