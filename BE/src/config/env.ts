@@ -4,6 +4,8 @@ export interface Env {
   CORS_ORIGINS: string[]
   /** Supabase 프로젝트 origin. 로그인 토큰의 발급자와 공개 키 주소가 여기서 나온다. */
   SUPABASE_URL: string
+  /** Supabase의 공개 키(publishable 또는 anon). 사용자 토큰으로 Supabase를 부를 때 `apikey` 헤더에 넣는다. 비밀키가 아니다. */
+  SUPABASE_PUBLISHABLE_KEY: string
 }
 
 // 값이 틀리면 부팅을 멈춘다. 틀린 설정으로 뜬 서버가 조용히 다르게 동작하지 않게 한다.
@@ -13,6 +15,7 @@ export function validateEnv(raw: Record<string, string | undefined>): Env {
     PORT: parsePort(raw.PORT),
     CORS_ORIGINS: parseOrigins(raw.CORS_ORIGINS),
     SUPABASE_URL: parseSupabaseUrl(raw.SUPABASE_URL),
+    SUPABASE_PUBLISHABLE_KEY: parsePublishableKey(raw.SUPABASE_PUBLISHABLE_KEY),
   }
 }
 
@@ -43,6 +46,16 @@ function parseSupabaseUrl(value: string | undefined): string {
   const { protocol, hostname } = new URL(value)
   if (protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(hostname)) {
     throw new Error(`SUPABASE_URL "${value}" must use https (http is allowed only for localhost)`)
+  }
+  return value
+}
+
+// 키는 헤더 값으로 그대로 나간다. 붙여 넣다 생긴 공백 · 줄바꿈이 있으면 틀린 키로 조용히 요청이 가지 않게 막는다.
+function parsePublishableKey(value: string | undefined): string {
+  if (value === undefined || !/^\S+$/.test(value)) {
+    throw new Error(
+      'SUPABASE_PUBLISHABLE_KEY is required and must not contain whitespace (the public key from Supabase Project Settings → API Keys)',
+    )
   }
   return value
 }
