@@ -52,6 +52,7 @@ export class AuthGuard implements CanActivate {
       throw new UnauthorizedException({ code: 'AUTH_REQUIRED', message: 'Login required' })
     }
     req.user = await this.verify(token)
+    req.accessToken = token
     return true
   }
 

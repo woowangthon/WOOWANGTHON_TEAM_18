@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { validateEnv } from './env.js'
 
 // 필수값만 채운 입력. 각 테스트는 보려는 값만 덮어쓴다.
-const base = { SUPABASE_URL: 'https://abc.supabase.co' }
+const base = { SUPABASE_URL: 'https://abc.supabase.co', SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_test' }
 
 describe('PORT', () => {
   it('defaults to 3000 when unset or empty', () => {
@@ -40,27 +40,41 @@ describe('CORS_ORIGINS', () => {
   )
 })
 
+describe('SUPABASE_PUBLISHABLE_KEY', () => {
+  it('is passed through', () => {
+    expect(validateEnv(base).SUPABASE_PUBLISHABLE_KEY).toBe('sb_publishable_test')
+  })
+
+  it.each([undefined, ''])('is required (%s)', (key) => {
+    expect(() => validateEnv({ ...base, SUPABASE_PUBLISHABLE_KEY: key })).toThrow(/SUPABASE_PUBLISHABLE_KEY is required/)
+  })
+
+  it.each([' abc', 'abc ', 'a b', 'abc\n'])('rejects whitespace in %j', (key) => {
+    expect(() => validateEnv({ ...base, SUPABASE_PUBLISHABLE_KEY: key })).toThrow(/whitespace/)
+  })
+})
+
 describe('SUPABASE_URL', () => {
   it('accepts a project origin', () => {
     expect(validateEnv(base).SUPABASE_URL).toBe('https://abc.supabase.co')
   })
 
   it.each(['http://127.0.0.1:54321', 'http://localhost:54321', 'http://[::1]:54321'])('allows http for a local Supabase (%s)', (url) => {
-    expect(validateEnv({ SUPABASE_URL: url }).SUPABASE_URL).toBe(url)
+    expect(validateEnv({ ...base, SUPABASE_URL: url }).SUPABASE_URL).toBe(url)
   })
 
   it.each(['http://abc.supabase.co', 'http://10.0.0.5:8000', 'ftp://abc.supabase.co'])('requires https for "%s"', (url) => {
-    expect(() => validateEnv({ SUPABASE_URL: url })).toThrow(/must use https/)
+    expect(() => validateEnv({ ...base, SUPABASE_URL: url })).toThrow(/must use https/)
   })
 
   it.each([undefined, ''])('is required (%s)', (url) => {
-    expect(() => validateEnv({ SUPABASE_URL: url })).toThrow(/SUPABASE_URL is required/)
+    expect(() => validateEnv({ ...base, SUPABASE_URL: url })).toThrow(/SUPABASE_URL is required/)
   })
 
   it.each(['abc.supabase.co', 'https://abc.supabase.co/', 'https://abc.supabase.co/auth/v1'])(
     'rejects "%s"',
     (url) => {
-      expect(() => validateEnv({ SUPABASE_URL: url })).toThrow(/SUPABASE_URL .* is not an origin/)
+      expect(() => validateEnv({ ...base, SUPABASE_URL: url })).toThrow(/SUPABASE_URL .* is not an origin/)
     },
   )
 })

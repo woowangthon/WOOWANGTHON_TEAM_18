@@ -1,13 +1,13 @@
 # 인증 — 설계
 
-- **상태**: 구현됨 (로그인 토큰 검증. GitHub 연동은 예정)
-- **관련**: SRS NFR-SEC-03 · [ADR-007](../adr/007-login-email-password-github-link.md) · [API 계약](api.md)의 인증 그룹
+- **상태**: 구현됨 (로그인 토큰 검증, 레포 소유 확인. FE의 연동 버튼은 예정)
+- **관련**: SRS NFR-SEC-03 · NFR-SEC-04 · [ADR-007](../adr/007-login-email-password-github-link.md) · [API 계약](api.md)의 인증 그룹
 
 ## 범위
 
 - **한다**: Supabase Auth가 발급한 로그인 토큰(access token)을 플랫폼 서버가 검증하고, 요청마다 누가 불렀는지(`id`, `email`, `isAdmin`)를 정한다. 로그인 없이 열기로 정한 API(헬스 체크, 나중에 만들 Playground 공개 조회 — [시스템 정의서](../system-definition.md) §4.4)를 뺀 모든 API에 적용한다.
 - **하지 않는다**: 로그인 · 가입 · 비밀번호 재설정 · 토큰 갱신. FE가 supabase-js로 Supabase에 직접 하고, 플랫폼 서버에는 로그인 API가 없다. 플랫폼 서버는 이 단계에서 Supabase 비밀키를 갖지 않는다.
-- **예정**: GitHub 연동과 레포 소유 확인(아래 [GitHub 연동](#github-연동-예정)).
+- **GitHub 연동과 레포 소유 확인**: 아래 [GitHub 연동과 레포 소유 확인](#github-연동과-레포-소유-확인).
 
 ## 설계
 
@@ -47,14 +47,32 @@
 
 `503`을 따로 두는 이유: 인증 서버 쪽 장애를 "토큰이 틀렸다"(`401`)로 돌려주면 FE가 멀쩡한 사용자를 로그아웃시킨다. 그렇다고 검증 없이 통과시키지도 않는다([`conventions.md`](../conventions.md) F-1).
 
-## GitHub 연동 (예정)
+## GitHub 연동과 레포 소유 확인
 
-다음 PR에서 만든다. 정해 둔 것:
+연동은 FE가, 확인은 플랫폼 서버가 한다. 확인 API는 [`api.md`](api.md)의 `POST /api/repos/check`이고, 나중에 만들 제출 API가 같은 확인을 그대로 쓴다.
 
-- 학생이 프로필에서 `supabase.auth.linkIdentity({ provider: 'github' })`로 연동한다. Supabase의 Manual linking 설정(beta)을 켜야 하고, GitHub OAuth 앱의 callback은 `<SUPABASE_URL>/auth/v1/callback`이다.
-- 연동한 GitHub 계정은 토큰에 들어 있지 않다. 플랫폼 서버가 service role 키로 `auth.admin.getUserById(id)`를 불러 `identities` 중 `provider = 'github'`인 항목의 GitHub 사용자 ID를 읽고, 레포 소유자의 ID와 비교한다. 사용자명(login)은 바뀔 수 있어 숫자 ID로 비교한다.
+- 학생이 프로필에서 `supabase.auth.linkIdentity({ provider: 'github' })`로 연동한다. Supabase의 Manual linking 설정(beta)을 켜야 하고, GitHub OAuth 앱의 callback은 `<SUPABASE_URL>/auth/v1/callback`이다. 요청하는 권한은 읽기뿐이다.
+- 연동한 GitHub 계정은 토큰에 들어 있지 않다. 플랫폼 서버는 **요청에 온 사용자 토큰 그대로** `GET <SUPABASE_URL>/auth/v1/user`(헤더 `Authorization: Bearer <토큰>` · `apikey: <공개 키>`)를 불러, 돌려받은 `identities` 중 `provider = 'github'`인 항목의 `id`(GitHub 사용자 숫자 ID)를 읽는다. 사용자명(login)은 바뀔 수 있어 숫자 ID로 비교한다. 이 방법이라 플랫폼 서버에 Supabase 비밀키(service role)가 필요 없고, 로그아웃되었거나 폐기된 세션의 토큰은 Supabase가 거부한다. 서버에 두는 값은 공개 키(`SUPABASE_PUBLISHABLE_KEY`, FE 번들에도 들어가는 값)뿐이다.
+- 사용자 토큰은 Supabase에만 보낸다. GitHub에는 어떤 `Authorization`도 붙이지 않고 공개 레포 조회만 한다.
 - 다른 계정에 이미 연동된 GitHub 계정은 Supabase가 연동을 거부한다. 그래서 GitHub 계정 하나는 사용자 하나에만 붙는다.
-- 연동 해제는 로그인 수단이 2개 이상일 때만 된다(이메일 + GitHub). 해제할 수 있으므로 소유 확인은 제출할 때마다 한다.
+- 연동 해제는 로그인 수단이 2개 이상일 때만 된다(이메일 + GitHub). 해제할 수 있으므로 소유 확인은 요청할 때마다 한다(저장해 두지 않는다).
+
+### 확인 순서와 오류
+
+앞 단계에서 실패하면 뒤 단계는 하지 않는다. 오류 모양은 SRS §2.4 공통 규칙을 따른다.
+
+| 단계 | 실패 | 응답 |
+| --- | --- | --- |
+| 1. 레포 주소 읽기: `https://github.com/<소유자>/<레포>`(끝의 `.git` · `/`는 허용)만 받는다 | 다른 호스트 · `http` · 사용자 정보 · 추가 경로 · 빈 이름 | `400 INVALID_REPO_URL` |
+| 2. Supabase에서 사용자 조회 | Supabase가 토큰을 거부(`401` · `403`) | `401 INVALID_TOKEN` |
+| | Supabase 장애 · 네트워크 · 시간 초과 | `503 AUTH_UNAVAILABLE` |
+| 3. 연동한 GitHub 확인 | `github` identity가 없음 | `403 GITHUB_NOT_LINKED` |
+| 4. GitHub에서 레포 조회 | 없는 레포, 비공개 레포(GitHub는 둘 다 `404`로 답한다) | `404 REPO_NOT_FOUND` |
+| | 한도 초과(`403` · `429`) · GitHub 장애 · 네트워크 · 시간 초과 | `503 GITHUB_UNAVAILABLE` |
+| 5. 개인 레포인가 | 소유자가 조직(`type`이 `User`가 아님). MVP는 공개 개인 레포만 지원한다([ADR-002](../adr/002-bot-account-for-fix-prs.md)) | `422 REPO_NOT_PERSONAL` |
+| 6. 소유자 대조 | 소유자 ID ≠ 연동한 GitHub ID | `403 REPO_NOT_OWNED` |
+
+외부 서비스 장애는 사용자 잘못(`4xx`)으로 바꾸지 않고 `503`으로 돌려준다([`conventions.md`](../conventions.md) F-1). 내가 소유자인 레포를 다른 레포에서 fork한 경우도 소유자는 나이므로 통과한다. 관리자도 같은 확인을 받는다(관리자는 제출하지 않고 보기만 하므로 예외를 두지 않는다).
 
 ## 결정과 대안
 
@@ -67,6 +85,7 @@
 
 ## 알려진 한계
 
+- GitHub 공개 API를 인증 없이 부르면 서버 IP당 시간당 60번까지다. 소유 확인은 요청마다 한 번 부르므로 데모에는 충분하지만, 부족해지면 봇 계정(ADR-002)의 토큰으로 5000번까지 늘린다. 한도에 걸리면 `503 GITHUB_UNAVAILABLE`이다.
 - 토큰은 수명(기본 1시간) 동안 유효하다. 로그아웃 · 계정 정지 · 관리자 해제가 플랫폼 서버에 바로 반영되지 않는다. 계정 정지 기능을 만들 때 DB 확인을 더할지 다시 본다.
 - `alg` 처리와 401 · 503 구분은 jose의 동작과 오류 종류에 기대고 있다. jose를 올리거나 바꾸면 `BE/test/auth.e2e.spec.ts`가 이를 다시 확인한다.
 - 자동 테스트는 테스트에서 만든 키로 서명한 토큰으로 검증 경로를 확인한다. 실제 Supabase 토큰은 테스트 계정으로 로그인해 직접(`curl`) 확인한다.
