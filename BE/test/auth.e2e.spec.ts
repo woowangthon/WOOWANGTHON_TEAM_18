@@ -1,38 +1,10 @@
 import { type INestApplication, Logger } from '@nestjs/common'
-import { exportJWK, generateKeyPair, SignJWT, UnsecuredJWT } from 'jose'
+import { UnsecuredJWT } from 'jose'
 import request from 'supertest'
 import type { App } from 'supertest/types.js'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { errorBody, ISSUER, JWKS_URL, keySet, now, stranger, token } from './auth-helpers.js'
 import { startApp } from './start-app.js'
-
-const ISSUER = new URL('/auth/v1', process.env.SUPABASE_URL).href
-const JWKS_URL = `${ISSUER}/.well-known/jwks.json`
-
-// 테스트에서 만든 키. 진짜 Supabase 대신 이 키의 공개 키 목록을 fetch 자리에서 돌려준다.
-const kid = 'test-key'
-const signer = await generateKeyPair('ES256')
-const stranger = await generateKeyPair('ES256')
-const keySet = { keys: [{ ...(await exportJWK(signer.publicKey)), kid, alg: 'ES256', use: 'sig' }] }
-
-const now = () => Math.floor(Date.now() / 1000)
-
-// 기본값은 유효한 토큰이다. 덮어쓴 claim만 바뀌고, undefined를 주면 그 claim이 빠진다.
-function token(
-  claims: Record<string, unknown> = {},
-  { alg = 'ES256', key = signer.privateKey }: { alg?: string; key?: Parameters<SignJWT['sign']>[0] } = {},
-) {
-  return new SignJWT({
-    sub: 'user-1',
-    email: 'student@example.com',
-    iss: ISSUER,
-    aud: 'authenticated',
-    exp: now() + 300,
-    ...claims,
-  })
-    .setProtectedHeader({ alg, kid })
-    .setIssuedAt()
-    .sign(key)
-}
 
 const fetchKeys = vi.fn<typeof fetch>()
 let app: INestApplication<App>
@@ -53,8 +25,6 @@ const me = (authorization?: string) => {
   const req = request(app.getHttpServer()).get('/api/me')
   return authorization === undefined ? req : req.set('Authorization', authorization)
 }
-
-const errorBody = (code: string) => ({ error: { code, message: expect.any(String) as string } })
 
 describe('GET /api/me', () => {
   it('returns the user of a valid token, read with the project key set', async () => {
