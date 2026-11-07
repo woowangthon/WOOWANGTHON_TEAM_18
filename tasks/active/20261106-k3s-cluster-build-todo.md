@@ -27,12 +27,13 @@ Priorities: the demo path first. Deferred (후순위): moving cloudflared from t
   - [x] SSH keys only (`/etc/ssh/sshd_config.d/10-wanggane-keys-only.conf`)
   - [x] ufw: deny incoming; allow in on `tailscale0` and from `192.168.77.0/24`, `10.42.0.0/16`, `10.43.0.0/16`
   - [x] ufw: deny outgoing; allow out to the same networks plus 53, 123/udp, 80/tcp, 443/tcp, 41641/udp, 3478/udp; leader also 7844
-  - [ ] `docs/design/cluster.md` PR (repo rule: design doc before implementation) — files: `docs/design/cluster.md`, this task pair
+  - [x] `docs/design/cluster.md` PR (repo rule: design doc before implementation) — files: `docs/design/cluster.md`, this task pair — #31, merged 2026-11-07
     - [x] write `docs/design/cluster.md` (implemented parts with the real values; stage 05+ as designed; resource cap and volume size as proposals)
     - [x] `docs/system-definition.md` §5.1 site values (wall-port uplink, firewall by source address, outbound ports, 7844 open, OS, return image), §5.2 and §6 pointers to the design doc
     - [x] `docs/ai-scope.md`: Tailscale remote access in use, node OS tools row, tunnel port checked
-    - [ ] open the PR (issue first), then confirm the proposed cap values with the server owner
-    - [ ] follow-up PR: `docs/architecture/*.drawio.svg` still say Wi-Fi per node / no uplink (cluster, overview, user3-visitor)
+    - [x] open the PR (issue first) — #30 / #31
+    - [ ] confirm the proposed cap values with the server owner (#31 merged without it; needed before 08)
+    - [x] follow-up PR: `docs/architecture/*.drawio.svg` still said Wi-Fi per node / no uplink and showed student volumes (cluster, overview, user3-visitor) — #33 / #34
 - [ ] 05 k3s install — nvidia-container-toolkit on the leader first (so k3s picks up the nvidia runtime without a restart); leader with embedded etcd (`--cluster-init`), node IP on the node network, Tailscale address in the API cert, default CoreDNS off, versions pinned; workers join; labels + leader taint; CoreDNS on both workers. Check: ufw FORWARD default DROP does not block pod traffic; Docker does not bypass ufw
 - [ ] 06 Reboot tests — each worker, then the leader, then a full power cut
 - [ ] 06′ Leader GPU + vLLM — NVIDIA device plugin, Qwen/Qwen3-8B-AWQ on vLLM (16K context, 3 concurrent, API key in a leader Secret), no public route; measure GPU memory
