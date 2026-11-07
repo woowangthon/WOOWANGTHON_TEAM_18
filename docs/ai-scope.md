@@ -24,8 +24,8 @@
 | 외부 기술 | AWS — CodeBuild(빌드), S3 + CloudFront(웹 정적 파일), EC2(Nest · FastAPI · Kafka 브로커) | 구현 전. 설정·연동 |
 | 외부 기술 | GHCR (학생 앱 이미지 레지스트리, 이미지 공개. [ADR-003](adr/003-registry-ghcr.md)) | 구현 전. 설정·연동 |
 | 외부 기술 | Apache Kafka (EC2 단일 브로커) | 구현 전. 설정·연동 |
-| 외부 기술 | Supabase (PostgreSQL, Auth — 이메일 · 비밀번호 로그인, GitHub 계정 연동. [ADR-007](adr/007-login-email-password-github-link.md)) | 구현 전. 설정·연동 |
-| 외부 API | GitHub API — 봇 계정의 fork·PR 생성, 계정 연동(OAuth, Supabase Auth가 처리), 레포 소유자 조회 | 구현 전. 연동 |
+| 외부 기술 | Supabase (PostgreSQL, Auth — 이메일 · 비밀번호 로그인, GitHub 계정 연동. [ADR-007](adr/007-login-email-password-github-link.md)) | 로그인 토큰 검증은 구현함. 소유 확인에서 사용자 토큰으로 `GET /auth/v1/user`를 불러 연동한 GitHub ID를 읽음. 연동 · 가입 화면은 구현 전 |
+| 외부 API | GitHub API — 봇 계정의 fork·PR 생성, 계정 연동(OAuth, Supabase Auth가 처리), 레포 소유자 조회 | 레포 소유자 조회(`GET /repos/{소유자}/{레포}`, 인증 없이 공개 레포만, 서버 IP당 시간당 60번)는 구현함. fork·PR 생성과 계정 연동 화면은 구현 전 |
 | 외부 기술 | k3s (Traefik Ingress 포함), Prometheus (node-exporter · cAdvisor · kube-state-metrics · blackbox-exporter), Grafana | 구현 전. 설정·연동 |
 | 외부 기술 | Tailscale (플랫폼 서버 ↔ 리더 연결, 운영자 원격 접속. [ADR-004](adr/004-server-cluster-link-tailscale.md)) | 운영자 원격 접속은 설정함(2026-11-05, 세 노드). 플랫폼 서버 연결은 구현 전 |
 | 외부 기술 | 노드 OS 도구 — ufw(호스트 방화벽), netplan(노드 주소), iperf3(노드 사이 속도 측정), Clonezilla(반납용 디스크 이미지) | 설정 · 사용(2026-11-04 ~ 06). 규칙 · 값은 [`design/cluster.md`](design/cluster.md) §1 ~ §3 |
