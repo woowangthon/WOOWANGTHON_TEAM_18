@@ -21,7 +21,8 @@
   - Own CoreDNS from the k3s v1.37.2 manifest (replicas 2, worker label, required hostname anti-affinity). Pods stuck in ContainerCreating: k3s does not fill `NodeHosts` when its CoreDNS is disabled; wrote the three node lines into the ConfigMap.
   - Checks: 3 nodes Ready on 192.168.77.x; cross-worker Pod ping (~0.66 ms) and HTTP; cluster DNS, node names, external names; Pod HTTPS out. School addresses: 6443/80/443/10250/NodePorts closed, tested from w1's school address and from a w1 Pod (masqueraded to the school address); the receiving ufw logged the school source. Node addresses reach 6443 and NodePorts.
   - FORWARD order: kube-router (NetworkPolicy) → kube-proxy → Docker/Tailscale → ufw → flannel. A fresh Pod's first SYN hit ufw's routed deny before kube-router synced the Pod; added `ufw route allow` from/to 10.42.0.0/16 on all three (150 s revert). NetworkPolicy still applies first (deny-ingress policy refused, removed policy allowed). Docker rules only touch `docker0`; no containers.
-  - Open: k3s token into the team shared vault (유성); NotReady detection time of v1.37.2 to be measured in stage 06.
+  - Followed up: the operator keeps a copy of the token in a password manager (a team vault waits until teammates need shared secrets); the NotReady time was measured in stage 06 (~50 s).
+- 2026-11-08: Stage 06 remote part done. Rebooted w1 → w2 → leader one at a time (`systemd-run --on-active=2 systemctl reboot`, so the SSH call returns first). Each came back in ~35–45 s with nobody logged in: k3s, ufw (route rules included), node addresses and Pod routes up; after the leader reboot all three nodes were Ready at once. A reboot is shorter than the NotReady grace period, so no node went NotReady and CoreDNS restarted in place (new Pod IP). Measured the grace period by stopping w1's k3s-agent for 150 s with a restart timer armed: NotReady after ~50 s (the docs assumed 40 s), replacement CoreDNS Pod 30 s later (Pending until w1 came back, one-per-node rule), ~80 s in total. Re-ran Pod ping/HTTP, DNS, Pod HTTPS and the school-address port checks: same as 05. Full power cut still to do on site.
 
 ## Lessons
 
@@ -37,4 +38,6 @@
 - **ufw parses `in`/`out` inside a comment** as direction keywords on `route` rules ("Invalid interface clause"). Keep those words out of comments.
 - **`pkill -f` matches its own SSH command line.** A pattern that also appears in the `bash -c` string kills the session; kill by PID.
 - **k3s leaves `NodeHosts` empty when its CoreDNS is disabled.** A CoreDNS copied from k3s needs the key, or the Pod never mounts its ConfigMap.
+- **Measure the NotReady time by stopping the agent, not by rebooting.** A ~40 s reboot ends inside the grace period, so nothing is rescheduled. `systemctl stop k3s-agent` keeps the containers running and, with a restart timer armed, shows the real NotReady and eviction times.
+- **A new namespace needs a moment before Pods can be created.** `kubectl run` right after `create ns` fails with "serviceaccount default not found"; wait for `get sa default` first.
 - **zsh does not word-split unquoted variables.** A `for pair in "host ip"; set -- $pair` loop silently passed the whole string as one argument; run such loops in bash.

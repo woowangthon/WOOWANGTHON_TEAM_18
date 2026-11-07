@@ -41,9 +41,11 @@ Priorities: the demo path first. Deferred (후순위): moving cloudflared from t
   - [x] workers joined with `wanggane/pool=student`
   - [x] own CoreDNS on both workers (`Infra/coredns/coredns.yaml`)
   - [x] checks: 3 nodes Ready, cross-worker Pod traffic, DNS, Pod HTTPS out, school-side 6443/80/443 closed, Docker rules only on `docker0`, `ufw route allow` for the Pod CIDR
-  - [ ] k3s token into the team shared vault
-  - [ ] repo PR (issue #35): `Infra/k3s/*`, `Infra/coredns/coredns.yaml`, `docs/design/cluster.md` §3–4, `docs/ai-scope.md`, `docs/system-definition.md` §5.1 ports (this log went in with #34)
+  - [x] k3s token: the server token is on the leader and on both workers (`/etc/rancher/k3s/token`); the operator keeps a copy in a password manager. A team shared vault waits until there are secrets teammates must use (vLLM key, tunnel token)
+  - [ ] repo PR #37 (issue #35): `Infra/k3s/*`, `Infra/coredns/coredns.yaml`, `docs/design/cluster.md` §3–4, `docs/ai-scope.md`, `docs/system-definition.md` §5.1–5.2, reboot results (this log went in with #34)
 - [ ] 06 Reboot tests — each worker, then the leader, then a full power cut
+  - [x] w1 → w2 → leader, one at a time, remotely (2026-11-08): each back in ~35–45 s unattended; NotReady measured at ~50 s (agent stopped), rescheduling at ~80 s
+  - [ ] full power cut (on site)
 - [ ] 06′ Leader GPU + vLLM — NVIDIA device plugin, Qwen/Qwen3-8B-AWQ on vLLM (16K context, 3 concurrent, API key in a leader Secret), no public route; measure GPU memory
 - [ ] 07 Image pulls — GHCR pull-through cache on the leader (local-path), nodes fall back to GHCR directly
 - [ ] 08 Student namespace template — `proj-<id>`, Pod Security baseline enforced, resource cap under half a worker, NetworkPolicy (same namespace + Ingress in; same namespace + DNS + internet out, school LAN / cluster / node / tailnet / private ranges / other projects blocked)
