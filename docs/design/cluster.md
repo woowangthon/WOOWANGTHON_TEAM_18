@@ -53,7 +53,7 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 | 거쳐 감 (FORWARD) | 출발지 또는 목적지 `10.42.0.0/16` | Pod 통신. NetworkPolicy(k3s의 kube-router)가 이보다 앞에서 걸린다 |
 
 - 나가는 쪽을 도메인이 아니라 포트로 거르는 것은 ufw가 도메인을 모르고, 레지스트리 · 패키지 저장소 · Tailscale이 CDN 뒤라 IP가 바뀌기 때문이다.
-- 이 표는 **호스트 프로세스**(containerd, k3s, Tailscale, apt 등)에만 걸린다. Pod에서 나가는 통신은 NAT 뒤 FORWARD 체인을 타서 이 표가 적용되지 않는다. 그래서 학생 Pod는 NetworkPolicy(§6)로 막고, 운영 도구 Pod(cloudflared · 이미지 캐시 · CoreDNS의 바깥 DNS 질의)는 05에서 FORWARD가 실제로 어떻게 동작하는지 본 뒤 필요한 목적지 · 포트만 여는 NetworkPolicy로 따로 묶는다. 그 전까지 "리더만 7844"는 호스트 기준이다.
+- 이 표는 **호스트 프로세스**(containerd, k3s, Tailscale, apt 등)에만 걸린다. Pod에서 나가는 통신은 NAT 뒤 FORWARD 체인을 타서 이 표가 적용되지 않는다. 그래서 학생 Pod는 NetworkPolicy(§6)로 막고, 운영 도구 Pod(cloudflared · 이미지 캐시 · CoreDNS의 바깥 DNS 질의)는 띄울 때(07 · 10) 필요한 목적지 · 포트만 여는 NetworkPolicy로 따로 묶는다(05에서 본 FORWARD 동작은 아래). 그 전까지 "리더만 7844"는 호스트 기준이다.
 - 확인한 것(2026-11-06): 사설망으로 세 대 SSH 됨, 노드 주소로는 22번이 열리고 학교 주소로는 막힘, DNS · HTTPS · GHCR · `apt update` · 시간 동기화 · Tailscale 됨, 8080 같은 다른 포트와 워커의 7844는 막힘, 부팅 때 ufw가 켜짐.
 - k3s 설치(§4, 2026-11-07)에서 본 것: FORWARD 체인은 kube-router(NetworkPolicy) → kube-proxy → Docker · Tailscale → ufw → flannel 순서다. 평소 Pod 통신은 맨 앞 kube-router 체인이 받지만, 새 Pod의 첫 패킷은 그 Pod의 규칙이 생기기 전에 ufw의 routed 기본 거부에 걸렸다. 그래서 위 표의 FORWARD 줄(`ufw route allow`, 양방향)을 더했다. NetworkPolicy는 그보다 앞이라 그대로 걸린다(거부 정책을 넣고 빼서 시험했다). flannel의 허용 규칙도 Pod 대역 전체를 받으므로, Pod 바깥 통신을 거르는 건 NetworkPolicy 몫이다. 이미 깔린 Docker는 `docker0`에만 규칙을 걸어 Pod 통신에 영향이 없고 컨테이너도 없다.
 - hostPort와 NodePort는 DNAT 뒤 FORWARD로 가서 ufw의 들어오는 거부(INPUT)를 비켜 간다. 그래서 §4에서 ServiceLB(Traefik의 hostPort 80/443)를 끄고 NodePort를 노드 대역으로 묶었다. 확인(2026-11-07): 다른 노드의 학교 주소와 그 노드의 Pod(학교 주소로 바뀌어 나간다)에서 재 보니 학교 주소로는 6443 · 80 · 443 · 10250 · NodePort가 닫혀 있고, 받는 쪽 ufw 차단 기록의 출발지가 학교 주소였다.
@@ -72,7 +72,7 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 - 배치 규칙: 워커에 학생용 라벨, 리더에 `NoSchedule` taint. 학생 Pod는 라벨로 워커에 가고, 서버 양식이 nodeSelector를 빠뜨려도 taint가 막는다. 리더에는 toleration을 단 운영 도구만 뜬다.
 - CoreDNS는 k3s 기본을 끄고 직접 띄운다: 워커 둘에 하나씩(복제본 2), 클러스터 DNS 주소는 k3s 기본값 `10.43.0.10`. k3s 기본은 복제본 1이라 리더에 뜰 수 있고, k3s가 시작할 때마다 기본 설정으로 되돌린다. 매니페스트는 [`Infra/coredns/coredns.yaml`](../../Infra/coredns/coredns.yaml)이다(k3s v1.37.2의 것에서 복제본 2, 워커 라벨, 노드당 하나만 바꿨다). k3s는 자기 CoreDNS를 끄면 `NodeHosts`를 채우지 않아서 세 노드 이름을 그 파일에 적었다.
 - Traefik(k3s 기본 Ingress)은 `HelmChartConfig`로 워커에만, 복제본 2로 둔다. 하나뿐이면 그 워커가 죽을 때 터널이 보낼 곳이 없다.
-- k3s 토큰은 리더와 팀 둘 이상이 여는 비밀번호 관리자 공유 보관함에만 둔다(노드를 새로 붙일 때 필요하다).
+- k3s 토큰(서버 토큰)은 리더에 있고, 조인에 쓴 사본이 워커 둘의 `/etc/rancher/k3s/token`(권한 600)에도 있다. 레포 · 노션 · 채팅에는 올리지 않고, 운영자가 비밀번호 관리자에 사본을 둔다. 서버 토큰은 워커뿐 아니라 리더로도 붙을 수 있는 열쇠라서, 학생 앱을 받기 전(08)에 워커에는 워커 전용 `agent-token`을 줄지 정한다.
 
 ### 5. 이미지 (예정)
 
@@ -129,7 +129,7 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 
 | 비밀값 | 두는 곳 |
 | --- | --- |
-| k3s 서버 토큰 | 리더, 팀 공유 비밀번호 관리자 |
+| k3s 서버 토큰 | 리더, 워커 둘의 토큰 파일, 운영자의 비밀번호 관리자 |
 | 플랫폼 서버의 클러스터 접속 정보 | AWS 비밀 설정 |
 | 서버용 Tailscale 인증 키 | 일회용. 등록 뒤 폐기 |
 | GHCR 쓰기 토큰(봇 계정) | 빌드 쪽에만 (ADR-003) |
@@ -164,6 +164,6 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 - 나가는 443은 목적지를 가리지 않는다. 워커 호스트가 뚫리면 443으로는 어디든 나갈 수 있다.
 - 학생 Pod가 인터넷으로 나가므로 학생 앱이 학교 공인 IP로 바깥에 요청을 보낼 수 있다(남용은 감수한다). 사설 대역 차단이 빠지면 학교망 · 노드 · 사설망에 닿으므로 NetworkPolicy의 예외 대역을 같이 적는다.
 - Secret을 "쓰기만" 줘도 간접 읽기는 막지 못한다. 서버 계정이 털리면 `proj-` 공간에 그 Secret을 마운트하는 Pod를 띄우고 로그로 값을 읽을 수 있다. 서버가 넣는 Secret은 그 학생 앱의 접속 정보뿐이라 한 프로젝트 안으로 피해가 묶이고, 다른 공간과 시스템 Secret은 검사 규칙으로 닿지 않는다. 서버 접속 정보를 AWS 비밀 설정에만 두는 것이 1차 방어다.
-- Pod 대역(`10.42.0.0/16`)으로 가는 패킷은 FORWARD에서 받는다(k3s 기본 flannel 규칙과 같다). 같은 선의 학교망 기기가 노드를 경로로 지정하면 Pod에 닿을 수 있어서, 학생 Pod는 NetworkPolicy(§6)의 들어오는 규칙이 막는다.
+- Pod 대역(`10.42.0.0/16`)으로 가는 패킷은 FORWARD에서 받는다(k3s 기본 flannel 규칙과 같다). 같은 선의 학교망 기기가 노드를 경로로 지정하면 Pod에 닿을 수 있다. 학생 Pod는 NetworkPolicy(§6)의 들어오는 규칙이 막지만, 시스템 Pod(CoreDNS · Traefik 등)는 아직 NetworkPolicy가 없어 이 길로 닿는다. 운영 도구 Pod의 NetworkPolicy(§3)를 넣을 때 들어오는 쪽도 같이 막는다.
 - 터널 대신 AWS 서버를 공개 입구로 두고 Tailscale로 워커 Traefik에 넘기는 대안을 쓰게 되면 ServiceLB가 없어 Traefik으로 가는 길을 따로 연다.
 - 위의 **제안** 값(프로젝트 자원 상한, 컨테이너 기본값)은 플랫폼 서버 담당과 확인 전이다.

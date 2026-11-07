@@ -84,7 +84,8 @@ data:
     }
     import /etc/coredns/custom/*.server
   # k3s fills NodeHosts only for its packaged CoreDNS, so the node addresses
-  # (fixed, docs/design/cluster.md §1) are listed here.
+  # (fixed, docs/design/cluster.md §1) are listed here. Update this list when a
+  # node is added, renamed or readdressed.
   NodeHosts: |
     192.168.77.11 k3s-leader
     192.168.77.12 k3s-w1
