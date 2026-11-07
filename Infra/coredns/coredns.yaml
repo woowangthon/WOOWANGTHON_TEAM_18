@@ -4,7 +4,8 @@
 # in (cluster.local, 10.43.0.10). Changed: replicas 2, workers only
 # (wanggane/pool=student), one per worker (required hostname anti-affinity),
 # NodeHosts written here (k3s does not fill it when its CoreDNS is disabled).
-# Apply: kubectl apply -f Infra/coredns/coredns.yaml
+# Apply from the operator's machine (the nodes' account has no kubeconfig):
+#   ssh k3s-leader 'sudo k3s kubectl apply -f -' < Infra/coredns/coredns.yaml
 apiVersion: v1
 kind: ServiceAccount
 metadata:
