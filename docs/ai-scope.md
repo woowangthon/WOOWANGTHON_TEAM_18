@@ -26,7 +26,8 @@
 | 외부 기술 | Apache Kafka (EC2 단일 브로커) | 구현 전. 설정·연동 |
 | 외부 기술 | Supabase (PostgreSQL, Auth — 이메일 · 비밀번호 로그인, GitHub 계정 연동. [ADR-007](adr/007-login-email-password-github-link.md)) | 구현 전. 설정·연동 |
 | 외부 API | GitHub API — 봇 계정의 fork·PR 생성, 계정 연동(OAuth, Supabase Auth가 처리), 레포 소유자 조회 | 구현 전. 연동 |
-| 외부 기술 | k3s (Traefik Ingress 포함), Prometheus (node-exporter · cAdvisor · kube-state-metrics · blackbox-exporter), Grafana | 구현 전. 설정·연동 |
+| 외부 기술 | k3s v1.37.2 (내장 etcd · flannel host-gw · Traefik Ingress 포함. CoreDNS는 k3s 것을 끄고 같은 이미지로 직접 띄움), nvidia-container-toolkit(리더에 받은 상태로 있음. k3s가 런타임으로 잡았고 vLLM 단계에서 쓴다) | 설치 · 설정(2026-11-07, 세 노드). 설정은 [`Infra/k3s/`](../Infra/k3s/) · [`Infra/coredns/`](../Infra/coredns/), 값과 시험 결과는 [`design/cluster.md`](design/cluster.md) §3 · §4. Traefik을 워커에 묶기와 재부팅 시험은 아직 |
+| 외부 기술 | Prometheus (node-exporter · cAdvisor · kube-state-metrics · blackbox-exporter), Grafana | 구현 전. 설정·연동 |
 | 외부 기술 | Tailscale (플랫폼 서버 ↔ 리더 연결, 운영자 원격 접속. [ADR-004](adr/004-server-cluster-link-tailscale.md)) | 운영자 원격 접속은 설정함(2026-11-05, 세 노드). 플랫폼 서버 연결은 구현 전 |
 | 외부 기술 | 노드 OS 도구 — ufw(호스트 방화벽), netplan(노드 주소), iperf3(노드 사이 속도 측정), Clonezilla(반납용 디스크 이미지) | 설정 · 사용(2026-11-04 ~ 06). 규칙 · 값은 [`design/cluster.md`](design/cluster.md) §1 ~ §3 |
 | 외부 기술 | 로그 수집기 · 저장소 (제품 미정. 시계열 DB는 두지 않는다, [ADR-006](adr/006-metrics-on-leader-prometheus.md)) | 결정 전 |

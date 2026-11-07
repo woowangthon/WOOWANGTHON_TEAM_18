@@ -1,0 +1,24 @@
+# k3s agent on k3s-w1 / k3s-w2, installed as /etc/rancher/k3s/config.yaml.
+# Install: curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=v1.37.2+k3s1 sh -s - agent
+# Replace <NODE_IP> with 192.168.77.12 (k3s-w1) or 192.168.77.13 (k3s-w2).
+# The join token is copied from the leader into /etc/rancher/k3s/token (mode 600)
+# over SSH; it is never written to the repo.
+# Design and reasons: docs/design/cluster.md §4.
+
+server: https://192.168.77.11:6443
+token-file: /etc/rancher/k3s/token
+
+node-ip: <NODE_IP>
+flannel-iface: enp4s0
+# Flannel (host-gw, set on the server) uses the external IP as this node's next hop
+# (server sets flannel-external-ip); without it flannel takes the first (school)
+# address on enp4s0.
+node-external-ip: <NODE_IP>
+
+# Student Pods select this label (no node-role.kubernetes.io/ prefix: NodeRestriction rejects it).
+node-label:
+  - wanggane/pool=student
+
+# Same as the server: NodePorts only on the node network.
+kube-proxy-arg:
+  - nodeport-addresses=192.168.77.0/24
