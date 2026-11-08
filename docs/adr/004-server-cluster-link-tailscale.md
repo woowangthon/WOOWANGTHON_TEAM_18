@@ -1,6 +1,6 @@
 # ADR-004: 플랫폼 서버는 Tailscale 사설망으로 리더의 쿠버네티스 API를 직접 부른다
 
-- **상태**: 유효
+- **상태**: 유효 (일부 대체: 배포 지시 → [009](009-deploy-runs-on-leader-gocd-agent.md))
 - **날짜**: 26-11-01
 - **결정자**: 태진, 유성
 - **관련**: [시스템 정의서 §3](../system-definition.md#3-시스템-개요)(사설망 행), [ADR-001](001-stack-and-deployment.md)(플랫폼 서버는 AWS)
