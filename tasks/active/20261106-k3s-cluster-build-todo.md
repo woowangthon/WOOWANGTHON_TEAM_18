@@ -46,7 +46,7 @@ Priorities: the demo path first. Deferred (후순위): moving cloudflared from t
 - [ ] 06 Reboot tests — each worker, then the leader, then a full power cut
   - [x] w1 → w2 → leader, one at a time, remotely (2026-11-08): each back in ~35–45 s unattended; NotReady measured at ~50 s (agent stopped), rescheduling at ~80 s
   - [ ] full power cut (on site)
-- [ ] 06′ Leader GPU + vLLM — NVIDIA device plugin, Qwen/Qwen3-8B-AWQ on vLLM (16K context, 3 concurrent, API key in a leader Secret), no public route; measure GPU memory. Team priority: 후순위 since the 2026-11-09 meeting — done off the demo path, never ahead of 09 / 09′
+- [x] 06′ Leader GPU + vLLM — NVIDIA device plugin, Qwen/Qwen3-8B-AWQ on vLLM (16K context, one request at a time, API key in a leader Secret), no public route; measure GPU memory. Team priority: 후순위 since the 2026-11-09 meeting — done off the demo path the same day. Left: copy the API key to the team vault; manifests go into `Infra/` with the 09′ docs
 - [ ] 07 Image pulls — GHCR pull-through cache on the leader (local-path), nodes fall back to GHCR directly
 - [ ] 08 Student namespace template — `proj-<id>`, Pod Security baseline enforced, resource cap under half a worker, NetworkPolicy (same namespace + Ingress in; same namespace + DNS + internet out, school LAN / cluster / node / tailnet / private ranges / other projects blocked)
 - [x] ~~08′ Student volume and DB failover~~ — dropped 2026-11-07: students bring their own DB (deploy workflow v15), so no platform MySQL or Longhorn; 08 opens student Pod egress to the internet instead

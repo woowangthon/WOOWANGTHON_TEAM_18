@@ -25,7 +25,7 @@
 | 외부 기술 | GHCR (학생 앱 이미지 레지스트리, 이미지 공개. [ADR-003](adr/003-registry-ghcr.md)) | 구현 전. 설정·연동 |
 | 외부 기술 | Apache Kafka (EC2 단일 브로커) | 후순위 (EC2 용량이 남으면, 2026-11-09). 구현 전 |
 | 외부 기술 | GoCD (배포 파이프라인. 서버는 EC2, 실행기는 리더. [ADR-009](adr/009-deploy-runs-on-leader-gocd-agent.md)) | 구현 전. 파이프라인 정의는 직접 작성한다. ArgoCD로 바꿀지 검토 중 |
-| 외부 기술 | vLLM + Qwen3-8B-AWQ (리더 GPU에서 도는 로컬 모델, Apache-2.0) | 후순위 (2026-11-09). 구현 전 |
+| 외부 기술 | vLLM v0.32.0 + Qwen3-8B-AWQ (리더 GPU에서 도는 로컬 모델, Apache-2.0), NVIDIA device plugin v0.20.1 | 팀 일정상 후순위(2026-11-09 회의)라 데모 경로 밖. 리더에 설치 · 시험함(2026-11-09): 컨텍스트 16K, 동시 요청 1, KV 캐시 FP8, 클러스터 안에서만 API 키로 답한다. EC2에서 부르는 길과 AI 서버 연동은 구현 전 |
 | 외부 기술 | Supabase (PostgreSQL, Auth — 이메일 · 비밀번호 로그인, GitHub 계정 연동. [ADR-007](adr/007-login-email-password-github-link.md)) | 구현 전. 설정·연동 |
 | 외부 API | GitHub API — 봇 계정의 fork·PR 생성, 계정 연동(OAuth, Supabase Auth가 처리), 레포 소유자 조회 | 구현 전. 연동 |
 | 외부 기술 | k3s (Traefik Ingress 포함), Prometheus (node-exporter · cAdvisor · kube-state-metrics · blackbox-exporter), Grafana | 구현 전. 설정·연동 |
