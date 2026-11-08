@@ -1,7 +1,7 @@
 # One-shot check after the device plugin: a Pod that asks for one GPU lands on the leader and prints it.
-# Expected log: NVIDIA GeForce RTX 3080, 10240 MiB. Delete the Pod afterwards.
-#   ssh k3s-leader 'sudo k3s kubectl apply -f -' < Infra/gpu/gpu-check.yaml
-#   ssh k3s-leader 'sudo k3s kubectl logs gpu-check && sudo k3s kubectl delete pod gpu-check'
+# Expected log: NVIDIA GeForce RTX 3080, 10240 MiB. The delete first makes a re-run start a fresh Pod.
+#   ssh k3s-leader 'sudo k3s kubectl delete pod gpu-check --ignore-not-found; sudo k3s kubectl apply -f -' < Infra/gpu/gpu-check.yaml
+#   ssh k3s-leader 'sudo k3s kubectl logs gpu-check'
 apiVersion: v1
 kind: Pod
 metadata:

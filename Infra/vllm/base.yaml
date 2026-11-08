@@ -54,7 +54,8 @@ spec:
     - port: 8000
       protocol: TCP
 ---
-# Model pinned to a Hugging Face commit so a re-download gets the same files.
+# Model pinned to a Hugging Face commit so a re-download gets the same files. No TTL: the completed Job stays,
+# so re-applying this file leaves it alone instead of downloading again.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -62,7 +63,6 @@ metadata:
   namespace: vllm
 spec:
   backoffLimit: 2
-  ttlSecondsAfterFinished: 86400
   template:
     spec:
       restartPolicy: Never
