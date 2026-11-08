@@ -1,0 +1,82 @@
+# One-shot check from inside the vllm namespace (the NetworkPolicy only lets this namespace in).
+# Runs: no key / wrong key -> 401, one request, a thinking-off tool call, three requests at once
+# (served one after another with --max-num-seqs=1), and an input over the 16K limit (about 22K tokens) that must be rejected (400).
+# The key comes from the Secret and is never printed.
+#   ssh k3s-leader 'sudo k3s kubectl apply -f -' < Infra/vllm/check.yaml
+#   ssh k3s-leader 'sudo k3s kubectl -n vllm logs vllm-check && sudo k3s kubectl -n vllm delete pod vllm-check'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: vllm-check
+  namespace: vllm
+spec:
+  restartPolicy: Never
+  enableServiceLinks: false
+  nodeSelector:
+    kubernetes.io/hostname: k3s-leader
+  tolerations:
+  - key: node-role.kubernetes.io/control-plane
+    operator: Exists
+    effect: NoSchedule
+  priorityClassName: wanggane-low
+  containers:
+  - name: test
+    image: docker.io/vllm/vllm-openai:v0.32.0
+    env:
+    - name: KEY
+      valueFrom:
+        secretKeyRef: {name: vllm-api-key, key: key}
+    command:
+    - python3
+    - -c
+    - |
+      import json, os, time, urllib.request, urllib.error
+      from concurrent.futures import ThreadPoolExecutor
+      BASE = "http://vllm:8000/v1"
+      KEY = os.environ["KEY"]
+      OFF = {"enable_thinking": False}
+
+      def call(path, body=None, key=KEY):
+          req = urllib.request.Request(BASE + path, data=json.dumps(body).encode() if body else None,
+                                       headers={"Content-Type": "application/json", **({"Authorization": "Bearer " + key} if key else {})})
+          t = time.time()
+          try:
+              with urllib.request.urlopen(req, timeout=300) as r:
+                  return r.status, json.loads(r.read()), time.time() - t
+          except urllib.error.HTTPError as e:
+              return e.code, None, time.time() - t
+
+      s, _, _ = call("/models", key=None)
+      print("1 no key ->", s)
+      s, _, _ = call("/models", key="wrong")
+      print("1 wrong key ->", s)
+
+      s, j, dt = call("/chat/completions", {"model": "qwen3-8b-awq", "max_tokens": 128, "chat_template_kwargs": OFF,
+                     "messages": [{"role": "user", "content": "배포가 크래시 루프에 빠졌을 때 먼저 볼 것 하나를 한 문장으로."}]})
+      print("2 single ->", s, round(dt, 2), "s", j["usage"], "|", j["choices"][0]["message"]["content"][:200].replace("\n", " "))
+
+      tools = [{"type": "function", "function": {"name": "get_logs", "description": "Read recent log lines of a student project",
+                "parameters": {"type": "object", "properties": {"project_id": {"type": "string"}, "lines": {"type": "integer"}},
+                               "required": ["project_id", "lines"]}}}]
+      s, j, dt = call("/chat/completions", {"model": "qwen3-8b-awq", "max_tokens": 512, "chat_template_kwargs": OFF,
+                     "tools": tools, "tool_choice": "auto",
+                     "messages": [{"role": "system", "content": "You fix failed deployments. Use tools to inspect before answering."},
+                                  {"role": "user", "content": "proj-demo 배포가 실패했어. 최근 로그 50줄부터 확인해."}]})
+      m = j["choices"][0]
+      print("3 tool call ->", s, round(dt, 2), "s finish=", m["finish_reason"], "tokens=", j["usage"]["completion_tokens"],
+            "calls=", [(c["function"]["name"], c["function"]["arguments"]) for c in (m["message"].get("tool_calls") or [])],
+            "reasoning_len=", len(m["message"].get("reasoning_content") or m["message"].get("reasoning") or ""))
+
+      def one(i):
+          return call("/chat/completions", {"model": "qwen3-8b-awq", "max_tokens": 300, "min_tokens": 300, "chat_template_kwargs": OFF,
+                      "messages": [{"role": "user", "content": f"쿠버네티스 롤링 업데이트를 설명해줘 ({i})."}]})
+      t = time.time()
+      with ThreadPoolExecutor(3) as ex:
+          res = list(ex.map(one, range(3)))
+      print("4 three at once ->", [r[0] for r in res], "each", [round(r[2], 1) for r in res], "s, wall", round(time.time() - t, 1), "s,",
+            sum(r[1]["usage"]["completion_tokens"] for r in res), "tokens")
+
+      long = "다음은 배포 로그다. " + " ".join(f"[{i:05d}] INFO pod proj-demo-web restarted, exit code 137, OOMKilled at step {i}." for i in range(700))
+      s, j, dt = call("/chat/completions", {"model": "qwen3-8b-awq", "max_tokens": 256, "chat_template_kwargs": OFF,
+                     "messages": [{"role": "user", "content": long + "\n\n위 로그에서 반복되는 원인을 한 문장으로."}]})
+      print("5 long input ->", s, round(dt, 2), "s", j["usage"] if j else None, "|", (j["choices"][0]["message"]["content"][:160].replace("\n", " ") if j else ""))
