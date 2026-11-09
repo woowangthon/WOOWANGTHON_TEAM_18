@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { beforeEach, expect, it, vi } from 'vitest'
 import ProfilePage from './ProfilePage.tsx'
@@ -85,6 +85,35 @@ it('G2: the button calls linkIdentity for GitHub and returns to /profile', async
   expect(
     screen.getByText('GitHub 화면으로 이동해요. 승인하면 이 화면으로 자동으로 돌아와요.'),
   ).toBeTruthy()
+})
+
+it('G2: leaving for GitHub and coming back from the back/forward cache re-enables the button', async () => {
+  auth.getUserIdentities.mockResolvedValue(emailOnly)
+  auth.linkIdentity.mockReturnValue(new Promise(() => undefined))
+  renderPage()
+  await screen.findByText('GitHub 계정 연동')
+  fireEvent.click(linkButton())
+  await screen.findByRole('button', { name: 'GitHub로 이동하는 중…' })
+  // 일반 이동으로 새로 불린 화면(persisted=false)은 상태가 새로 시작하므로 건드리지 않는다.
+  act(() => {
+    window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: false }))
+  })
+  expect(screen.queryByRole('button', { name: 'GitHub로 연동하기' })).toBeNull()
+  act(() => {
+    window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }))
+  })
+  const again = screen.getByRole('button', { name: 'GitHub로 연동하기' })
+  expect((again as HTMLButtonElement).disabled).toBe(false)
+})
+
+it('G2: the error from the URL is hidden while a new attempt is redirecting', async () => {
+  auth.getUserIdentities.mockResolvedValue(emailOnly)
+  auth.linkIdentity.mockReturnValue(new Promise(() => undefined))
+  renderPage('/profile?error=access_denied')
+  expect(await screen.findByText('GitHub 연동에 실패했어요')).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: '다시 연동하기' }))
+  await screen.findByRole('button', { name: 'GitHub로 이동하는 중…' })
+  expect(screen.queryByText('GitHub 연동에 실패했어요')).toBeNull()
 })
 
 it('G3: shows a temporary error and re-enables the button when linkIdentity fails', async () => {

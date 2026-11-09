@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react'
+import { MemoryRouter } from 'react-router'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { ApiError } from '../lib/api.ts'
 import DockerfileCheck from './DockerfileCheck.tsx'
@@ -75,4 +76,29 @@ it.each([
   expect(screen.getByText('Dockerfile을 확인하는 중…')).toBeTruthy()
   expect(await screen.findByText('Dockerfile', { selector: 'li' })).toBeTruthy()
   expect(api.apiFetch).toHaveBeenCalledTimes(2)
+})
+
+it.each([
+  ['REPO_NOT_OWNED', 403, '내 GitHub 계정의 레포가 아니에요'],
+  ['REPO_NOT_FOUND', 404, '레포를 찾을 수 없어요'],
+  ['REPO_NOT_PERSONAL', 403, '지금은 개인 레포만 지원해요'],
+])('%s from the owner re-check is shown as that cause, not as a retryable outage', async (code, status, title) => {
+  api.apiFetch.mockRejectedValue(new ApiError(status, code, 'x'))
+  render(<DockerfileCheck repoUrl={REPO_URL} />)
+  expect(await screen.findByText(title)).toBeTruthy()
+  expect(screen.queryByText('사용자 잘못이 아니에요. 잠시 후 다시 시도해 주세요.')).toBeNull()
+  expect(screen.queryByRole('button', { name: '다시 확인하기' })).toBeNull()
+  expect(screen.queryByText('Dockerfile이 없어요.')).toBeNull()
+})
+
+it('GITHUB_NOT_LINKED from the owner re-check points to the profile page', async () => {
+  api.apiFetch.mockRejectedValue(new ApiError(403, 'GITHUB_NOT_LINKED', 'x'))
+  render(
+    <MemoryRouter>
+      <DockerfileCheck repoUrl={REPO_URL} />
+    </MemoryRouter>,
+  )
+  expect(await screen.findByText('GitHub 계정이 연동되지 않았어요')).toBeTruthy()
+  expect(screen.getByRole('link', { name: '프로필로 이동' }).getAttribute('href')).toBe('/profile')
+  expect(screen.queryByRole('button', { name: '다시 확인하기' })).toBeNull()
 })

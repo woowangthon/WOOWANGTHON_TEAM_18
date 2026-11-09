@@ -10,9 +10,9 @@ type LinkState =
   | { status: 'failed' }
   | { status: 'unlinked' }
   | { status: 'linked'; handle: string | null }
-type Failure = 'cancelled' | 'exists' | 'temporary'
+type LinkFailure = 'cancelled' | 'exists' | 'temporary'
 
-const failureText: Record<Failure, string> = {
+const failureText: Record<LinkFailure, string> = {
   cancelled: 'GitHub 화면에서 승인하지 않았어요. 다시 시도하면 돼요.',
   exists:
     '이 GitHub 계정은 다른 WCP 계정에 연동돼 있어요. 그 계정에서 연동을 풀거나 다른 GitHub 계정을 써 주세요.',
@@ -21,7 +21,7 @@ const failureText: Record<Failure, string> = {
 
 // 연동 도중 실패하면 Supabase가 오류를 주소의 쿼리나 해시에 담아 이 화면으로 돌려보낸다.
 // 코드로 먼저 가르고, 승인 취소처럼 코드가 따로 없는 경우만 이름에 access_denied가 들어 있는지 본다. 그 외는 일시 오류다.
-function failureInUrl(search: string, hash: string): Failure | null {
+function failureInUrl(search: string, hash: string): LinkFailure | null {
   const params = [new URLSearchParams(search), new URLSearchParams(hash.replace(/^#/, ''))]
   const read = (name: string) => params.map((p) => p.get(name)).find((v) => v !== null) ?? ''
   const error = read('error')
@@ -33,7 +33,7 @@ function failureInUrl(search: string, hash: string): Failure | null {
   return 'temporary'
 }
 
-function failureOfLinkCall(error: { code?: string }): Failure {
+function failureOfLinkCall(error: { code?: string }): LinkFailure {
   return error.code === 'identity_already_exists' ? 'exists' : 'temporary'
 }
 
@@ -42,7 +42,7 @@ function GithubLinkCard() {
   const [link, setLink] = useState<LinkState>({ status: 'loading' })
   const [attempt, setAttempt] = useState(0)
   const [redirecting, setRedirecting] = useState(false)
-  const [linkCallFailure, setLinkCallFailure] = useState<Failure | null>(null)
+  const [linkCallFailure, setLinkCallFailure] = useState<LinkFailure | null>(null)
 
   useEffect(() => {
     let ignore = false
@@ -69,6 +69,17 @@ function GithubLinkCard() {
       ignore = true
     }
   }, [attempt])
+
+  // GitHub에서 뒤로 가기로 돌아오면 브라우저가 이 화면을 멈춘 상태 그대로(이동하는 중) 되살릴 수 있다.
+  useEffect(() => {
+    const restore = (event: PageTransitionEvent) => {
+      if (event.persisted) setRedirecting(false)
+    }
+    window.addEventListener('pageshow', restore)
+    return () => {
+      window.removeEventListener('pageshow', restore)
+    }
+  }, [])
 
   async function handleLink() {
     setLinkCallFailure(null)
@@ -139,7 +150,7 @@ function GithubLinkCard() {
         <h2 className="text-lg">GitHub 계정 연동</h2>
         <p className="text-sm text-muted">배포를 요청하려면 한 번만 연동해 주세요.</p>
       </div>
-      {failure && (
+      {failure && !redirecting && (
         <Alert title="GitHub 연동에 실패했어요">{failureText[failure]}</Alert>
       )}
       <ul className="flex list-disc flex-col gap-1 pl-5 text-sm">

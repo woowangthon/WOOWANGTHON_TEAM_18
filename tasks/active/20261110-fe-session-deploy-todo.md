@@ -24,7 +24,7 @@ Five demo-path issues are done on one branch, one commit per issue, so the work 
 - [x] #58 Dockerfile check + tests — files: `FE/src/pages/DockerfileCheck.tsx`
 - [x] Check every screen in Chromium with faked responses (light/dark, 1440/390)
 - [x] Independent review with agy over the whole range (3 findings, all wrong)
-- [ ] `/code-review` and `/simplify` on the PR-B range (run with the worktree path), fixes applied
+- [x] `/code-review` and `/simplify` on the PR-B range (run with the worktree path), fixes applied
 
 ## Done when
 
