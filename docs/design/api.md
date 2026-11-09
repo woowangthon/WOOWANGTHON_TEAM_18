@@ -129,7 +129,7 @@ FE 흐름은 ① `repos/check` → ② `repos/dockerfiles`와 이 API. 이 API�
 
 - `projects`: `package.json`이 있는 폴더마다 한 항목(레포 루트는 `dir: "."`). 하나도 없으면 빈 배열이고 **오류가 아니다**(Node가 아닌 레포 · 커밋이 없는 빈 레포). 폴더는 얕은 것부터 이름순으로 **최대 10개**만 읽는다. `workspaces`를 선언했거나 같은 폴더에 `pnpm-workspace.yaml`이 있는 `package.json`이 프레임워크도 알아볼 수 없으면, 배포 대상이 아닌 워크스페이스 루트로 보고 `projects`에서 뺀다(하위 패키지는 각자 항목이 된다).
 - `truncated`: GitHub가 너무 큰 레포의 파일 목록을 잘랐거나, 폴더가 10개를 넘어 일부를 읽지 않았으면 `true`. 이때는 목록이 전부가 아니고, 각 폴더의 `lockfile: null` · `dockerfile: false`도 "없다"고 단정할 수 없다(잘려 나간 파일일 수 있다).
-- 항목은 `{ value, source }`이고 `source`는 값을 어디서 얻었는지(`package.json` · `lockfile` · `default`)다. 값이 없으면 `null`이다.
+- 항목은 `{ value, source }`이고 `source`는 값을 어디서 얻었는지(`package.json` · `lockfile` · `default`)다. 값이 없으면 `null`이다. `build` · `start`는 `script`를 더하고, `nodeVersion` · `lockfile`(문자열 또는 `null`)과 `dockerfile`(불리언)은 `{ value, source }`가 아닌 값 그대로다.
 - **`needsReview`**: 자동으로 정하지 못해 사용자가 골라야 하는 항목 이름이다(값은 `null`). 후보가 여럿이라 못 정한 항목은 `candidates`(문자열 배열)를 더해 후보를 알린다(예: `{ "value": null, "source": null, "candidates": ["npm", "pnpm"] }`). 값이 `null`인데 `needsReview`에 없으면 "해당 없음"이다(정적 사이트의 `start` · `port`, Next.js의 `outputDir`).
 - `dockerfile`: 그 폴더에 `Dockerfile`이 있는지(`repos/dockerfiles`와 같은 파일 목록). 없을 때 어떻게 할지는 정해지지 않았다([#25](https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/25)). 이 API는 사실만 알려 준다.
 - `nodeVersion`: `package.json`의 `engines.node` 문자열 그대로. 없으면 `null`.
@@ -143,7 +143,7 @@ FE 흐름은 ① `repos/check` → ② `repos/dockerfiles`와 이 API. 이 API�
 | 락 파일 | 그 폴더에서 시작해 **가장 가까운 상위 폴더**까지 올라가며 처음 나오는 락 파일(`pnpm-lock.yaml` · `package-lock.json` · `yarn.lock` · `bun.lock` · `bun.lockb`). 워크스페이스는 락이 루트에 있기 때문이다. 설치 명령은 응답의 `lockfile`이 있는 폴더에서 실행해야 한다(없으면 `dir`) |
 | 패키지 매니저 · 설치 명령 | 락 파일 종류로 정한다: pnpm → `pnpm install --frozen-lockfile`, npm → `npm ci`, yarn → `yarn install --frozen-lockfile`(`packageManager`가 `yarn@2` 이상이면 `yarn install --immutable`), bun → `bun install --frozen-lockfile`. 같은 폴더에 **서로 다른 패키지 매니저의 락 파일**이 여럿이거나(`bun.lock`과 `bun.lockb`는 같은 bun이라 충돌이 아니다) `packageManager`와 **어긋나면** 판단 필요(`candidates`). `packageManager`는 `pnpm@9.1.0+sha512…`처럼 버전 · 해시가 붙으므로 `@` 앞의 이름만 비교하고, npm · pnpm · yarn · bun이 아닌 이름은 없는 것으로 본다 |
 | 락 파일이 없을 때 | 프레임워크 · 언어 · 빌드는 `package.json`만으로 정한다. 패키지 매니저는 `packageManager`가 있으면 그것(`source: package.json`), 없으면 `npm`(`source: default`)이고 설치 명령은 고정 설치가 아닌 `<pm> install`이다. `lockfile`은 `null`이다 |
-| 빌드 · 시작 명령 | `scripts.build` · `scripts.start`가 있으면 `<pm> run build` · `<pm> run start`로 보여 주고 실제 스크립트 문자열을 `script`에 함께 담는다. **스크립트가 없으면 프레임워크 기본 명령을 지어내지 않고** 판단 필요다(단 정적 사이트의 `start`는 해당 없음) |
+| 빌드 · 시작 명령 | `scripts.build` · `scripts.start`가 있으면 `<pm> run build` · `<pm> run start`로 보여 주고 실제 스크립트 문자열을 `script`에 함께 담는다. **스크립트가 없으면 프레임워크 기본 명령을 지어내지 않고** 판단 필요다(단 정적 사이트의 `start`는 해당 없음). 패키지 매니저를 못 정했으면(판단 필요) 스크립트가 있어도 `<pm>`을 모르니 `value`는 `null`이고 `script`와 `source: package.json`만 채우며 판단 필요다 |
 | 출력 폴더 · 포트 | 프레임워크 기본값 표만 쓴다: `vite-react` → 출력 폴더 `dist`(시작 명령 · 포트 없음, 정적), `nextjs` → 포트 `3000`(출력 폴더 없음). 스크립트 · README는 파싱하지 않는다. 프레임워크를 모르면 판단 필요 |
 
 오류: `POST /api/repos/check`와 같고, 파일 목록이나 `package.json`을 못 받으면 `503 GITHUB_UNAVAILABLE`을 더한다(이미 소유 확인을 통과한 레포라 사용자 잘못이 아니다). 읽은 `package.json`이 JSON 객체가 아니거나 1,000,000바이트를 넘어 읽지 않았으면(크기는 파일 목록에 있다. 큰 파일로 서버 메모리를 쓰지 못하게 한다) 오류가 아니라, `package.json`에서 알아내는 항목(프레임워크 · 언어 · 빌드/시작 명령 · 출력 폴더 · 포트)이 그 폴더만 판단 필요다. 락 파일과 Dockerfile로 아는 값(패키지 매니저 · 설치 명령 · `dockerfile`)은 그대로 채운다. 읽는 사이 `package.json`이 사라져 `404`가 나도 같다(읽는 사이 push가 있을 수 있다).

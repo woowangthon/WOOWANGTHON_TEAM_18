@@ -14,6 +14,7 @@
 
 - 2026-11-09: R2 (agy, correctness / security) and `/simplify`. Simplify: the rules module takes a file-path set instead of a list, `buildProjects` does the workspace-root filtering, `selectPackageDirs` sorts by name then depth. Doc fixes: example order BE before FE, auth.md quota bullet. Lint: `specOf()` helper for typed responses. One equivalent mutant ("berry for any declared manager") led to dropping a redundant `declared?.name === 'yarn'` condition. A merged test table broke one e2e row (see Lessons) and was fixed.
 - 2026-11-09: PR #47 was squash-merged while this was in progress; moved this branch onto `upstream/main` with `git rebase --onto`.
+- 2026-11-09: PR review. CodeRabbit: 1 valid (`ai-scope.md` row 55 "AI role" column still said it detects the entry point → fixed; the "Docstring Coverage" pre-merge note is not a required check and the repo documents with comments). `/code-review medium`: 8 findings, none needing a code change (Berry without `packageManager`, install from an ancestor lockfile, examples filling the 10 slots, one failed read → whole 503, hoisted workspace roots: all known limits or deliberate; the Dockerfile `node_modules` one is #47's code). Kept as a known limit: a Next `start` script with `-p 8080` still shows port 3000 with `source: default`. agy final round: 6 findings; 2 doc gaps taken (api.md: `build`/`start` when the package manager is open, and which fields are plain values), the rest rejected (code from #36, `size` is always present in a real tree, late fetches end at the 5 s limit).
 
 ## Lessons
 
