@@ -16,16 +16,16 @@ The FE draws nothing yet (`App` returns `null`), so every screen issue is blocke
 
 ## Todo
 
-- [ ] Router and five empty pages, replace the "renders nothing" smoke test with one test per route — files: `FE/src/main.tsx`, `FE/src/App.tsx`, `FE/src/pages/*.tsx`, `FE/src/App.test.tsx`, `FE/package.json`
-- [ ] Docs for the router — files: `docs/ai-scope.md` §1
-- [ ] Supabase client that fails loudly on missing settings, with tests for both cases — files: `FE/src/lib/supabase.ts`, `FE/src/lib/supabase.test.ts`, `FE/src/vite-env.d.ts`, `FE/.env.example`
-- [ ] Docs for supabase-js — files: `docs/ai-scope.md` §1
-- [ ] Dev server proxy for `/api` — files: `FE/vite.config.ts`
-- [ ] Add the two design skills to the optional plugin table — files: `.claude/skills/README.md`
+- [x] Router and five empty pages, replace the "renders nothing" smoke test with one test per route — files: `FE/src/main.tsx`, `FE/src/App.tsx`, `FE/src/pages/*.tsx`, `FE/src/App.test.tsx`, `FE/package.json`
+- [x] Docs for the router — files: `docs/ai-scope.md` §1
+- [x] Supabase client that fails loudly on missing settings, with tests for both cases — files: `FE/src/lib/supabase.ts`, `FE/src/lib/supabase.test.ts`, `FE/src/vite-env.d.ts`, `FE/.env.example`
+- [x] Docs for supabase-js — files: `docs/ai-scope.md` §1
+- [x] Dev server proxy for `/api` — files: `FE/vite.config.ts`
+- [x] Add the two design skills to the optional plugin table — files: `.claude/skills/README.md`
 
 ## Done when
 
-- [ ] `cd FE && pnpm install --frozen-lockfile && pnpm verify` passes
-- [ ] Each of the five routes opens in `pnpm dev` (checked in Chromium, light and dark, 390px and 1440px) with no console errors
-- [ ] `curl -i localhost:5173/api/health` reaches the proxy (a proxy error while the BE is down, not the SPA's `index.html`)
-- [ ] tests added; mutation testing not run — no mutation tool chosen yet (conventions §6), noted in the PR body
+- [x] `cd FE && pnpm install --frozen-lockfile && pnpm verify` passes
+- [x] Each of the five routes opens in `pnpm dev` (checked in Chromium, light and dark, 390px and 1440px: 20 combinations, no console errors, no horizontal scroll)
+- [x] `curl -i localhost:5173/api/health` reaches the proxy (checked with a temporary fake BE on port 3000: the path arrives as `/api/health`; with no BE it returns an empty reply, not the SPA's `index.html`)
+- [x] tests added; mutation testing not run — no mutation tool chosen yet (conventions §6), noted in the PR body
