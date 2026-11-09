@@ -19,6 +19,9 @@ type Answer = () => Response
 let supabaseAnswer: Answer
 let githubAnswer: Answer
 let treeAnswer: Answer
+// raw.githubusercontent.com의 package.json 답. 키는 레포 루트 기준 경로이고, 정하지 않은 경로를 읽으려 하면 테스트가 실패한다.
+type RawAnswer = () => Response | Promise<Response>
+let rawFiles: Record<string, RawAnswer | object>
 let logError: MockInstance<Logger['error']>
 
 const linkedUser = (id = GITHUB_ID): Answer => () =>
@@ -27,11 +30,12 @@ const emailOnlyUser: Answer = () => Response.json({ identities: [{ provider: 'em
 const repoOwnedBy = (id: number | string, type = 'User'): Answer => () =>
   Response.json({ full_name: FULL_NAME, private: false, owner: { login: 'student', id, type } })
 // 끝에 /가 붙은 이름은 폴더다. GitHub는 폴더 항목의 path에 /를 붙이지 않고 type만 tree로 표시한다.
-const treeOf = (paths: string[], truncated = false): Answer => () =>
+// sizes: 파일 경로 → 바이트. GitHub는 파일 항목에 size를 준다.
+const treeOf = (paths: string[], truncated = false, sizes: Record<string, number> = {}): Answer => () =>
   Response.json({
     sha: 'abc',
     truncated,
-    tree: paths.map((p) => (p.endsWith('/') ? { path: p.slice(0, -1), type: 'tree' } : { path: p, type: 'blob' })),
+    tree: paths.map((p) => (p.endsWith('/') ? { path: p.slice(0, -1), type: 'tree' } : { path: p, type: 'blob', size: sizes[p] ?? 100 })),
   })
 const status = (code: number): Answer => () => new Response('{}', { status: code })
 const fails = (err: Error): Answer => () => {
@@ -45,6 +49,9 @@ const outage: [string, Answer][] = [
   ['200 that is not JSON', () => new Response('<html>')],
 ]
 
+const RAW = 'https://raw.githubusercontent.com/'
+const RAW_PREFIX = `${RAW}student/my-app/HEAD/`
+
 const urlOf = (input: string | URL | Request) => (input instanceof Request ? input.url : input.toString())
 
 const fetchMock = vi.fn<typeof fetch>((input) => {
@@ -53,6 +60,11 @@ const fetchMock = vi.fn<typeof fetch>((input) => {
   if (url === SUPABASE_USER_URL) return Promise.resolve().then(() => supabaseAnswer())
   if (url.includes('/git/trees/')) return Promise.resolve().then(() => treeAnswer())
   if (url.startsWith('https://api.github.com/repos/')) return Promise.resolve().then(() => githubAnswer())
+  if (url.startsWith(RAW_PREFIX)) {
+    const answer = rawFiles[decodeURIComponent(url.slice(RAW_PREFIX.length))]
+    if (answer === undefined) return Promise.reject(new Error(`unexpected raw fetch ${url}`))
+    return Promise.resolve().then(() => (typeof answer === 'function' ? (answer as RawAnswer)() : Response.json(answer)))
+  }
   return Promise.reject(new Error(`unexpected fetch ${url}`))
 })
 let app: INestApplication<App>
@@ -61,6 +73,7 @@ beforeEach(async () => {
   supabaseAnswer = linkedUser()
   githubAnswer = repoOwnedBy(Number(GITHUB_ID))
   treeAnswer = treeOf([])
+  rawFiles = {}
   fetchMock.mockClear()
   vi.stubGlobal('fetch', fetchMock)
   logError = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
@@ -85,6 +98,7 @@ async function post(path: string, body?: string | object, auth?: string | null) 
 
 const check = (body?: string | object, auth?: string | null) => post('/api/repos/check', body, auth)
 const dockerfiles = (body?: string | object, auth?: string | null) => post('/api/repos/dockerfiles', body, auth)
+const deploySpec = (body?: string | object, auth?: string | null) => post('/api/repos/deploy-spec', body, auth)
 
 const callsTo = (prefix: string) => fetchMock.mock.calls.filter(([url]) => urlOf(url).startsWith(prefix))
 
@@ -311,5 +325,254 @@ describe('POST /api/repos/dockerfiles when GitHub cannot give the file list (503
     const res = await check(VALID)
     expect(res.status).toBe(200)
     expect(callsTo('https://api.github.com/')).toHaveLength(1)
+  })
+})
+
+// 실제 Vite 템플릿(react-ts)과 Nest 앱의 모양을 따른다.
+const VITE_PKG = {
+  scripts: { dev: 'vite', build: 'tsc -b && vite build', preview: 'vite preview' },
+  dependencies: { react: '^19.3.1', 'react-dom': '^19.3.1' },
+  devDependencies: { typescript: '~7.0.2', vite: '^8.3.6' },
+  engines: { node: '>=22' },
+}
+const NEST_PKG = {
+  scripts: { build: 'nest build', start: 'node dist/main' },
+  dependencies: { '@nestjs/core': '^12.0.0' },
+  devDependencies: { typescript: '^6.0.0' },
+}
+// supertest의 res.body는 any라 응답 모양을 한 곳에서 정한다.
+const specOf = (res: { body: unknown }) => res.body as { repo: string; truncated: boolean; projects: { dir: string }[] }
+const rawCalls = () => callsTo(RAW)
+const treeCalls = () => callsTo('https://api.github.com/').filter(([url]) => urlOf(url).includes('/git/trees/'))
+
+describe('POST /api/repos/deploy-spec drafts the deploy spec', () => {
+  it('answers each folder of a monorepo from its package.json, lock file and Dockerfile', async () => {
+    treeAnswer = treeOf(['FE/', 'FE/package.json', 'FE/pnpm-lock.yaml', 'FE/Dockerfile', 'BE/', 'BE/package.json', 'BE/pnpm-lock.yaml', 'BE/Dockerfile', 'README.md'])
+    rawFiles = { 'FE/package.json': VITE_PKG, 'BE/package.json': NEST_PKG }
+    const res = await deploySpec(VALID)
+    expect(res.status).toBe(200)
+    expect(res.body).toEqual({
+      repo: FULL_NAME,
+      truncated: false,
+      projects: [
+        {
+          dir: 'BE',
+          framework: { value: null, source: null },
+          language: { value: 'typescript', source: 'package.json' },
+          packageManager: { value: 'pnpm', source: 'lockfile' },
+          install: { value: 'pnpm install --frozen-lockfile', source: 'lockfile' },
+          build: { value: 'pnpm run build', script: 'nest build', source: 'package.json' },
+          start: { value: 'pnpm run start', script: 'node dist/main', source: 'package.json' },
+          outputDir: { value: null, source: null },
+          port: { value: null, source: null },
+          nodeVersion: null,
+          lockfile: 'BE/pnpm-lock.yaml',
+          dockerfile: true,
+          needsReview: ['framework', 'outputDir', 'port'],
+        },
+        {
+          dir: 'FE',
+          framework: { value: 'vite-react', source: 'package.json' },
+          language: { value: 'typescript', source: 'package.json' },
+          packageManager: { value: 'pnpm', source: 'lockfile' },
+          install: { value: 'pnpm install --frozen-lockfile', source: 'lockfile' },
+          build: { value: 'pnpm run build', script: 'tsc -b && vite build', source: 'package.json' },
+          start: { value: null, script: null, source: null },
+          outputDir: { value: 'dist', source: 'default' },
+          port: { value: null, source: null },
+          nodeVersion: '>=22',
+          lockfile: 'FE/pnpm-lock.yaml',
+          dockerfile: true,
+          needsReview: [],
+        },
+      ],
+    })
+  })
+
+  it('uses a lock file kept at the repo root for a workspace package, and leaves the workspace root out', async () => {
+    treeAnswer = treeOf(['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'apps/', 'apps/web/', 'apps/web/package.json'])
+    rawFiles = { 'package.json': { private: true, devDependencies: { typescript: '5' } }, 'apps/web/package.json': VITE_PKG }
+    const res = await deploySpec(VALID)
+    expect(specOf(res).projects).toHaveLength(1)
+    expect(specOf(res).projects[0]).toMatchObject({ dir: 'apps/web', lockfile: 'pnpm-lock.yaml', install: { value: 'pnpm install --frozen-lockfile', source: 'lockfile' } })
+  })
+
+  it.each<[string, Answer]>([
+    ['no package.json anywhere: 200 with an empty list, not an error', treeOf(['main.py', 'requirements.txt'])],
+    ['a repo with no commits (GitHub says 409)', status(409)],
+  ])('%s', async (_, answer) => {
+    treeAnswer = answer
+    const res = await deploySpec(VALID)
+    expect(res.status).toBe(200)
+    expect(res.body).toEqual({ repo: FULL_NAME, projects: [], truncated: false })
+    expect(rawCalls()).toHaveLength(0)
+  })
+
+  it('passes the file list cut by GitHub through as truncated', async () => {
+    treeAnswer = treeOf(['package.json'], true)
+    rawFiles = { 'package.json': VITE_PKG }
+    const res = await deploySpec(VALID)
+    expect(res.body).toMatchObject({ truncated: true, projects: [{ dir: '.' }] })
+  })
+
+  it('reads at most 10 package.json (shallowest first) and says the list is cut', async () => {
+    const dirs = Array.from({ length: 11 }, (_, i) => `p${String(i).padStart(2, '0')}`)
+    treeAnswer = treeOf(dirs.flatMap((d) => [`${d}/`, `${d}/package.json`]))
+    rawFiles = Object.fromEntries(dirs.map((d) => [`${d}/package.json`, {}]))
+    const res = await deploySpec(VALID)
+    expect(res.status).toBe(200)
+    expect(specOf(res).truncated).toBe(true)
+    expect(specOf(res).projects.map((p) => p.dir)).toEqual(dirs.slice(0, 10))
+    expect(rawCalls()).toHaveLength(10)
+  })
+
+  it('never reads a package.json inside node_modules or one that is a folder', async () => {
+    treeAnswer = treeOf(['package.json', 'node_modules/', 'node_modules/react/', 'node_modules/react/package.json', 'docs/', 'docs/package.json/'])
+    rawFiles = { 'package.json': VITE_PKG }
+    const res = await deploySpec(VALID)
+    expect(specOf(res).projects).toHaveLength(1)
+    expect(rawCalls()).toHaveLength(1)
+  })
+
+  it('names the folder only as GitHub spells it, percent-encoded per path segment', async () => {
+    treeAnswer = treeOf(['my app/#frag/한글/package.json'])
+    rawFiles = { 'my app/#frag/한글/package.json': VITE_PKG }
+    const res = await deploySpec(VALID)
+    expect(specOf(res).projects[0]).toMatchObject({ dir: 'my app/#frag/한글' })
+    expect(urlOf(rawCalls()[0][0])).toBe(`${RAW_PREFIX}my%20app/%23frag/%ED%95%9C%EA%B8%80/package.json`)
+  })
+
+  it('does not read a package.json bigger than 1,000,000 bytes (the size comes with the file list), and leaves that folder open', async () => {
+    treeAnswer = treeOf(['BE/package.json', 'FE/package.json'], false, { 'BE/package.json': 1_000_000, 'FE/package.json': 1_000_001 })
+    rawFiles = { 'BE/package.json': NEST_PKG, 'FE/package.json': VITE_PKG }
+    const res = await deploySpec(VALID)
+    expect(res.status).toBe(200)
+    expect(rawCalls().map(([url]) => urlOf(url))).toEqual([`${RAW_PREFIX}BE/package.json`])
+    expect(specOf(res).projects).toEqual([
+      expect.objectContaining({ dir: 'BE', language: { value: 'typescript', source: 'package.json' } }),
+      expect.objectContaining({ dir: 'FE', framework: { value: null, source: null }, language: { value: null, source: null } }),
+    ])
+  })
+
+  it('starts all the reads at once, not one after another', async () => {
+    treeAnswer = treeOf(['a/package.json', 'b/package.json', 'c/package.json'])
+    let release: () => void
+    const all = new Promise<void>((resolve) => (release = resolve))
+    const gate: RawAnswer = () => {
+      if (rawCalls().length === 3) release()
+      return all.then(() => Response.json({}))
+    }
+    rawFiles = { 'a/package.json': gate, 'b/package.json': gate, 'c/package.json': gate }
+    const res = await deploySpec(VALID)
+    expect(res.status).toBe(200)
+    expect(specOf(res).projects).toHaveLength(3)
+  })
+
+  it('asks GitHub for the API twice only and reads files without any credential and with a time limit', async () => {
+    const t = await token()
+    treeAnswer = treeOf(['FE/package.json', 'BE/package.json'])
+    rawFiles = { 'FE/package.json': VITE_PKG, 'BE/package.json': NEST_PKG }
+    await deploySpec(VALID, `Bearer ${t}`)
+
+    expect(callsTo('https://api.github.com/')).toHaveLength(2)
+    expect(rawCalls().map(([url]) => urlOf(url)).sort()).toEqual([`${RAW_PREFIX}BE/package.json`, `${RAW_PREFIX}FE/package.json`])
+    for (const [, init] of rawCalls()) {
+      expect(JSON.stringify(init?.headers).toLowerCase()).not.toContain('authorization')
+      expect(init?.signal).toBeInstanceOf(AbortSignal)
+    }
+    expect(JSON.stringify(rawCalls())).not.toContain(t)
+  })
+
+  describe('a package.json that is gone or not a JSON object leaves that folder open for the student', () => {
+    it.each<[string, RawAnswer | object]>([
+      ['gone by now (404)', () => new Response('404: Not Found', { status: 404 })],
+      ['200 that is not JSON', () => new Response('<html>')],
+      ['a JSON array', []],
+      ['a JSON string', () => Response.json('hello')],
+    ])('%s', async (_, answer) => {
+      treeAnswer = treeOf(['FE/package.json', 'FE/yarn.lock', 'FE/Dockerfile', 'BE/package.json'])
+      rawFiles = { 'FE/package.json': answer, 'BE/package.json': NEST_PKG }
+      const res = await deploySpec(VALID)
+      expect(res.status).toBe(200)
+      expect(specOf(res).projects).toEqual([
+        expect.objectContaining({ dir: 'BE', language: { value: 'typescript', source: 'package.json' } }),
+        // 락 파일과 Dockerfile은 package.json 없이도 안다.
+        expect.objectContaining({
+          dir: 'FE',
+          framework: { value: null, source: null },
+          language: { value: null, source: null },
+          packageManager: { value: 'yarn', source: 'lockfile' },
+          dockerfile: true,
+        }),
+      ])
+    })
+  })
+})
+
+describe('POST /api/repos/deploy-spec checks ownership first (same errors as /repos/check)', () => {
+  it.each([
+    ['a repo owned by another account', () => (githubAnswer = repoOwnedBy(1)), 403, 'REPO_NOT_OWNED'],
+    ['an organization repo', () => (githubAnswer = repoOwnedBy(Number(GITHUB_ID), 'Organization')), 422, 'REPO_NOT_PERSONAL'],
+    ['a missing or private repo', () => (githubAnswer = status(404)), 404, 'REPO_NOT_FOUND'],
+    ['an account without GitHub linked', () => (supabaseAnswer = emailOnlyUser), 403, 'GITHUB_NOT_LINKED'],
+  ])('%s never reaches the file list or any file', async (_, arrange, code, errorCode) => {
+    treeAnswer = treeOf(['package.json'])
+    rawFiles = { 'package.json': VITE_PKG }
+    arrange()
+    const res = await deploySpec(VALID)
+    expect(res.status).toBe(code)
+    expect(res.body).toEqual(errorBody(errorCode))
+    expect(treeCalls()).toHaveLength(0)
+    expect(rawCalls()).toHaveLength(0)
+  })
+
+  it('a bad repo address (400 INVALID_REPO_URL) before calling anyone', async () => {
+    const res = await deploySpec({ repoUrl: 'https://github.com/student/my-app/tree/main' })
+    expect(res.status).toBe(400)
+    expect(res.body).toEqual(errorBody('INVALID_REPO_URL'))
+    expect(fetchMock.mock.calls.filter(([url]) => urlOf(url) !== JWKS_URL)).toHaveLength(0)
+  })
+
+  it('no token (401 AUTH_REQUIRED) without asking anyone', async () => {
+    const res = await deploySpec(VALID, null)
+    expect(res.status).toBe(401)
+    expect(res.body).toEqual(errorBody('AUTH_REQUIRED'))
+    expect(callsTo('https://api.github.com/')).toHaveLength(0)
+    expect(rawCalls()).toHaveLength(0)
+  })
+})
+
+describe('POST /api/repos/deploy-spec when GitHub cannot give a file (503, never a user error)', () => {
+  it.each<[string, Answer]>([...outage, ['404', status(404)], ['rate limit 403', status(403)], ['rate limit 429', status(429)], ['200 without a tree', () => Response.json({ truncated: false })]])(
+    'file list: %s → GITHUB_UNAVAILABLE and no file is read',
+    async (_, answer) => {
+      treeAnswer = answer
+      const res = await deploySpec(VALID)
+      expect(res.status).toBe(503)
+      expect(res.body).toEqual(errorBody('GITHUB_UNAVAILABLE'))
+      expect(rawCalls()).toHaveLength(0)
+    },
+  )
+
+  it.each<[string, RawAnswer]>([
+    // 200인데 JSON이 아닌 답은 그 폴더만 판단 필요로 두므로(위 describe) 여기 없다.
+    ...outage.filter(([name]) => name !== '200 that is not JSON'),
+    ['rate limit 429', status(429)],
+    ['403', status(403)],
+    ['an error status with a body that looks fine', () => Response.json(VITE_PKG, { status: 502 })],
+  ])('one package.json: %s → GITHUB_UNAVAILABLE (and it is logged)', async (_, answer) => {
+    treeAnswer = treeOf(['FE/package.json', 'BE/package.json'])
+    rawFiles = { 'FE/package.json': VITE_PKG, 'BE/package.json': answer }
+    const res = await deploySpec(VALID)
+    expect(res.status).toBe(503)
+    expect(res.body).toEqual(errorBody('GITHUB_UNAVAILABLE'))
+    expect(logError).toHaveBeenCalled()
+  })
+
+  it('/repos/check and /repos/dockerfiles never read a file', async () => {
+    treeAnswer = treeOf(['Dockerfile', 'package.json'])
+    expect((await check(VALID)).status).toBe(200)
+    expect((await dockerfiles(VALID)).status).toBe(200)
+    expect(rawCalls()).toHaveLength(0)
   })
 })
