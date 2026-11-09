@@ -88,7 +88,7 @@ FE 흐름은 ① `repos/check` → ② `repos/dockerfiles`와 이 API. 이 API�
 { "repoUrl": "https://github.com/student/my-app", "commit": "0123456789abcdef0123456789abcdef01234567" }
 ```
 
-- `commit`(선택): 읽을 commit의 **전체 SHA**(40자, 소문자 16진수). 없으면 `HEAD`를 읽고 응답의 `commit`은 `null`이다. 짧은 SHA · 브랜치 이름 · 대문자는 받지 않는다(`400 INVALID_COMMIT`).
+- `commit`(선택): 읽을 commit의 **전체 SHA**(40자, 소문자 16진수). 없으면(`null`도 같다. `repos/check`가 빈 레포에 `null`을 주므로 그대로 넘겨도 된다) `HEAD`를 읽고 응답의 `commit`은 `null`이다. 짧은 SHA · 브랜치 이름 · 대문자 · 빈 문자열 · 공백이 낀 값 · 문자열이 아닌 값(숫자 · 배열 · 객체)은 받지 않는다(`400 INVALID_COMMIT`). 다듬어(trim) 받아 주지는 않는다.
 
 응답 `200` (모양은 [#46](https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/46)이 정해질 때까지 잠정이다):
 
@@ -152,7 +152,7 @@ FE 흐름은 ① `repos/check` → ② `repos/dockerfiles`와 이 API. 이 API�
 | 빌드 · 시작 명령 | `scripts.build` · `scripts.start`가 있으면 `<pm> run build` · `<pm> run start`로 보여 주고 실제 스크립트 문자열을 `script`에 함께 담는다. **스크립트가 없으면 프레임워크 기본 명령을 지어내지 않고** 판단 필요다(단 정적 사이트의 `start`는 해당 없음). 패키지 매니저를 못 정했으면(판단 필요) 스크립트가 있어도 `<pm>`을 모르니 `value`는 `null`이고 `script`와 `source: package.json`만 채우며 판단 필요다 |
 | 출력 폴더 · 포트 | 프레임워크 기본값 표만 쓴다: `vite-react` → 출력 폴더 `dist`(시작 명령 · 포트 없음, 정적), `nextjs` → 포트 `3000`(출력 폴더 없음). 스크립트 · README는 파싱하지 않는다. 프레임워크를 모르면 판단 필요 |
 
-오류: `POST /api/repos/check`와 같고, `400 INVALID_COMMIT`(`commit`이 있는데 전체 SHA 모양이 아니다. 외부 호출 전에 거른다)과 `404 COMMIT_NOT_FOUND`(그 레포에 없는 SHA다. GitHub는 없는 SHA · 다른 레포의 SHA · commit이 아닌 tree SHA에 모두 `422`로 답하므로 한꺼번에 이 오류로 돌려준다)를 더한다. 파일 목록이나 `package.json`을 못 받으면 `503 GITHUB_UNAVAILABLE`을 더한다(이미 소유 확인을 통과한 레포라 사용자 잘못이 아니다). 읽은 `package.json`이 JSON 객체가 아니거나 1,000,000바이트를 넘어 읽지 않았으면(크기는 파일 목록에 있다. 큰 파일로 서버 메모리를 쓰지 못하게 한다) 오류가 아니라, `package.json`에서 알아내는 항목(프레임워크 · 언어 · 빌드/시작 명령 · 출력 폴더 · 포트)이 그 폴더만 판단 필요다. 락 파일과 Dockerfile로 아는 값(패키지 매니저 · 설치 명령 · `dockerfile`)은 그대로 채운다. 읽는 사이 `package.json`이 사라져 `404`가 나도 같다(읽는 사이 push가 있을 수 있다).
+오류: `POST /api/repos/check`와 같고, `400 INVALID_COMMIT`(`commit`이 있는데 전체 SHA 모양이 아니다. 외부 호출 전에 거른다)과 `404 COMMIT_NOT_FOUND`(그 레포에 없는 SHA다. GitHub는 없는 SHA · 다른 레포의 SHA · commit이 아닌 tree SHA에 모두 `422`로 답하고 커밋이 없는 빈 레포는 `409`이므로 한꺼번에 이 오류로 돌려준다)를 더한다. 파일 목록이나 `package.json`을 못 받으면 `503 GITHUB_UNAVAILABLE`을 더한다(이미 소유 확인을 통과한 레포라 사용자 잘못이 아니다). 읽은 `package.json`이 JSON 객체가 아니거나 1,000,000바이트를 넘어 읽지 않았으면(크기는 파일 목록에 있다. 큰 파일로 서버 메모리를 쓰지 못하게 한다) 오류가 아니라, `package.json`에서 알아내는 항목(프레임워크 · 언어 · 빌드/시작 명령 · 출력 폴더 · 포트)이 그 폴더만 판단 필요다. 락 파일과 Dockerfile로 아는 값(패키지 매니저 · 설치 명령 · `dockerfile`)은 그대로 채운다. 읽는 사이 `package.json`이 사라져 `404`가 나도 같다(읽는 사이 push가 있을 수 있다).
 
 ## <그룹명> (SRS §2.4)
 
