@@ -27,7 +27,7 @@ Five demo-path issues are done on one branch, one commit per issue, so the work 
 
 ## Done when
 
-- [ ] `cd FE && pnpm verify` passes on every commit
+- [x] `cd FE && pnpm verify` passes on every commit
 - [ ] Each state is seen in a browser; no console errors, no horizontal scroll
 - [ ] Real Supabase login return, X1 and the GitHub link are confirmed by the user (needs #49)
 - [ ] tests added; mutation testing not run — no mutation tool chosen yet (conventions §6), noted in the PR bodies
