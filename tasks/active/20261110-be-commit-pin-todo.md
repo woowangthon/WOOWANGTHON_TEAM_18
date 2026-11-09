@@ -14,14 +14,14 @@ Not done here on purpose: the server does not remember the commit, so "the commi
 
 ## Todo
 
-- [ ] Probe real GitHub answers (HEAD SHA, tree by SHA, missing/short/tree SHA, raw by SHA, rate use)
-- [ ] Docs first: `docs/design/api.md`, `auth.md`, `docs/ai-scope.md` — files: `docs/`
-- [ ] Review round R0 (agy, Gemini): gaps in the docs, hostile `commit` inputs
-- [ ] `commit` check (pure function) + `check()` returns the commit + `deploySpec(…, commit?)` + e2e — files: `BE/src/repos/`, `BE/test/repos.e2e.spec.ts`
-- [ ] Review rounds R2a (agy, GPT-OSS 120B: correctness / security) and R2b (agy, Gemini: docs vs code)
-- [ ] Follow-ups from the #48 review: tick `20261109-be-deploy-spec-draft-todo.md` truthfully, rerun the hand-made mutants after the refactor, fix the GitHub limit wording
-- [ ] Hand-made mutants for the new code; survivors get a test or a reason
-- [ ] `pnpm verify`, `/code-review medium`, `/simplify`, R3 (agy, GPT-OSS 120B)
+- [x] Probe real GitHub answers (HEAD SHA, tree by SHA, missing/short/tree SHA, raw by SHA, rate use)
+- [x] Docs first: `docs/design/api.md`, `auth.md`, `docs/ai-scope.md` — files: `docs/`
+- [x] Review round R0 (agy, Gemini): gaps in the docs, hostile `commit` inputs
+- [x] `commit` check (pure function) + `check()` returns the commit + `deploySpec(…, commit?)` + e2e — files: `BE/src/repos/`, `BE/test/repos.e2e.spec.ts`
+- [x] Review rounds R2a (agy, GPT-OSS 120B: correctness / security) and R2b (agy, Gemini: docs vs code)
+- [x] Follow-ups from the #48 review: tick `20261109-be-deploy-spec-draft-todo.md` truthfully, rerun the hand-made mutants after the refactor, fix the GitHub limit wording
+- [x] Hand-made mutants for the new code; survivors get a test or a reason
+- [ ] `pnpm verify` (passes with `--testTimeout=30000`; the health test times out at 5 s on this machine, also on `upstream/main`), `/code-review medium`, `/simplify` (done), R3 (agy, GPT-OSS 120B; running)
 - [ ] Commit locally. Do **not** push (the owner pushes later; FE login work may conflict)
 - [ ] Next task: #45 (security scan, now also warns about a committed `.env`)
 - [ ] Later task: store the confirmed spec in Supabase (needs a data model in `docs/design/` first)
@@ -30,8 +30,8 @@ Not done here on purpose: the server does not remember the commit, so "the commi
 
 (CI green is left for the PR checks to show.)
 
-- [ ] `pnpm verify` passes on the final tree
-- [ ] The test fixtures have the shape of the real GitHub answers probed above
-- [ ] Hand-made mutants listed in lessons, survivors resolved or explained; the mutants from the #48 work are rerun on the refactored code
-- [ ] `/code-review medium` and `/simplify` were run and their findings handled
+- [ ] `pnpm verify` passes on the final tree (all 383 pass; the unrelated health test is over its 5 s limit on this machine, see lessons)
+- [x] The test fixtures have the shape of the real GitHub answers probed above
+- [x] Hand-made mutants listed in lessons, survivors resolved or explained; the mutants from the #48 work are rerun on the refactored code
+- [x] `/code-review medium` and `/simplify` were run and their findings handled
 - [ ] Real Supabase + linked test account run, or the PR body says that path is unverified
