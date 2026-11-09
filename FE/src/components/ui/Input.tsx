@@ -7,7 +7,7 @@ type InputProps = InputHTMLAttributes<HTMLInputElement> &
 export function Input({ className = '', ...rest }: InputProps) {
   return (
     <input
-      className={`h-8 w-full rounded-sm border border-line-strong bg-bg px-3 text-sm text-fg placeholder:text-muted disabled:border-line disabled:bg-surface disabled:text-muted ${className}`}
+      className={`h-8 w-full rounded-sm border border-line-strong bg-bg px-3 aria-invalid:border-err text-sm text-fg placeholder:text-muted disabled:border-line disabled:bg-surface disabled:text-muted ${className}`}
       {...rest}
     />
   )
