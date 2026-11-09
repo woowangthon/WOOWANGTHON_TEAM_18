@@ -27,6 +27,6 @@ The repo is read from GitHub's public API without credentials (the user's token 
 - [x] History is docs first, then code (docs, env, URL parser, API, task docs), plus review follow-ups appended as separate commits (ai-scope row, 401 fix, task docs) instead of rewriting pushed history; each code commit passes `pnpm install --frozen-lockfile && pnpm verify` on its own
 - [x] Real Supabase, test account **not linked**: no token → `401 AUTH_REQUIRED`; garbage token → `401 INVALID_TOKEN`; bad URL → `400`; valid URL → `403 GITHUB_NOT_LINKED`; malformed JSON → `400 BAD_REQUEST`; `GET /api/me` unchanged; boot stops without the key
 - [x] Real Supabase + real GitHub, test account **linked** (throwaway local page, not committed), 2026-11-09: own repo (`TaeTaeJin/WOOWANGTHON_TEAM_18`, also with `.git`) → `200`; organization repo (`woowangthon/WOOWANGTHON_TEAM_18`) → `422 REPO_NOT_PERSONAL`; someone else's personal repo (`torvalds/linux`) → `403 REPO_NOT_OWNED`; missing repo → `404 REPO_NOT_FOUND`; non-GitHub URL → `400`; `GET /api/me` keys unchanged (`email`, `id`, `isAdmin`). The linked identity's `id` is a string, as assumed
-- [ ] CI green on GitHub
+- [x] CI green on GitHub
 - [x] Notion SRS synced (NFR-SEC-04, §2.4) — confirmed by TaeTaeJin in the PR #36 review thread, 2026-11-09
 - [x] Tests added; mutation testing not run with a tool — none chosen yet (conventions §6); hand-made mutants, see lessons
