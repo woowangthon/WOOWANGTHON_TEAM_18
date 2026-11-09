@@ -32,7 +32,7 @@ Priorities: the demo path first. Deferred (후순위): moving cloudflared from t
     - [x] `docs/system-definition.md` §5.1 site values (wall-port uplink, firewall by source address, outbound ports, 7844 open, OS, return image), §5.2 and §6 pointers to the design doc
     - [x] `docs/ai-scope.md`: Tailscale remote access in use, node OS tools row, tunnel port checked
     - [x] open the PR (issue first) — #30 / #31
-    - [ ] confirm the proposed cap values with the server owner (#31 merged without it; needed before 08)
+    - [x] ~~confirm the proposed cap values with the server owner~~ — decided by the infra owner 2026-11-10 (the server only creates the template as written and never reads the values); shared through the 08 PR
     - [x] follow-up PR: `docs/architecture/*.drawio.svg` still said Wi-Fi per node / no uplink and showed student volumes (cluster, overview, user3-visitor) — #33 / #34
 - [x] 05 k3s install (2026-11-07) — k3s v1.37.2+k3s1, options in `/etc/rancher/k3s/config.yaml` (`Infra/k3s/server.yaml`, `agent.yaml`)
   - [x] nvidia-container-toolkit on the leader (1.20.1 already there as received; k3s registered the `nvidia` runtime)
@@ -47,10 +47,10 @@ Priorities: the demo path first. Deferred (후순위): moving cloudflared from t
   - [x] w1 → w2 → leader, one at a time, remotely (2026-11-08): each back in ~35–45 s unattended; NotReady measured at ~50 s (agent stopped), rescheduling at ~80 s
   - [ ] full power cut (on site)
 - [x] 06′ Leader GPU + vLLM — NVIDIA device plugin, Qwen/Qwen3-8B-AWQ on vLLM (16K context, one request at a time, API key in a leader Secret), no public route; measure GPU memory. Team priority: 후순위 since the 2026-11-09 meeting — done off the demo path the same day. Manifests in `Infra/gpu/` · `Infra/vllm/`, design in cluster.md §11 (#38). Left: copy the API key to the team vault
-- [x] 07 Image pulls (2026-11-10, issue #62) — GHCR pull-through cache on the leader (`registry:3.1.2` proxy mode, hostNetwork on 192.168.77.11:5000, local-path; `Infra/registry-cache/`), `/etc/rancher/k3s/registries.yaml` on all three (`Infra/k3s/registries.yaml`); second worker pulls from the cache only, a stopped cache falls back to GHCR directly
-- [ ] 08 Student namespace template — `proj-<id>`, Pod Security baseline enforced, resource cap under half a worker, NetworkPolicy (same namespace + Ingress in; same namespace + DNS + internet out, school LAN / cluster / node / tailnet / private ranges / other projects blocked)
+- [x] 07 Image pulls (2026-11-10, issue #62, PR #63) — GHCR pull-through cache on the leader (`registry:3.1.2` proxy mode, hostNetwork on 192.168.77.11:5000, local-path; `Infra/registry-cache/`), `/etc/rancher/k3s/registries.yaml` on all three (`Infra/k3s/registries.yaml`); second worker pulls from the cache only, a stopped cache falls back to GHCR directly
+- [x] 08 Student namespace template (2026-11-10, issue #64) — `proj-<id>`, Pod Security baseline enforced, resource cap under half a worker (plus no PVC, NodePort or LoadBalancer), NetworkPolicy (same namespace + Ingress in; same namespace + DNS + internet out, school LAN / cluster / node / tailnet / private ranges / other projects blocked). Template `Infra/student/space.yaml` applied as `proj-demo` with a podinfo test app (`app-example.yaml`); `Infra/student/check.sh` passes; design in cluster.md §6
 - [x] ~~08′ Student volume and DB failover~~ — dropped 2026-11-07: students bring their own DB (deploy workflow v15), so no platform MySQL or Longhorn; 08 opens student Pod egress to the internet instead
-- [ ] 09 Server link — Tailscale tag and ACL, server ServiceAccount + RBAC + ValidatingAdmissionPolicy, Secret write-only
+- [ ] 09 Server link — Tailscale tag and ACL, server ServiceAccount + RBAC + ValidatingAdmissionPolicy, Secret write-only; the policy also rejects proj- Pods without `automountServiceAccountToken: false` (08 left the default ServiceAccount stock because the server may only create)
 - [ ] 09′ GoCD Agent on the leader — connects to the GoCD server on the EC2 over Tailscale, deploy rights move to its ServiceAccount (cluster.md §8 split, ADR-009), Verify path through Traefik; docs for the AI parts. Check the AI teammate's ArgoCD review first: if the team switches, this stage changes
 - [ ] 10 Public entry — Cloudflare Tunnel from the leader, Traefik (2 replicas) on the workers, the demo student address over HTTPS
 - [ ] 11 Monitoring — Prometheus + Grafana on the leader (local-path), server queries Prometheus, Discord alerts

@@ -1,6 +1,6 @@
 # 클러스터 — 설계
 
-- **상태**: 일부 구현됨 (노드 · 네트워크 · 방화벽 2026-11-06, k3s 설치 2026-11-07, 재부팅 시험 2026-11-08, 리더 GPU · 로컬 모델 2026-11-09, 이미지 캐시 2026-11-10). 학생 공간 양식부터는 초안
+- **상태**: 일부 구현됨 (노드 · 네트워크 · 방화벽 2026-11-06, k3s 설치 2026-11-07, 재부팅 시험 2026-11-08, 리더 GPU · 로컬 모델 2026-11-09, 이미지 캐시 · 학생 공간 양식 2026-11-10). 서버 연결부터는 초안
 - **관련**: SRS NFR-OPS-01 · NFR-SEC-01 · [ADR-003](../adr/003-registry-ghcr.md) 레지스트리 · [ADR-004](../adr/004-server-cluster-link-tailscale.md) 서버 연결 · [ADR-005](../adr/005-k3s-cluster-on-school-pcs.md) 클러스터 구성 · [ADR-006](../adr/006-metrics-on-leader-prometheus.md) 지표 · [ADR-008](../adr/008-node-network-on-school-wired-lan.md) 노드망 · [ADR-009](../adr/009-deploy-runs-on-leader-gocd-agent.md) 배포 실행기 · [시스템 정의서 §5](../system-definition.md#5-인프라) · 구축 task [`20261106-k3s-cluster-build`](../../tasks/active/20261106-k3s-cluster-build-todo.md)
 
 ## 범위
@@ -82,22 +82,31 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 - 세 노드의 `/etc/rancher/k3s/registries.yaml`(권한 600, `Infra/k3s/registries.yaml`)이 `ghcr.io`의 mirror로 리더 캐시를 둔다. containerd는 레지스트리 자신의 주소를 마지막 시도로 늘 남겨 두므로(k3s 기본), 캐시가 죽으면 GHCR에서 직접 받는다. 이미지가 공개라 노드에도 캐시에도 자격증명이 없다(ADR-003). 파일을 바꾸면 k3s를 다시 시작해야 한다(w2 → w1 → 리더 순서로 한 대씩, 돌던 컨테이너는 그대로).
 - 시험(2026-11-10, `ghcr.io/stefanprodan/podinfo:6.15.0`, 34.8MB): w1이 처음 받을 때 캐시가 GHCR에서 가져오며 넘겨줘 1분 53초, 이어서 w2는 1.1초였고 그동안 캐시가 GHCR에 간 기록은 없었다. 캐시를 0개로 내리고 w1의 이미지를 지운 뒤 다시 받으니 containerd가 연결 거부를 받고 바로 GHCR로 넘어가 44초에 받았다. 리더가 꺼진 경우는 w1에서 리더 5000번으로 가는 패킷을 버려(DROP) 흉내 냈다: containerd가 연결 시간 초과 30초를 한 번 기다린 뒤 GHCR로 넘어가 모두 3분 37초에 받았다(그중 GHCR에서 받은 시간 3분 6초. 같은 이미지가 앞서 44초였으니 학교망의 GHCR 속도가 들쭉날쭉하다). 리더 전원을 실제로 끈 시험은 아니다. 학교 주소에서 리더 5000번은 닫혀 있다(시간 초과).
 
-### 6. 학생 공간 양식 (예정)
+### 6. 학생 공간 양식 (구현됨, 2026-11-10)
 
-프로젝트마다 만드는 공간의 틀. 공간 · 보안 등급 · 자원 상한 · 차단 규칙은 플랫폼 서버가 처음에 만들고, 앱 자원(Deployment · Service · Ingress)은 리더의 배포 실행기가 배포 설정에서 값을 뽑아 채운다.
+프로젝트마다 만드는 공간의 틀. 공간 · 보안 등급 · 자원 상한 · 차단 규칙은 플랫폼 서버가 처음에 만들고, 앱 자원(Deployment · Service · Ingress)은 리더의 배포 실행기가 배포 설정에서 값을 뽑아 채운다. 양식은 [`Infra/student/space.yaml`](../../Infra/student/space.yaml)이고 시험 공간 `proj-demo`에 적용해 두었다. 서버는 이 파일에서 이름만 `proj-<id>`로 바꿔 Namespace · LimitRange · ResourceQuota · NetworkPolicy 넷을 만든다. 배포 실행기의 `student-app` 차트가 서비스마다 넣어야 할 필드는 [`Infra/student/app-example.yaml`](../../Infra/student/app-example.yaml)에 있다.
 
 | 항목 | 값 |
 | --- | --- |
 | 이름 | `proj-<id>` |
 | 보안 등급 | Pod Security `enforce=baseline`, `warn=restricted`. restricted로 강제하면 root로 도는 공식 이미지(nginx · node 등)가 거절된다 |
-| 컨테이너 권한 | 모든 컨테이너에서 `NET_RAW` capability를 뺀다(`securityContext.capabilities.drop: ["NET_RAW"]`). baseline은 이걸 빼지 않아, 같은 워커의 학생 Pod가 ARP 스푸핑으로 다른 Pod 통신을 가로챌 수 있다. 배포 실행기가 매니페스트에 넣고, 검사 규칙(§8)이 빠진 Pod를 거절한다 |
-| 배치 | 워커에만(라벨 + 리더 taint). 앱 복제본 1 |
-| 프로젝트 자원 상한 (ResourceQuota) | **제안** CPU 요청 4 · 상한 8, 메모리 요청 16Gi · 상한 32Gi, 볼륨 요청 0(학생 볼륨 없음), Pod 10개. 워커 하나(24스레드 · 125GiB)의 절반 아래로, 워커가 하나 꺼져 두 프로젝트가 한 워커에 떠도 시스템 몫이 남는다. 플랫폼 서버 담당과 확인한 뒤 확정한다 |
-| 컨테이너 기본값 (LimitRange) | **제안** 요청 CPU 250m · 메모리 256Mi, 상한 CPU 2 · 메모리 4Gi(스펙에 값이 없을 때) |
+| 컨테이너 권한 | 모든 컨테이너에서 `NET_RAW` capability를 뺀다(`securityContext.capabilities.drop: ["NET_RAW"]`). baseline은 이걸 빼지 않아, 같은 워커의 학생 Pod가 ARP 스푸핑으로 다른 Pod 통신을 가로챌 수 있다. 배포 실행기가 매니페스트에 넣는다. 빠진 Pod를 거절하는 검사 규칙(§8)은 구축 09에서 넣는다(그 전에는 막는 장치가 없다) |
+| API 토큰 | 학생 Pod에는 쿠버네티스 API 토큰을 넣지 않는다(`automountServiceAccountToken: false`). 학생 앱은 API를 쓸 일이 없다. 서버는 공간 안 객체를 만들기만 할 수 있어(§8) 공간의 `default` ServiceAccount는 쿠버네티스가 만든 그대로 두고, 배포 실행기가 Pod마다 끈다. 토큰이 켜진 Pod를 거절하는 검사 규칙(§8)은 구축 09에서 넣는다(그 전에는 막는 장치가 없다) |
+| 배치 | 워커에만(nodeSelector `wanggane/pool: student` + 리더 taint). 앱 복제본 1 |
+| 프로젝트 자원 상한 (ResourceQuota) | CPU 요청 4 · 상한 8, 메모리 요청 16Gi · 상한 32Gi, 임시 저장소(로그 · emptyDir · 컨테이너 쓰기 층) 요청 10Gi · 상한 40Gi, Pod 10개, 볼륨(PVC) 0 · 볼륨 요청 0(학생 볼륨 없음), NodePort · LoadBalancer Service 0(방문자는 Traefik으로만 들어온다. NodePort는 노드 대역에 앱을 바로 연다). 워커 하나(24스레드 · 125GiB)의 절반 아래로, 워커가 하나 꺼져 두 프로젝트가 한 워커에 떠도 시스템 몫이 남는다. 값은 구축 담당이 정했다(2026-11-10. 서버는 양식을 그대로 만들 뿐 값을 쓰지 않는다) |
+| 컨테이너 기본값 (LimitRange) | 요청 CPU 250m · 메모리 256Mi · 임시 저장소 1Gi, 상한 CPU 2 · 메모리 4Gi · 임시 저장소 8Gi(없으면 한 Pod가 워커 디스크를 채워 같은 워커의 Pod가 모두 쫓겨난다). 스펙에 값이 없을 때만 채운다. 컨테이너 하나의 최대치가 아니며, 합계는 위 상한이 막는다 |
 | 들어오는 통신 (NetworkPolicy) | 같은 공간, Ingress(Traefik)에서만 |
 | 나가는 통신 (NetworkPolicy) | 같은 공간, 클러스터 DNS, 인터넷(학생 DB가 밖에 있다). 학교망 `10.198.0.0/16`, 클러스터 내부(`10.42.0.0/16` · `10.43.0.0/16`, DNS 빼고), 노드 대역 `192.168.77.0/24`, Tailscale `100.64.0.0/10`, 그 밖의 사설 대역, 다른 학생 공간은 막는다 |
 | 노드가 꺼졌을 때 | 약 50초 뒤 NotReady가 되고(2026-11-08 잼), 포기 대기 30초(기본 5분)가 지나 약 80초에 남은 워커에 다시 띄운다. 포기 대기 값은 API 서버에서 한 번에 준다(§4). 서버 양식에 따로 넣지 않는다 |
 | DB | 학생 것(MVP). 학생이 넣은 접속 정보를 Secret으로 환경 변수에 주입한다. 클러스터에 DB와 볼륨을 두지 않는다 |
+
+- 상한에서 먼저 닿는 것은 CPU 상한 합계다. 기본값만 쓰는 컨테이너는 상한 8 ÷ 2 = 4개까지 뜬다(CPU 요청으로는 16개, 메모리로는 8개, 임시 저장소로는 5개, Pod 10개). FE · BE · AI 셋이면 상한 합계 6이고, Deployment는 새 Pod를 먼저 띄우고 옛 Pod를 지우므로(복제본 1이면 하나 더) 배포 하나가 도는 동안 8로 꽉 찬다. 두 서비스를 동시에 배포하면 두 번째 새 Pod는 첫 배포가 끝날 때까지 만들어지지 않는다(실패가 아니라 기다린다). 그래서 배포 실행기는 한 프로젝트의 서비스를 하나씩 차례로 배포한다. 차트가 서비스마다 상한을 적으면 기본값은 쓰이지 않는다.
+- 공간을 만든 직후 잠깐은 `default` ServiceAccount가 아직 없어 Pod를 만들 수 없다. 서버는 기다리지 않는다(ServiceAccount를 읽을 권한도 없다, §8). Pod는 배포 실행기의 Deployment에서 나오고, Deployment 컨트롤러가 ServiceAccount가 생길 때까지 다시 시도한다.
+- 시험(2026-11-10, [`Infra/student/check.sh`](../../Infra/student/check.sh), 운영자 기기에서 실행): 같은 양식으로 공간을 하나 더(`proj-check`), 정책 없는 대조 공간을 하나 만들고 각 공간의 시험 Pod에서 재 본 뒤 지운다.
+  - 된다: 같은 공간 Service, 클러스터 DNS, 인터넷 HTTPS, 바깥 DB 포트 3306 · 5432(학교망에서도 열려 있다), Traefik → 학생 Service(Ingress 시험 호스트로 200. 다른 워커 쪽은 스크립트를 만들기 전에 손으로 쟀다).
+  - 막힌다: 리더 API(Service 주소 · 노드 주소), 이미지 캐시, 두 워커의 kubelet, 학교망 DNS 서버, 리더의 Tailscale 주소, 로컬 모델(`vllm`), Traefik Service에 직접, 다른 학생 공간(Service · Pod 주소, 양쪽 방향). 대조 공간에서는 같은 대상에 닿아, 막는 것이 이 정책임을 확인했다. 막힌 연결은 시간 초과가 아니라 바로 거절된다.
+  - 받아들여지지 않는다(서버 쪽 dry run): hostNetwork · privileged Pod, CPU 5개를 요청하는 Pod(상한 초과), NodePort Service. 배치: 워커 라벨을 단 시험 Pod는 워커에, nodeSelector가 없는 Pod도 리더 taint 때문에 워커에 뜨고, 리더를 지정한 Pod는 Pending으로 남는다. 스크립트가 중간에 멈춰도 만든 것은 지우고, 시험 Pod에 들어가지 못한 측정과 연결 거절 · 시간 초과가 아닌 curl 오류(이름 풀이 실패 등)는 "막힘"이 아니라 실패로 센다.
+  - 리더 호스트에서 학생 Pod로 바로 가는 길도 막힌다. 배포 뒤 동작 확인(배포 실행기)은 Traefik을 거쳐야 한다.
 
 ### 7. 학생 볼륨 (빠짐)
 
@@ -112,7 +121,7 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 1. **권한(RBAC)**: ServiceAccount 둘.
    - **플랫폼 서버**: 클러스터 범위 쓰기는 네임스페이스 만들기 · 삭제 둘뿐이다. 공간 안에서는 ResourceQuota · LimitRange · NetworkPolicy **만들기만**, Secret **만들기 · 고치기만**(`get` · `list` · `watch` 없음), 조치용 Deployment 고치기(재시작 · 중지/재개), 읽기(노드 · Pod 상태, 로그, Prometheus 프록시)를 준다. 서버가 자기 공간의 상한과 차단 규칙을 고치거나 지울 수 있으면, 서버 계정이 털렸을 때 그 제한부터 풀린다.
    - **배포 실행기**: 공간 안 Deployment · Service · Ingress · ConfigMap 만들기 · 고치기 · 지우기와, 동작 확인용 읽기(Pod · Endpoints · 이벤트 · 롤아웃 상태)만 준다. Secret은 읽지 않는다. 필요한 키가 들어갔는지는 플랫폼 서버가 남긴 키 이름으로 확인한다(값은 보지 않는다). 네임스페이스 · 상한 · 차단 규칙은 건드리지 못한다. 실행기 계정의 토큰은 리더 밖으로 나가지 않는다.
-2. **검사 규칙(ValidatingAdmissionPolicy)**: 두 계정 모두 공간 안 쓰기 · 삭제는 `proj-`로 시작하는 공간에서만 통과한다. 네임스페이스는 이름이 `proj-`로 시작하고 보안 등급 라벨이 붙었을 때만 만들어지고, **삭제도 이름이 `proj-`로 시작할 때만** 통과하며, 그 라벨은 지울 수 없다. Pod는 `NET_RAW`를 뺀 것만 통과한다. ResourceQuota · LimitRange · NetworkPolicy는 §6 양식과 같은 값일 때만 만들어진다. RBAC만으로는 네임스페이스 이름 조건을 걸 수 없어서 겹친다.
+2. **검사 규칙(ValidatingAdmissionPolicy)**: 두 계정 모두 공간 안 쓰기 · 삭제는 `proj-`로 시작하는 공간에서만 통과한다. 네임스페이스는 이름이 `proj-`로 시작하고 보안 등급 라벨이 붙었을 때만 만들어지고, **삭제도 이름이 `proj-`로 시작할 때만** 통과하며, 그 라벨은 지울 수 없다. Pod는 `NET_RAW`를 빼고 API 토큰 자동 마운트를 끈(`automountServiceAccountToken: false`) 것만 통과한다. 공간의 기본 ServiceAccount는 서버가 고칠 수 없어서(만들기만 가능) 토큰은 Pod마다 끈다. ResourceQuota · LimitRange · NetworkPolicy는 §6 양식과 같은 값일 때만 만들어진다. RBAC만으로는 네임스페이스 이름 조건을 걸 수 없어서 겹친다.
 
 사설망 접근 규칙(Tailscale ACL)은 서버 태그 → 리더 `:6443`, 리더 → EC2의 GoCD 서버 포트(실행기가 일감을 받는 길) 둘만, SSH는 운영자 기기만 허용한다. 서버 접속 정보는 AWS의 비밀 설정에만 둔다.
 
@@ -179,6 +188,8 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 | 로컬 모델 동시 요청 1 (2026-11-09) | 정해진 값이 없었다(AI 쪽 답 없음). 넘치는 요청은 실패하지 않고 줄을 선다 | 3(슬롯 2 + 분석 호출 1로 어림했던 값) |
 | 이미지 캐시는 hostNetwork, 노드 주소에만 묶기 (2026-11-10) | 호스트 방화벽이 그대로 걸려 학교 주소 쪽이 닫히고, 노드의 containerd가 고정 주소 하나로 닿는다 | hostPort(DNAT 뒤 FORWARD라 들어오는 거부를 비켜 간다), NodePort(Service · kube-proxy를 거쳐야 하고 포트가 30000번대), 운영 도구 NetworkPolicy로 묶기(호스트에서 오는 연결은 NetworkPolicy로 거르기 어렵다) |
 | 이미지 캐시 제품은 CNCF Distribution(`registry`) 끌어오기 모드 (2026-11-10) | 공식 이미지 하나에 설정 파일 하나, 원본이 공개라 자격증명이 없다 | Harbor(DB · Redis 등 구성요소가 많다), k3s 내장 노드끼리 나누기(Spegel, 레지스트리에서 받는 횟수는 줄지만 첫 노드는 늘 바깥에서 받는다) |
+| 학생 공간의 API 토큰은 Pod마다 끄고 검사 규칙으로 강제 (2026-11-10) | 서버 계정이 공간 안 객체를 만들기만 하는 설계(§8)를 지킨다. Pod가 덮어쓸 수 없는 검사 규칙이 공간 설정보다 단단하다 | 양식에 `default` ServiceAccount를 넣어 자동 마운트 끄기(서버에 고치기 권한이 필요하고, 공간 생성 직후 쿠버네티스가 만든 것과 부딪혀 `AlreadyExists`가 난다) |
+| 학생 공간에 NodePort · LoadBalancer Service 0개 (2026-11-10) | 방문자 길을 Traefik 하나로 묶는다. NodePort는 NetworkPolicy · Traefik을 거치지 않고 노드 대역에 앱을 연다 | 노드 대역 제한(§4)만 믿기 |
 | 학생 DB는 학생 것, 학생 Pod는 인터넷으로 나간다 (2026-11-07) | 배포 구조 v15에서 MVP 범위를 줄였다. 클러스터에 학생 데이터가 없어 볼륨 복제 · 페일오버 시험이 빠진다 | 플랫폼 MySQL + Longhorn 사본 2(이전 계획), 학생 DB 주소만 허용하는 egress(주소를 미리 알 수 없다) |
 
 ## 알려진 한계
@@ -195,4 +206,5 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 - 이미지 캐시가 처음 받는 이미지는 GHCR에서 직접 받을 때보다 느렸다(같은 이미지 1분 53초 대 44초, 한 번 잼). 학교망에서 GHCR이 느린 데다 캐시가 받으며 넘겨주는 동안 기다린다. 두 번째 노드부터는 1초대다. 데모 전에 쓸 이미지를 한 번 받아 두면 피한다.
 - 이미지 캐시는 리더에 하나뿐이다. 캐시에 닿지 않으면 노드는 이미지를 받을 때마다 연결 시간 초과 30초를 먼저 기다린 뒤 GHCR에서 직접 받는다(5000번 DROP으로 흉내 내 잼, 리더 전원을 끈 시험은 아니다). 캐시에 받아 둔 것은 7일 뒤 지워진다.
 - 캐시 볼륨의 50Gi는 상한이 아니다. local-path는 크기를 막지 않고 캐시에도 크기 제한이 없어, 7일 안에 큰 이미지를 많이 받으면 리더 디스크(etcd · 모델 볼륨과 같은 디스크)를 계속 차지한다. 지금 리더 여유는 약 760G다. 리더 디스크 알림(구축 11)으로 본다.
-- 위의 **제안** 값(프로젝트 자원 상한, 컨테이너 기본값)은 플랫폼 서버 담당과 확인 전이다.
+- 리더 taint는 toleration을 단 Pod는 막지 못한다. 지금은 차트가 Pod 스펙을 만들어서 괜찮고, `proj-` 공간의 toleration을 막는 것은 검사 규칙(§8, 구축 09)에서 본다.
+- 프로젝트 자원 상한은 기본값 컨테이너 4개분이라, 한 프로젝트에서 두 서비스를 동시에 배포하면 하나가 기다린다(§6).
