@@ -1,4 +1,5 @@
 import { Route, Routes } from 'react-router'
+import DashboardPage from './pages/DashboardPage.tsx'
 import DeployNewPage from './pages/DeployNewPage.tsx'
 import LoginPage from './pages/LoginPage.tsx'
 import ProfilePage from './pages/ProfilePage.tsx'
@@ -12,6 +13,7 @@ function App() {
       <Route path="/login" element={<LoginPage />} />
       <Route path="/signup" element={<SignupPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
+      <Route path="/dashboard" element={<DashboardPage />} />
       <Route path="/profile" element={<ProfilePage />} />
       <Route path="/deploy/new" element={<DeployNewPage />} />
     </Routes>
