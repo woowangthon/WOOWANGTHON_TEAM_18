@@ -1,0 +1,23 @@
+# FE login screen (#51) and follow-ups from the #59 review — lessons
+
+## Log
+
+- 2026-11-10: #59 merged (`63b5476`). Started #51 on `feat/fe-login` in the FE worktree, again leaving the BE checkout alone.
+- 2026-11-10: CloudFront SPA fallback: decided with the user not to open an issue. The repo has no CloudFront or AWS configuration (`.github/workflows` has only lint/test/build; `Infra/` is the k3s cluster), so the part that can be done here is writing the requirement into the deployment section of `docs/system-definition.md`.
+
+- 2026-11-10: `vite-env.d.ts`: removing the two `VITE_*` declarations gives 4 `no-unsafe-*` lint errors (vite's `ImportMetaEnv` is `Record<string, any>`), so only the redundant `/// <reference>` and the `ImportMeta` block went.
+- 2026-11-10: The lint rule `better-tailwindcss/no-unknown-classes` reads every string inside an object named `variants` as a class, so `Alert` keeps its ARIA roles in a separate `roles` map.
+- 2026-11-10: First draft of the login tests came from agy (GPT-OSS 120B, `--mode plan`). It answered with a plan file instead of text, and the draft used jest-dom matchers and `require()` that this repo does not have. Used its case structure and rewrote the file to the repo's rules.
+- 2026-11-10: Chromium run against `pnpm dev` with the real Supabase settings: a fake account gets `invalid_credentials` and the banner. The other states (unverified email, 429, offline, success) answered only at the network layer with `page.route`; Supabase's real answers for those were not observed. Light/dark and 1440/390 show no console errors and no horizontal scroll.
+- 2026-11-10: agy reviewed the diff: 6 findings, 1 real (the 429 banner stayed after the button unlocked; fixed with a test that fails without the fix). The other 5 were wrong or not applicable (a Tailwind variant "unknown" that lint and the screenshot show working, React 17 `useId`, a double-submit race that the synchronous `submitting` state prevents, `role="alert"` for the warning against the wireframe, a resend button that should lock after 429).
+- 2026-11-10: After the user tried the screen: login goes to a new empty `/dashboard` page (the wireframe has a dashboard but no route or issue existed), the tab icon is the team logo (`favicon.svg` was Vite's default; now `logo.svg` with a `viewBox` so it scales), the password toggle uses eye icons (inline SVG, no icon library), and the subtitle under the title is gone.
+- 2026-11-10: CodeRabbit: 1 valid finding (resend used the email field, which the user can edit while the banner is up; now it uses the address that was found unverified, with a test that fails without the fix). Its docstring-coverage check was not acted on: this repo writes short Korean comments, not docstrings.
+- 2026-11-10: Tab icon: `logo.svg` (a vtracer trace) carries a full-size white rectangle and a white fill inside the P; both removed from `favicon.svg` so the icon is transparent. Without more, the dark navy text vanishes on a dark tab bar, so the SVG has a `prefers-color-scheme: dark` rule that turns the 28 dark paths light.
+- 2026-11-10: Browser tab title changed from `왕가네식구들` to `Wang's Cloud Platform` (the user's wording).
+
+## Lessons
+
+- A test query like `findByRole('status')` returns the first match at once. Two live regions on one screen (a submitting hint and a banner) made it read the wrong one; wait on the title text instead.
+- `test.env` in `vite.config.ts` beats the local `FE/.env`, which keeps tests independent of both CI (no `.env`) and a developer's real values. Checked with a throwaway test.
+- Rate-limit and unverified-email answers from the real Supabase are still unseen. Whoever builds signup (#52) will trigger them for real; check that the codes `email_not_confirmed` and status 429 match.
+- **SVG or PNG for web design.** Use SVG for UI icons and simple logos or illustrations: it stays sharp at any size, is small, can be transparent, and can follow the theme (`currentColor`, or a `prefers-color-scheme` rule inside the file, as the tab icon does). Inline an icon that sits in the UI (the eye icon here, `aria-hidden` plus an `aria-label` on the button); reference a file for a favicon or a logo image. Use PNG for photos, screenshots and raster artwork, and wherever SVG is not accepted (for example `apple-touch-icon` and social-share images). Check before trusting an SVG that was auto-traced from a raster (vtracer, Illustrator image trace): `public/logo.svg` has a full-size white rectangle and stray fills inside letters, so it is not really transparent, and it weighs 37 KB of path data. `public/logo.png` is 885x860 and 527 KB, too heavy to put on a page as is; resize or compress it first.
