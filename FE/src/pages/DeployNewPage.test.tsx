@@ -29,6 +29,15 @@ const submit = (value: string) => {
 }
 const rejectWith = (status: number, code: string) =>
   api.apiFetch.mockRejectedValue(new ApiError(status, code, 'x'))
+// 확인(check)을 통과하면 이어서 Dockerfile 확인(dockerfiles)도 부른다. 경로별로 답한다.
+const passCheck = (dockerfiles: string[] = ['Dockerfile']) =>
+  api.apiFetch.mockImplementation((path: string) =>
+    Promise.resolve(
+      path === '/api/repos/dockerfiles'
+        ? { repo: 'student/my-app', dockerfiles, truncated: false }
+        : { repo: 'student/my-app' },
+    ),
+  )
 
 it('shows the title, the field with its hint and the check button', () => {
   renderPage()
@@ -45,7 +54,7 @@ it('asks for an address without calling the server when the field is empty', () 
 })
 
 it('sends the trimmed address and shows the repo that passed', async () => {
-  api.apiFetch.mockResolvedValue({ repo: 'student/my-app' })
+  passCheck()
   renderPage()
   submit('  https://github.com/student/my-app  ')
   expect(await screen.findByText('student/my-app')).toBeTruthy()
@@ -67,7 +76,7 @@ it('locks the field and button while checking', async () => {
 })
 
 it('clears the passed result when the address is edited', async () => {
-  api.apiFetch.mockResolvedValue({ repo: 'student/my-app' })
+  passCheck()
   renderPage()
   submit('https://github.com/student/my-app')
   await screen.findByText('student/my-app')
@@ -122,8 +131,37 @@ it('can check again after a failure and the old error goes away', async () => {
   renderPage()
   submit('https://github.com/student/my-app')
   await screen.findByText('서버와 연결하지 못했어요')
-  api.apiFetch.mockResolvedValue({ repo: 'student/my-app' })
+  passCheck()
   fireEvent.click(checkButton())
   expect(await screen.findByText('student/my-app')).toBeTruthy()
   expect(screen.queryByText('서버와 연결하지 못했어요')).toBeNull()
+})
+
+it('checks for Dockerfiles only after the repo check passed', async () => {
+  passCheck(['BE/Dockerfile'])
+  renderPage()
+  submit('https://github.com/student/my-app')
+  expect(await screen.findByText('BE/Dockerfile')).toBeTruthy()
+  expect(api.apiFetch.mock.calls.map((call) => String(call[0]))).toEqual([
+    '/api/repos/check',
+    '/api/repos/dockerfiles',
+  ])
+})
+
+it('does not look for Dockerfiles when the repo check fails', async () => {
+  rejectWith(403, 'REPO_NOT_OWNED')
+  renderPage()
+  submit('https://github.com/student/my-app')
+  await screen.findByText('내 GitHub 계정의 레포가 아니에요')
+  expect(api.apiFetch).toHaveBeenCalledTimes(1)
+  expect(screen.queryByRole('heading', { name: 'Dockerfile' })).toBeNull()
+})
+
+it('hides the Dockerfile section when the address is edited after a pass', async () => {
+  passCheck()
+  renderPage()
+  submit('https://github.com/student/my-app')
+  await screen.findByRole('heading', { name: 'Dockerfile' })
+  fireEvent.change(urlInput(), { target: { value: 'https://github.com/student/other' } })
+  expect(screen.queryByRole('heading', { name: 'Dockerfile' })).toBeNull()
 })

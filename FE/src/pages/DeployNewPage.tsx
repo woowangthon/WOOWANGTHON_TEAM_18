@@ -7,6 +7,7 @@ import { Button } from '../components/ui/Button.tsx'
 import { Card } from '../components/ui/Card.tsx'
 import { Field } from '../components/ui/Field.tsx'
 import { ApiError, apiFetch } from '../lib/api.ts'
+import DockerfileCheck from './DockerfileCheck.tsx'
 
 type Failure = 'invalid-url' | 'not-linked' | 'not-owned' | 'not-found' | 'not-personal' | 'unavailable' | 'unknown'
 
@@ -148,6 +149,12 @@ function DeployNewPage() {
           </div>
         )}
       </Card>
+
+      {checked && (
+        <Card>
+          <DockerfileCheck key={checked.repoUrl} repoUrl={checked.repoUrl} />
+        </Card>
+      )}
     </>
   )
 }
