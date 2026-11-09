@@ -41,11 +41,7 @@ export class ReposService {
   /** 소유 확인을 통과한 레포의 Dockerfile 경로를 모두 찾는다. 없으면 빈 목록이다(없을 때의 처리는 정해지지 않았다). */
   async dockerfiles(accessToken: string, repoUrl: unknown): Promise<{ repo: string; dockerfiles: string[]; truncated: boolean }> {
     const { ref, repo } = await this.verifyOwnership(accessToken, repoUrl)
-    if (typeof repo.default_branch !== 'string' || repo.default_branch === '') {
-      this.logger.error(`GitHub GET /repos/${ref.owner}/${ref.repo} has no default_branch`)
-      throw githubUnavailable()
-    }
-    const tree = await this.fetchTree(ref, repo.default_branch)
+    const tree = await this.fetchTree(ref)
     const dockerfiles = tree.tree.filter((e) => e.type === 'blob' && (e.path === 'Dockerfile' || e.path.endsWith('/Dockerfile'))).map((e) => e.path)
     return { repo: repo.full_name, dockerfiles, truncated: tree.truncated }
   }
@@ -125,14 +121,15 @@ export class ReposService {
     return body
   }
 
-  // 소유 확인을 이미 통과한 레포라 어떤 실패든(404 포함) 사용자 잘못이 아니다.
-  private async fetchTree({ owner, repo }: RepoRef, branch: string): Promise<GithubTree> {
-    const path = branch.split('/').map(encodeURIComponent).join('/')
+  // HEAD는 기본 브랜치를 가리킨다. 소유 확인을 이미 통과한 레포라 아래를 뺀 실패는 사용자 잘못이 아니다(404 포함).
+  private async fetchTree({ owner, repo }: RepoRef): Promise<GithubTree> {
     const { status, ok, body } = await this.request(
-      `https://api.github.com/repos/${owner}/${repo}/git/trees/${path}?recursive=1`,
+      `https://api.github.com/repos/${owner}/${repo}/git/trees/HEAD?recursive=1`,
       GITHUB_HEADERS,
       githubUnavailable,
     )
+    // 커밋이 없는 빈 레포는 GitHub가 409 "Git Repository is empty."로 답한다. 파일이 없다는 정상 상태다.
+    if (status === 409) return { tree: [], truncated: false }
     if (!ok || !isGithubTree(body)) {
       this.logger.error(`GitHub GET /repos/${owner}/${repo}/git/trees answered ${status}`)
       throw githubUnavailable()
@@ -161,7 +158,6 @@ interface SupabaseUser {
 interface GithubRepo {
   full_name: string
   owner: { id: number; type: string }
-  default_branch?: unknown
 }
 
 interface GithubTree {

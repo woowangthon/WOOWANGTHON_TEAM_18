@@ -24,7 +24,7 @@ const linkedUser = (id = GITHUB_ID): Answer => () =>
   Response.json({ identities: [{ provider: 'email', id: 'user-1' }, { provider: 'github', id }] })
 const emailOnlyUser: Answer = () => Response.json({ identities: [{ provider: 'email', id: 'user-1' }] })
 const repoOwnedBy = (id: number | string, type = 'User'): Answer => () =>
-  Response.json({ full_name: 'Student/My-App', private: false, default_branch: 'main', owner: { login: 'student', id, type } })
+  Response.json({ full_name: 'Student/My-App', private: false, owner: { login: 'student', id, type } })
 const treeOf = (paths: string[], truncated = false): Answer => () =>
   Response.json({ sha: 'abc', truncated, tree: paths.map((path) => ({ path, type: path.endsWith('/') ? 'tree' : 'blob' })) })
 const status = (code: number): Answer => () => new Response('{}', { status: code })
@@ -258,16 +258,21 @@ describe('POST /api/repos/dockerfiles finds Dockerfiles', () => {
     expect(res.body).toEqual({ repo: 'Student/My-App', dockerfiles: ['a/Dockerfile'], truncated: true })
   })
 
-  it('reads the default branch of the repo, with no credential and a time limit', async () => {
-    githubAnswer = () =>
-      Response.json({ full_name: 'student/my-app', default_branch: 'release/v 1', owner: { id: Number(GITHUB_ID), type: 'User' } })
+  it('answers 200 with an empty list for a repo with no commits (GitHub says 409)', async () => {
+    treeAnswer = status(409)
+    const res = await dockerfiles(VALID)
+    expect(res.status).toBe(200)
+    expect(res.body).toEqual({ repo: 'Student/My-App', dockerfiles: [], truncated: false })
+  })
+
+  it('reads the default branch (HEAD) of the repo, with no credential and a time limit', async () => {
     const t = await token()
     await dockerfiles(VALID, `Bearer ${t}`)
 
     const github = callsTo('https://api.github.com/')
     expect(github).toHaveLength(2)
     const [treeUrl, treeInit] = github[1]
-    expect(urlOf(treeUrl)).toBe('https://api.github.com/repos/student/my-app/git/trees/release/v%201?recursive=1')
+    expect(urlOf(treeUrl)).toBe('https://api.github.com/repos/student/my-app/git/trees/HEAD?recursive=1')
     expect(JSON.stringify(treeInit?.headers).toLowerCase()).not.toContain('authorization')
     expect(JSON.stringify(github)).not.toContain(t)
     expect(treeInit?.signal).toBeInstanceOf(AbortSignal)
@@ -323,21 +328,7 @@ describe('POST /api/repos/dockerfiles when GitHub cannot give the file list (503
     expect(res.body).toEqual(errorBody('GITHUB_UNAVAILABLE'))
   })
 
-  it.each<[string, unknown]>([
-    ['missing', undefined],
-    ['empty', ''],
-    ['not a string', 7],
-  ])('a repo answer whose default_branch is %s → GITHUB_UNAVAILABLE, logged', async (_, branch) => {
-    githubAnswer = () => Response.json({ full_name: 'student/my-app', default_branch: branch, owner: { id: Number(GITHUB_ID), type: 'User' } })
-    const res = await dockerfiles(VALID)
-    expect(res.status).toBe(503)
-    expect(res.body).toEqual(errorBody('GITHUB_UNAVAILABLE'))
-    expect(logError).toHaveBeenCalledWith(expect.stringContaining('default_branch'))
-    expect(callsTo('https://api.github.com/')).toHaveLength(1)
-  })
-
-  it('/repos/check does not need default_branch and does not call the file list', async () => {
-    githubAnswer = () => Response.json({ full_name: 'student/my-app', owner: { id: Number(GITHUB_ID), type: 'User' } })
+  it('/repos/check does not call the file list', async () => {
     const res = await check(VALID)
     expect(res.status).toBe(200)
     expect(callsTo('https://api.github.com/')).toHaveLength(1)
