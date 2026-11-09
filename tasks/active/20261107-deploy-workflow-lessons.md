@@ -6,6 +6,7 @@
 - 2026-11-06: Build moved back to AWS CodeBuild (ADR-001); GoCD runs on two agents (AWS for Build, leader for the rest); manifests are rendered per deploy with our Helm chart.
 - 2026-11-07: Local model changed to Qwen3-8B (AWQ, 16k on the RTX 3080); planning uses a reasoning-model API. AWS consolidated to one t3.large EC2 (8GB; GoCD alone takes 1–2GB). Diagram redrawn so W4–W6 appear once, as the pipeline.
 - 2026-11-07: The message queue is left out of this design (현식). When the agent has to change files in the student repo, it opens a fix PR through the bot account (ADR-002) after the trial deploy passes; the user merges, and the new commit redeploys. Issue #29 (agents on every worker) updated with this resolution and closed.
+- 2026-11-09: Diagram review: the GoCD pipeline box sat inside the platform-server lane, so W5 read as running on the backend. Colored the stages by where they run (AWS box for Build, leader-node box for Prepare to Report, the same purple as the leader below) and said in the lane title that GoCD runs W4–W6.
 
 ## Lessons
 
