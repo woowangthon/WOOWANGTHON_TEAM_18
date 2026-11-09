@@ -16,7 +16,7 @@ Defaults I chose where the owner's answer did not say (revisit in review): no lo
 
 - [x] Probe real answers first: `package.json` samples (Vite template, Next example), a big recursive tree (317 `package.json`, 22 under `node_modules/`, nested lockfiles), raw `404`, rate limit
 - [x] Docs first: `docs/design/api.md`, `auth.md`, `docs/ai-scope.md` — files: `docs/`
-- [ ] Review round R0 (agy): gaps in the rules, before code
+- [x] Review round R0 (agy): gaps in the rules, before code
 - [ ] Rules + table unit tests — files: `BE/src/repos/deploy-spec.ts`, `deploy-spec.spec.ts`
 - [ ] Review round R1 (agy): adversarial inputs → more test rows
 - [ ] Service `deploySpec()` + route + e2e (fake raw answers) — files: `BE/src/repos/repos.service.ts`, `repos.controller.ts`, `BE/test/repos.e2e.spec.ts`
