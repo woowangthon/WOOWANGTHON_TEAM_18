@@ -439,6 +439,26 @@ describe('POST /api/repos/deploy-spec drafts the deploy spec', () => {
     expect(urlOf(rawCalls()[0][0])).toBe(`${RAW_PREFIX}my%20app/%23frag/%ED%95%9C%EA%B8%80/package.json`)
   })
 
+  it('does not read a package.json bigger than 1,000,000 bytes (the size comes with the file list), and leaves that folder open', async () => {
+    treeAnswer = () =>
+      Response.json({
+        sha: 'abc',
+        truncated: false,
+        tree: [
+          { path: 'BE/package.json', type: 'blob', size: 1_000_000 },
+          { path: 'FE/package.json', type: 'blob', size: 1_000_001 },
+        ],
+      })
+    rawFiles = { 'BE/package.json': NEST_PKG, 'FE/package.json': VITE_PKG }
+    const res = await deploySpec(VALID)
+    expect(res.status).toBe(200)
+    expect(rawCalls().map(([url]) => urlOf(url))).toEqual([`${RAW_PREFIX}BE/package.json`])
+    expect(res.body.projects).toEqual([
+      expect.objectContaining({ dir: 'BE', language: { value: 'typescript', source: 'package.json' } }),
+      expect.objectContaining({ dir: 'FE', framework: { value: null, source: null }, language: { value: null, source: null } }),
+    ])
+  })
+
   it('starts all the reads at once, not one after another', async () => {
     treeAnswer = treeOf(['a/package.json', 'b/package.json', 'c/package.json'])
     let release: () => void

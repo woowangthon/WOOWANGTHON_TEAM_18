@@ -15,6 +15,8 @@ import { buildProject, type DeployProject, selectPackageDirs } from './deploy-sp
 import { parseRepoUrl, type RepoRef } from './repo-url.js'
 
 const TIMEOUT_MS = 5000
+// 실제 package.json은 수 KB다. 이보다 큰 파일은 읽지 않아(메모리를 지키려는 것) 판단 필요로 둔다.
+const MAX_PACKAGE_JSON_BYTES = 1_000_000
 // 이름이 정확히 Dockerfile인 파일만(루트 또는 하위 폴더). Dockerfile.prod · *.Dockerfile은 MVP 제외.
 const DOCKERFILE_PATH = /(^|\/)Dockerfile$/
 // package.json 내용은 API 한도에 잡히지 않는 raw 주소로 읽는다(2026-11-09 확인). 인증 없이 공개 레포만 본다.
@@ -58,9 +60,11 @@ export class ReposService {
   async deploySpec(accessToken: string, repoUrl: unknown): Promise<DeploySpecResult> {
     const { ref, repo } = await this.verifyOwnership(accessToken, repoUrl)
     const tree = await this.fetchTree(ref)
-    const paths = tree.tree.filter((e) => e.type === 'blob').map((e) => e.path)
+    const blobs = tree.tree.filter((e) => e.type === 'blob')
+    const paths = blobs.map((e) => e.path)
+    const sizes = new Map(blobs.map((e) => [e.path, e.size]))
     const { dirs, truncated } = selectPackageDirs(paths)
-    const packages = await Promise.all(dirs.map((dir) => this.fetchPackageJson(ref, dir)))
+    const packages = await Promise.all(dirs.map((dir) => this.fetchPackageJson(ref, packageJsonPath(dir), sizes.get(packageJsonPath(dir)))))
     const files = new Set(paths)
     const projects = dirs.flatMap((dir, i) => buildProject(dir, packages[i], files) ?? [])
     return { repo: repo.full_name, projects, truncated: tree.truncated || truncated }
@@ -158,8 +162,9 @@ export class ReposService {
   }
 
   // 읽는 사이 파일이 사라져 404이면 못 읽은 것으로 두고(그 폴더만 판단 필요), JSON이 아니어도 마찬가지다. 한도 · 장애는 503이다.
-  private async fetchPackageJson({ owner, repo }: RepoRef, dir: string): Promise<unknown> {
-    const path = (dir === '.' ? 'package.json' : `${dir}/package.json`).split('/').map(encodeURIComponent).join('/')
+  private async fetchPackageJson({ owner, repo }: RepoRef, file: string, size: number | undefined): Promise<unknown> {
+    if (typeof size === 'number' && size > MAX_PACKAGE_JSON_BYTES) return undefined
+    const path = file.split('/').map(encodeURIComponent).join('/')
     const { status, ok, body } = await this.request(
       `https://raw.githubusercontent.com/${owner}/${repo}/HEAD/${path}`,
       RAW_HEADERS,
@@ -199,6 +204,7 @@ interface GithubRepo {
 interface GithubTreeEntry {
   path: string
   type: string
+  size?: number
 }
 
 interface GithubTree {
@@ -217,6 +223,8 @@ export interface DockerfilesResult {
   dockerfiles: string[]
   truncated: boolean
 }
+
+const packageJsonPath = (dir: string) => (dir === '.' ? 'package.json' : `${dir}/package.json`)
 
 function isGithubTree(value: unknown): value is GithubTree {
   const { tree, truncated } = (value ?? {}) as { tree?: unknown; truncated?: unknown }
