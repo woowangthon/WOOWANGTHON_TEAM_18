@@ -30,5 +30,5 @@
 
 - [x] `cd FE && pnpm install --frozen-lockfile && pnpm verify` passes
 - [x] Each state of the login screen is seen in a browser; no console errors, no horizontal scroll
-- [ ] A real login with a test account is confirmed by the user (the password is not pasted anywhere)
+- [x] A real login with a test account is confirmed by the user (the password is not pasted anywhere)
 - [x] tests added; mutation testing not run — no mutation tool chosen yet (conventions §6), noted in the PR body
