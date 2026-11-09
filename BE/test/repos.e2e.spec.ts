@@ -13,12 +13,18 @@ const GITHUB_ID = '4242'
 const FULL_NAME = 'Student/My-App'
 const REPO_URL = 'https://github.com/student/my-app'
 const VALID = { repoUrl: REPO_URL }
+// 실제 GitHub는 commits/{rev}를 sha 미디어 타입으로 부르면 40자 SHA 텍스트만 준다(2026-11-10 확인).
+const HEAD_SHA = '0123456789abcdef0123456789abcdef01234567'
+const OTHER_SHA = 'abcdef0123456789abcdef0123456789abcdef01'
 
 // 테스트마다 바꿔 끼우는 외부 서비스의 답. 기본값은 "연동한 학생이 자기 개인 레포를 낸다"이다.
 type Answer = () => Response
 let supabaseAnswer: Answer
 let githubAnswer: Answer
 let treeAnswer: Answer
+// commits/{rev}의 답. rev는 HEAD 또는 SHA이고, 기본값은 HEAD는 HEAD_SHA를, SHA는 그 SHA 자신을 돌려준다.
+type CommitAnswer = (rev: string) => Response
+let commitAnswer: CommitAnswer
 // raw.githubusercontent.com의 package.json 답. 키는 레포 루트 기준 경로이고, 정하지 않은 경로를 읽으려 하면 테스트가 실패한다.
 type RawAnswer = () => Response | Promise<Response>
 let rawFiles: Record<string, RawAnswer | object>
@@ -50,7 +56,8 @@ const outage: [string, Answer][] = [
 ]
 
 const RAW = 'https://raw.githubusercontent.com/'
-const RAW_PREFIX = `${RAW}student/my-app/HEAD/`
+const RAW_REPO = `${RAW}student/my-app/`
+const RAW_PREFIX = `${RAW_REPO}HEAD/`
 
 const urlOf = (input: string | URL | Request) => (input instanceof Request ? input.url : input.toString())
 
@@ -58,10 +65,13 @@ const fetchMock = vi.fn<typeof fetch>((input) => {
   const url = urlOf(input)
   if (url === JWKS_URL) return Promise.resolve(Response.json(keySet))
   if (url === SUPABASE_USER_URL) return Promise.resolve().then(() => supabaseAnswer())
+  if (url.includes('/commits/')) return Promise.resolve().then(() => commitAnswer(url.slice(url.lastIndexOf('/commits/') + '/commits/'.length)))
   if (url.includes('/git/trees/')) return Promise.resolve().then(() => treeAnswer())
   if (url.startsWith('https://api.github.com/repos/')) return Promise.resolve().then(() => githubAnswer())
-  if (url.startsWith(RAW_PREFIX)) {
-    const answer = rawFiles[decodeURIComponent(url.slice(RAW_PREFIX.length))]
+  if (url.startsWith(RAW_REPO)) {
+    // RAW_REPO 뒤 첫 마디는 HEAD 또는 commit SHA이고 나머지가 레포 루트 기준 경로다.
+    const rest = url.slice(RAW_REPO.length)
+    const answer = rawFiles[decodeURIComponent(rest.slice(rest.indexOf('/') + 1))]
     if (answer === undefined) return Promise.reject(new Error(`unexpected raw fetch ${url}`))
     return Promise.resolve().then(() => (typeof answer === 'function' ? (answer as RawAnswer)() : Response.json(answer)))
   }
@@ -73,6 +83,7 @@ beforeEach(async () => {
   supabaseAnswer = linkedUser()
   githubAnswer = repoOwnedBy(Number(GITHUB_ID))
   treeAnswer = treeOf([])
+  commitAnswer = (rev) => new Response(rev === 'HEAD' ? HEAD_SHA : rev, { headers: { 'content-type': 'application/vnd.github.sha' } })
   rawFiles = {}
   fetchMock.mockClear()
   vi.stubGlobal('fetch', fetchMock)
@@ -106,7 +117,7 @@ describe('POST /api/repos/check passes', () => {
   it('for a public personal repo owned by the linked GitHub account', async () => {
     const res = await check(VALID)
     expect(res.status).toBe(200)
-    expect(res.body).toEqual({ repo: 'Student/My-App' })
+    expect(res.body).toEqual({ repo: 'Student/My-App', commit: HEAD_SHA })
   })
 
   it('asks Supabase with the user token and the public key, and GitHub without any credential', async () => {
@@ -117,13 +128,18 @@ describe('POST /api/repos/check passes', () => {
     expect(supabaseInit?.headers).toEqual({ Authorization: `Bearer ${t}`, apikey: API_KEY })
     expect(supabaseInit?.signal).toBeInstanceOf(AbortSignal)
 
+    // 레포 조회 한 번, 그 뒤 HEAD commit 한 번.
     const github = callsTo('https://api.github.com/')
-    expect(github).toHaveLength(1)
-    const [githubUrl, githubInit] = github[0]
-    expect(urlOf(githubUrl)).toBe('https://api.github.com/repos/student/my-app')
-    expect(JSON.stringify(githubInit?.headers).toLowerCase()).not.toContain('authorization')
+    expect(github.map(([url]) => urlOf(url))).toEqual([
+      'https://api.github.com/repos/student/my-app',
+      'https://api.github.com/repos/student/my-app/commits/HEAD',
+    ])
+    for (const [, githubInit] of github) {
+      expect(JSON.stringify(githubInit?.headers).toLowerCase()).not.toContain('authorization')
+      expect(githubInit?.signal).toBeInstanceOf(AbortSignal)
+    }
+    expect(github[1][1]?.headers).toMatchObject({ Accept: 'application/vnd.github.sha' })
     expect(JSON.stringify(github)).not.toContain(t)
-    expect(githubInit?.signal).toBeInstanceOf(AbortSignal)
   })
 })
 
@@ -236,6 +252,45 @@ describe('POST /api/repos/check when an outside service is not working (503, nev
   })
 })
 
+describe('POST /api/repos/check pins the commit', () => {
+  it('a repo with no commits (GitHub says 409 for HEAD): 200 with commit null, not an error', async () => {
+    commitAnswer = status(409)
+    const res = await check(VALID)
+    expect(res.status).toBe(200)
+    expect(res.body).toEqual({ repo: FULL_NAME, commit: null })
+  })
+
+  it.each([
+    ['a repo owned by another account', () => (githubAnswer = repoOwnedBy(1)), 403, 'REPO_NOT_OWNED'],
+    ['an organization repo', () => (githubAnswer = repoOwnedBy(Number(GITHUB_ID), 'Organization')), 422, 'REPO_NOT_PERSONAL'],
+    ['a missing or private repo', () => (githubAnswer = status(404)), 404, 'REPO_NOT_FOUND'],
+    ['an account without GitHub linked', () => (supabaseAnswer = emailOnlyUser), 403, 'GITHUB_NOT_LINKED'],
+  ])('%s never reaches the commit lookup', async (_, arrange, code, errorCode) => {
+    arrange()
+    const res = await check(VALID)
+    expect(res.status).toBe(code)
+    expect(res.body).toEqual(errorBody(errorCode))
+    expect(commitCalls()).toHaveLength(0)
+  })
+
+  it.each<[string, CommitAnswer]>([
+    ...outage,
+    ['404', status(404)],
+    ['422', status(422)],
+    ['rate limit 403', status(403)],
+    ['rate limit 429', status(429)],
+    ['200 with a short SHA', () => new Response(HEAD_SHA.slice(0, 7))],
+    ['200 with an upper-case SHA', () => new Response(HEAD_SHA.toUpperCase())],
+    ['an error status with a SHA that looks fine', () => new Response(HEAD_SHA, { status: 502 })],
+  ])('HEAD commit: %s → GITHUB_UNAVAILABLE, never a made-up commit (and it is logged)', async (_, answer) => {
+    commitAnswer = answer
+    const res = await check(VALID)
+    expect(res.status).toBe(503)
+    expect(res.body).toEqual(errorBody('GITHUB_UNAVAILABLE'))
+    expect(logError).toHaveBeenCalled()
+  })
+})
+
 describe('POST /api/repos/dockerfiles finds Dockerfiles', () => {
   it.each<[string, Answer, string[], boolean]>([
     ['at the repo root', treeOf(['Dockerfile', 'package.json', 'src/', 'src/index.ts']), ['Dockerfile'], false],
@@ -324,7 +379,7 @@ describe('POST /api/repos/dockerfiles when GitHub cannot give the file list (503
   it('/repos/check does not call the file list', async () => {
     const res = await check(VALID)
     expect(res.status).toBe(200)
-    expect(callsTo('https://api.github.com/')).toHaveLength(1)
+    expect(treeCalls()).toHaveLength(0)
   })
 })
 
@@ -343,6 +398,7 @@ const NEST_PKG = {
 // supertest의 res.body는 any라 응답 모양을 한 곳에서 정한다.
 const specOf = (res: { body: unknown }) => res.body as { repo: string; truncated: boolean; projects: { dir: string }[] }
 const rawCalls = () => callsTo(RAW)
+const commitCalls = () => callsTo('https://api.github.com/').filter(([url]) => urlOf(url).includes('/commits/'))
 const treeCalls = () => callsTo('https://api.github.com/').filter(([url]) => urlOf(url).includes('/git/trees/'))
 
 describe('POST /api/repos/deploy-spec drafts the deploy spec', () => {
@@ -353,6 +409,7 @@ describe('POST /api/repos/deploy-spec drafts the deploy spec', () => {
     expect(res.status).toBe(200)
     expect(res.body).toEqual({
       repo: FULL_NAME,
+      commit: null,
       truncated: false,
       projects: [
         {
@@ -404,7 +461,7 @@ describe('POST /api/repos/deploy-spec drafts the deploy spec', () => {
     treeAnswer = answer
     const res = await deploySpec(VALID)
     expect(res.status).toBe(200)
-    expect(res.body).toEqual({ repo: FULL_NAME, projects: [], truncated: false })
+    expect(res.body).toEqual({ repo: FULL_NAME, commit: null, projects: [], truncated: false })
     expect(rawCalls()).toHaveLength(0)
   })
 
@@ -574,5 +631,132 @@ describe('POST /api/repos/deploy-spec when GitHub cannot give a file (503, never
     expect((await check(VALID)).status).toBe(200)
     expect((await dockerfiles(VALID)).status).toBe(200)
     expect(rawCalls()).toHaveLength(0)
+  })
+})
+
+describe('POST /api/repos/deploy-spec at a pinned commit', () => {
+  const FILES = ['FE/package.json', 'BE/package.json']
+  const arrangeFiles = () => {
+    treeAnswer = treeOf(FILES)
+    rawFiles = { 'FE/package.json': VITE_PKG, 'BE/package.json': NEST_PKG }
+  }
+
+  it('checks the commit, then reads the file list and every package.json at that commit and says which one', async () => {
+    arrangeFiles()
+    const res = await deploySpec({ ...VALID, commit: OTHER_SHA })
+    expect(res.status).toBe(200)
+    expect(specOf(res)).toMatchObject({ repo: FULL_NAME, commit: OTHER_SHA })
+    expect(specOf(res).projects.map((p) => p.dir)).toEqual(['BE', 'FE'])
+    expect(callsTo('https://api.github.com/').map(([url]) => urlOf(url))).toEqual([
+      'https://api.github.com/repos/student/my-app',
+      `https://api.github.com/repos/student/my-app/commits/${OTHER_SHA}`,
+      `https://api.github.com/repos/student/my-app/git/trees/${OTHER_SHA}?recursive=1`,
+    ])
+    expect(commitCalls()[0][1]?.headers).toMatchObject({ Accept: 'application/vnd.github.sha' })
+    expect(rawCalls().map(([url]) => urlOf(url)).sort()).toEqual([`${RAW_REPO}${OTHER_SHA}/BE/package.json`, `${RAW_REPO}${OTHER_SHA}/FE/package.json`])
+    expect(JSON.stringify(fetchMock.mock.calls.map(([url]) => urlOf(url)))).not.toContain('/HEAD')
+  })
+
+  it.each<[string, object]>([
+    ['commit left out', VALID],
+    ['commit null (what repos/check gives for a repo with no commits)', { ...VALID, commit: null }],
+  ])('%s: reads HEAD, never asks for a commit, and answers commit null', async (_, body) => {
+    arrangeFiles()
+    const res = await deploySpec(body)
+    expect(res.status).toBe(200)
+    expect(specOf(res)).toMatchObject({ commit: null })
+    expect(commitCalls()).toHaveLength(0)
+    expect(treeCalls().map(([url]) => urlOf(url))).toEqual(['https://api.github.com/repos/student/my-app/git/trees/HEAD?recursive=1'])
+    expect(rawCalls().map(([url]) => urlOf(url)).sort()).toEqual([`${RAW_PREFIX}BE/package.json`, `${RAW_PREFIX}FE/package.json`])
+  })
+
+  it.each<[string, unknown]>([
+    ['an empty string', ''],
+    ['a branch name', 'main'],
+    ['HEAD', 'HEAD'],
+    ['a short SHA', HEAD_SHA.slice(0, 7)],
+    ['an upper-case SHA', HEAD_SHA.toUpperCase()],
+    ['a 64-character SHA', HEAD_SHA + HEAD_SHA.slice(0, 24)],
+    ['a SHA with a trailing newline', `${HEAD_SHA}\n`],
+    ['a SHA with a space', ` ${HEAD_SHA}`],
+    ['a path trying to leave the commit', `${HEAD_SHA}/../x`],
+    ['a number', 12345],
+    ['true', true],
+    ['an array', [HEAD_SHA]],
+    ['an object', { sha: HEAD_SHA }],
+  ])('%s → 400 INVALID_COMMIT before anyone is called', async (_, commit) => {
+    arrangeFiles()
+    const res = await deploySpec({ ...VALID, commit })
+    expect(res.status).toBe(400)
+    expect(res.body).toEqual(errorBody('INVALID_COMMIT'))
+    expect(callsTo(SUPABASE_USER_URL)).toHaveLength(0)
+    expect(callsTo('https://api.github.com/')).toHaveLength(0)
+    expect(rawCalls()).toHaveLength(0)
+  })
+
+  it.each([
+    ['a repo owned by another account', () => (githubAnswer = repoOwnedBy(1)), 403, 'REPO_NOT_OWNED'],
+    ['an organization repo', () => (githubAnswer = repoOwnedBy(Number(GITHUB_ID), 'Organization')), 422, 'REPO_NOT_PERSONAL'],
+    ['a missing or private repo', () => (githubAnswer = status(404)), 404, 'REPO_NOT_FOUND'],
+    ['an account without GitHub linked', () => (supabaseAnswer = emailOnlyUser), 403, 'GITHUB_NOT_LINKED'],
+  ])('%s never reaches the commit check, the file list or any file', async (_, arrange, code, errorCode) => {
+    arrangeFiles()
+    arrange()
+    const res = await deploySpec({ ...VALID, commit: OTHER_SHA })
+    expect(res.status).toBe(code)
+    expect(res.body).toEqual(errorBody(errorCode))
+    expect(commitCalls()).toHaveLength(0)
+    expect(treeCalls()).toHaveLength(0)
+    expect(rawCalls()).toHaveLength(0)
+  })
+
+  it.each<[string, CommitAnswer]>([
+    ['404', status(404)],
+    ['409 (a repo with no commits has no commit to read)', status(409)],
+    ['422 (GitHub says this for a missing SHA, a tree SHA and a SHA of another repo)', status(422)],
+    ['200 that names another commit', () => new Response(HEAD_SHA)],
+  ])('commit lookup %s → 404 COMMIT_NOT_FOUND, and no file list or file is read', async (_, answer) => {
+    arrangeFiles()
+    commitAnswer = answer
+    const res = await deploySpec({ ...VALID, commit: OTHER_SHA })
+    expect(res.status).toBe(404)
+    expect(res.body).toEqual(errorBody('COMMIT_NOT_FOUND'))
+    expect(treeCalls()).toHaveLength(0)
+    expect(rawCalls()).toHaveLength(0)
+  })
+
+  it.each<[string, CommitAnswer]>([
+    ...outage,
+    ['rate limit 403', status(403)],
+    ['rate limit 429', status(429)],
+    ['500', status(500)],
+    ['an error status with the right SHA', () => new Response(OTHER_SHA, { status: 502 })],
+  ])('commit lookup %s → 503 GITHUB_UNAVAILABLE (and it is logged), never "no such commit"', async (_, answer) => {
+    arrangeFiles()
+    commitAnswer = answer
+    const res = await deploySpec({ ...VALID, commit: OTHER_SHA })
+    expect(res.status).toBe(503)
+    expect(res.body).toEqual(errorBody('GITHUB_UNAVAILABLE'))
+    expect(logError).toHaveBeenCalled()
+    expect(treeCalls()).toHaveLength(0)
+  })
+
+  it('a package.json that raw cannot find at the pinned commit leaves that folder open, like at HEAD', async () => {
+    treeAnswer = treeOf(FILES)
+    rawFiles = { 'FE/package.json': () => new Response('404: Not Found', { status: 404 }), 'BE/package.json': NEST_PKG }
+    const res = await deploySpec({ ...VALID, commit: OTHER_SHA })
+    expect(res.status).toBe(200)
+    expect(specOf(res).projects.map((p) => p.dir)).toEqual(['BE', 'FE'])
+  })
+})
+
+describe('POST /api/repos/dockerfiles does not take a commit (its answer shape is on hold, #46)', () => {
+  it('ignores a commit in the body: it still reads HEAD and never asks for a commit', async () => {
+    treeAnswer = treeOf(['Dockerfile'])
+    const res = await dockerfiles({ ...VALID, commit: OTHER_SHA })
+    expect(res.status).toBe(200)
+    expect(res.body).toEqual({ repo: FULL_NAME, dockerfiles: ['Dockerfile'], truncated: false })
+    expect(commitCalls()).toHaveLength(0)
+    expect(treeCalls().map(([url]) => urlOf(url))).toEqual(['https://api.github.com/repos/student/my-app/git/trees/HEAD?recursive=1'])
   })
 })
