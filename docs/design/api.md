@@ -21,6 +21,34 @@ FE·BE·AI가 서로를 기다리지 않도록 **요청·응답 모양을 먼저
 
 오류: `401 AUTH_REQUIRED` 헤더가 없거나 `Bearer` 형식이 아님 / `401 INVALID_TOKEN` 서명 · 만료 · 발급자 등 검증 실패 / `503 AUTH_UNAVAILABLE` 인증 서버의 공개 키를 받지 못함 — 오류 응답 모양은 SRS §2.4.
 
+## 레포 소유 확인 (SRS §2.4)
+
+### `POST /api/repos/check` — 제출하려는 레포가 내 것인지 미리 확인 (NFR-SEC-04)
+
+로그인한 계정에 연동된 GitHub 계정이 그 레포의 소유자인지, 공개 개인 레포인지 확인한다. FE는 제출 전에 이 API로 미리 안내하고, 제출 API도 같은 확인을 한다. 확인 순서와 이유는 [`auth.md`](auth.md#github-연동과-레포-소유-확인)에 있다.
+
+요청:
+
+```json
+{ "repoUrl": "https://github.com/student/my-app" }
+```
+
+응답 `200`:
+
+```json
+{ "repo": "student/my-app" }
+```
+
+오류 (`code`: 의미):
+
+- `400 INVALID_REPO_URL`: `https://github.com/<소유자>/<레포>` 모양이 아니거나 `repoUrl`이 없다 · 문자열이 아니다
+- `401 AUTH_REQUIRED` · `401 INVALID_TOKEN`: 로그인 토큰 문제 (위 인증 그룹)
+- `403 GITHUB_NOT_LINKED`: 이 계정에 GitHub가 연동되어 있지 않다 → 프로필에서 연동하도록 안내
+- `403 REPO_NOT_OWNED`: 연동한 GitHub 계정이 레포 소유자가 아니다
+- `404 REPO_NOT_FOUND`: 없는 레포이거나 비공개 레포다
+- `422 REPO_NOT_PERSONAL`: 소유자가 조직이다 (MVP는 공개 개인 레포만)
+- `503 AUTH_UNAVAILABLE` · `503 GITHUB_UNAVAILABLE`: 인증 서버 또는 GitHub에 닿지 못했거나, 서버가 가진 Supabase 공개 키가 거부당했다. 사용자 잘못이 아니므로 다시 시도하게 한다
+
 ## <그룹명> (SRS §2.4)
 
 ### `METHOD /path` — 한 줄 설명 (FR-NNN)
