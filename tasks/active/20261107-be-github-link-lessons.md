@@ -8,6 +8,8 @@
 - 2026-11-07: The raw token must reach the controller to be forwarded to Supabase, but `GET /api/me` returns `AuthUser` whole. Putting the token on `AuthUser` would have leaked it into that response; it lives in `req.accessToken` instead, and a mutant that moves it into `AuthUser` is killed by the existing strict `/api/me` test.
 - 2026-11-07: Hand-made mutants on the URL parser and the service: two survivors on the parser — `.git` stripped anywhere (no test for `my.github.io`) and the `.`/`..` repo-name check, which looked dead because `URL` already resolves dot segments, but `..git` loses `.git` and leaves `.` (test added, check kept). Two survivors on the service — ignoring the HTTP status when the body looks fine — fixed with tests that answer 500 / 403 with a well-formed body.
 - 2026-11-07: A shell chain `pnpm verify | grep ...; git commit` committed code that failed lint (the pipe hides the exit code). Amended before pushing; later runs write the log to a file and check `$?`.
+- 2026-11-09: Corrected the 2026-11-07 decision "Supabase `401`/`403` → `INVALID_TOKEN`". Called `GET /auth/v1/user` with a good token and a bad `apikey`: `401 Invalid API key` (no key: `401 No API key found in request`), both without `error_code`; a forged token is `403 bad_jwt`, a signed-out session `403 session_not_found`. Every user-side token problem is `403`; `401` only means our public key is wrong, and mapping it to `INVALID_TOKEN` would tell every user "your token is bad" and log nothing. Now `403` → `INVALID_TOKEN`, `401` → logged `503 AUTH_UNAVAILABLE`. A reviewer (seren-wib) caught it; the probe confirmed it. Checked end to end with a second BE on a wrong key: `503` plus an `ERROR` line.
+- 2026-11-09: Real run with the linked test account (GitHub identity `id` is a string; owner `TaeTaeJin`): own repo `200`, org repo `422`, `torvalds/linux` `403`, missing repo `404`. Probing `POST /auth/v1/logout` ended every session of the test account (default scope is global), including the one open in the browser page; the test account should be signed out with `scope: local`.
 
 ## Lessons
 
@@ -15,3 +17,5 @@
 - Do not put a credential on an object that another route returns as-is.
 - A check that looks dead may guard a path that only another transformation opens (`..git` → `.`); try to construct an input before deleting it.
 - Never let a pipe stand between a gate (`verify`) and the next step; check the exit code.
+- A status family can encode whose fault the error is (`403` = your token, `401` = our key). Probe the wrong-credential cases, not only the good path, before choosing a mapping.
+- `pkill -f <pattern>` kills the shell that carries the pattern in its own command line; use `[n]est`-style patterns or the PID.
