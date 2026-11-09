@@ -11,11 +11,14 @@ import {
 } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
 import type { Env } from '../config/env.js'
+import { buildProject, type DeployProject, selectPackageDirs } from './deploy-spec.js'
 import { parseRepoUrl, type RepoRef } from './repo-url.js'
 
 const TIMEOUT_MS = 5000
 // 이름이 정확히 Dockerfile인 파일만(루트 또는 하위 폴더). Dockerfile.prod · *.Dockerfile은 MVP 제외.
 const DOCKERFILE_PATH = /(^|\/)Dockerfile$/
+// package.json 내용은 API 한도에 잡히지 않는 raw 주소로 읽는다(2026-11-09 확인). 인증 없이 공개 레포만 본다.
+const RAW_HEADERS = { 'User-Agent': 'woowangthon-platform' }
 const GITHUB_HEADERS = { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'woowangthon-platform' }
 
 const authUnavailable = () =>
@@ -46,6 +49,21 @@ export class ReposService {
     const tree = await this.fetchTree(ref)
     const dockerfiles = tree.tree.filter((e) => e.type === 'blob' && DOCKERFILE_PATH.test(e.path)).map((e) => e.path)
     return { repo: repo.full_name, dockerfiles, truncated: tree.truncated }
+  }
+
+  /**
+   * 소유 확인을 통과한 레포의 배포 설정 초안을 만든다: 폴더마다 package.json과 락 파일 이름으로 프레임워크 · 패키지 매니저 · 명령을 채운다.
+   * 저장하지 않고 호출할 때마다 계산한다. package.json이 없으면 빈 목록이다(오류가 아니다). 규칙은 docs/design/api.md.
+   */
+  async deploySpec(accessToken: string, repoUrl: unknown): Promise<DeploySpecResult> {
+    const { ref, repo } = await this.verifyOwnership(accessToken, repoUrl)
+    const tree = await this.fetchTree(ref)
+    const paths = tree.tree.filter((e) => e.type === 'blob').map((e) => e.path)
+    const { dirs, truncated } = selectPackageDirs(paths)
+    const packages = await Promise.all(dirs.map((dir) => this.fetchPackageJson(ref, dir)))
+    const files = new Set(paths)
+    const projects = dirs.flatMap((dir, i) => buildProject(dir, packages[i], files) ?? [])
+    return { repo: repo.full_name, projects, truncated: tree.truncated || truncated }
   }
 
   private async verifyOwnership(accessToken: string, repoUrl: unknown): Promise<{ ref: RepoRef; repo: GithubRepo }> {
@@ -139,6 +157,22 @@ export class ReposService {
     return body
   }
 
+  // 읽는 사이 파일이 사라져 404이면 못 읽은 것으로 두고(그 폴더만 판단 필요), JSON이 아니어도 마찬가지다. 한도 · 장애는 503이다.
+  private async fetchPackageJson({ owner, repo }: RepoRef, dir: string): Promise<unknown> {
+    const path = (dir === '.' ? 'package.json' : `${dir}/package.json`).split('/').map(encodeURIComponent).join('/')
+    const { status, ok, body } = await this.request(
+      `https://raw.githubusercontent.com/${owner}/${repo}/HEAD/${path}`,
+      RAW_HEADERS,
+      githubUnavailable,
+    )
+    if (status === 404) return undefined
+    if (!ok) {
+      this.logger.error(`GitHub raw ${owner}/${repo}/HEAD/${path} answered ${status}`)
+      throw githubUnavailable()
+    }
+    return body
+  }
+
   // 외부 호출 하나. 5초 제한을 걸고, 오류 응답이어도 본문을 끝까지 읽어 연결이 풀로 돌아가게 한다.
   // 닿지 못하면(네트워크 · 시간 초과) 로그를 남기고 unavailable()을 던진다. 본문이 JSON이 아니면 body는 undefined다.
   private async request(url: string, headers: Record<string, string>, unavailable: () => HttpException) {
@@ -169,6 +203,12 @@ interface GithubTreeEntry {
 
 interface GithubTree {
   tree: GithubTreeEntry[]
+  truncated: boolean
+}
+
+export interface DeploySpecResult {
+  repo: string
+  projects: DeployProject[]
   truncated: boolean
 }
 

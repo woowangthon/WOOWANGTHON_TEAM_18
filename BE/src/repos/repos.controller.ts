@@ -17,4 +17,10 @@ export class ReposController {
   dockerfiles(@AccessToken() accessToken: string, @Body() body: { repoUrl?: unknown } | undefined) {
     return this.repos.dockerfiles(accessToken, body?.repoUrl)
   }
+
+  @Post('deploy-spec')
+  @HttpCode(200)
+  deploySpec(@AccessToken() accessToken: string, @Body() body: { repoUrl?: unknown } | undefined) {
+    return this.repos.deploySpec(accessToken, body?.repoUrl)
+  }
 }
