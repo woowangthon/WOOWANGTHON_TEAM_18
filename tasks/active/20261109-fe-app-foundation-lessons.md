@@ -10,6 +10,8 @@
 - 2026-11-09: An independent review by agy (GPT-OSS 120B, used because the Gemini quota ran out) raised five findings and all were wrong: it claimed `react-router-dom` was missing (v8 exports everything from `react-router`) and that the proxy needed a `rewrite` (the BE has the global prefix `api`, so a rewrite would break it). Each finding was checked against the code and the running app.
 - 2026-11-09: `/code-review` and `/simplify` were not run: they work on the session's primary directory, which is the BE checkout, and could touch the BE branch. The diff was read by hand instead.
 
+- 2026-11-09: Checked with the real Supabase project (the same values as `BE/.env`, renamed with the `VITE_` prefix): the dev server injects them, the client is created, and a fake login gets `400 invalid_credentials` from Supabase, so the URL and key are valid. Copying `BE/.env` unchanged does not work: Vite exposes only `VITE_*` variables, and it read 0 of them from a file with the BE names. The Supabase auth settings endpoint showed email sign-in and the GitHub provider on, and Confirm email on.
+
 ## Lessons
 
 - A small open model as the second reviewer invents defects from outdated library knowledge. Check each finding against the installed package or the running app before acting; "no defects found" from such a model does not replace reading the diff yourself.
