@@ -1,0 +1,51 @@
+# NVIDIA device plugin v0.20.1: tells Kubernetes the leader has one GPU (nvidia.com/gpu: 1).
+# Based on upstream deployments/static/nvidia-device-plugin.yml (v0.20.1). Changed: leader only
+# (nodeSelector + control-plane toleration) and runtimeClassName nvidia, without which the plugin
+# cannot see the GPU. The nvidia RuntimeClass and containerd runtime come from k3s, which picked up
+# nvidia-container-toolkit at install time (§4).
+# Design and reasons: docs/design/cluster.md §11.
+# Apply from the operator's machine:
+#   ssh k3s-leader 'sudo k3s kubectl apply -f -' < Infra/gpu/nvidia-device-plugin.yaml
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: nvidia-device-plugin-daemonset
+  namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      name: nvidia-device-plugin-ds
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        name: nvidia-device-plugin-ds
+    spec:
+      runtimeClassName: nvidia
+      nodeSelector:
+        kubernetes.io/hostname: k3s-leader
+      tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
+      priorityClassName: system-node-critical
+      containers:
+      - image: nvcr.io/nvidia/k8s-device-plugin:v0.20.1
+        name: nvidia-device-plugin-ctr
+        env: []
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        volumeMounts:
+        - name: kubelet-device-plugins-dir
+          mountPath: /var/lib/kubelet/device-plugins
+      volumes:
+      - name: kubelet-device-plugins-dir
+        hostPath:
+          path: /var/lib/kubelet/device-plugins
+          type: Directory

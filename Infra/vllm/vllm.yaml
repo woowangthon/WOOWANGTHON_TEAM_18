@@ -1,0 +1,94 @@
+# vLLM v0.32.0 serving Qwen3-8B-AWQ on the leader GPU. Cluster-internal only (ClusterIP); API key from a Secret.
+# Design and reasons: docs/design/cluster.md §11. Apply after base.yaml and the API key Secret.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm
+  namespace: vllm
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: vllm
+  template:
+    metadata:
+      labels:
+        app: vllm
+    spec:
+      # The Service is named vllm, so Kubernetes would inject VLLM_PORT=tcp://..., which vLLM reads as its own setting.
+      enableServiceLinks: false
+      runtimeClassName: nvidia
+      nodeSelector:
+        kubernetes.io/hostname: k3s-leader
+      tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
+      priorityClassName: wanggane-low
+      containers:
+      - name: vllm
+        image: docker.io/vllm/vllm-openai:v0.32.0
+        command: ["vllm", "serve", "/models/Qwen3-8B-AWQ"]
+        args:
+        - --served-model-name=qwen3-8b-awq
+        - --port=8000
+        - --max-model-len=16384
+        # One request at a time (2026-11-09). Further requests queue in vLLM instead of failing.
+        - --max-num-seqs=1
+        - --gpu-memory-utilization=0.90
+        # fp16 KV left 1.66 GiB = ~11.8K tokens, short of one 16K request (2.25 GiB). FP8 KV doubles that to ~24K,
+        # enough for one 16K request. Still needed with one sequence: the check is one full-length request.
+        - --kv-cache-dtype=fp8
+        - --enable-auto-tool-choice
+        - --tool-call-parser=hermes
+        - --reasoning-parser=qwen3
+        env:
+        - name: VLLM_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: vllm-api-key
+              key: key
+        - name: HF_HUB_OFFLINE
+          value: "1"
+        ports:
+        - containerPort: 8000
+          name: http
+        resources:
+          requests: {cpu: "2", memory: 12Gi}
+          limits: {cpu: "8", memory: 32Gi, nvidia.com/gpu: 1}
+        startupProbe:
+          httpGet: {path: /health, port: 8000}
+          periodSeconds: 10
+          failureThreshold: 90
+        readinessProbe:
+          httpGet: {path: /health, port: 8000}
+          periodSeconds: 10
+        volumeMounts:
+        - name: models
+          mountPath: /models
+          readOnly: true
+        - name: shm
+          mountPath: /dev/shm
+      volumes:
+      - name: models
+        persistentVolumeClaim:
+          claimName: models
+      - name: shm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 4Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm
+  namespace: vllm
+spec:
+  selector:
+    app: vllm
+  ports:
+  - port: 8000
+    targetPort: 8000
+    name: http

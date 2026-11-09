@@ -1,0 +1,25 @@
+# One-shot check after the device plugin: a Pod that asks for one GPU lands on the leader and prints it.
+# Expected log: NVIDIA GeForce RTX 3080, 10240 MiB. The delete first makes a re-run start a fresh Pod.
+#   ssh k3s-leader 'sudo k3s kubectl delete pod gpu-check --ignore-not-found; sudo k3s kubectl apply -f -' < Infra/gpu/gpu-check.yaml
+#   ssh k3s-leader 'sudo k3s kubectl logs gpu-check'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gpu-check
+  namespace: default
+spec:
+  restartPolicy: Never
+  runtimeClassName: nvidia
+  nodeSelector:
+    kubernetes.io/hostname: k3s-leader
+  tolerations:
+  - key: node-role.kubernetes.io/control-plane
+    operator: Exists
+    effect: NoSchedule
+  containers:
+  - name: cuda
+    image: nvcr.io/nvidia/cuda:12.9.1-base-ubuntu24.04
+    command: ["nvidia-smi", "--query-gpu=name,memory.total,memory.used", "--format=csv"]
+    resources:
+      limits:
+        nvidia.com/gpu: 1

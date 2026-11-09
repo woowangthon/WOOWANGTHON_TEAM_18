@@ -27,7 +27,7 @@
 | 외부 API | GitHub API — 봇 계정의 fork·PR 생성, 계정 연동(OAuth, Supabase Auth가 처리), 레포 소유자 조회 | 레포 소유자 조회(`GET /repos/{소유자}/{레포}`, 인증 없이 공개 레포만, 서버 IP당 시간당 60번)는 구현함. fork·PR 생성과 계정 연동 화면은 구현 전 |
 | 외부 기술 | Apache Kafka (EC2 단일 브로커) | 후순위 (EC2 용량이 남으면, 2026-11-09). 구현 전 |
 | 외부 기술 | GoCD (배포 파이프라인. 서버는 EC2, 실행기는 리더. [ADR-009](adr/009-deploy-runs-on-leader-gocd-agent.md)) | 구현 전. 파이프라인 정의는 직접 작성한다. ArgoCD로 바꿀지 검토 중 |
-| 외부 기술 | vLLM v0.32.0 + Qwen3-8B-AWQ (리더 GPU에서 도는 로컬 모델, Apache-2.0), NVIDIA device plugin v0.20.1 | 팀 일정상 후순위(2026-11-09 회의)라 데모 경로 밖. 리더에 설치 · 시험함(2026-11-09): 컨텍스트 16K, 동시 요청 1, KV 캐시 FP8, 클러스터 안에서만 API 키로 답한다. EC2에서 부르는 길과 AI 서버 연동은 구현 전 |
+| 외부 기술 | vLLM v0.32.0 + Qwen3-8B-AWQ (리더 GPU에서 도는 로컬 모델, Apache-2.0), NVIDIA device plugin v0.20.1 | 팀 일정상 후순위(2026-11-09 회의)라 데모 경로 밖. 리더에 설치 · 시험함(2026-11-09): 컨텍스트 16K, 동시 요청 1, KV 캐시 FP8, 클러스터 안에서만 API 키로 답한다. 설정은 [`Infra/gpu/`](../Infra/gpu/) · [`Infra/vllm/`](../Infra/vllm/), 값과 이유는 [`design/cluster.md`](design/cluster.md) §11. EC2에서 부르는 길과 AI 서버 연동은 구현 전 |
 | 외부 기술 | k3s v1.37.2 (내장 etcd · flannel host-gw · Traefik Ingress 포함. CoreDNS는 k3s 것을 끄고 같은 이미지로 직접 띄움), nvidia-container-toolkit(리더에 받은 상태로 있음. k3s가 런타임으로 잡았고 vLLM 단계에서 쓴다) | 설치 · 설정(2026-11-07, 세 노드). 설정은 [`Infra/k3s/`](../Infra/k3s/) · [`Infra/coredns/`](../Infra/coredns/), 값과 시험 결과는 [`design/cluster.md`](design/cluster.md) §3 · §4. 재부팅 시험 통과(2026-11-08). Traefik을 워커에 묶기는 아직 |
 | 외부 기술 | Prometheus (node-exporter · cAdvisor · kube-state-metrics · blackbox-exporter), Grafana | 구현 전. 설정·연동 |
 | 외부 기술 | Tailscale (플랫폼 서버 ↔ 리더 연결, 운영자 원격 접속. [ADR-004](adr/004-server-cluster-link-tailscale.md)) | 운영자 원격 접속은 설정함(2026-11-05, 세 노드). 플랫폼 서버 연결은 구현 전 |

@@ -1,0 +1,97 @@
+# Local model base on the leader: namespace, low priority class, model volume, ingress policy, model download.
+# Design and reasons: docs/design/cluster.md §11.
+# Order (from the operator's machine):
+#   1. ssh k3s-leader 'sudo k3s kubectl apply -f -' < Infra/vllm/base.yaml
+#      (the Job downloads the model once into the volume; wait for it to complete)
+#   2. API key, generated on the leader straight into a Secret, never printed or committed:
+#      ssh k3s-leader 'openssl rand -hex 32 | tr -d "\n" | sudo k3s kubectl -n vllm create secret generic vllm-api-key --from-file=key=/dev/stdin'
+#   3. ssh k3s-leader 'sudo k3s kubectl apply -f -' < Infra/vllm/vllm.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: vllm
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/warn: restricted
+---
+# Lower than student services (default 0) and never preempts anything.
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: wanggane-low
+value: -100
+preemptionPolicy: Never
+globalDefault: false
+description: Leader-side extras (local model) that must never push anything else out.
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: models
+  namespace: vllm
+spec:
+  storageClassName: local-path
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 30Gi
+---
+# Only Pods in this namespace may reach vLLM for now. The EC2 path over Tailscale is added in build stage 09.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: vllm-ingress
+  namespace: vllm
+spec:
+  podSelector:
+    matchLabels:
+      app: vllm
+  policyTypes: ["Ingress"]
+  ingress:
+  - from:
+    - podSelector: {}
+    ports:
+    - port: 8000
+      protocol: TCP
+---
+# Model pinned to a Hugging Face commit so a re-download gets the same files. No TTL: the completed Job stays,
+# so re-applying this file leaves it alone instead of downloading again.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: model-download
+  namespace: vllm
+spec:
+  backoffLimit: 2
+  template:
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        kubernetes.io/hostname: k3s-leader
+      tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
+      priorityClassName: wanggane-low
+      containers:
+      - name: download
+        image: docker.io/vllm/vllm-openai:v0.32.0
+        command:
+        - python3
+        - -c
+        - |
+          import time
+          from huggingface_hub import snapshot_download
+          t = time.time()
+          p = snapshot_download("Qwen/Qwen3-8B-AWQ", revision="4da05a8edb55c6046cce958586c33b61da07bb79", local_dir="/models/Qwen3-8B-AWQ")
+          print("done", p, round(time.time() - t), "s")
+        resources:
+          requests: {cpu: "1", memory: 1Gi}
+          limits: {cpu: "4", memory: 4Gi}
+        volumeMounts:
+        - name: models
+          mountPath: /models
+      volumes:
+      - name: models
+        persistentVolumeClaim:
+          claimName: models
