@@ -12,7 +12,7 @@
 
 | 구분 | 무엇 | 우리가 한 일 |
 | --- | --- | --- |
-| 직접 구현 | 검토 하네스(입력 구성 · 프롬프트 · 결과 형식 · 실패 처리), 리뷰 패킷, 플랫폼 서버의 배포 매니페스트 생성과 쿠버네티스 호출 모듈, 스파이크 판정 규칙, 클러스터 구성(`Infra/`: 학생 공간 틀 · 권한 · 네트워크 정책) | 우리가 설계 · 구현 |
+| 직접 구현 | 검토 하네스(입력 구성 · 프롬프트 · 결과 형식 · 실패 처리), 리뷰 패킷, 플랫폼 서버의 배포 설정 초안(레포 설정 파일로 프레임워크 판별, 규칙 코드) · 보안 검사 호출 · 쿠버네티스 호출 모듈(비밀값 · 조치 · 조회), 배포 파이프라인 정의(매니페스트 생성 · 적용 · 동작 확인 · 되돌리기), 스파이크 판정 규칙, 클러스터 구성(`Infra/`: 학생 공간 틀 · 권한 · 네트워크 정책) | 우리가 설계 · 구현 |
 | 외부 기술 | React + TypeScript (Vite), Nest.js, FastAPI (FE · BE 버전은 각각 `FE/package.json` · `BE/package.json`에 고정, AI는 TBD) | FE는 `FE/`에 Vite 템플릿으로 세팅하고 데모 코드를 제거함(패키지 매니저는 pnpm이고 버전은 `FE/package.json`의 `packageManager`로 고정. lint는 ESLint(typescript-eslint, jsx-a11y), 테스트는 Vitest + Testing Library + jsdom. TypeScript는 typescript-eslint가 7을 지원하지 않아 6.0으로 고정). BE는 `BE/`에 Nest 12(ESM)로 세팅함(pnpm. lint는 ESLint 10(typescript-eslint), 테스트는 Vitest + `@nestjs/testing` + supertest, 설정 읽기는 `@nestjs/config`이고 값 검증은 직접 구현. 헬스 체크 `GET /api/health`, CORS 허용 목록, 오류 응답 형식, 로그인 토큰 검증과 `GET /api/me`(아래 jose 행), 레포 소유 확인 `POST /api/repos/check`(아래 Supabase · GitHub API 행)가 있고 그 밖의 기능은 구현 전). AI는 구현 전. 프레임워크 사용 |
 | 외부 기술 | Tailwind CSS v4 (`@tailwindcss/vite`) | 스타일링 도구. 기본 팔레트를 비우고 흑백 토큰만 `@theme`에 선언. 컴포넌트 6종(Button · Input · Badge · Table · Card · LogBlock)은 직접 구현하고 기성 컴포넌트 키트는 쓰지 않음 |
 | 외부 기술 | eslint-plugin-better-tailwindcss (FE devDependency, MIT) | 개발 도구. 린트에서 `theme.css`에 정의되지 않은 Tailwind 클래스(`bg-white` 등)를 막는다. 앱 번들에는 들어가지 않음. `no-unknown-classes`(없는 클래스)와 `no-restricted-classes`(임의값 · 로드하지 않은 굵기 · 그림자 계열) 두 규칙만 켰다 |
@@ -21,16 +21,19 @@
 | 외부 기술 | jose (BE에서 Supabase 로그인 토큰 서명 검증, 공개 키 목록 받기 · 캐시) | 라이브러리 사용. 전역 가드(`@Public()` 예외, 401 · 503 구분, 관리자 판단)는 직접 구현. 테스트에서 만든 키로 서명한 토큰으로 위조 · 만료 · 발급자 · 대상 · 관리자 판단 · 인증 서버 장애 경로를 자동 테스트했다. 2026-11-04에 실제 Supabase 프로젝트로 띄워(로컬 · 컨테이너) 공개 키 목록을 받아 위조 토큰을 401로 거부하는 것과, 인증 서버에 닿지 못하면 503인 것을 확인했다. 같은 날 개발용 테스트 계정의 진짜 로그인 토큰으로 `GET /api/me`가 `200`을 주고, 서명이나 `app_metadata`를 바꾼 토큰은 `401`인 것을 확인했다 |
 | 외부 기술 | LangChain (배포 전 검토 파이프라인. 복잡해지면 LangGraph로 확장) | 구현 전. 체인 구성과 프롬프트는 직접 설계 |
 | 외부 API | LLM API (업체·모델 미정) | 구현 전. 호출 하네스와 시스템 프롬프트는 직접 구현 |
-| 외부 기술 | AWS — CodeBuild(빌드), S3 + CloudFront(웹 정적 파일), EC2(Nest · FastAPI · Kafka 브로커) | 구현 전. 설정·연동 |
+| 외부 기술 | AWS — CodeBuild(빌드), S3 + CloudFront(웹 정적 파일), EC2 한 대(Nest · FastAPI · GoCD 서버. Kafka 브로커는 후순위) | 구현 전. 설정·연동 |
 | 외부 기술 | GHCR (학생 앱 이미지 레지스트리, 이미지 공개. [ADR-003](adr/003-registry-ghcr.md)) | 구현 전. 설정·연동 |
-| 외부 기술 | Apache Kafka (EC2 단일 브로커) | 구현 전. 설정·연동 |
 | 외부 기술 | Supabase (PostgreSQL, Auth — 이메일 · 비밀번호 로그인, GitHub 계정 연동. [ADR-007](adr/007-login-email-password-github-link.md)) | 로그인 토큰 검증은 구현함. 소유 확인에서 사용자 토큰으로 `GET /auth/v1/user`를 불러 연동한 GitHub ID를 읽음. 연동 · 가입 화면은 구현 전 |
 | 외부 API | GitHub API — 봇 계정의 fork·PR 생성, 계정 연동(OAuth, Supabase Auth가 처리), 레포 소유자 조회 | 레포 소유자 조회(`GET /repos/{소유자}/{레포}`, 인증 없이 공개 레포만, 서버 IP당 시간당 60번)는 구현함. fork·PR 생성과 계정 연동 화면은 구현 전 |
-| 외부 기술 | k3s (Traefik Ingress 포함), Prometheus (node-exporter · cAdvisor · kube-state-metrics · blackbox-exporter), Grafana | 구현 전. 설정·연동 |
+| 외부 기술 | Apache Kafka (EC2 단일 브로커) | 후순위 (EC2 용량이 남으면, 2026-11-09). 구현 전 |
+| 외부 기술 | GoCD (배포 파이프라인. 서버는 EC2, 실행기는 리더. [ADR-009](adr/009-deploy-runs-on-leader-gocd-agent.md)) | 구현 전. 파이프라인 정의는 직접 작성한다. ArgoCD로 바꿀지 검토 중 |
+| 외부 기술 | vLLM v0.32.0 + Qwen3-8B-AWQ (리더 GPU에서 도는 로컬 모델, Apache-2.0), NVIDIA device plugin v0.20.1 | 팀 일정상 후순위(2026-11-09 회의)라 데모 경로 밖. 리더에 설치 · 시험함(2026-11-09): 컨텍스트 16K, 동시 요청 1, KV 캐시 FP8, 클러스터 안에서만 API 키로 답한다. EC2에서 부르는 길과 AI 서버 연동은 구현 전 |
+| 외부 기술 | k3s v1.37.2 (내장 etcd · flannel host-gw · Traefik Ingress 포함. CoreDNS는 k3s 것을 끄고 같은 이미지로 직접 띄움), nvidia-container-toolkit(리더에 받은 상태로 있음. k3s가 런타임으로 잡았고 vLLM 단계에서 쓴다) | 설치 · 설정(2026-11-07, 세 노드). 설정은 [`Infra/k3s/`](../Infra/k3s/) · [`Infra/coredns/`](../Infra/coredns/), 값과 시험 결과는 [`design/cluster.md`](design/cluster.md) §3 · §4. 재부팅 시험 통과(2026-11-08). Traefik을 워커에 묶기는 아직 |
+| 외부 기술 | Prometheus (node-exporter · cAdvisor · kube-state-metrics · blackbox-exporter), Grafana | 구현 전. 설정·연동 |
 | 외부 기술 | Tailscale (플랫폼 서버 ↔ 리더 연결, 운영자 원격 접속. [ADR-004](adr/004-server-cluster-link-tailscale.md)) | 운영자 원격 접속은 설정함(2026-11-05, 세 노드). 플랫폼 서버 연결은 구현 전 |
 | 외부 기술 | 노드 OS 도구 — ufw(호스트 방화벽), netplan(노드 주소), iperf3(노드 사이 속도 측정), Clonezilla(반납용 디스크 이미지) | 설정 · 사용(2026-11-04 ~ 06). 규칙 · 값은 [`design/cluster.md`](design/cluster.md) §1 ~ §3 |
-| 외부 기술 | 로그 수집기 · 저장소 (제품 미정. 시계열 DB는 두지 않는다, [ADR-006](adr/006-metrics-on-leader-prometheus.md)) | 결정 전 |
-| 외부 기술 | 취약점 스캐너 (후보: Trivy · OSV-Scanner) | 후보. 구현할 때 하나 고르고 확정되면 여기 올린다 |
+| 외부 기술 | 로그 수집기 · 저장소 — 두지 않는다 (2026-11-09). 스파이크 판정 순간 플랫폼 서버가 쿠버네티스 API로 그 프로젝트 로그를 읽어 Supabase에 스냅샷으로 남긴다. 시계열 DB도 두지 않는다([ADR-006](adr/006-metrics-on-leader-prometheus.md)) | 쓰지 않음. 스냅샷은 직접 구현(구현 전) |
+| 외부 기술 | 보안 검사 도구 (후보: 의존성 취약점 Trivy · OSV-Scanner, 비밀값 gitleaks. 플랫폼 서버가 돌린다, [ADR-010](adr/010-repo-analysis-and-security-scan-in-platform-server.md)) | 후보. 구현할 때 하나 고르고 확정되면 여기 올린다 |
 | 외부 기술 | Cloudflare Tunnel (학생 서비스 공개 진입, 리더에서 실행) | 예정. 학교망이 터널 포트(TCP 7844)를 통과시키는 것은 확인함(2026-11-06). 설치 전 |
 | 외부 기술 | 레지스트리 캐시 (리더에서 실행, 제품은 구축 때 고른다) | 구현 전 |
 | 외부 기술 | 클러스터 밖 백업 보관처 (리더 상태 스냅샷, 후보 Cloudflare R2) | 후순위 |
@@ -49,6 +52,7 @@
 | (FR 미정) 스파이크 판정 · 자동 조치 | 없음 (규칙 코드) | AI를 쓰지 않는다. 규칙 두 개(메모리 한도 초과 · 크래시 루프)를 플랫폼 서버의 코드가 판정해 자동으로 중단 · 재시작한다 | 학생이 사후에 이벤트 로그로 확인한다 | 미적용 (AI 아님) | AI 대신 규칙 코드가 한다 |
 | (FR 미정) 차단 등급 자동 차단 | 없음 (규칙 코드) | AI를 쓰지 않는다. 검토 결과의 차단 등급을 플랫폼 서버의 코드가 자동 차단한다 | 그 외는 운영자가 승인 / 수정 요청 / 차단을 결정 | 미적용 (AI 아님) | AI 대신 코드가 한다 |
 | (FR 미정) 취약점 스캔 | 결정적 스캐너 (후보 Trivy · OSV-Scanner) | 스캐너가 의존성 취약점을 찾고, LLM은 결과를 설명만 한다 | 운영자가 리뷰 패킷에서 확인 | 미적용 | 구현 전. 탐지는 AI가 아니라 도구가 한다 |
+| (FR 미정) 배포 설정 초안 | 없음 (규칙 코드) | AI를 쓰지 않는다. 플랫폼 서버가 레포 설정 파일(package.json 등)로 프레임워크 · 진입점 · 포트를 판별해 배포 설정을 미리 채운다 | 학생이 확인하고 고친다 | 미적용 (AI 아님) | AI 대신 규칙 코드가 한다 |
 | FR-NNN | | | | 검증됨 / 미검증 / 미적용 | |
 
 검증 상태:

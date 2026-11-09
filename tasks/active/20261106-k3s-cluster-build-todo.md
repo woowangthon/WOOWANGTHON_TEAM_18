@@ -27,20 +27,31 @@ Priorities: the demo path first. Deferred (후순위): moving cloudflared from t
   - [x] SSH keys only (`/etc/ssh/sshd_config.d/10-wanggane-keys-only.conf`)
   - [x] ufw: deny incoming; allow in on `tailscale0` and from `192.168.77.0/24`, `10.42.0.0/16`, `10.43.0.0/16`
   - [x] ufw: deny outgoing; allow out to the same networks plus 53, 123/udp, 80/tcp, 443/tcp, 41641/udp, 3478/udp; leader also 7844
-  - [ ] `docs/design/cluster.md` PR (repo rule: design doc before implementation) — files: `docs/design/cluster.md`, this task pair
+  - [x] `docs/design/cluster.md` PR (repo rule: design doc before implementation) — files: `docs/design/cluster.md`, this task pair — #31, merged 2026-11-07
     - [x] write `docs/design/cluster.md` (implemented parts with the real values; stage 05+ as designed; resource cap and volume size as proposals)
     - [x] `docs/system-definition.md` §5.1 site values (wall-port uplink, firewall by source address, outbound ports, 7844 open, OS, return image), §5.2 and §6 pointers to the design doc
     - [x] `docs/ai-scope.md`: Tailscale remote access in use, node OS tools row, tunnel port checked
-    - [ ] open the PR (issue first), then confirm the proposed cap values with the server owner
-    - [ ] follow-up PR: `docs/architecture/*.drawio.svg` still say Wi-Fi per node / no uplink (cluster, overview, user3-visitor)
-- [ ] 05 k3s install — nvidia-container-toolkit on the leader first (so k3s picks up the nvidia runtime without a restart); leader with embedded etcd (`--cluster-init`), node IP on the node network, Tailscale address in the API cert, default CoreDNS off, versions pinned; workers join; labels + leader taint; CoreDNS on both workers. Check: ufw FORWARD default DROP does not block pod traffic; Docker does not bypass ufw
+    - [x] open the PR (issue first) — #30 / #31
+    - [ ] confirm the proposed cap values with the server owner (#31 merged without it; needed before 08)
+    - [x] follow-up PR: `docs/architecture/*.drawio.svg` still said Wi-Fi per node / no uplink and showed student volumes (cluster, overview, user3-visitor) — #33 / #34
+- [x] 05 k3s install (2026-11-07) — k3s v1.37.2+k3s1, options in `/etc/rancher/k3s/config.yaml` (`Infra/k3s/server.yaml`, `agent.yaml`)
+  - [x] nvidia-container-toolkit on the leader (1.20.1 already there as received; k3s registered the `nvidia` runtime)
+  - [x] leader: embedded etcd, node IP + API cert names, CoreDNS and ServiceLB off, Secrets encryption, control-plane taint, 30 s tolerations, NodePorts on the node network only
+  - [x] flannel `host-gw` with the node address as next hop (VXLAN used the school address)
+  - [x] workers joined with `wanggane/pool=student`
+  - [x] own CoreDNS on both workers (`Infra/coredns/coredns.yaml`)
+  - [x] checks: 3 nodes Ready, cross-worker Pod traffic, DNS, Pod HTTPS out, school-side 6443/80/443 closed, Docker rules only on `docker0`, `ufw route allow` for the Pod CIDR
+  - [x] k3s token: the server token is on the leader and on both workers (`/etc/rancher/k3s/token`); the operator keeps a copy in a password manager. A team shared vault waits until there are secrets teammates must use (vLLM key, tunnel token)
+  - [ ] repo PR #37 (issue #35): `Infra/k3s/*`, `Infra/coredns/coredns.yaml`, `docs/design/cluster.md` §3–4, `docs/ai-scope.md`, `docs/system-definition.md` §5.1–5.2, reboot results (this log went in with #34)
 - [ ] 06 Reboot tests — each worker, then the leader, then a full power cut
-- [ ] 06′ Leader GPU + vLLM — NVIDIA device plugin, Qwen/Qwen3-8B-AWQ on vLLM (16K context, 3 concurrent, API key in a leader Secret), no public route; measure GPU memory
+  - [x] w1 → w2 → leader, one at a time, remotely (2026-11-08): each back in ~35–45 s unattended; NotReady measured at ~50 s (agent stopped), rescheduling at ~80 s
+  - [ ] full power cut (on site)
+- [x] 06′ Leader GPU + vLLM — NVIDIA device plugin, Qwen/Qwen3-8B-AWQ on vLLM (16K context, one request at a time, API key in a leader Secret), no public route; measure GPU memory. Team priority: 후순위 since the 2026-11-09 meeting — done off the demo path the same day. Left: copy the API key to the team vault; manifests go into `Infra/` with the 09′ docs
 - [ ] 07 Image pulls — GHCR pull-through cache on the leader (local-path), nodes fall back to GHCR directly
 - [ ] 08 Student namespace template — `proj-<id>`, Pod Security baseline enforced, resource cap under half a worker, NetworkPolicy (same namespace + Ingress in; same namespace + DNS + internet out, school LAN / cluster / node / tailnet / private ranges / other projects blocked)
 - [x] ~~08′ Student volume and DB failover~~ — dropped 2026-11-07: students bring their own DB (deploy workflow v15), so no platform MySQL or Longhorn; 08 opens student Pod egress to the internet instead
 - [ ] 09 Server link — Tailscale tag and ACL, server ServiceAccount + RBAC + ValidatingAdmissionPolicy, Secret write-only
-- [ ] 09′ GoCD Agent on the leader — connects to the GoCD server on the EC2 over Tailscale, deploy rights move to its ServiceAccount, Verify path through Traefik; docs (cluster.md, ADRs, ai-scope) for the AI parts
+- [ ] 09′ GoCD Agent on the leader — connects to the GoCD server on the EC2 over Tailscale, deploy rights move to its ServiceAccount (cluster.md §8 split, ADR-009), Verify path through Traefik; docs for the AI parts. Check the AI teammate's ArgoCD review first: if the team switches, this stage changes
 - [ ] 10 Public entry — Cloudflare Tunnel from the leader, Traefik (2 replicas) on the workers, the demo student address over HTTPS
 - [ ] 11 Monitoring — Prometheus + Grafana on the leader (local-path), server queries Prometheus, Discord alerts
 - [ ] 12 Return — Clonezilla restore of all three disks, BIOS back to the photos, secrets revoked

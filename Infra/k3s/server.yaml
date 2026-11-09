@@ -1,0 +1,49 @@
+# k3s server on k3s-leader, installed as /etc/rancher/k3s/config.yaml.
+# Install: curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=v1.37.2+k3s1 sh -s - server
+# Replace <LEADER_TAILSCALE_IP> with the leader's Tailscale address on the node only.
+# Design and reasons: docs/design/cluster.md §4.
+
+# Embedded etcd instead of SQLite (one server; keeps the snapshot-restore option open).
+cluster-init: true
+
+# Use the node network, not the school address that comes first on enp4s0.
+node-ip: 192.168.77.11
+advertise-address: 192.168.77.11
+flannel-iface: enp4s0
+# flannel-iface picks the card, but flannel takes its FIRST address (the school one)
+# as the VXLAN source, and ufw drops traffic from school addresses. k3s v1.37.2 has
+# no option to pick the address, so: host-gw backend (plain routes, no VXLAN; all
+# three nodes share one switch) with the node address as the next hop
+# (node-external-ip + flannel-external-ip). Pod routes: 10.42.N.0/24 via 192.168.77.x.
+flannel-backend: host-gw
+node-external-ip: 192.168.77.11
+flannel-external-ip: true
+
+# API certificate names: node address, Tailscale address (platform server), MagicDNS name.
+tls-san:
+  - 192.168.77.11
+  - <LEADER_TAILSCALE_IP>
+  - k3s-leader
+
+# coredns: our own CoreDNS runs on both workers (Infra/coredns/coredns.yaml).
+# servicelb: its hostPort 80/443 is DNATed through FORWARD and never reaches ufw INPUT,
+# so the school LAN could reach Traefik. Visitors come through the tunnel instead.
+disable:
+  - coredns
+  - servicelb
+
+# Encrypt Secrets at rest in etcd.
+secrets-encryption: true
+
+# Student Pods never land on the leader; system tools add a toleration.
+node-taint:
+  - node-role.kubernetes.io/control-plane:NoSchedule
+
+# Reschedule Pods 30 s after a node goes NotReady/unreachable (default 300 s).
+kube-apiserver-arg:
+  - default-not-ready-toleration-seconds=30
+  - default-unreachable-toleration-seconds=30
+
+# NodePorts bypass ufw INPUT the same way; accept them on the node network only.
+kube-proxy-arg:
+  - nodeport-addresses=192.168.77.0/24
