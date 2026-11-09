@@ -1,0 +1,99 @@
+# Student project space template, applied as the test space proj-demo.
+# Design and reasons: docs/design/cluster.md §6.
+# The platform server creates one of these per project with the name proj-<id> (only the name changes;
+# the build-09 admission policy accepts these exact values). The server may only create these objects
+# (cluster.md §8), so the space's default ServiceAccount is left as Kubernetes makes it; the API token is
+# turned off on each Pod instead. App resources (Deployment, Service, Ingress) come from the leader's
+# deploy executor, see app-example.yaml.
+# Apply (from the operator's machine):
+#   ssh k3s-leader 'sudo k3s kubectl apply -f -' < Infra/student/space.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: proj-demo
+  labels:
+    # restricted would reject root images such as the official nginx and node images.
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/warn: restricted
+---
+# Defaults for containers whose spec gives no values. Not a per-container maximum: the quota below caps the total.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: container-defaults
+  namespace: proj-demo
+spec:
+  limits:
+  - type: Container
+    defaultRequest:
+      cpu: 250m
+      memory: 256Mi
+    default:
+      cpu: "2"
+      memory: 4Gi
+---
+# Under half a worker (24 threads, 125 GiB), so two projects still fit on one worker when the other is down.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: project-cap
+  namespace: proj-demo
+spec:
+  hard:
+    requests.cpu: "4"
+    limits.cpu: "8"
+    requests.memory: 16Gi
+    limits.memory: 32Gi
+    pods: "10"
+    # No student volumes (students bring their own DB).
+    persistentvolumeclaims: "0"
+    requests.storage: "0"
+    # Visitors come in through Traefik only. A NodePort would open the app on the node network.
+    services.nodeports: "0"
+    services.loadbalancers: "0"
+---
+# In: the same space and Traefik. Out: the same space, cluster DNS, the internet.
+# Private ranges cover the school LAN (10.198.0.0/16), the Pod and Service ranges (10.42/16, 10.43/16,
+# so other proj- spaces and the leader API too), the node network (192.168.77.0/24) and the tailnet.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: project-isolation
+  namespace: proj-demo
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+  - from:
+    - podSelector: {}
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: traefik
+  egress:
+  - to:
+    - podSelector: {}
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - port: 53
+      protocol: UDP
+    - port: 53
+      protocol: TCP
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+        except:
+        - 10.0.0.0/8
+        - 172.16.0.0/12
+        - 192.168.0.0/16
+        - 100.64.0.0/10
+        - 169.254.0.0/16
