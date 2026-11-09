@@ -104,6 +104,7 @@ Kafka는 **"사용자가 맡긴 배포본이 시스템 오류로 사라지지 �
 
 - `FE/`와 `BE/`는 각자 `Dockerfile`을 두고, **컨테이너 두 개로 로컬에서 띄워** 먼저 개발한다. 배포 단위는 [구성요소 표](#구성요소와-책임)대로 FE는 S3 + CloudFront, BE는 EC2다.
 - **FE → BE 호출 주소** (가정): 로컬은 Vite 개발 서버의 프록시로 BE에 넘기고, 배포는 FE의 환경변수에 BE 주소를 넣고 BE가 FE 주소를 CORS 허용 목록에 둔다 (CloudFront 경로 라우팅은 쓰지 않는다). [열린 질문](#열린-질문)의 "FE → BE 호출 주소".
+- **FE 배포 시 경로 fallback (배포 설정에 반드시 넣는다)**: FE는 `BrowserRouter`를 쓰므로 `/login` 같은 경로는 S3에 파일이 없다. 주소창에 직접 입력하거나 새로고침하면 403 · 404가 나므로, CloudFront의 Custom error response로 **403 · 404를 `/index.html`(응답 코드 200)로 돌려준다.** 로컬 컨테이너의 `FE/nginx.conf`(`try_files $uri /index.html`)와 같은 역할이다. 이 레포에는 CloudFront 설정이 없어 코드가 아니라 배포 담당이 AWS에서 설정한다([PR #59 리뷰](https://github.com/woowangthon/WOOWANGTHON_TEAM_18/pull/59#pullrequestreview-5826618732)). 확인: 배포한 주소에서 `/login`을 직접 열어 로그인 화면이 뜨는지 본다.
 
 ### 리더 이전 계획
 

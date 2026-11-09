@@ -1,7 +1,9 @@
 import { render, screen } from '@testing-library/react'
 import { expect, it } from 'vitest'
+import { Alert } from './Alert.tsx'
 import { Badge } from './Badge.tsx'
 import { Button } from './Button.tsx'
+import { Field } from './Field.tsx'
 import { Input } from './Input.tsx'
 import { LogBlock } from './LogBlock.tsx'
 import { Table, Td, Th, THead } from './Table.tsx'
@@ -69,6 +71,78 @@ it('Input keeps its own classes and appends the caller className as a separate c
   const classes = screen.getByRole('textbox', { name: 'repo' }).className.split(' ')
   expect(classes).toContain('mt-2')
   expect(classes).toContain('disabled:text-muted')
+})
+
+it('Input draws its error border from aria-invalid, not from a caller class', () => {
+  render(<Input aria-label="repo" />)
+  expect(screen.getByRole('textbox', { name: 'repo' }).className).toContain(
+    'aria-invalid:border-err',
+  )
+})
+
+it('Field names its input with the visible label', () => {
+  render(<Field label="이메일" type="email" />)
+  const input = screen.getByRole('textbox', { name: '이메일' })
+  expect(input.getAttribute('type')).toBe('email')
+  // 라벨을 누르면 입력칸으로 가야 하므로 htmlFor도 맞아야 한다.
+  expect(screen.getByText('이메일').getAttribute('for')).toBe(input.id)
+  expect(input.getAttribute('aria-invalid')).toBeNull()
+  expect(input.getAttribute('aria-describedby')).toBeNull()
+  expect(screen.queryByRole('alert')).toBeNull()
+})
+
+it('Field with an error marks the input invalid and ties the message to it', () => {
+  render(<Field label="이메일" error="올바른 이메일 형식이 아니에요" />)
+  const input = screen.getByRole('textbox', { name: '이메일' })
+  const message = screen.getByRole('alert')
+  expect(message.textContent).toBe('올바른 이메일 형식이 아니에요')
+  expect(input.getAttribute('aria-invalid')).toBe('true')
+  expect(input.getAttribute('aria-describedby')).toBe(message.id)
+  expect(message.className).toContain('text-err')
+})
+
+it('Field gives each instance its own id and renders the trailing control after the input', () => {
+  render(
+    <>
+      <Field label="이메일" />
+      <Field label="비밀번호" trailing={<Button>보기</Button>} />
+    </>,
+  )
+  const email = screen.getByRole('textbox', { name: '이메일' })
+  const password = screen.getByRole('textbox', { name: '비밀번호' })
+  expect(email.id).not.toBe(password.id)
+  expect(screen.getByRole('button', { name: '보기' })).toBeTruthy()
+})
+
+it('Alert uses role=alert for errors and role=status for warnings and info, and always shows a title', () => {
+  render(
+    <>
+      <Alert variant="err" title="로그인 실패" />
+      <Alert variant="warn" title="잠시 쉬어요">
+        1분 뒤에 다시 시도해 주세요
+      </Alert>
+      <Alert variant="info" title="인증이 필요해요" />
+    </>,
+  )
+  expect(screen.getByRole('alert').textContent).toBe('로그인 실패')
+  const warn = screen.getByText('잠시 쉬어요').parentElement
+  expect(warn?.getAttribute('role')).toBe('status')
+  expect(warn?.textContent).toContain('1분 뒤에 다시 시도해 주세요')
+  expect(screen.getByText('인증이 필요해요').parentElement?.getAttribute('role')).toBe('status')
+})
+
+it('Alert variants differ in border and title color; the default variant is err', () => {
+  render(
+    <>
+      <Alert title="e" />
+      <Alert variant="warn" title="w" />
+      <Alert variant="info" title="i" />
+    </>,
+  )
+  expect(screen.getByRole('alert').className).toContain('border-err')
+  expect(screen.getByText('w').parentElement?.className).toContain('border-warn')
+  expect(screen.getByText('i').parentElement?.className).toContain('border-info')
+  expect(screen.getByText('w').className).toContain('text-warn')
 })
 
 it('disabled Button and Input use tokens, not opacity (opacity fades the text with the background)', () => {

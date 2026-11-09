@@ -9,6 +9,7 @@ const routes = [
   ['/signup', '회원가입'],
   ['/reset-password', '비밀번호 재설정'],
   ['/profile', '프로필'],
+  ['/dashboard', '대시보드'],
   ['/deploy/new', '새 배포 요청'],
 ] as const
 
