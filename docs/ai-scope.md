@@ -24,7 +24,7 @@
 | 외부 기술 | AWS — CodeBuild(빌드), S3 + CloudFront(웹 정적 파일), EC2 한 대(Nest · FastAPI · GoCD 서버. Kafka 브로커는 후순위) | 구현 전. 설정·연동 |
 | 외부 기술 | GHCR (학생 앱 이미지 레지스트리, 이미지 공개. [ADR-003](adr/003-registry-ghcr.md)) | 구현 전. 설정·연동 |
 | 외부 기술 | Supabase (PostgreSQL, Auth — 이메일 · 비밀번호 로그인, GitHub 계정 연동. [ADR-007](adr/007-login-email-password-github-link.md)) | 로그인 토큰 검증은 구현함. 소유 확인에서 사용자 토큰으로 `GET /auth/v1/user`를 불러 연동한 GitHub ID를 읽음. 연동 · 가입 화면은 구현 전 |
-| 외부 API | GitHub API — 봇 계정의 fork·PR 생성, 계정 연동(OAuth, Supabase Auth가 처리), 레포 소유자 조회 | 레포 소유자 조회(`GET /repos/{소유자}/{레포}`, 인증 없이 공개 레포만, 서버 IP당 시간당 60번)는 구현함. Dockerfile 유무 확인(`GET /repos/{소유자}/{레포}/git/trees/HEAD?recursive=1`, 같은 한도)은 AI 없이 파일 이름으로 판별하고 구현함. fork·PR 생성과 계정 연동 화면은 구현 전 |
+| 외부 API | GitHub API — 봇 계정의 fork·PR 생성, 계정 연동(OAuth, Supabase Auth가 처리), 레포 소유자 조회 | 레포 소유자 조회(`GET /repos/{소유자}/{레포}`, 인증 없이 공개 레포만, 서버 IP당 시간당 60번)는 구현함. Dockerfile 유무 확인(`GET /repos/{소유자}/{레포}/git/trees/HEAD?recursive=1`, 같은 한도)은 AI 없이 파일 이름으로 판별하고 구현함. 배포 설정 초안은 같은 파일 목록에서 `package.json`을 찾아 `raw.githubusercontent.com`(인증 없이, API 한도에 잡히지 않음)으로 내용을 읽고 구현함. fork·PR 생성과 계정 연동 화면은 구현 전 |
 | 외부 기술 | Apache Kafka (EC2 단일 브로커) | 후순위 (EC2 용량이 남으면, 2026-11-09). 구현 전 |
 | 외부 기술 | GoCD (배포 파이프라인. 서버는 EC2, 실행기는 리더. [ADR-009](adr/009-deploy-runs-on-leader-gocd-agent.md)) | 구현 전. 파이프라인 정의는 직접 작성한다. ArgoCD로 바꿀지 검토 중 |
 | 외부 기술 | vLLM v0.32.0 + Qwen3-8B-AWQ (리더 GPU에서 도는 로컬 모델, Apache-2.0), NVIDIA device plugin v0.20.1 | 팀 일정상 후순위(2026-11-09 회의)라 데모 경로 밖. 리더에 설치 · 시험함(2026-11-09): 컨텍스트 16K, 동시 요청 1, KV 캐시 FP8, 클러스터 안에서만 API 키로 답한다. 설정은 [`Infra/gpu/`](../Infra/gpu/) · [`Infra/vllm/`](../Infra/vllm/), 값과 이유는 [`design/cluster.md`](design/cluster.md) §11. EC2에서 부르는 길과 AI 서버 연동은 구현 전 |
@@ -52,7 +52,7 @@
 | (FR 미정) 스파이크 판정 · 자동 조치 | 없음 (규칙 코드) | AI를 쓰지 않는다. 규칙 두 개(메모리 한도 초과 · 크래시 루프)를 플랫폼 서버의 코드가 판정해 자동으로 중단 · 재시작한다 | 학생이 사후에 이벤트 로그로 확인한다 | 미적용 (AI 아님) | AI 대신 규칙 코드가 한다 |
 | (FR 미정) 차단 등급 자동 차단 | 없음 (규칙 코드) | AI를 쓰지 않는다. 검토 결과의 차단 등급을 플랫폼 서버의 코드가 자동 차단한다 | 그 외는 운영자가 승인 / 수정 요청 / 차단을 결정 | 미적용 (AI 아님) | AI 대신 코드가 한다 |
 | (FR 미정) 취약점 스캔 | 결정적 스캐너 (후보 Trivy · OSV-Scanner) | 스캐너가 의존성 취약점을 찾고, LLM은 결과를 설명만 한다 | 운영자가 리뷰 패킷에서 확인 | 미적용 | 구현 전. 탐지는 AI가 아니라 도구가 한다 |
-| (FR 미정) 배포 설정 초안 | 없음 (규칙 코드) | AI를 쓰지 않는다. 플랫폼 서버가 레포 설정 파일(package.json 등)로 프레임워크 · 진입점 · 포트를 판별해 배포 설정을 미리 채운다 | 학생이 확인하고 고친다 | 미적용 (AI 아님) | AI 대신 규칙 코드가 한다 |
+| (FR 미정) 배포 설정 초안 | 없음 (규칙 코드) | AI를 쓰지 않는다. 플랫폼 서버가 레포 설정 파일(package.json 등)로 프레임워크 · 진입점 · 포트를 판별해 배포 설정을 미리 채운다 | 학생이 확인하고 고친다 | 미적용 (AI 아님) | AI 대신 규칙 코드가 한다. 초안 조회 API(`POST /api/repos/deploy-spec`)는 구현함: `package.json`과 락 파일 이름으로 Vite + React · Next.js · 언어 · 패키지 매니저 · 설치 · 빌드 · 시작 명령을 판별하고, 모르면 "판단 필요"로 둔다. README는 읽지 않고 락 파일 내용도 읽지 않는다. 진입점 · 환경변수 · 백엔드 프레임워크(Nest 등) 판별은 하지 않으며(구현 전), 확정한 값을 저장하는 API도 구현 전이다 |
 | FR-NNN | | | | 검증됨 / 미검증 / 미적용 | |
 
 검증 상태:
