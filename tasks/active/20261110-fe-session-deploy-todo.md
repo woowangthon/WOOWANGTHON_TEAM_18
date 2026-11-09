@@ -17,8 +17,8 @@ Five demo-path issues are done on one branch, one commit per issue, so the work 
 
 ## Todo
 
-- [ ] #54 `apiFetch` + `ApiError` + tests — files: `FE/src/lib/api.ts`, `FE/src/lib/api.test.ts`
-- [ ] #53 auth context, guard, app bar, X1, login return + tests, `docs/ai-scope.md` — files: `FE/src/auth/*`, `FE/src/layout/AppLayout.tsx`, `FE/src/App.tsx`, `FE/src/pages/LoginPage.tsx`
+- [x] #54 `apiFetch` + `ApiError` + tests — files: `FE/src/lib/api.ts`, `FE/src/lib/api.test.ts`
+- [x] #53 auth context, guard, app bar, X1, login return + tests, `docs/ai-scope.md` — files: `FE/src/auth/*`, `FE/src/layout/AppLayout.tsx`, `FE/src/App.tsx`, `FE/src/pages/LoginPage.tsx`
 - [ ] #56 profile page + tests, `docs/design/auth.md`, `docs/ai-scope.md` — files: `FE/src/pages/ProfilePage.tsx`
 - [ ] #57 repo check page + tests — files: `FE/src/pages/DeployNewPage.tsx`
 - [ ] #58 Dockerfile check + tests — files: `FE/src/pages/DockerfileCheck.tsx`
