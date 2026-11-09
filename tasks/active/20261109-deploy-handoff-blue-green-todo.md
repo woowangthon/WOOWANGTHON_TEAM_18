@@ -11,7 +11,7 @@ Fix the W3 → W4 deploy input JSON so W0~W3 can be built in parallel, then chan
 ## Todo
 
 - [x] Deploy input schema (commitSha, deploy_condition, spec), fields, validation rules — files: `docs/design/deploy-handoff.md`
-- [ ] A/B slots: slot layout, DB rows, open Ingress, slot reset, shared Secret — files: `docs/design/deploy-workflow.md`
+- [x] A/B slots: slot layout, DB rows, open Ingress, slot reset, shared Secret — files: `docs/design/deploy-workflow.md`
 - [ ] Traefik check of the target slot through the test Ingress before switching open — files: `docs/design/deploy-workflow.md`
 
 ## Done when
