@@ -28,9 +28,12 @@ spec:
     defaultRequest:
       cpu: 250m
       memory: 256Mi
+      ephemeral-storage: 1Gi
     default:
       cpu: "2"
       memory: 4Gi
+      # Logs, emptyDir and the writable layer. Without a limit one Pod can fill the worker's disk.
+      ephemeral-storage: 8Gi
 ---
 # Under half a worker (24 threads, 125 GiB), so two projects still fit on one worker when the other is down.
 apiVersion: v1
@@ -44,6 +47,8 @@ spec:
     limits.cpu: "8"
     requests.memory: 16Gi
     limits.memory: 32Gi
+    requests.ephemeral-storage: 10Gi
+    limits.ephemeral-storage: 40Gi
     pods: "10"
     # No student volumes (students bring their own DB).
     persistentvolumeclaims: "0"

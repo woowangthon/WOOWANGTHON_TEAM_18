@@ -3,7 +3,7 @@
 #   bash Infra/student/check.sh
 # Needs proj-demo from space.yaml + app-example.yaml. Creates a second space proj-check from the same
 # template and a control namespace without the NetworkPolicy, probes from a test Pod in each, prints
-# PASS/FAIL per line, then deletes everything it created (proj-demo is left as it was).
+# PASS/FAIL per line, then deletes everything it created (proj-demo is left as it was), also when it stops early.
 # A TCP target counts as reached when curl's connect time is non-zero (telnet:// then waits for the timeout).
 set -u
 cd "$(dirname "$0")"
@@ -15,6 +15,15 @@ expect() { # expect <ok|blocked> <label> <result line "exit code time_connect">
   if [ "$e" = 0 ] || awk "BEGIN{exit !($t > 0)}"; then got=ok; else got=blocked; fi
   if [ "$got" = "$want" ]; then echo "PASS $label ($got)"; else echo "FAIL $label (want $want, got $got)"; fail=1; fi
 }
+
+cleanup() {
+  k delete namespace proj-check netpol-control --ignore-not-found --wait=false >/dev/null
+  k -n proj-demo delete pod check-client pin-leader --ignore-not-found >/dev/null
+}
+trap cleanup EXIT
+# Leftovers from a run that was cut off.
+k delete namespace proj-check netpol-control --ignore-not-found >/dev/null
+k -n proj-demo delete pod check-client pin-leader --ignore-not-found >/dev/null
 
 TS=$(ssh k3s-leader 'tailscale ip -4')
 { sed 's/proj-demo/proj-check/g' space.yaml; echo '---'; sed 's/proj-demo/proj-check/g' app-example.yaml; } | k apply -f - >/dev/null 2>&1
@@ -44,15 +53,25 @@ CHECKIP=$(k -n proj-check get pod -l app=web -o "jsonpath='{.items[0].status.pod
 
 probe() { # probe <namespace> <url>
   k -n "$1" exec check-client -- curl -sk -o /dev/null --connect-timeout 4 -m 6 -w "'%{exitcode} %{http_code} %{time_connect}'" "'$2'" </dev/null 2>/dev/null
-  local e=$?; [ $e = 0 ] || true
 }
 run() { # run <namespace> <ok|blocked> <label> <url>
-  local out; out=$(probe "$1" "$4"); [ -n "$out" ] || out="1 000 0"
+  local out; out=$(probe "$1" "$4")
+  # No output means kubectl exec itself failed (no client Pod), which proves nothing either way.
+  if [ -z "$out" ]; then echo "FAIL $1: $3 (probe did not run)"; fail=1; return; fi
   expect "$2" "$1: $3" "$out"
 }
 
+echo "== placement"
+for ns in proj-demo proj-check netpol-control; do
+  node=$(k -n $ns get pod check-client -o "jsonpath='{.spec.nodeName}'")
+  case $node in k3s-w1|k3s-w2) echo "PASS $ns: client on a worker ($node)";; *) echo "FAIL $ns: client on $node"; fail=1;; esac
+done
+k -n proj-demo run pin-leader --image=busybox:1.37 --restart=Never "--overrides='{\"spec\":{\"nodeSelector\":{\"kubernetes.io/hostname\":\"k3s-leader\"},\"automountServiceAccountToken\":false}}'" -- sleep 60 >/dev/null 2>&1
+sleep 10
+phase=$(k -n proj-demo get pod pin-leader -o "jsonpath='{.status.phase}'")
+if [ "$phase" = Pending ]; then echo "PASS Pod pinned to the leader stays Pending"; else echo "FAIL Pod pinned to the leader is $phase"; fail=1; fi
+
 echo "== proj-demo (student space)"
-k -n proj-demo get pod check-client -o "jsonpath='node {.spec.nodeName}{\"\\n\"}'"
 if k -n proj-demo exec check-client -- nslookup -timeout=3 github.com >/dev/null 2>&1; then echo "PASS proj-demo: cluster DNS (ok)"; else echo "FAIL proj-demo: cluster DNS"; fail=1; fi
 run proj-demo ok      "same space Service"           http://web.proj-demo
 run proj-demo ok      "internet HTTPS"               https://github.com
@@ -89,8 +108,11 @@ spec:
   - host: check.check.invalid
     http: {paths: [{path: /, pathType: Prefix, backend: {service: {name: web, port: {number: 80}}}}]}
 EOF
-sleep 3
-code=$(ssh k3s-leader 'curl -s -o /dev/null -m 6 -w "%{http_code}" -H "Host: check.check.invalid" http://$(sudo -n k3s kubectl -n kube-system get svc traefik -o jsonpath="{.spec.clusterIP}")/')
+# Traefik picks up a new Ingress within seconds; retry for up to 30 s.
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  code=$(ssh k3s-leader 'curl -s -o /dev/null -m 6 -w "%{http_code}" -H "Host: check.check.invalid" http://$(sudo -n k3s kubectl -n kube-system get svc traefik -o jsonpath="{.spec.clusterIP}")/')
+  [ "$code" = 200 ] && break; sleep 3
+done
 if [ "$code" = 200 ]; then echo "PASS Traefik -> proj-check web (200)"; else echo "FAIL Traefik -> proj-check web ($code)"; fail=1; fi
 
 echo "== admission (server dry run)"
@@ -104,6 +126,4 @@ deny "Pod asking 5 CPU" -n proj-demo run x --image=busybox:1.37 "--overrides='{\
 deny "NodePort Service" -n proj-demo create service nodeport x --tcp=80:9898
 
 echo "== cleanup"
-k delete namespace proj-check netpol-control >/dev/null
-k -n proj-demo delete pod check-client >/dev/null
 [ $fail = 0 ] && echo "ALL PASS" || { echo "SOME FAILED"; exit 1; }
