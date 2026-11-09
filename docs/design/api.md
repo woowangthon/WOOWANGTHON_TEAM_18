@@ -47,7 +47,7 @@ FE·BE·AI가 서로를 기다리지 않도록 **요청·응답 모양을 먼저
 - `403 REPO_NOT_OWNED`: 연동한 GitHub 계정이 레포 소유자가 아니다
 - `404 REPO_NOT_FOUND`: 없는 레포이거나 비공개 레포다
 - `422 REPO_NOT_PERSONAL`: 소유자가 조직이다 (MVP는 공개 개인 레포만)
-- `503 AUTH_UNAVAILABLE` · `503 GITHUB_UNAVAILABLE`: 인증 서버 또는 GitHub에 닿지 못했다. 사용자 잘못이 아니므로 다시 시도하게 한다
+- `503 AUTH_UNAVAILABLE` · `503 GITHUB_UNAVAILABLE`: 인증 서버 또는 GitHub에 닿지 못했거나, 서버가 가진 Supabase 공개 키가 거부당했다. 사용자 잘못이 아니므로 다시 시도하게 한다
 
 ## <그룹명> (SRS §2.4)
 

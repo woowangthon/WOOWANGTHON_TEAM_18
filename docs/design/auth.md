@@ -64,13 +64,15 @@
 | 단계 | 실패 | 응답 |
 | --- | --- | --- |
 | 1. 레포 주소 읽기: `https://github.com/<소유자>/<레포>`(끝의 `.git` · `/`는 허용)만 받는다 | 다른 호스트 · `http` · 사용자 정보 · 추가 경로 · 빈 이름 | `400 INVALID_REPO_URL` |
-| 2. Supabase에서 사용자 조회 | Supabase가 토큰을 거부(`401` · `403`) | `401 INVALID_TOKEN` |
-| | Supabase 장애 · 네트워크 · 시간 초과 | `503 AUTH_UNAVAILABLE` |
+| 2. Supabase에서 사용자 조회 | Supabase가 토큰을 거부(`403`) | `401 INVALID_TOKEN` |
+| | Supabase가 `401`(우리 공개 키가 틀렸거나 교체됨) · 장애 · 네트워크 · 시간 초과 | `503 AUTH_UNAVAILABLE` (로그를 남긴다) |
 | 3. 연동한 GitHub 확인 | `github` identity가 없음 | `403 GITHUB_NOT_LINKED` |
 | 4. GitHub에서 레포 조회 | 없는 레포, 비공개 레포(GitHub는 둘 다 `404`로 답한다) | `404 REPO_NOT_FOUND` |
 | | 한도 초과(`403` · `429`) · GitHub 장애 · 네트워크 · 시간 초과 | `503 GITHUB_UNAVAILABLE` |
 | 5. 개인 레포인가 | 소유자가 조직(`type`이 `User`가 아님). MVP는 공개 개인 레포만 지원한다([ADR-002](../adr/002-bot-account-for-fix-prs.md)) | `422 REPO_NOT_PERSONAL` |
 | 6. 소유자 대조 | 소유자 ID ≠ 연동한 GitHub ID | `403 REPO_NOT_OWNED` |
+
+Supabase `GET /auth/v1/user`의 `401`과 `403`은 책임이 다르다(2026-11-09 실제 응답으로 확인). 틀린 `apikey`는 `401 Invalid API key`, `apikey` 없음은 `401 No API key found in request`(둘 다 `error_code` 없음)이고, 위조 토큰은 `403 bad_jwt`, 로그아웃된 세션은 `403 session_not_found`다. 사용자 쪽 토큰 문제는 모두 `403`이고 `401`은 우리 쪽 설정 문제이므로, `401`을 `INVALID_TOKEN`으로 돌려주면 공개 키가 틀렸을 때 모든 사용자가 "토큰이 틀렸다"를 받고 원인이 로그에 남지 않는다.
 
 외부 서비스 장애는 사용자 잘못(`4xx`)으로 바꾸지 않고 `503`으로 돌려준다([`conventions.md`](../conventions.md) F-1). 내가 소유자인 레포를 다른 레포에서 fork한 경우도 소유자는 나이므로 통과한다. 관리자도 같은 확인을 받는다(관리자는 제출하지 않고 보기만 하므로 예외를 두지 않는다).
 
