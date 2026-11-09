@@ -93,21 +93,6 @@ FE 흐름은 ① `repos/check` → ② `repos/dockerfiles`와 이 API. 이 API�
   "repo": "student/my-app",
   "projects": [
     {
-      "dir": "FE",
-      "framework": { "value": "vite-react", "source": "package.json" },
-      "language": { "value": "typescript", "source": "package.json" },
-      "packageManager": { "value": "pnpm", "source": "lockfile" },
-      "install": { "value": "pnpm install --frozen-lockfile", "source": "lockfile" },
-      "build": { "value": "pnpm run build", "script": "tsc -b && vite build", "source": "package.json" },
-      "start": { "value": null, "script": null, "source": null },
-      "outputDir": { "value": "dist", "source": "default" },
-      "port": { "value": null, "source": null },
-      "nodeVersion": ">=22",
-      "lockfile": "FE/pnpm-lock.yaml",
-      "dockerfile": true,
-      "needsReview": []
-    },
-    {
       "dir": "BE",
       "framework": { "value": null, "source": null },
       "language": { "value": "typescript", "source": "package.json" },
@@ -121,6 +106,21 @@ FE 흐름은 ① `repos/check` → ② `repos/dockerfiles`와 이 API. 이 API�
       "lockfile": "BE/pnpm-lock.yaml",
       "dockerfile": true,
       "needsReview": ["framework", "outputDir", "port"]
+    },
+    {
+      "dir": "FE",
+      "framework": { "value": "vite-react", "source": "package.json" },
+      "language": { "value": "typescript", "source": "package.json" },
+      "packageManager": { "value": "pnpm", "source": "lockfile" },
+      "install": { "value": "pnpm install --frozen-lockfile", "source": "lockfile" },
+      "build": { "value": "pnpm run build", "script": "tsc -b && vite build", "source": "package.json" },
+      "start": { "value": null, "script": null, "source": null },
+      "outputDir": { "value": "dist", "source": "default" },
+      "port": { "value": null, "source": null },
+      "nodeVersion": ">=22",
+      "lockfile": "FE/pnpm-lock.yaml",
+      "dockerfile": true,
+      "needsReview": []
     }
   ],
   "truncated": false

@@ -11,7 +11,7 @@ import {
 } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
 import type { Env } from '../config/env.js'
-import { buildProject, type DeployProject, selectPackageDirs } from './deploy-spec.js'
+import { buildProjects, type DeployProject, join, selectPackageDirs } from './deploy-spec.js'
 import { parseRepoUrl, type RepoRef } from './repo-url.js'
 
 const TIMEOUT_MS = 5000
@@ -19,7 +19,7 @@ const TIMEOUT_MS = 5000
 const MAX_PACKAGE_JSON_BYTES = 1_000_000
 // 이름이 정확히 Dockerfile인 파일만(루트 또는 하위 폴더). Dockerfile.prod · *.Dockerfile은 MVP 제외.
 const DOCKERFILE_PATH = /(^|\/)Dockerfile$/
-// package.json 내용은 API 한도에 잡히지 않는 raw 주소로 읽는다(2026-11-09 확인). 인증 없이 공개 레포만 본다.
+// package.json 내용은 API 한도에 잡히지 않는 raw 주소로 읽는다(한도 헤더가 없다). 인증 없이 공개 레포만 본다.
 const RAW_HEADERS = { 'User-Agent': 'woowangthon-platform' }
 const GITHUB_HEADERS = { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'woowangthon-platform' }
 
@@ -60,14 +60,16 @@ export class ReposService {
   async deploySpec(accessToken: string, repoUrl: unknown): Promise<DeploySpecResult> {
     const { ref, repo } = await this.verifyOwnership(accessToken, repoUrl)
     const tree = await this.fetchTree(ref)
-    const blobs = tree.tree.filter((e) => e.type === 'blob')
-    const paths = blobs.map((e) => e.path)
-    const sizes = new Map(blobs.map((e) => [e.path, e.size]))
-    const { dirs, truncated } = selectPackageDirs(paths)
-    const packages = await Promise.all(dirs.map((dir) => this.fetchPackageJson(ref, packageJsonPath(dir), sizes.get(packageJsonPath(dir)))))
-    const files = new Set(paths)
-    const projects = dirs.flatMap((dir, i) => buildProject(dir, packages[i], files) ?? [])
-    return { repo: repo.full_name, projects, truncated: tree.truncated || truncated }
+    // 파일 경로 → 크기. 크기는 큰 package.json을 읽기 전에 거르는 데 쓴다.
+    const files = new Map(tree.tree.filter((e) => e.type === 'blob').map((e): [string, number | undefined] => [e.path, e.size]))
+    const { dirs, truncated } = selectPackageDirs(files.keys())
+    const packages = await Promise.all(
+      dirs.map((dir) => {
+        const file = join(dir, 'package.json')
+        return this.fetchPackageJson(ref, file, files.get(file))
+      }),
+    )
+    return { repo: repo.full_name, projects: buildProjects(dirs, packages, files), truncated: tree.truncated || truncated }
   }
 
   private async verifyOwnership(accessToken: string, repoUrl: unknown): Promise<{ ref: RepoRef; repo: GithubRepo }> {
@@ -223,8 +225,6 @@ export interface DockerfilesResult {
   dockerfiles: string[]
   truncated: boolean
 }
-
-const packageJsonPath = (dir: string) => (dir === '.' ? 'package.json' : `${dir}/package.json`)
 
 function isGithubTree(value: unknown): value is GithubTree {
   const { tree, truncated } = (value ?? {}) as { tree?: unknown; truncated?: unknown }

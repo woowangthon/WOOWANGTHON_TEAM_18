@@ -7,6 +7,8 @@ export const MAX_PACKAGES = 10
 export type Source = 'package.json' | 'lockfile' | 'default'
 type PackageManager = 'npm' | 'pnpm' | 'yarn' | 'bun'
 type Framework = 'nextjs' | 'vite-react'
+/** 레포의 모든 파일 경로. 있는지 묻기만 한다. */
+type Files = { has(path: string): boolean }
 
 /** `value`가 null이면 모르거나 해당 없음이다. 사용자가 골라야 하면 `needsReview`에 이름이 있다. */
 export interface Field<T> {
@@ -54,39 +56,38 @@ const INSTALL: Record<PackageManager, string> = {
   yarn: 'yarn install --frozen-lockfile',
   bun: 'bun install --frozen-lockfile',
 }
-const PLAIN_INSTALL: Record<PackageManager, string> = {
-  pnpm: 'pnpm install',
-  npm: 'npm install',
-  yarn: 'yarn install',
-  bun: 'bun install',
+// 프레임워크가 정해 주는 값은 출력 폴더 · 포트 · 시작 명령이 있는지뿐이다. 명령 자체는 프로젝트의 scripts에만 기댄다(없는 명령을 지어내지 않는다).
+// 값이 null인 칸은 "해당 없음"이다(정적 사이트에는 시작 명령 · 포트가 없고, Next.js에는 출력 폴더가 없다).
+const FRAMEWORKS: Record<Framework, { outputDir: string | null; port: number | null; hasStart: boolean }> = {
+  'vite-react': { outputDir: 'dist', port: null, hasStart: false },
+  nextjs: { outputDir: null, port: 3000, hasStart: true },
 }
-// 프레임워크가 정해 주는 값은 출력 폴더와 포트뿐이다. 명령은 프로젝트의 scripts에만 기댄다(없는 명령을 지어내지 않는다).
-const OUTPUT_DIR: Record<Framework, string | null> = { 'vite-react': 'dist', nextjs: null }
-const PORT: Record<Framework, number | null> = { 'vite-react': null, nextjs: 3000 }
 
 const none = { value: null, source: null } as const
 const noCommand: Command = { value: null, script: null, source: null }
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
-const join = (dir: string, name: string) => (dir === '.' ? name : `${dir}/${name}`)
-const parent = (dir: string) => (dir.includes('/') ? dir.slice(0, dir.lastIndexOf('/')) : '.')
+export const join = (dir: string, name: string) => (dir === '.' ? name : `${dir}/${name}`)
+// 경로의 폴더. 폴더 이름에도 쓴다(레포 루트는 '.').
+const parent = (path: string) => (path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '.')
 
 /** 트리의 파일 경로에서 읽을 package.json 폴더를 고른다: node_modules 밖, 얕은 폴더부터 이름순, 최대 MAX_PACKAGES개. */
-export function selectPackageDirs(paths: string[]): { dirs: string[]; truncated: boolean } {
-  const dirs = paths
-    .filter((p) => (p === 'package.json' || p.endsWith('/package.json')) && !p.split('/').includes('node_modules'))
-    .map((p) => (p === 'package.json' ? '.' : p.slice(0, -'/package.json'.length)))
-    .sort((a, b) => depth(a) - depth(b) || (a < b ? -1 : a > b ? 1 : 0))
+export function selectPackageDirs(paths: Iterable<string>): { dirs: string[]; truncated: boolean } {
+  const depth = (dir: string) => (dir === '.' ? 0 : dir.split('/').length)
+  const dirs = [...paths]
+    .filter((p) => (p === 'package.json' || p.endsWith('/package.json')) && !p.startsWith('node_modules/') && !p.includes('/node_modules/'))
+    .map(parent)
+    // 기본 정렬은 코드 단위 순서이고 정렬은 안정적이라, 이름순으로 한 번 정렬한 뒤 얕은 순으로 다시 정렬하면 "얕은 순, 같으면 이름순"이다.
+    .sort()
+    .sort((a, b) => depth(a) - depth(b))
   return { dirs: dirs.slice(0, MAX_PACKAGES), truncated: dirs.length > MAX_PACKAGES }
 }
-
-const depth = (dir: string) => (dir === '.' ? 0 : dir.split('/').length)
 
 /**
  * 폴더 하나의 초안. `pkg`는 읽어 파싱한 package.json이고 객체가 아니면 읽지 못한 것이다(그래도 락 파일 · Dockerfile은 알 수 있다).
  * `files`는 레포의 모든 파일 경로다. 배포 대상이 아닌 워크스페이스 루트는 null이다.
  */
-export function buildProject(dir: string, pkg: unknown, files: ReadonlySet<string>): DeployProject | null {
+export function buildProject(dir: string, pkg: unknown, files: Files): DeployProject | null {
   const readable = isRecord(pkg)
   const p = readable ? pkg : {}
   const deps = new Set([...Object.keys(asRecord(p.dependencies)), ...Object.keys(asRecord(p.devDependencies))])
@@ -100,15 +101,15 @@ export function buildProject(dir: string, pkg: unknown, files: ReadonlySet<strin
   const pm = manager.value
   const fw = framework.value
 
-  const install: Field<string> =
-    lock && pm
-      ? { value: pm === 'yarn' && declared?.name === 'yarn' && declared.major >= 2 ? 'yarn install --immutable' : INSTALL[pm], source: 'lockfile' }
-      : !lock && pm
-        ? { value: PLAIN_INSTALL[pm], source: manager.source }
-        : none
+  // 락 파일이 있으면 고정 설치(Yarn 2 이상은 --immutable), 없으면 그냥 설치. 출처는 패키지 매니저의 출처와 같다.
+  const berry = (declared?.major ?? 0) >= 2
+  const install: Field<string> = pm
+    ? { value: lock ? (pm === 'yarn' && berry ? 'yarn install --immutable' : INSTALL[pm]) : `${pm} install`, source: manager.source }
+    : none
 
-  const outputDir = fw && OUTPUT_DIR[fw] ? ({ value: OUTPUT_DIR[fw], source: 'default' } as const) : none
-  const port = fw && PORT[fw] ? ({ value: PORT[fw], source: 'default' } as const) : none
+  const defaults = fw ? FRAMEWORKS[fw] : undefined
+  const outputDir: Field<string> = defaults?.outputDir ? { value: defaults.outputDir, source: 'default' } : none
+  const port: Field<number> = defaults?.port ? { value: defaults.port, source: 'default' } : none
   const scripts = asRecord(p.scripts)
 
   const result: Omit<DeployProject, 'needsReview'> = {
@@ -120,8 +121,7 @@ export function buildProject(dir: string, pkg: unknown, files: ReadonlySet<strin
     packageManager: manager,
     install,
     build: command(scripts.build, 'build', pm),
-    // 정적 사이트(Vite + React)는 시작 명령이 없다.
-    start: fw === 'vite-react' ? noCommand : command(scripts.start, 'start', pm),
+    start: defaults && !defaults.hasStart ? noCommand : command(scripts.start, 'start', pm),
     outputDir,
     port,
     nodeVersion: isRecord(p.engines) && typeof p.engines.node === 'string' ? p.engines.node : null,
@@ -129,10 +129,18 @@ export function buildProject(dir: string, pkg: unknown, files: ReadonlySet<strin
     lockfile: lock && pm ? lock.path : null,
     dockerfile: files.has(join(dir, 'Dockerfile')),
   }
-  // 값이 없는데 해당 없음도 아니면 사용자가 골라야 한다. 해당 없음은 정적 사이트의 시작 명령 · 포트, Next.js의 출력 폴더다.
-  const notApplicable: Reviewable[] = fw === 'vite-react' ? ['start', 'port'] : fw === 'nextjs' ? ['outputDir'] : []
+  // 값이 없는데 해당 없음도 아니면 사용자가 골라야 한다. 프레임워크를 알면 FRAMEWORKS의 null 칸이 해당 없음이다.
+  const notApplicable: Reviewable[] = []
+  if (defaults && !defaults.hasStart) notApplicable.push('start')
+  if (defaults?.outputDir === null) notApplicable.push('outputDir')
+  if (defaults?.port === null) notApplicable.push('port')
   const needsReview = REVIEW_ORDER.filter((name) => result[name].value === null && !notApplicable.includes(name))
   return { ...result, needsReview }
+}
+
+/** 읽은 package.json들(dirs와 같은 순서)로 폴더마다 초안을 만든다. 배포 대상이 아닌 워크스페이스 루트는 뺀다. */
+export function buildProjects(dirs: string[], packages: unknown[], files: Files): DeployProject[] {
+  return dirs.flatMap((dir, i) => buildProject(dir, packages[i], files) ?? [])
 }
 
 const asRecord = (v: unknown): Record<string, unknown> => (isRecord(v) ? v : {})
@@ -146,8 +154,8 @@ function detectFramework(deps: ReadonlySet<string>): Field<Framework> {
 }
 
 // workspaces를 배열이나 객체(yarn의 { packages })로 선언했거나 pnpm-workspace.yaml이 곁에 있으면 패키지를 묶는 루트다.
-function isWorkspaceRoot(dir: string, pkg: Record<string, unknown>, files: ReadonlySet<string>) {
-  return Array.isArray(pkg.workspaces) || isRecord(pkg.workspaces) || files.has(join(dir, 'pnpm-workspace.yaml'))
+function isWorkspaceRoot(dir: string, pkg: Record<string, unknown>, files: Files) {
+  return (typeof pkg.workspaces === 'object' && pkg.workspaces !== null) || files.has(join(dir, 'pnpm-workspace.yaml'))
 }
 
 // `pnpm@9.1.0+sha512…`처럼 버전 · 해시가 붙으므로 @ 앞의 이름만 쓴다. 네 가지 외의 이름은 없는 것으로 본다.
@@ -159,7 +167,7 @@ function declaredManager(value: unknown): { name: PackageManager; major: number 
 }
 
 /** 이 폴더에서 시작해 가장 가까운 상위 폴더까지 올라가며 처음 락 파일이 나오는 곳. 한 폴더에서 나온 락 파일 이름만 모은다. */
-function findLock(dir: string, files: ReadonlySet<string>): { path: string; managers: PackageManager[] } | undefined {
+function findLock(dir: string, files: Files): { path: string; managers: PackageManager[] } | undefined {
   for (let d = dir; ; d = parent(d)) {
     const found = LOCKS.filter(([name]) => files.has(join(d, name)))
     if (found.length > 0) {

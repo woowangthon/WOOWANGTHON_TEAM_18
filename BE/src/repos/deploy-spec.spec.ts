@@ -102,28 +102,29 @@ describe('language', () => {
 
 describe('package manager and install command', () => {
   it.each([
-    ['pnpm-lock.yaml', undefined, 'pnpm', 'pnpm install --frozen-lockfile', 'pnpm-lock.yaml'],
-    ['package-lock.json', undefined, 'npm', 'npm ci', 'package-lock.json'],
-    ['yarn.lock', undefined, 'yarn', 'yarn install --frozen-lockfile', 'yarn.lock'],
-    ['yarn.lock', 'yarn@1.22.19', 'yarn', 'yarn install --frozen-lockfile', 'yarn.lock'],
-    ['yarn.lock', 'yarn@2.4.3', 'yarn', 'yarn install --immutable', 'yarn.lock'],
-    ['yarn.lock', 'yarn@4.1.0+sha256.abc', 'yarn', 'yarn install --immutable', 'yarn.lock'],
-    ['yarn.lock', 'yarn@10.0.0', 'yarn', 'yarn install --immutable', 'yarn.lock'],
-    ['bun.lock', undefined, 'bun', 'bun install --frozen-lockfile', 'bun.lock'],
-    ['bun.lockb', undefined, 'bun', 'bun install --frozen-lockfile', 'bun.lockb'],
+    ['pnpm-lock.yaml', undefined, 'pnpm', 'pnpm install --frozen-lockfile'],
+    ['package-lock.json', undefined, 'npm', 'npm ci'],
+    ['yarn.lock', undefined, 'yarn', 'yarn install --frozen-lockfile'],
+    ['yarn.lock', 'yarn@1.22.19', 'yarn', 'yarn install --frozen-lockfile'],
+    ['yarn.lock', 'yarn@2.4.3', 'yarn', 'yarn install --immutable'],
+    ['yarn.lock', 'yarn@4.1.0+sha256.abc', 'yarn', 'yarn install --immutable'],
+    ['yarn.lock', 'yarn@10.0.0', 'yarn', 'yarn install --immutable'],
+    ['bun.lock', undefined, 'bun', 'bun install --frozen-lockfile'],
+    ['bun.lockb', undefined, 'bun', 'bun install --frozen-lockfile'],
     // 같은 bun의 새 락 파일과 옛 락 파일은 충돌이 아니다. 새 쪽을 가리킨다.
-    ['bun.lock bun.lockb', undefined, 'bun', 'bun install --frozen-lockfile', 'bun.lock'],
+    ['bun.lock bun.lockb', undefined, 'bun', 'bun install --frozen-lockfile'],
     // packageManager에는 버전 · 해시가 붙는다. 이름만 비교한다.
-    ['pnpm-lock.yaml', 'pnpm@9.1.0+sha512.0123abcd', 'pnpm', 'pnpm install --frozen-lockfile', 'pnpm-lock.yaml'],
+    ['pnpm-lock.yaml', 'pnpm@9.1.0+sha512.0123abcd', 'pnpm', 'pnpm install --frozen-lockfile'],
     // 알 수 없는 이름 · 모양은 없는 것으로 본다.
-    ['pnpm-lock.yaml', 'deno@1.0.0', 'pnpm', 'pnpm install --frozen-lockfile', 'pnpm-lock.yaml'],
-    ['pnpm-lock.yaml', 'pnpm', 'pnpm', 'pnpm install --frozen-lockfile', 'pnpm-lock.yaml'],
-    ['pnpm-lock.yaml', '', 'pnpm', 'pnpm install --frozen-lockfile', 'pnpm-lock.yaml'],
-  ])('lock %s + packageManager %j → %s', (lock, declared, pm, install, lockfile) => {
+    ['pnpm-lock.yaml', 'deno@1.0.0', 'pnpm', 'pnpm install --frozen-lockfile'],
+    ['pnpm-lock.yaml', 'pnpm', 'pnpm', 'pnpm install --frozen-lockfile'],
+    ['pnpm-lock.yaml', '', 'pnpm', 'pnpm install --frozen-lockfile'],
+  ])('lock %s + packageManager %j → %s', (lock, declared, pm, install) => {
     const p = project('.', { ...(declared === undefined ? {} : { packageManager: declared }) }, ...lock.split(' '))
     expect(p.packageManager).toEqual({ value: pm, source: 'lockfile' })
     expect(p.install).toEqual({ value: install, source: 'lockfile' })
-    expect(p.lockfile).toBe(lockfile)
+    // 락 파일이 둘이어도 같은 bun이면 새 쪽(맨 앞 이름)을 가리킨다.
+    expect(p.lockfile).toBe(lock.split(' ')[0])
   })
 
   it.each([
@@ -248,11 +249,10 @@ describe('build and start commands', () => {
   })
 
   it.each([
-    ['yarn', 'yarn run build'],
-    ['bun', 'bun run build'],
-    ['npm', 'npm run build'],
-  ])('uses the %s run form', (pm, expected) => {
-    const lock = { yarn: 'yarn.lock', bun: 'bun.lock', npm: 'package-lock.json' }[pm] as string
+    ['yarn.lock', 'yarn run build'],
+    ['bun.lock', 'bun run build'],
+    ['package-lock.json', 'npm run build'],
+  ])('with %s uses the run form %s', (lock, expected) => {
     expect(project('.', next(), lock).build.value).toBe(expected)
   })
 })

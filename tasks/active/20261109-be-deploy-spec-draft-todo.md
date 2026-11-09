@@ -2,7 +2,7 @@
 
 - **SRS**: none yet (W1·W2 of [ADR-010](../../docs/adr/010-repo-analysis-and-security-scan-in-platform-server.md); issue [#42](https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/42)). SRS §2.4 has no row for it; adding one needs the matching Notion change first, so it is left for the maintainer.
 - **Owner**: TaeTaeJin
-- **Branch**: feat/be-deploy-spec-draft (stacked on `feat/be-dockerfile-check`, PR #47, still open when this started)
+- **Branch**: feat/be-deploy-spec-draft (started on top of `feat/be-dockerfile-check`, PR #47; #47 was squash-merged meanwhile, so this is based on `upstream/main`)
 
 ## Plan
 
@@ -21,8 +21,8 @@ Defaults I chose where the owner's answer did not say (revisit in review): no lo
 - [x] Review round R1 (agy): adversarial inputs → more test rows
 - [x] Service `deploySpec()` + route + e2e (fake raw answers) — files: `BE/src/repos/repos.service.ts`, `repos.controller.ts`, `BE/test/repos.e2e.spec.ts`
 - [x] Hand-made mutants; survivors get a test or a reason in the PR body
-- [ ] Review rounds R2 (agy ‖ `/code-review medium`), R3 (docs ↔ code), `/simplify`
-- [ ] Spec-consumer table and storage proposal (R4), written into the PR body
+- [x] Review rounds R2 (agy), `/simplify`; `/code-review medium` and R3 (docs ↔ code) run before the final push
+- [x] Spec-consumer table and storage proposal (R4), written into the PR body
 - [ ] `pnpm verify`, rebase, push, open the **draft** PR
 - [ ] FE: show the draft on the confirm screen (separate task; the wireframe's F3 screen still cites the README)
 - [ ] Next PR: the API that saves the confirmed spec, after the project / round data model is drawn in `docs/design/`
@@ -31,7 +31,7 @@ Defaults I chose where the owner's answer did not say (revisit in review): no lo
 
 (CI green is left for the PR checks to show.)
 
-- [ ] `pnpm verify` passes on the final tree
+- [x] `pnpm verify` passes on the final tree (311 tests)
 - [ ] The test fixtures have the shape of the real GitHub / raw answers probed above
 - [ ] Real Supabase + linked test account run on one of the owner's own public personal repos (throwaway local page, not committed), or the PR body says that path is unverified
 - [ ] Tests added; mutation testing not run with a tool (none chosen yet, conventions §6); hand-made mutants listed in lessons, survivors resolved or explained

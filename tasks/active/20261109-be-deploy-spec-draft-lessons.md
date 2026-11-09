@@ -12,6 +12,13 @@
 - 2026-11-09: Hand-made mutants, 37 (29 on the rules, 8 on the service). 36 killed on the first run. One "survivor" (path not percent-encoded) was my runner: it had no e2e command, so only the unit tests ran; rerun against the e2e it is killed too, so all 37 died. The file was restored after every mutant. Lesson: a mutant runner must say which tests can see each source file, or a missing command reads as a test gap.
 - 2026-11-09: R4 (agy, storage proposal, docs only). 8 findings. Taken: the save goes through a BE API that checks ownership and shape, not a direct write from the page; the spec is a child of `(project, round, commit SHA)` (system definition: the round is the unit and the SHA is fixed per round), kept as an array per folder; the operator approval queue and the public Playground list are readers too; the AI-agent write is still disputed (the system definition says the AI only proposes, PR #32's draft has it fix the spec and rerun) so it is marked as not agreed. Rejected: "ask for secrets only after approval" misreads the flow (secret values never reach the DB; #43 sends them from the BE to a k8s Secret) and is outside spec storage.
 
+- 2026-11-09: R2 (agy, correctness / security) and `/simplify`. Simplify: the rules module takes a file-path set instead of a list, `buildProjects` does the workspace-root filtering, `selectPackageDirs` sorts by name then depth. Doc fixes: example order BE before FE, auth.md quota bullet. Lint: `specOf()` helper for typed responses. One equivalent mutant ("berry for any declared manager") led to dropping a redundant `declared?.name === 'yarn'` condition. A merged test table broke one e2e row (see Lessons) and was fixed.
+- 2026-11-09: PR #47 was squash-merged while this was in progress; moved this branch onto `upstream/main` with `git rebase --onto`.
+
 ## Lessons
 
-<filled when done>
+- A mutant runner must say which tests can see each source file; otherwise a missing command reads as a test gap (the "path not percent-encoded" false survivor).
+- Do not chain a slow job after `pnpm verify` with `;`. A lint failure went unseen and a 15-minute mutant run delayed the PR. Open the PR first, run mutants after, and read the verify exit code before anything else.
+- When tables are merged to cut duplication (the shared `outage` list), re-check that every row still means the same thing in the new place: "200 that is not JSON" is an outage for the file list but only "needs review" for one `package.json`.
+- A second model (agy) was useful for gaps in the rules and for the storage consumers, and wrong about inputs that cannot exist. Every finding was reproduced or checked against a source before it changed anything.
+- `raw.githubusercontent.com` keeps file reads off the 60/h API quota, but it has its own limit and a 5-minute cache. Say so in the docs, not only in the code.
