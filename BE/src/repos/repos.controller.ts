@@ -11,4 +11,10 @@ export class ReposController {
   check(@AccessToken() accessToken: string, @Body() body: { repoUrl?: unknown } | undefined) {
     return this.repos.check(accessToken, body?.repoUrl)
   }
+
+  @Post('dockerfiles')
+  @HttpCode(200)
+  dockerfiles(@AccessToken() accessToken: string, @Body() body: { repoUrl?: unknown } | undefined) {
+    return this.repos.dockerfiles(accessToken, body?.repoUrl)
+  }
 }

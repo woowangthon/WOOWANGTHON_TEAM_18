@@ -14,6 +14,7 @@ import type { Env } from '../config/env.js'
 import { parseRepoUrl, type RepoRef } from './repo-url.js'
 
 const TIMEOUT_MS = 5000
+const GITHUB_HEADERS = { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'woowangthon-platform' }
 
 const authUnavailable = () =>
   new ServiceUnavailableException({ code: 'AUTH_UNAVAILABLE', message: 'Could not check the linked GitHub account' })
@@ -33,6 +34,23 @@ export class ReposService {
 
   /** 로그인 계정에 연동된 GitHub 계정이 이 공개 개인 레포의 소유자인지 확인한다. 순서와 오류는 docs/design/auth.md. */
   async check(accessToken: string, repoUrl: unknown): Promise<{ repo: string }> {
+    const { repo } = await this.verifyOwnership(accessToken, repoUrl)
+    return { repo: repo.full_name }
+  }
+
+  /** 소유 확인을 통과한 레포의 Dockerfile 경로를 모두 찾는다. 없으면 빈 목록이다(없을 때의 처리는 정해지지 않았다). */
+  async dockerfiles(accessToken: string, repoUrl: unknown): Promise<{ repo: string; dockerfiles: string[]; truncated: boolean }> {
+    const { ref, repo } = await this.verifyOwnership(accessToken, repoUrl)
+    if (typeof repo.default_branch !== 'string' || repo.default_branch === '') {
+      this.logger.error(`GitHub GET /repos/${ref.owner}/${ref.repo} has no default_branch`)
+      throw githubUnavailable()
+    }
+    const tree = await this.fetchTree(ref, repo.default_branch)
+    const dockerfiles = tree.tree.filter((e) => e.type === 'blob' && (e.path === 'Dockerfile' || e.path.endsWith('/Dockerfile'))).map((e) => e.path)
+    return { repo: repo.full_name, dockerfiles, truncated: tree.truncated }
+  }
+
+  private async verifyOwnership(accessToken: string, repoUrl: unknown): Promise<{ ref: RepoRef; repo: GithubRepo }> {
     const ref = parseRepoUrl(repoUrl)
     if (!ref) {
       throw new BadRequestException({
@@ -60,7 +78,7 @@ export class ReposService {
         message: 'The linked GitHub account does not own this repository',
       })
     }
-    return { repo: repo.full_name }
+    return { ref, repo }
   }
 
   // 사용자 토큰을 Supabase에 그대로 보내 identities를 읽는다. 로그아웃 · 폐기된 세션은 Supabase가 거부한다.
@@ -92,7 +110,7 @@ export class ReposService {
   private async fetchRepo({ owner, repo }: RepoRef): Promise<GithubRepo> {
     const { status, ok, body } = await this.request(
       `https://api.github.com/repos/${owner}/${repo}`,
-      { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'woowangthon-platform' },
+      GITHUB_HEADERS,
       githubUnavailable,
     )
     // 없는 레포와 비공개 레포는 GitHub가 둘 다 404로 답한다.
@@ -102,6 +120,21 @@ export class ReposService {
     if (!ok || !isGithubRepo(body)) {
       // 한도 초과(403 · 429) · GitHub 장애 · 예상 밖 응답은 사용자 잘못이 아니다.
       this.logger.error(`GitHub GET /repos/${owner}/${repo} answered ${status}`)
+      throw githubUnavailable()
+    }
+    return body
+  }
+
+  // 소유 확인을 이미 통과한 레포라 어떤 실패든(404 포함) 사용자 잘못이 아니다.
+  private async fetchTree({ owner, repo }: RepoRef, branch: string): Promise<GithubTree> {
+    const path = branch.split('/').map(encodeURIComponent).join('/')
+    const { status, ok, body } = await this.request(
+      `https://api.github.com/repos/${owner}/${repo}/git/trees/${path}?recursive=1`,
+      GITHUB_HEADERS,
+      githubUnavailable,
+    )
+    if (!ok || !isGithubTree(body)) {
+      this.logger.error(`GitHub GET /repos/${owner}/${repo}/git/trees answered ${status}`)
       throw githubUnavailable()
     }
     return body
@@ -128,6 +161,21 @@ interface SupabaseUser {
 interface GithubRepo {
   full_name: string
   owner: { id: number; type: string }
+  default_branch?: unknown
+}
+
+interface GithubTree {
+  tree: { path: string; type: string }[]
+  truncated: boolean
+}
+
+function isGithubTree(value: unknown): value is GithubTree {
+  const { tree, truncated } = (value ?? {}) as { tree?: unknown; truncated?: unknown }
+  return (
+    typeof truncated === 'boolean' &&
+    Array.isArray(tree) &&
+    tree.every((e) => typeof (e as { path?: unknown } | null)?.path === 'string' && typeof (e as { type?: unknown }).type === 'string')
+  )
 }
 
 function isGithubRepo(value: unknown): value is GithubRepo {
