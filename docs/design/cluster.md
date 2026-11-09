@@ -1,6 +1,6 @@
 # 클러스터 — 설계
 
-- **상태**: 일부 구현됨 (노드 · 네트워크 · 방화벽 2026-11-06, k3s 설치 2026-11-07, 재부팅 시험 2026-11-08, 리더 GPU · 로컬 모델 2026-11-09). 이미지 캐시부터는 초안
+- **상태**: 일부 구현됨 (노드 · 네트워크 · 방화벽 2026-11-06, k3s 설치 2026-11-07, 재부팅 시험 2026-11-08, 리더 GPU · 로컬 모델 2026-11-09, 이미지 캐시 2026-11-10). 학생 공간 양식부터는 초안
 - **관련**: SRS NFR-OPS-01 · NFR-SEC-01 · [ADR-003](../adr/003-registry-ghcr.md) 레지스트리 · [ADR-004](../adr/004-server-cluster-link-tailscale.md) 서버 연결 · [ADR-005](../adr/005-k3s-cluster-on-school-pcs.md) 클러스터 구성 · [ADR-006](../adr/006-metrics-on-leader-prometheus.md) 지표 · [ADR-008](../adr/008-node-network-on-school-wired-lan.md) 노드망 · [ADR-009](../adr/009-deploy-runs-on-leader-gocd-agent.md) 배포 실행기 · [시스템 정의서 §5](../system-definition.md#5-인프라) · 구축 task [`20261106-k3s-cluster-build`](../../tasks/active/20261106-k3s-cluster-build-todo.md)
 
 ## 범위
@@ -53,7 +53,7 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 | 거쳐 감 (FORWARD) | 출발지 또는 목적지 `10.42.0.0/16` | Pod 통신. NetworkPolicy(k3s의 kube-router)가 이보다 앞에서 걸린다 |
 
 - 나가는 쪽을 도메인이 아니라 포트로 거르는 것은 ufw가 도메인을 모르고, 레지스트리 · 패키지 저장소 · Tailscale이 CDN 뒤라 IP가 바뀌기 때문이다.
-- 이 표는 **호스트 프로세스**(containerd, k3s, Tailscale, apt 등)에만 걸린다. Pod에서 나가는 통신은 NAT 뒤 FORWARD 체인을 타서 이 표가 적용되지 않는다. 그래서 학생 Pod는 NetworkPolicy(§6)로 막고, 운영 도구 Pod(cloudflared · 이미지 캐시 · CoreDNS의 바깥 DNS 질의)는 띄울 때(07 · 10) 필요한 목적지 · 포트만 여는 NetworkPolicy로 따로 묶는다(05에서 본 FORWARD 동작은 아래). 그 전까지 "리더만 7844"는 호스트 기준이다.
+- 이 표는 **호스트 프로세스**(containerd, k3s, Tailscale, apt 등)에만 걸린다. Pod에서 나가는 통신은 NAT 뒤 FORWARD 체인을 타서 이 표가 적용되지 않는다. 그래서 학생 Pod는 NetworkPolicy(§6)로 막고, 운영 도구 Pod(cloudflared · CoreDNS의 바깥 DNS 질의)는 띄울 때(10) 필요한 목적지 · 포트만 여는 NetworkPolicy로 따로 묶는다(05에서 본 FORWARD 동작은 아래). 이미지 캐시는 hostNetwork로 띄워서 호스트 프로세스처럼 이 표가 그대로 걸린다(§5). 그 전까지 "리더만 7844"는 호스트 기준이다.
 - 확인한 것(2026-11-06): 사설망으로 세 대 SSH 됨, 노드 주소로는 22번이 열리고 학교 주소로는 막힘, DNS · HTTPS · GHCR · `apt update` · 시간 동기화 · Tailscale 됨, 8080 같은 다른 포트와 워커의 7844는 막힘, 부팅 때 ufw가 켜짐.
 - k3s 설치(§4, 2026-11-07)에서 본 것: FORWARD 체인은 kube-router(NetworkPolicy) → kube-proxy → Docker · Tailscale → ufw → flannel 순서다. 평소 Pod 통신은 맨 앞 kube-router 체인이 받지만, 새 Pod의 첫 패킷은 그 Pod의 규칙이 생기기 전에 ufw의 routed 기본 거부에 걸렸다. 그래서 위 표의 FORWARD 줄(`ufw route allow`, 양방향)을 더했다. NetworkPolicy는 그보다 앞이라 그대로 걸린다(거부 정책을 넣고 빼서 시험했다). flannel의 허용 규칙도 Pod 대역 전체를 받으므로, Pod 바깥 통신을 거르는 건 NetworkPolicy 몫이다. 이미 깔린 Docker는 `docker0`에만 규칙을 걸어 Pod 통신에 영향이 없고 컨테이너도 없다.
 - hostPort와 NodePort는 DNAT 뒤 FORWARD로 가서 ufw의 들어오는 거부(INPUT)를 비켜 간다. 그래서 §4에서 ServiceLB(Traefik의 hostPort 80/443)를 끄고 NodePort를 노드 대역으로 묶었다. 확인(2026-11-07): 다른 노드의 학교 주소와 그 노드의 Pod(학교 주소로 바뀌어 나간다)에서 재 보니 학교 주소로는 6443 · 80 · 443 · 10250 · NodePort가 닫혀 있고, 받는 쪽 ufw 차단 기록의 출발지가 학교 주소였다.
@@ -75,10 +75,12 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 - Traefik(k3s 기본 Ingress)은 `HelmChartConfig`로 워커에만, 복제본 2로 둔다(예정). 하나뿐이면 그 워커가 죽을 때 터널이 보낼 곳이 없다. 지금은 k3s 기본(복제본 1)이고, 리더의 taint 때문에 워커 하나에 떠 있을 뿐이다.
 - k3s 토큰(서버 토큰)은 리더에 있고, 조인에 쓴 사본이 워커 둘의 `/etc/rancher/k3s/token`(권한 600)에도 있다. 레포 · 노션 · 채팅에는 올리지 않고, 운영자가 비밀번호 관리자에 사본을 둔다. 서버 토큰은 워커뿐 아니라 리더로도 붙을 수 있는 열쇠라서, 학생 앱을 받기 전(08)에 워커에는 워커 전용 `agent-token`을 줄지 정한다.
 
-### 5. 이미지 (예정)
+### 5. 이미지 (구현됨, 2026-11-10)
 
-- 리더에 GHCR 끌어오기 캐시(pull-through) 저장소를 둔다. 저장은 리더 로컬 디스크(local-path).
-- 세 노드의 containerd가 `ghcr.io`를 리더 캐시(`192.168.77.11:5000`)에서 먼저 받고, 캐시가 죽으면 GHCR에서 직접 받는다(`registries.yaml`의 mirror). 이미지가 공개라 노드에 자격증명이 없다(ADR-003).
+- 리더에 GHCR 끌어오기 캐시(pull-through)를 둔다: `registry:3.1.2`(CNCF Distribution)의 proxy 모드, 원본 `https://ghcr.io`, 받아 둔 것은 7일(`ttl: 168h`) 뒤 지운다. 저장은 리더 로컬 디스크(local-path, 리더의 `/var/lib/rancher/k3s/storage/<PV 이름>_registry-cache_registry-cache`). 50Gi는 요청값일 뿐 상한이 아니다: local-path는 크기를 막지 않고 캐시에도 크기 제한 설정이 없어, 7일 TTL이 유일한 정리다. 리더 디스크 알림(§10, 구축 11)이 이 경로를 같이 본다. 설정은 `Infra/registry-cache/registry-cache.yaml`.
+- 캐시는 `hostNetwork`로 띄우고 노드 주소 `192.168.77.11:5000`에만 묶는다. 그래서 §3 표가 호스트 프로세스와 똑같이 걸린다: 들어오는 건 노드 대역에서만, 나가는 건 §3 표의 나가는 줄(캐시가 실제로 쓰는 건 GHCR 443과 DNS 53). hostPort는 DNAT 뒤 FORWARD로 가서 들어오는 거부를 비켜 가므로 쓰지 않는다. baseline 보안 등급이 hostNetwork를 막아 `registry-cache` 공간만 privileged로 두고(warn은 baseline), 컨테이너는 non-root(UID 1000) · capability 없음 · 읽기 전용 루트 파일시스템으로 돈다. 이름 풀이는 클러스터 DNS(워커에 있다)가 아니라 호스트 것을 쓴다(`dnsPolicy: Default`).
+- 세 노드의 `/etc/rancher/k3s/registries.yaml`(권한 600, `Infra/k3s/registries.yaml`)이 `ghcr.io`의 mirror로 리더 캐시를 둔다. containerd는 레지스트리 자신의 주소를 마지막 시도로 늘 남겨 두므로(k3s 기본), 캐시가 죽으면 GHCR에서 직접 받는다. 이미지가 공개라 노드에도 캐시에도 자격증명이 없다(ADR-003). 파일을 바꾸면 k3s를 다시 시작해야 한다(w2 → w1 → 리더 순서로 한 대씩, 돌던 컨테이너는 그대로).
+- 시험(2026-11-10, `ghcr.io/stefanprodan/podinfo:6.15.0`, 34.8MB): w1이 처음 받을 때 캐시가 GHCR에서 가져오며 넘겨줘 1분 53초, 이어서 w2는 1.1초였고 그동안 캐시가 GHCR에 간 기록은 없었다. 캐시를 0개로 내리고 w1의 이미지를 지운 뒤 다시 받으니 containerd가 연결 거부를 받고 바로 GHCR로 넘어가 44초에 받았다. 리더가 꺼진 경우는 w1에서 리더 5000번으로 가는 패킷을 버려(DROP) 흉내 냈다: containerd가 연결 시간 초과 30초를 한 번 기다린 뒤 GHCR로 넘어가 모두 3분 37초에 받았다(그중 GHCR에서 받은 시간 3분 6초. 같은 이미지가 앞서 44초였으니 학교망의 GHCR 속도가 들쭉날쭉하다). 리더 전원을 실제로 끈 시험은 아니다. 학교 주소에서 리더 5000번은 닫혀 있다(시간 초과).
 
 ### 6. 학생 공간 양식 (예정)
 
@@ -175,6 +177,8 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 | 배포는 리더의 배포 실행기, 플랫폼 서버는 비밀값 · 조치 · 조회만 (2026-11-09, ADR-009) | 배포 쓰기 권한이 클러스터 안에 머물고, 털렸을 때 위험한 서버 계정의 권한이 줄어든다 | 플랫폼 서버가 직접 적용(ADR-004), AWS에 둔 실행기가 사설망 너머로 적용 |
 | 로컬 모델의 KV 캐시는 FP8 (2026-11-09) | 10GB에서 16K 한 요청이 들어가는 길. 16K는 AI 쪽 설계값이다 | fp16 그대로(시작 실패), GPU 사용률 0.95(약 2.2GiB로 여전히 모자람), 컨텍스트 12K(설계값을 바꾼다) |
 | 로컬 모델 동시 요청 1 (2026-11-09) | 정해진 값이 없었다(AI 쪽 답 없음). 넘치는 요청은 실패하지 않고 줄을 선다 | 3(슬롯 2 + 분석 호출 1로 어림했던 값) |
+| 이미지 캐시는 hostNetwork, 노드 주소에만 묶기 (2026-11-10) | 호스트 방화벽이 그대로 걸려 학교 주소 쪽이 닫히고, 노드의 containerd가 고정 주소 하나로 닿는다 | hostPort(DNAT 뒤 FORWARD라 들어오는 거부를 비켜 간다), NodePort(Service · kube-proxy를 거쳐야 하고 포트가 30000번대), 운영 도구 NetworkPolicy로 묶기(호스트에서 오는 연결은 NetworkPolicy로 거르기 어렵다) |
+| 이미지 캐시 제품은 CNCF Distribution(`registry`) 끌어오기 모드 (2026-11-10) | 공식 이미지 하나에 설정 파일 하나, 원본이 공개라 자격증명이 없다 | Harbor(DB · Redis 등 구성요소가 많다), k3s 내장 노드끼리 나누기(Spegel, 레지스트리에서 받는 횟수는 줄지만 첫 노드는 늘 바깥에서 받는다) |
 | 학생 DB는 학생 것, 학생 Pod는 인터넷으로 나간다 (2026-11-07) | 배포 구조 v15에서 MVP 범위를 줄였다. 클러스터에 학생 데이터가 없어 볼륨 복제 · 페일오버 시험이 빠진다 | 플랫폼 MySQL + Longhorn 사본 2(이전 계획), 학생 DB 주소만 허용하는 egress(주소를 미리 알 수 없다) |
 
 ## 알려진 한계
@@ -188,4 +192,7 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 - Pod 대역(`10.42.0.0/16`)으로 가는 패킷은 FORWARD에서 받는다(k3s 기본 flannel 규칙과 같다). 같은 선의 학교망 기기가 노드를 경로로 지정하면 Pod에 닿을 수 있다. 학생 Pod는 NetworkPolicy(§6)의 들어오는 규칙이 막지만, 시스템 Pod(CoreDNS · Traefik 등)는 아직 NetworkPolicy가 없어 이 길로 닿는다. 운영 도구 Pod의 NetworkPolicy(§3)를 넣을 때 들어오는 쪽도 같이 막는다.
 - 터널 대신 AWS 서버를 공개 입구로 두고 Tailscale로 워커 Traefik에 넘기는 대안을 쓰게 되면 ServiceLB가 없어 Traefik으로 가는 길을 따로 연다.
 - 로컬 모델은 리더에 있어 리더가 꺼지면 제어 · 모니터링과 같이 멈춘다. KV 캐시를 FP8로 저장해 fp16보다 정확도가 조금 떨어질 수 있다(시험한 도구 호출 · 로그 요약은 맞았다).
+- 이미지 캐시가 처음 받는 이미지는 GHCR에서 직접 받을 때보다 느렸다(같은 이미지 1분 53초 대 44초, 한 번 잼). 학교망에서 GHCR이 느린 데다 캐시가 받으며 넘겨주는 동안 기다린다. 두 번째 노드부터는 1초대다. 데모 전에 쓸 이미지를 한 번 받아 두면 피한다.
+- 이미지 캐시는 리더에 하나뿐이다. 캐시에 닿지 않으면 노드는 이미지를 받을 때마다 연결 시간 초과 30초를 먼저 기다린 뒤 GHCR에서 직접 받는다(5000번 DROP으로 흉내 내 잼, 리더 전원을 끈 시험은 아니다). 캐시에 받아 둔 것은 7일 뒤 지워진다.
+- 캐시 볼륨의 50Gi는 상한이 아니다. local-path는 크기를 막지 않고 캐시에도 크기 제한이 없어, 7일 안에 큰 이미지를 많이 받으면 리더 디스크(etcd · 모델 볼륨과 같은 디스크)를 계속 차지한다. 지금 리더 여유는 약 760G다. 리더 디스크 알림(구축 11)으로 본다.
 - 위의 **제안** 값(프로젝트 자원 상한, 컨테이너 기본값)은 플랫폼 서버 담당과 확인 전이다.

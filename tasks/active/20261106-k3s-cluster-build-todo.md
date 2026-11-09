@@ -42,12 +42,12 @@ Priorities: the demo path first. Deferred (후순위): moving cloudflared from t
   - [x] own CoreDNS on both workers (`Infra/coredns/coredns.yaml`)
   - [x] checks: 3 nodes Ready, cross-worker Pod traffic, DNS, Pod HTTPS out, school-side 6443/80/443 closed, Docker rules only on `docker0`, `ufw route allow` for the Pod CIDR
   - [x] k3s token: the server token is on the leader and on both workers (`/etc/rancher/k3s/token`); the operator keeps a copy in a password manager. A team shared vault waits until there are secrets teammates must use (vLLM key, tunnel token)
-  - [ ] repo PR #37 (issue #35): `Infra/k3s/*`, `Infra/coredns/coredns.yaml`, `docs/design/cluster.md` §3–4, `docs/ai-scope.md`, `docs/system-definition.md` §5.1–5.2, reboot results (this log went in with #34)
+  - [x] repo PR #37 (issue #35): `Infra/k3s/*`, `Infra/coredns/coredns.yaml`, `docs/design/cluster.md` §3–4, `docs/ai-scope.md`, `docs/system-definition.md` §5.1–5.2, reboot results (this log went in with #34)
 - [ ] 06 Reboot tests — each worker, then the leader, then a full power cut
   - [x] w1 → w2 → leader, one at a time, remotely (2026-11-08): each back in ~35–45 s unattended; NotReady measured at ~50 s (agent stopped), rescheduling at ~80 s
   - [ ] full power cut (on site)
 - [x] 06′ Leader GPU + vLLM — NVIDIA device plugin, Qwen/Qwen3-8B-AWQ on vLLM (16K context, one request at a time, API key in a leader Secret), no public route; measure GPU memory. Team priority: 후순위 since the 2026-11-09 meeting — done off the demo path the same day. Manifests in `Infra/gpu/` · `Infra/vllm/`, design in cluster.md §11 (#38). Left: copy the API key to the team vault
-- [ ] 07 Image pulls — GHCR pull-through cache on the leader (local-path), nodes fall back to GHCR directly
+- [x] 07 Image pulls (2026-11-10, issue #62) — GHCR pull-through cache on the leader (`registry:3.1.2` proxy mode, hostNetwork on 192.168.77.11:5000, local-path; `Infra/registry-cache/`), `/etc/rancher/k3s/registries.yaml` on all three (`Infra/k3s/registries.yaml`); second worker pulls from the cache only, a stopped cache falls back to GHCR directly
 - [ ] 08 Student namespace template — `proj-<id>`, Pod Security baseline enforced, resource cap under half a worker, NetworkPolicy (same namespace + Ingress in; same namespace + DNS + internet out, school LAN / cluster / node / tailnet / private ranges / other projects blocked)
 - [x] ~~08′ Student volume and DB failover~~ — dropped 2026-11-07: students bring their own DB (deploy workflow v15), so no platform MySQL or Longhorn; 08 opens student Pod egress to the internet instead
 - [ ] 09 Server link — Tailscale tag and ACL, server ServiceAccount + RBAC + ValidatingAdmissionPolicy, Secret write-only

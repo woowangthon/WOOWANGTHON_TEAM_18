@@ -1,0 +1,11 @@
+# Image mirror on all three nodes, installed as /etc/rancher/k3s/registries.yaml (mode 600),
+# then `systemctl restart k3s` (leader) or `k3s-agent` (workers), one node at a time.
+# ghcr.io pulls go to the leader cache first (Infra/registry-cache/). containerd always keeps the
+# registry's own endpoint as the last try, so a dead cache means a direct GHCR pull, not a failed one.
+# No credentials: the images are public (ADR-003).
+# Design and reasons: docs/design/cluster.md §5.
+
+mirrors:
+  ghcr.io:
+    endpoint:
+      - "http://192.168.77.11:5000"
