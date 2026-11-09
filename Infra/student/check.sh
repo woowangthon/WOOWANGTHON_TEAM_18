@@ -12,18 +12,21 @@ fail=0
 expect() { # expect <ok|blocked> <label> <result line "exit code time_connect">
   local want=$1 label=$2 e c t got
   read -r e c t <<<"$3"
-  if [ "$e" = 0 ] || awk "BEGIN{exit !($t > 0)}"; then got=ok; else got=blocked; fi
+  # Blocked means refused (7) or timed out (28) before connecting; any other curl error proves nothing.
+  if [ "$e" = 0 ] || awk "BEGIN{exit !($t > 0)}"; then got=ok
+  elif [ "$e" = 7 ] || [ "$e" = 28 ]; then got=blocked
+  else got="error (curl exit $e)"; fi
   if [ "$got" = "$want" ]; then echo "PASS $label ($got)"; else echo "FAIL $label (want $want, got $got)"; fail=1; fi
 }
 
 cleanup() {
   k delete namespace proj-check netpol-control --ignore-not-found --wait=false >/dev/null
-  k -n proj-demo delete pod check-client pin-leader --ignore-not-found >/dev/null
+  k -n proj-demo delete pod check-client pin-leader no-selector --ignore-not-found >/dev/null
 }
 trap cleanup EXIT
 # Leftovers from a run that was cut off.
 k delete namespace proj-check netpol-control --ignore-not-found >/dev/null
-k -n proj-demo delete pod check-client pin-leader --ignore-not-found >/dev/null
+k -n proj-demo delete pod check-client pin-leader no-selector --ignore-not-found >/dev/null
 
 TS=$(ssh k3s-leader 'tailscale ip -4')
 { sed 's/proj-demo/proj-check/g' space.yaml; echo '---'; sed 's/proj-demo/proj-check/g' app-example.yaml; } | k apply -f - >/dev/null 2>&1
@@ -66,10 +69,14 @@ for ns in proj-demo proj-check netpol-control; do
   node=$(k -n $ns get pod check-client -o "jsonpath='{.spec.nodeName}'")
   case $node in k3s-w1|k3s-w2) echo "PASS $ns: client on a worker ($node)";; *) echo "FAIL $ns: client on $node"; fail=1;; esac
 done
+# No nodeSelector: the leader taint alone must keep it off the leader. Only scheduling is checked.
+k -n proj-demo run no-selector --image=busybox:1.37 --restart=Never "--overrides='{\"spec\":{\"automountServiceAccountToken\":false}}'" -- sleep 60 >/dev/null 2>&1
 k -n proj-demo run pin-leader --image=busybox:1.37 --restart=Never "--overrides='{\"spec\":{\"nodeSelector\":{\"kubernetes.io/hostname\":\"k3s-leader\"},\"automountServiceAccountToken\":false}}'" -- sleep 60 >/dev/null 2>&1
 sleep 10
 phase=$(k -n proj-demo get pod pin-leader -o "jsonpath='{.status.phase}'")
 if [ "$phase" = Pending ]; then echo "PASS Pod pinned to the leader stays Pending"; else echo "FAIL Pod pinned to the leader is $phase"; fail=1; fi
+node=$(k -n proj-demo get pod no-selector -o "jsonpath='{.spec.nodeName}'")
+case $node in k3s-w1|k3s-w2) echo "PASS Pod without nodeSelector on a worker ($node)";; *) echo "FAIL Pod without nodeSelector on '$node'"; fail=1;; esac
 
 echo "== proj-demo (student space)"
 if k -n proj-demo exec check-client -- nslookup -timeout=3 github.com >/dev/null 2>&1; then echo "PASS proj-demo: cluster DNS (ok)"; else echo "FAIL proj-demo: cluster DNS"; fail=1; fi

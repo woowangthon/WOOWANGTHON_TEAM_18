@@ -23,8 +23,8 @@ spec:
       # Workers only. The leader taint also keeps student Pods off the leader if this is missing.
       nodeSelector:
         wanggane/pool: student
-      # No API token in student Pods. Like the NET_RAW drop below, the build-09 admission policy
-      # rejects Pods without it.
+      # No API token in student Pods. Like the NET_RAW drop below, the admission policy planned for
+      # build 09 will reject Pods without it (nothing enforces it before then).
       automountServiceAccountToken: false
       enableServiceLinks: false
       containers:
