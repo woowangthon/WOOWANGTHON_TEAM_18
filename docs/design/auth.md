@@ -74,7 +74,7 @@
 
 Supabase `GET /auth/v1/user`의 `401`과 `403`은 책임이 다르다(2026-11-09 실제 응답으로 확인). 틀린 `apikey`는 `401 Invalid API key`, `apikey` 없음은 `401 No API key found in request`(둘 다 `error_code` 없음)이고, 위조 토큰은 `403 bad_jwt`, 로그아웃된 세션은 `403 session_not_found`다. 사용자 쪽 토큰 문제는 모두 `403`이고 `401`은 우리 쪽 설정 문제이므로, `401`을 `INVALID_TOKEN`으로 돌려주면 공개 키가 틀렸을 때 모든 사용자가 "토큰이 틀렸다"를 받고 원인이 로그에 남지 않는다.
 
-`POST /api/repos/dockerfiles`는 위 1~6단계를 그대로 거친 뒤에야 7단계로 간다. 7단계는 1~6단계에서 받은 레포 응답의 `default_branch`로 파일 목록을 한 번 더 받는다(`GET /repos/{소유자}/{레포}/git/trees/{기본 브랜치}?recursive=1`, 인증 없이). 목록을 못 받으면(없음 · 한도 · 장애 · 네트워크 · 시간 초과) `503 GITHUB_UNAVAILABLE`이다. 소유 확인을 이미 통과했으므로 `404`를 `REPO_NOT_FOUND`로 돌려주지 않는다. 한 요청에 GitHub를 두 번 부른다(레포 조회 + 파일 목록).
+`POST /api/repos/dockerfiles`는 위 1~6단계를 그대로 거친 뒤에야 7단계로 간다. 7단계는 파일 목록을 한 번 더 받는다(`GET /repos/{소유자}/{레포}/git/trees/HEAD?recursive=1`, 인증 없이. `HEAD`는 기본 브랜치다). 커밋이 없는 빈 레포는 GitHub가 `409 Git Repository is empty.`로 답하는데(2026-11-09 실제 공개 빈 레포로 확인), 파일이 없는 정상 상태이므로 빈 목록과 `200`을 돌려준다. 그 밖에 목록을 못 받으면(없음 · 한도 · 장애 · 네트워크 · 시간 초과) `503 GITHUB_UNAVAILABLE`이다. 소유 확인을 이미 통과했으므로 `404`를 `REPO_NOT_FOUND`로 돌려주지 않는다. 한 요청에 GitHub를 두 번 부른다(레포 조회 + 파일 목록).
 
 외부 서비스 장애는 사용자 잘못(`4xx`)으로 바꾸지 않고 `503`으로 돌려준다([`conventions.md`](../conventions.md) F-1). 내가 소유자인 레포를 다른 레포에서 fork한 경우도 소유자는 나이므로 통과한다. 관리자도 같은 확인을 받는다(관리자는 제출하지 않고 보기만 하므로 예외를 두지 않는다).
 

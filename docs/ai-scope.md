@@ -24,7 +24,7 @@
 | 외부 기술 | AWS — CodeBuild(빌드), S3 + CloudFront(웹 정적 파일), EC2 한 대(Nest · FastAPI · GoCD 서버. Kafka 브로커는 후순위) | 구현 전. 설정·연동 |
 | 외부 기술 | GHCR (학생 앱 이미지 레지스트리, 이미지 공개. [ADR-003](adr/003-registry-ghcr.md)) | 구현 전. 설정·연동 |
 | 외부 기술 | Supabase (PostgreSQL, Auth — 이메일 · 비밀번호 로그인, GitHub 계정 연동. [ADR-007](adr/007-login-email-password-github-link.md)) | 로그인 토큰 검증은 구현함. 소유 확인에서 사용자 토큰으로 `GET /auth/v1/user`를 불러 연동한 GitHub ID를 읽음. 연동 · 가입 화면은 구현 전 |
-| 외부 API | GitHub API — 봇 계정의 fork·PR 생성, 계정 연동(OAuth, Supabase Auth가 처리), 레포 소유자 조회 | 레포 소유자 조회(`GET /repos/{소유자}/{레포}`, 인증 없이 공개 레포만, 서버 IP당 시간당 60번)는 구현함. Dockerfile 유무 확인(`GET /repos/{소유자}/{레포}/git/trees/{기본 브랜치}?recursive=1`, 같은 한도)은 AI 없이 파일 이름으로 판별하고 구현함. fork·PR 생성과 계정 연동 화면은 구현 전 |
+| 외부 API | GitHub API — 봇 계정의 fork·PR 생성, 계정 연동(OAuth, Supabase Auth가 처리), 레포 소유자 조회 | 레포 소유자 조회(`GET /repos/{소유자}/{레포}`, 인증 없이 공개 레포만, 서버 IP당 시간당 60번)는 구현함. Dockerfile 유무 확인(`GET /repos/{소유자}/{레포}/git/trees/HEAD?recursive=1`, 같은 한도)은 AI 없이 파일 이름으로 판별하고 구현함. fork·PR 생성과 계정 연동 화면은 구현 전 |
 | 외부 기술 | Apache Kafka (EC2 단일 브로커) | 후순위 (EC2 용량이 남으면, 2026-11-09). 구현 전 |
 | 외부 기술 | GoCD (배포 파이프라인. 서버는 EC2, 실행기는 리더. [ADR-009](adr/009-deploy-runs-on-leader-gocd-agent.md)) | 구현 전. 파이프라인 정의는 직접 작성한다. ArgoCD로 바꿀지 검토 중 |
 | 외부 기술 | vLLM v0.32.0 + Qwen3-8B-AWQ (리더 GPU에서 도는 로컬 모델, Apache-2.0), NVIDIA device plugin v0.20.1 | 팀 일정상 후순위(2026-11-09 회의)라 데모 경로 밖. 리더에 설치 · 시험함(2026-11-09): 컨텍스트 16K, 동시 요청 1, KV 캐시 FP8, 클러스터 안에서만 API 키로 답한다. 설정은 [`Infra/gpu/`](../Infra/gpu/) · [`Infra/vllm/`](../Infra/vllm/), 값과 이유는 [`design/cluster.md`](design/cluster.md) §11. EC2에서 부르는 길과 AI 서버 연동은 구현 전 |
