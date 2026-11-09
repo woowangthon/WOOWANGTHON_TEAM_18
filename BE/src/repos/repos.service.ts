@@ -70,12 +70,13 @@ export class ReposService {
       { Authorization: `Bearer ${accessToken}`, apikey: this.apiKey },
       authUnavailable,
     )
-    if (status === 401 || status === 403) {
+    // 사용자 쪽 토큰 문제(위조 · 만료 · 로그아웃)는 403이다. 401은 우리 공개 키가 틀렸을 때 나오므로 아래에서 503이 된다.
+    if (status === 403) {
       throw new UnauthorizedException({ code: 'INVALID_TOKEN', message: 'Invalid or expired login token' })
     }
     const identities = (body as SupabaseUser | undefined)?.identities
     if (!ok || !Array.isArray(identities)) {
-      this.logger.error(`Supabase GET /auth/v1/user answered ${status} without identities`)
+      this.logger.error(`Supabase GET /auth/v1/user answered ${status} without identities (401 means SUPABASE_PUBLISHABLE_KEY was refused)`)
       throw authUnavailable()
     }
     const github = identities.find((i) => i.provider === 'github')

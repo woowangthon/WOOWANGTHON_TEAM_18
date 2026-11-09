@@ -2,7 +2,7 @@ import type { INestApplication } from '@nestjs/common'
 import { Logger } from '@nestjs/common'
 import request from 'supertest'
 import type { App } from 'supertest/types.js'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from 'vitest'
 import { errorBody, JWKS_URL, keySet, token } from './auth-helpers.js'
 import { startApp } from './start-app.js'
 
@@ -17,6 +17,7 @@ const VALID = { repoUrl: REPO_URL }
 type Answer = () => Response
 let supabaseAnswer: Answer
 let githubAnswer: Answer
+let logError: MockInstance<Logger['error']>
 
 const linkedUser = (id = GITHUB_ID): Answer => () =>
   Response.json({ identities: [{ provider: 'email', id: 'user-1' }, { provider: 'github', id }] })
@@ -51,7 +52,7 @@ beforeEach(async () => {
   githubAnswer = repoOwnedBy(Number(GITHUB_ID))
   fetchMock.mockClear()
   vi.stubGlobal('fetch', fetchMock)
-  vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+  logError = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
   app = await startApp()
 })
 
@@ -161,8 +162,8 @@ describe('POST /api/repos/check rejects', () => {
     expect(callsTo('https://api.github.com/')).toHaveLength(0)
   })
 
-  it.each([401, 403])('a session Supabase refuses, answered %i (401 INVALID_TOKEN)', async (code) => {
-    supabaseAnswer = status(code)
+  it('a session Supabase refuses (it answers 403) (401 INVALID_TOKEN)', async () => {
+    supabaseAnswer = status(403)
     const res = await check(VALID)
     expect(res.status).toBe(401)
     expect(res.body).toEqual(errorBody('INVALID_TOKEN'))
@@ -170,6 +171,15 @@ describe('POST /api/repos/check rejects', () => {
 })
 
 describe('POST /api/repos/check when an outside service is not working (503, never a user error)', () => {
+  it('Supabase refusing our public key (401) is not the user\'s fault: 503, and it is logged', async () => {
+    supabaseAnswer = status(401)
+    const res = await check(VALID)
+    expect(res.status).toBe(503)
+    expect(res.body).toEqual(errorBody('AUTH_UNAVAILABLE'))
+    expect(callsTo('https://api.github.com/')).toHaveLength(0)
+    expect(logError).toHaveBeenCalledWith(expect.stringContaining('401'))
+  })
+
   it.each<[string, Answer]>([
     ...outage,
     ['429', status(429)],
