@@ -28,6 +28,8 @@ Pointers, not vendored copies — install the current version from the source.
 | `andrej-karpathy-skills` ([source](https://github.com/multica-ai/andrej-karpathy-skills)) | The four principles in [`CLAUDE.md`](../../CLAUDE.md) §2, as a skill | While writing code |
 | `code-review` (`/plugin install code-review@claude-plugins-official`) | Catches bugs before the PR. You choose the review level (`low` gives few, high-confidence findings; higher levels cost more) | Before opening a PR on a non-trivial change |
 | `/simplify` (built in) | Finds over-built code that still works — the shape [`docs/conventions.md`](../../docs/conventions.md) F-2 forbids | Before opening a PR |
+| `taste-skill` ([source](https://github.com/Leonxlnx/taste-skill)) | Frontend art direction that steers screens away from templated, generic looks. Where it disagrees with the tokens in [`docs/design/design-system.md`](../../docs/design/design-system.md), the tokens win | While building or restyling FE screens |
+| `refactoring-ui-skill` ([source](https://github.com/s0xDk/refactoring-ui-skill)) | The mechanical rules of the book *Refactoring UI*: hierarchy through weight and color, fixed spacing and type scales, depth. Its own color, shadow and radius scales do not apply here — the tokens in [`docs/design/design-system.md`](../../docs/design/design-system.md) and `components/ui` come first | While building or restyling FE screens |
 
 Running `/code-review` and `/simplify` from a Sonnet session is recommended to save cost, not required. In a 3-week
 hackathon, skip them on small PRs — a teammate's review is the gate.
