@@ -1,9 +1,11 @@
+import { AuthApiError, AuthRetryableFetchError } from '@supabase/supabase-js'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { ApiError, apiFetch } from './api.ts'
 
 // 실제 Supabase와 BE를 부르지 않는다. 테스트 전용 대역이라 MOCK 표식은 필요 없다(conventions §6).
 const auth = vi.hoisted(() => ({
   getSession: vi.fn(),
+  refreshSession: vi.fn(),
   signOut: vi.fn(),
 }))
 vi.mock('./supabase.ts', () => ({ supabase: { auth } }))
@@ -30,6 +32,13 @@ async function failure(call: Promise<unknown>) {
 beforeEach(() => {
   auth.getSession.mockReset()
   auth.signOut.mockReset().mockResolvedValue({ error: null })
+  // 기본값: 갱신이 안 된다(로그인이 풀렸다). 갱신이 되는 경우는 각 테스트가 정한다.
+  auth.refreshSession
+    .mockReset()
+    .mockResolvedValue({
+      data: { session: null },
+      error: new AuthApiError('Invalid Refresh Token', 400, 'refresh_token_not_found'),
+    })
   fetchMock.mockReset()
   vi.stubGlobal('fetch', fetchMock)
   withSession()
@@ -85,17 +94,80 @@ it('오류 본문의 status, code, message를 ApiError로 던진다', async () =
   expect(auth.signOut).not.toHaveBeenCalled()
 })
 
-it.each(['AUTH_REQUIRED', 'INVALID_TOKEN'])('401 %s이면 로그아웃시키고 오류를 던진다', async (code) => {
-  fetchMock.mockResolvedValue(json(401, { error: { code, message: 'no' } }))
+const sessionError = (code = 'INVALID_TOKEN') =>
+  json(401, { error: { code, message: 'no' } })
+const refreshed = (token: string) =>
+  auth.refreshSession.mockResolvedValue({ data: { session: { access_token: token } }, error: null })
+const bearerOf = (call: number) =>
+  new Headers(fetchMock.mock.calls[call]?.[1]?.headers).get('Authorization')
+
+it('401이면 갱신한 새 토큰으로 한 번 다시 보내고, 성공하면 로그아웃하지 않는다', async () => {
+  refreshed('tok-2')
+  fetchMock
+    .mockResolvedValueOnce(sessionError())
+    .mockResolvedValueOnce(json(200, { id: 'u1' }))
+  expect(await apiFetch('/api/me')).toEqual({ id: 'u1' })
+  expect(fetchMock).toHaveBeenCalledTimes(2)
+  expect(bearerOf(0)).toBe('Bearer tok-1')
+  expect(bearerOf(1)).toBe('Bearer tok-2')
+  expect(auth.signOut).not.toHaveBeenCalled()
+})
+
+it('다시 보낸 요청도 세션 401이면 이 기기만 로그아웃하고, 더 보내지 않는다', async () => {
+  refreshed('tok-2')
+  // Response 본문은 한 번만 읽을 수 있어서 호출마다 새로 만든다.
+  fetchMock.mockImplementation(() => Promise.resolve(sessionError('AUTH_REQUIRED')))
   const error = await failure(apiFetch('/api/me'))
+  expect(fetchMock).toHaveBeenCalledTimes(2)
   expect(auth.signOut).toHaveBeenCalledTimes(1)
+  expect(auth.signOut).toHaveBeenCalledWith({ scope: 'local' })
+  expect(error.code).toBe('AUTH_REQUIRED')
+})
+
+it.each(['AUTH_REQUIRED', 'INVALID_TOKEN'])('401 %s에서 갱신이 거부되면 이 기기만 로그아웃한다', async (code) => {
+  fetchMock.mockResolvedValue(sessionError(code))
+  const error = await failure(apiFetch('/api/me'))
+  expect(fetchMock).toHaveBeenCalledTimes(1)
+  expect(auth.signOut).toHaveBeenCalledTimes(1)
+  expect(auth.signOut).toHaveBeenCalledWith({ scope: 'local' })
   expect(error.code).toBe(code)
+})
+
+it('갱신이 오프라인 · 서버 장애로 못 됐으면 로그아웃하지 않고 NETWORK_ERROR로 던진다', async () => {
+  auth.refreshSession.mockResolvedValue({
+    data: { session: null },
+    error: new AuthRetryableFetchError('offline', 0),
+  })
+  fetchMock.mockResolvedValue(sessionError())
+  const error = await failure(apiFetch('/api/me'))
+  expect(error.status).toBe(0)
+  expect(error.code).toBe('NETWORK_ERROR')
+  expect(auth.signOut).not.toHaveBeenCalled()
+  expect(fetchMock).toHaveBeenCalledTimes(1)
+})
+
+it('다시 보낸 요청이 503이면 그 오류를 던지고 로그아웃하지 않는다', async () => {
+  refreshed('tok-2')
+  fetchMock
+    .mockResolvedValueOnce(sessionError())
+    .mockResolvedValueOnce(json(503, { error: { code: 'AUTH_UNAVAILABLE', message: 'down' } }))
+  const error = await failure(apiFetch('/api/me'))
+  expect(error.status).toBe(503)
+  expect(auth.signOut).not.toHaveBeenCalled()
+})
+
+it('세션이 없었으면 갱신을 시도하지 않는다', async () => {
+  auth.getSession.mockResolvedValue({ data: { session: null } })
+  fetchMock.mockResolvedValue(sessionError('AUTH_REQUIRED'))
+  await failure(apiFetch('/api/me'))
+  expect(auth.refreshSession).not.toHaveBeenCalled()
 })
 
 it('401이어도 세션 코드가 아니면 로그아웃시키지 않는다', async () => {
   fetchMock.mockResolvedValue(json(401, { error: { code: 'SOMETHING_ELSE', message: 'no' } }))
   await failure(apiFetch('/api/me'))
   expect(auth.signOut).not.toHaveBeenCalled()
+  expect(auth.refreshSession).not.toHaveBeenCalled()
 })
 
 it('503은 로그아웃시키지 않는다', async () => {

@@ -13,6 +13,8 @@
 
 1. FE가 이메일 · 비밀번호로 Supabase에 로그인해 access token(JWT, 기본 수명 1시간)과 refresh token을 받는다. 갱신은 supabase-js가 한다.
 2. FE는 플랫폼 서버를 부를 때마다 `Authorization: Bearer <access token>`을 붙인다.
+   - 서버가 `401 AUTH_REQUIRED` · `401 INVALID_TOKEN`을 주면 FE는 `refreshSession()`으로 한 번 갱신해 같은 요청을 다시 보낸다. 그래도 401이거나 갱신이 거부되면 **이 기기만** 로그아웃(`signOut({ scope: 'local' })`)하고 로그인 화면(X1)으로 보낸다. 갱신이 오프라인 · 서버 장애로 안 된 경우와 `503`은 로그아웃하지 않는다.
+   - 세션 연장 버튼은 두지 않는다. 갱신은 supabase-js가 자동으로 한다.
 3. 플랫폼 서버의 전역 가드가 토큰을 검증한다.
    - 서명: Supabase의 공개 키 목록(JWKS, `<SUPABASE_URL>/auth/v1/.well-known/jwks.json`)으로 확인한다. 공개 키는 처음 필요할 때 받아 두고, 모르는 `kid`가 오면 다시 받는다. 그래서 Supabase에서 키를 교체해도 재배포 없이 따라간다. 키를 받는 주소라 `SUPABASE_URL`은 `https`여야 한다(평문이면 중간에서 키를 바꿔 위조 토큰을 통과시킬 수 있다. 로컬 Supabase용 loopback 주소만 `http`를 허용한다).
    - 알고리즘 허용 목록은 따로 두지 않는다. jose는 토큰의 `alg`에 맞는 종류의 키만 키 목록에서 고르는데, 공개 키 목록에는 HMAC 키가 있을 수 없고 `alg: none`은 항상 거부한다. 그래서 `alg`를 `HS256` · `none`으로 바꾼 토큰은 통과하지 못한다(자동 테스트). 목록을 따로 두어도 결과가 같다는 것을 뮤턴트로 확인했다.
