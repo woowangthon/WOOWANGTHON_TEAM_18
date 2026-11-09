@@ -37,7 +37,7 @@
 | 외부 기술 | 로그 수집기 · 저장소 — 두지 않는다 (2026-11-09). 스파이크 판정 순간 플랫폼 서버가 쿠버네티스 API로 그 프로젝트 로그를 읽어 Supabase에 스냅샷으로 남긴다. 시계열 DB도 두지 않는다([ADR-006](adr/006-metrics-on-leader-prometheus.md)) | 쓰지 않음. 스냅샷은 직접 구현(구현 전) |
 | 외부 기술 | 보안 검사 도구 (후보: 의존성 취약점 Trivy · OSV-Scanner, 비밀값 gitleaks. 플랫폼 서버가 돌린다, [ADR-010](adr/010-repo-analysis-and-security-scan-in-platform-server.md)) | 후보. 구현할 때 하나 고르고 확정되면 여기 올린다 |
 | 외부 기술 | Cloudflare Tunnel (학생 서비스 공개 진입, 리더에서 실행) | 예정. 학교망이 터널 포트(TCP 7844)를 통과시키는 것은 확인함(2026-11-06). 설치 전 |
-| 외부 기술 | 레지스트리 캐시 (리더에서 실행, 제품은 구축 때 고른다) | 구현 전 |
+| 외부 기술 | 레지스트리 캐시 `registry:3.1.2` (CNCF Distribution, GHCR 끌어오기 모드, 리더에서 실행, Apache-2.0) | 설치 · 시험함(2026-11-10): 같은 이미지를 두 번째 워커는 캐시에서 1.1초에 받고 GHCR에서는 한 번만 받음, 캐시를 끄면 노드가 GHCR에서 직접 받음. 설정만 직접 작성(`Infra/registry-cache/`, `Infra/k3s/registries.yaml`) |
 | 외부 기술 | 클러스터 밖 백업 보관처 (리더 상태 스냅샷, 후보 Cloudflare R2) | 후순위 |
 
 ## 2. AI 기능
