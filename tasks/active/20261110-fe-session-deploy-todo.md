@@ -19,11 +19,12 @@ Five demo-path issues are done on one branch, one commit per issue, so the work 
 
 - [x] #54 `apiFetch` + `ApiError` + tests — files: `FE/src/lib/api.ts`, `FE/src/lib/api.test.ts`
 - [x] #53 auth context, guard, app bar, X1, login return + tests, `docs/ai-scope.md` — files: `FE/src/auth/*`, `FE/src/layout/AppLayout.tsx`, `FE/src/App.tsx`, `FE/src/pages/LoginPage.tsx`
-- [ ] #56 profile page + tests, `docs/design/auth.md`, `docs/ai-scope.md` — files: `FE/src/pages/ProfilePage.tsx`
-- [ ] #57 repo check page + tests — files: `FE/src/pages/DeployNewPage.tsx`
-- [ ] #58 Dockerfile check + tests — files: `FE/src/pages/DockerfileCheck.tsx`
-- [ ] Check every screen in Chromium with faked responses (light/dark, 1440/390)
-- [ ] Independent review with agy per PR range, each finding verified before acting
+- [x] #56 profile page + tests, `docs/design/auth.md`, `docs/ai-scope.md` — files: `FE/src/pages/ProfilePage.tsx`
+- [x] #57 repo check page + tests — files: `FE/src/pages/DeployNewPage.tsx`
+- [x] #58 Dockerfile check + tests — files: `FE/src/pages/DockerfileCheck.tsx`
+- [x] Check every screen in Chromium with faked responses (light/dark, 1440/390)
+- [x] Independent review with agy over the whole range (3 findings, all wrong)
+- [ ] `/code-review` and `/simplify` on the PR-B range (run with the worktree path), fixes applied
 
 ## Done when
 
