@@ -10,6 +10,7 @@ import { startApp } from './start-app.js'
 const SUPABASE_USER_URL = 'https://test.supabase.co/auth/v1/user'
 const API_KEY = 'sb_publishable_test'
 const GITHUB_ID = '4242'
+const FULL_NAME = 'Student/My-App'
 const REPO_URL = 'https://github.com/student/my-app'
 const VALID = { repoUrl: REPO_URL }
 
@@ -17,13 +18,21 @@ const VALID = { repoUrl: REPO_URL }
 type Answer = () => Response
 let supabaseAnswer: Answer
 let githubAnswer: Answer
+let treeAnswer: Answer
 let logError: MockInstance<Logger['error']>
 
 const linkedUser = (id = GITHUB_ID): Answer => () =>
   Response.json({ identities: [{ provider: 'email', id: 'user-1' }, { provider: 'github', id }] })
 const emailOnlyUser: Answer = () => Response.json({ identities: [{ provider: 'email', id: 'user-1' }] })
 const repoOwnedBy = (id: number | string, type = 'User'): Answer => () =>
-  Response.json({ full_name: 'Student/My-App', private: false, owner: { login: 'student', id, type } })
+  Response.json({ full_name: FULL_NAME, private: false, owner: { login: 'student', id, type } })
+// 끝에 /가 붙은 이름은 폴더다. GitHub는 폴더 항목의 path에 /를 붙이지 않고 type만 tree로 표시한다.
+const treeOf = (paths: string[], truncated = false): Answer => () =>
+  Response.json({
+    sha: 'abc',
+    truncated,
+    tree: paths.map((p) => (p.endsWith('/') ? { path: p.slice(0, -1), type: 'tree' } : { path: p, type: 'blob' })),
+  })
 const status = (code: number): Answer => () => new Response('{}', { status: code })
 const fails = (err: Error): Answer => () => {
   throw err
@@ -42,6 +51,7 @@ const fetchMock = vi.fn<typeof fetch>((input) => {
   const url = urlOf(input)
   if (url === JWKS_URL) return Promise.resolve(Response.json(keySet))
   if (url === SUPABASE_USER_URL) return Promise.resolve().then(() => supabaseAnswer())
+  if (url.includes('/git/trees/')) return Promise.resolve().then(() => treeAnswer())
   if (url.startsWith('https://api.github.com/repos/')) return Promise.resolve().then(() => githubAnswer())
   return Promise.reject(new Error(`unexpected fetch ${url}`))
 })
@@ -50,6 +60,7 @@ let app: INestApplication<App>
 beforeEach(async () => {
   supabaseAnswer = linkedUser()
   githubAnswer = repoOwnedBy(Number(GITHUB_ID))
+  treeAnswer = treeOf([])
   fetchMock.mockClear()
   vi.stubGlobal('fetch', fetchMock)
   logError = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
@@ -63,14 +74,17 @@ afterEach(async () => {
 })
 
 // auth: 생략하면 올바른 토큰, null이면 헤더 없음. body가 문자열이면 그대로 보낸다.
-async function check(body?: string | object, auth?: string | null) {
+async function post(path: string, body?: string | object, auth?: string | null) {
   const authorization = auth === undefined ? `Bearer ${await token()}` : auth
   return request(app.getHttpServer())
-    .post('/api/repos/check')
+    .post(path)
     .set(authorization === null ? {} : { Authorization: authorization })
     .set('Content-Type', 'application/json')
     .send(body)
 }
+
+const check = (body?: string | object, auth?: string | null) => post('/api/repos/check', body, auth)
+const dockerfiles = (body?: string | object, auth?: string | null) => post('/api/repos/dockerfiles', body, auth)
 
 const callsTo = (prefix: string) => fetchMock.mock.calls.filter(([url]) => urlOf(url).startsWith(prefix))
 
@@ -205,5 +219,97 @@ describe('POST /api/repos/check when an outside service is not working (503, nev
     const res = await check(VALID)
     expect(res.status).toBe(503)
     expect(res.body).toEqual(errorBody('GITHUB_UNAVAILABLE'))
+  })
+})
+
+describe('POST /api/repos/dockerfiles finds Dockerfiles', () => {
+  it.each<[string, Answer, string[], boolean]>([
+    ['at the repo root', treeOf(['Dockerfile', 'package.json', 'src/', 'src/index.ts']), ['Dockerfile'], false],
+    ['in every sub folder, in the order GitHub lists them', treeOf(['BE/', 'BE/Dockerfile', 'FE/', 'FE/web/', 'FE/web/Dockerfile']), ['BE/Dockerfile', 'FE/web/Dockerfile'], false],
+    ['none: 200 with an empty list, not an error', treeOf(['README.md', 'src/', 'src/index.ts']), [], false],
+    ['passes truncated through so an empty list is not read as "none"', treeOf(['a/Dockerfile'], true), ['a/Dockerfile'], true],
+    ['a repo with no commits (GitHub says 409): 200 with an empty list', status(409), [], false],
+  ])('%s', async (_, answer, found, truncated) => {
+    treeAnswer = answer
+    const res = await dockerfiles(VALID)
+    expect(res.status).toBe(200)
+    expect(res.body).toEqual({ repo: FULL_NAME, dockerfiles: found, truncated })
+  })
+
+  // 'Dockerfile/'은 이름이 Dockerfile인 폴더(type tree)다. 파일이 아니므로 세지 않는다.
+  it.each(['Dockerfile.prod', 'api.Dockerfile', 'MyDockerfile', 'docs/Dockerfile.md', 'dockerfile', 'Dockerfile/'])(
+    'does not count %s',
+    async (path) => {
+      treeAnswer = treeOf([path])
+      const res = await dockerfiles(VALID)
+      expect(res.body).toMatchObject({ dockerfiles: [] })
+    },
+  )
+
+  it('reads the default branch (HEAD) of the repo, with no credential and a time limit', async () => {
+    const t = await token()
+    await dockerfiles(VALID, `Bearer ${t}`)
+
+    const github = callsTo('https://api.github.com/')
+    expect(github).toHaveLength(2)
+    const [treeUrl, treeInit] = github[1]
+    expect(urlOf(treeUrl)).toBe('https://api.github.com/repos/student/my-app/git/trees/HEAD?recursive=1')
+    expect(JSON.stringify(treeInit?.headers).toLowerCase()).not.toContain('authorization')
+    expect(JSON.stringify(github)).not.toContain(t)
+    expect(treeInit?.signal).toBeInstanceOf(AbortSignal)
+  })
+})
+
+describe('POST /api/repos/dockerfiles checks ownership first (same errors as /repos/check)', () => {
+  it.each([
+    ['a repo owned by another account', () => (githubAnswer = repoOwnedBy(1)), 403, 'REPO_NOT_OWNED'],
+    ['an organization repo', () => (githubAnswer = repoOwnedBy(Number(GITHUB_ID), 'Organization')), 422, 'REPO_NOT_PERSONAL'],
+    ['a missing or private repo', () => (githubAnswer = status(404)), 404, 'REPO_NOT_FOUND'],
+    ['an account without GitHub linked', () => (supabaseAnswer = emailOnlyUser), 403, 'GITHUB_NOT_LINKED'],
+  ])('%s never reaches the file list', async (_, arrange, code, errorCode) => {
+    arrange()
+    const res = await dockerfiles(VALID)
+    expect(res.status).toBe(code)
+    expect(res.body).toEqual(errorBody(errorCode))
+    expect(callsTo('https://api.github.com/').filter(([url]) => urlOf(url).includes('/git/trees/'))).toHaveLength(0)
+  })
+
+  it('a bad repo address (400 INVALID_REPO_URL) before calling anyone', async () => {
+    const res = await dockerfiles({ repoUrl: 'https://github.com/student/my-app/tree/main' })
+    expect(res.status).toBe(400)
+    expect(res.body).toEqual(errorBody('INVALID_REPO_URL'))
+    expect(callsTo(SUPABASE_USER_URL)).toHaveLength(0)
+    expect(callsTo('https://api.github.com/')).toHaveLength(0)
+  })
+
+  it('no token (401 AUTH_REQUIRED) without asking anyone', async () => {
+    const res = await dockerfiles(VALID, null)
+    expect(res.status).toBe(401)
+    expect(res.body).toEqual(errorBody('AUTH_REQUIRED'))
+    expect(callsTo('https://api.github.com/')).toHaveLength(0)
+  })
+})
+
+describe('POST /api/repos/dockerfiles when GitHub cannot give the file list (503, never a user error)', () => {
+  it.each<[string, Answer]>([
+    ...outage,
+    ['404', status(404)],
+    ['rate limit 403', status(403)],
+    ['rate limit 429', status(429)],
+    ['403 with a body that looks fine', () => Response.json({ truncated: false, tree: [] }, { status: 403 })],
+    ['200 without a tree', () => Response.json({ truncated: false })],
+    ['200 without truncated', () => Response.json({ tree: [] })],
+    ['200 with an entry without a path', () => Response.json({ truncated: false, tree: [{ type: 'blob' }] })],
+  ])('tree: %s → GITHUB_UNAVAILABLE', async (_, answer) => {
+    treeAnswer = answer
+    const res = await dockerfiles(VALID)
+    expect(res.status).toBe(503)
+    expect(res.body).toEqual(errorBody('GITHUB_UNAVAILABLE'))
+  })
+
+  it('/repos/check does not call the file list', async () => {
+    const res = await check(VALID)
+    expect(res.status).toBe(200)
+    expect(callsTo('https://api.github.com/')).toHaveLength(1)
   })
 })

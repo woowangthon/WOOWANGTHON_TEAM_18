@@ -14,6 +14,9 @@ import type { Env } from '../config/env.js'
 import { parseRepoUrl, type RepoRef } from './repo-url.js'
 
 const TIMEOUT_MS = 5000
+// 이름이 정확히 Dockerfile인 파일만(루트 또는 하위 폴더). Dockerfile.prod · *.Dockerfile은 MVP 제외.
+const DOCKERFILE_PATH = /(^|\/)Dockerfile$/
+const GITHUB_HEADERS = { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'woowangthon-platform' }
 
 const authUnavailable = () =>
   new ServiceUnavailableException({ code: 'AUTH_UNAVAILABLE', message: 'Could not check the linked GitHub account' })
@@ -33,6 +36,19 @@ export class ReposService {
 
   /** 로그인 계정에 연동된 GitHub 계정이 이 공개 개인 레포의 소유자인지 확인한다. 순서와 오류는 docs/design/auth.md. */
   async check(accessToken: string, repoUrl: unknown): Promise<{ repo: string }> {
+    const { repo } = await this.verifyOwnership(accessToken, repoUrl)
+    return { repo: repo.full_name }
+  }
+
+  /** 소유 확인을 통과한 레포의 Dockerfile 경로를 모두 찾는다. 없으면 빈 목록이다(오류가 아니다). */
+  async dockerfiles(accessToken: string, repoUrl: unknown): Promise<DockerfilesResult> {
+    const { ref, repo } = await this.verifyOwnership(accessToken, repoUrl)
+    const tree = await this.fetchTree(ref)
+    const dockerfiles = tree.tree.filter((e) => e.type === 'blob' && DOCKERFILE_PATH.test(e.path)).map((e) => e.path)
+    return { repo: repo.full_name, dockerfiles, truncated: tree.truncated }
+  }
+
+  private async verifyOwnership(accessToken: string, repoUrl: unknown): Promise<{ ref: RepoRef; repo: GithubRepo }> {
     const ref = parseRepoUrl(repoUrl)
     if (!ref) {
       throw new BadRequestException({
@@ -60,7 +76,7 @@ export class ReposService {
         message: 'The linked GitHub account does not own this repository',
       })
     }
-    return { repo: repo.full_name }
+    return { ref, repo }
   }
 
   // 사용자 토큰을 Supabase에 그대로 보내 identities를 읽는다. 로그아웃 · 폐기된 세션은 Supabase가 거부한다.
@@ -92,7 +108,7 @@ export class ReposService {
   private async fetchRepo({ owner, repo }: RepoRef): Promise<GithubRepo> {
     const { status, ok, body } = await this.request(
       `https://api.github.com/repos/${owner}/${repo}`,
-      { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'woowangthon-platform' },
+      GITHUB_HEADERS,
       githubUnavailable,
     )
     // 없는 레포와 비공개 레포는 GitHub가 둘 다 404로 답한다.
@@ -102,6 +118,22 @@ export class ReposService {
     if (!ok || !isGithubRepo(body)) {
       // 한도 초과(403 · 429) · GitHub 장애 · 예상 밖 응답은 사용자 잘못이 아니다.
       this.logger.error(`GitHub GET /repos/${owner}/${repo} answered ${status}`)
+      throw githubUnavailable()
+    }
+    return body
+  }
+
+  // HEAD는 기본 브랜치를 가리킨다. 소유 확인을 이미 통과한 레포라 아래를 뺀 실패는 사용자 잘못이 아니다(404 포함).
+  private async fetchTree({ owner, repo }: RepoRef): Promise<GithubTree> {
+    const { status, ok, body } = await this.request(
+      `https://api.github.com/repos/${owner}/${repo}/git/trees/HEAD?recursive=1`,
+      GITHUB_HEADERS,
+      githubUnavailable,
+    )
+    // 커밋이 없는 빈 레포는 GitHub가 409 "Git Repository is empty."로 답한다. 파일이 없다는 정상 상태다.
+    if (status === 409) return { tree: [], truncated: false }
+    if (!ok || !isGithubTree(body)) {
+      this.logger.error(`GitHub GET /repos/${owner}/${repo}/git/trees answered ${status}`)
       throw githubUnavailable()
     }
     return body
@@ -128,6 +160,34 @@ interface SupabaseUser {
 interface GithubRepo {
   full_name: string
   owner: { id: number; type: string }
+}
+
+interface GithubTreeEntry {
+  path: string
+  type: string
+}
+
+interface GithubTree {
+  tree: GithubTreeEntry[]
+  truncated: boolean
+}
+
+export interface DockerfilesResult {
+  repo: string
+  dockerfiles: string[]
+  truncated: boolean
+}
+
+function isGithubTree(value: unknown): value is GithubTree {
+  const { tree, truncated } = (value ?? {}) as { tree?: unknown; truncated?: unknown }
+  return (
+    typeof truncated === 'boolean' &&
+    Array.isArray(tree) &&
+    tree.every((e) => {
+      const { path, type } = (e ?? {}) as Partial<GithubTreeEntry>
+      return typeof path === 'string' && typeof type === 'string'
+    })
+  )
 }
 
 function isGithubRepo(value: unknown): value is GithubRepo {
