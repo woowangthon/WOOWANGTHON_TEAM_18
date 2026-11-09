@@ -11,7 +11,7 @@
 - 2026-11-09: `/simplify` (4 reviewers) found nothing structural. Applied: a named result type, a regex for the path, a table for the repeated finds tests. One suggestion was wrong: deleting the test "folder named Dockerfile" as a duplicate of the `Dockerfile/` row let the `type === 'blob'` mutant survive, because my helper wrote folders as `Dockerfile/` (a path GitHub never produces) so the regex missed them anyway. The helper now writes folders the way GitHub does (`path` without `/`, `type: tree`) and the mutant dies.
 - 2026-11-09: TaeTaeJin also confirmed the other cases (another person's repo, an organization repo, a Dockerfile in a sub folder) against the real Supabase and GitHub.
 - 2026-11-09: TaeTaeJin's real run on `TaeTaeJin/NoTI` (a fork) passed the ownership check: the owner is the linked account, so a fork passes by design. Whether to refuse forks is a team decision (not made). The response shape stays `dockerfiles` + `truncated` ([#46](https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/46)).
-- 2026-11-09: The real `git/trees` response was checked with an unauthenticated call (fields as the code assumes, missing branch `404`). The full path with a real Supabase token was not run here.
+- 2026-11-09: The real `git/trees` response was checked with an unauthenticated call (fields as the code assumes, missing branch `404`). The full path with a real Supabase token was run afterwards by TaeTaeJin (see the `TaeTaeJin/NoTI` entry above).
 
 ## Lessons
 
