@@ -17,10 +17,10 @@ Defaults I chose where the owner's answer did not say (revisit in review): no lo
 - [x] Probe real answers first: `package.json` samples (Vite template, Next example), a big recursive tree (317 `package.json`, 22 under `node_modules/`, nested lockfiles), raw `404`, rate limit
 - [x] Docs first: `docs/design/api.md`, `auth.md`, `docs/ai-scope.md` — files: `docs/`
 - [x] Review round R0 (agy): gaps in the rules, before code
-- [ ] Rules + table unit tests — files: `BE/src/repos/deploy-spec.ts`, `deploy-spec.spec.ts`
-- [ ] Review round R1 (agy): adversarial inputs → more test rows
-- [ ] Service `deploySpec()` + route + e2e (fake raw answers) — files: `BE/src/repos/repos.service.ts`, `repos.controller.ts`, `BE/test/repos.e2e.spec.ts`
-- [ ] Hand-made mutants; survivors get a test or a reason in the PR body
+- [x] Rules + table unit tests — files: `BE/src/repos/deploy-spec.ts`, `deploy-spec.spec.ts`
+- [x] Review round R1 (agy): adversarial inputs → more test rows
+- [x] Service `deploySpec()` + route + e2e (fake raw answers) — files: `BE/src/repos/repos.service.ts`, `repos.controller.ts`, `BE/test/repos.e2e.spec.ts`
+- [x] Hand-made mutants; survivors get a test or a reason in the PR body
 - [ ] Review rounds R2 (agy ‖ `/code-review medium`), R3 (docs ↔ code), `/simplify`
 - [ ] Spec-consumer table and storage proposal (R4), written into the PR body
 - [ ] `pnpm verify`, rebase, push, open the **draft** PR
