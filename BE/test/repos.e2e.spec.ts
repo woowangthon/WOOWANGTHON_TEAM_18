@@ -55,6 +55,14 @@ const outage: [string, Answer][] = [
   ['200 that is not JSON', () => new Response('<html>')],
 ]
 
+// 소유 확인에서 걸리는 경우. 어떤 API든 같은 오류여야 하고, 걸리면 그 뒤 GitHub 호출은 하지 않는다.
+const ownershipFailures: [name: string, arrange: () => unknown, status: number, code: string][] = [
+    ['a repo owned by another account', () => (githubAnswer = repoOwnedBy(1)), 403, 'REPO_NOT_OWNED'],
+    ['an organization repo', () => (githubAnswer = repoOwnedBy(Number(GITHUB_ID), 'Organization')), 422, 'REPO_NOT_PERSONAL'],
+    ['a missing or private repo', () => (githubAnswer = status(404)), 404, 'REPO_NOT_FOUND'],
+    ['an account without GitHub linked', () => (supabaseAnswer = emailOnlyUser), 403, 'GITHUB_NOT_LINKED'],
+]
+
 const RAW = 'https://raw.githubusercontent.com/'
 const RAW_REPO = `${RAW}student/my-app/`
 const RAW_PREFIX = `${RAW_REPO}HEAD/`
@@ -65,7 +73,7 @@ const fetchMock = vi.fn<typeof fetch>((input) => {
   const url = urlOf(input)
   if (url === JWKS_URL) return Promise.resolve(Response.json(keySet))
   if (url === SUPABASE_USER_URL) return Promise.resolve().then(() => supabaseAnswer())
-  if (url.includes('/commits/')) return Promise.resolve().then(() => commitAnswer(url.slice(url.lastIndexOf('/commits/') + '/commits/'.length)))
+  if (url.includes('/commits/')) return Promise.resolve().then(() => commitAnswer(url.split('/commits/')[1]))
   if (url.includes('/git/trees/')) return Promise.resolve().then(() => treeAnswer())
   if (url.startsWith('https://api.github.com/repos/')) return Promise.resolve().then(() => githubAnswer())
   if (url.startsWith(RAW_REPO)) {
@@ -260,12 +268,7 @@ describe('POST /api/repos/check pins the commit', () => {
     expect(res.body).toEqual({ repo: FULL_NAME, commit: null })
   })
 
-  it.each([
-    ['a repo owned by another account', () => (githubAnswer = repoOwnedBy(1)), 403, 'REPO_NOT_OWNED'],
-    ['an organization repo', () => (githubAnswer = repoOwnedBy(Number(GITHUB_ID), 'Organization')), 422, 'REPO_NOT_PERSONAL'],
-    ['a missing or private repo', () => (githubAnswer = status(404)), 404, 'REPO_NOT_FOUND'],
-    ['an account without GitHub linked', () => (supabaseAnswer = emailOnlyUser), 403, 'GITHUB_NOT_LINKED'],
-  ])('%s never reaches the commit lookup', async (_, arrange, code, errorCode) => {
+  it.each(ownershipFailures)('%s never reaches the commit lookup', async (_, arrange, code, errorCode) => {
     arrange()
     const res = await check(VALID)
     expect(res.status).toBe(code)
@@ -330,12 +333,7 @@ describe('POST /api/repos/dockerfiles finds Dockerfiles', () => {
 })
 
 describe('POST /api/repos/dockerfiles checks ownership first (same errors as /repos/check)', () => {
-  it.each([
-    ['a repo owned by another account', () => (githubAnswer = repoOwnedBy(1)), 403, 'REPO_NOT_OWNED'],
-    ['an organization repo', () => (githubAnswer = repoOwnedBy(Number(GITHUB_ID), 'Organization')), 422, 'REPO_NOT_PERSONAL'],
-    ['a missing or private repo', () => (githubAnswer = status(404)), 404, 'REPO_NOT_FOUND'],
-    ['an account without GitHub linked', () => (supabaseAnswer = emailOnlyUser), 403, 'GITHUB_NOT_LINKED'],
-  ])('%s never reaches the file list', async (_, arrange, code, errorCode) => {
+  it.each(ownershipFailures)('%s never reaches the file list', async (_, arrange, code, errorCode) => {
     arrange()
     const res = await dockerfiles(VALID)
     expect(res.status).toBe(code)
@@ -567,12 +565,7 @@ describe('POST /api/repos/deploy-spec drafts the deploy spec', () => {
 })
 
 describe('POST /api/repos/deploy-spec checks ownership first (same errors as /repos/check)', () => {
-  it.each([
-    ['a repo owned by another account', () => (githubAnswer = repoOwnedBy(1)), 403, 'REPO_NOT_OWNED'],
-    ['an organization repo', () => (githubAnswer = repoOwnedBy(Number(GITHUB_ID), 'Organization')), 422, 'REPO_NOT_PERSONAL'],
-    ['a missing or private repo', () => (githubAnswer = status(404)), 404, 'REPO_NOT_FOUND'],
-    ['an account without GitHub linked', () => (supabaseAnswer = emailOnlyUser), 403, 'GITHUB_NOT_LINKED'],
-  ])('%s never reaches the file list or any file', async (_, arrange, code, errorCode) => {
+  it.each(ownershipFailures)('%s never reaches the file list or any file', async (_, arrange, code, errorCode) => {
     treeAnswer = treeOf(['package.json'])
     rawFiles = { 'package.json': VITE_PKG }
     arrange()
@@ -643,16 +636,21 @@ describe('POST /api/repos/deploy-spec at a pinned commit', () => {
 
   it('checks the commit, then reads the file list and every package.json at that commit and says which one', async () => {
     arrangeFiles()
-    const res = await deploySpec({ ...VALID, commit: OTHER_SHA })
+    const t = await token()
+    const res = await deploySpec({ ...VALID, commit: OTHER_SHA }, `Bearer ${t}`)
     expect(res.status).toBe(200)
     expect(specOf(res)).toMatchObject({ repo: FULL_NAME, commit: OTHER_SHA })
     expect(specOf(res).projects.map((p) => p.dir)).toEqual(['BE', 'FE'])
-    expect(callsTo('https://api.github.com/').map(([url]) => urlOf(url))).toEqual([
+    const github = callsTo('https://api.github.com/')
+    expect(github.map(([url]) => urlOf(url))).toEqual([
       'https://api.github.com/repos/student/my-app',
       `https://api.github.com/repos/student/my-app/commits/${OTHER_SHA}`,
       `https://api.github.com/repos/student/my-app/git/trees/${OTHER_SHA}?recursive=1`,
     ])
     expect(commitCalls()[0][1]?.headers).toMatchObject({ Accept: 'application/vnd.github.sha' })
+    expect(commitCalls()[0][1]?.signal).toBeInstanceOf(AbortSignal)
+    expect(JSON.stringify(github)).not.toContain(t)
+    expect(JSON.stringify(github.map(([, init]) => init?.headers)).toLowerCase()).not.toContain('authorization')
     expect(rawCalls().map(([url]) => urlOf(url)).sort()).toEqual([`${RAW_REPO}${OTHER_SHA}/BE/package.json`, `${RAW_REPO}${OTHER_SHA}/FE/package.json`])
     expect(JSON.stringify(fetchMock.mock.calls.map(([url]) => urlOf(url)))).not.toContain('/HEAD')
   })
@@ -694,12 +692,7 @@ describe('POST /api/repos/deploy-spec at a pinned commit', () => {
     expect(rawCalls()).toHaveLength(0)
   })
 
-  it.each([
-    ['a repo owned by another account', () => (githubAnswer = repoOwnedBy(1)), 403, 'REPO_NOT_OWNED'],
-    ['an organization repo', () => (githubAnswer = repoOwnedBy(Number(GITHUB_ID), 'Organization')), 422, 'REPO_NOT_PERSONAL'],
-    ['a missing or private repo', () => (githubAnswer = status(404)), 404, 'REPO_NOT_FOUND'],
-    ['an account without GitHub linked', () => (supabaseAnswer = emailOnlyUser), 403, 'GITHUB_NOT_LINKED'],
-  ])('%s never reaches the commit check, the file list or any file', async (_, arrange, code, errorCode) => {
+  it.each(ownershipFailures)('%s never reaches the commit check, the file list or any file', async (_, arrange, code, errorCode) => {
     arrangeFiles()
     arrange()
     const res = await deploySpec({ ...VALID, commit: OTHER_SHA })
@@ -739,6 +732,14 @@ describe('POST /api/repos/deploy-spec at a pinned commit', () => {
     expect(res.body).toEqual(errorBody('GITHUB_UNAVAILABLE'))
     expect(logError).toHaveBeenCalled()
     expect(treeCalls()).toHaveLength(0)
+  })
+
+  it('a repo with no commits: the commit null that repos/check gave is passed back and answers 200 with an empty list', async () => {
+    treeAnswer = status(409)
+    const res = await deploySpec({ ...VALID, commit: null })
+    expect(res.status).toBe(200)
+    expect(res.body).toEqual({ repo: FULL_NAME, commit: null, projects: [], truncated: false })
+    expect(commitCalls()).toHaveLength(0)
   })
 
   it('a package.json that raw cannot find at the pinned commit leaves that folder open, like at HEAD', async () => {

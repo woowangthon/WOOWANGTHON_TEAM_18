@@ -50,8 +50,7 @@ export class ReposService {
   async check(accessToken: string, repoUrl: unknown): Promise<{ repo: string; commit: string | null }> {
     const { ref, repo } = await this.verifyOwnership(accessToken, repoUrl)
     // 409는 커밋이 없는 빈 레포다(오류가 아니다).
-    const commit = await this.fetchCommit(ref, 'HEAD', [409])
-    return { repo: repo.full_name, commit: commit ?? null }
+    return { repo: repo.full_name, commit: await this.fetchCommit(ref, 'HEAD', [409]) }
   }
 
   /** 소유 확인을 통과한 레포의 Dockerfile 경로를 모두 찾는다. 없으면 빈 목록이다(오류가 아니다). */
@@ -67,11 +66,11 @@ export class ReposService {
    * 저장하지 않고 호출할 때마다 계산한다. package.json이 없으면 빈 목록이다(오류가 아니다). 규칙은 docs/design/api.md.
    * commit이 있으면(null도 없는 것으로 본다) 그 commit의 파일을, 없으면 HEAD를 읽는다.
    */
-  async deploySpec(accessToken: string, repoUrl: unknown, commit?: unknown): Promise<DeploySpecResult> {
-    const sha = requestedCommit(commit)
+  async deploySpec(accessToken: string, repoUrl: unknown, requested?: unknown): Promise<DeploySpecResult> {
+    const commit = requestedCommit(requested)
     const { ref, repo } = await this.verifyOwnership(accessToken, repoUrl)
-    if (sha) await this.assertCommit(ref, sha)
-    const rev = sha ?? 'HEAD'
+    if (commit) await this.assertCommit(ref, commit)
+    const rev = commit ?? 'HEAD'
     const tree = await this.fetchTree(ref, rev)
     // 파일 경로 → 크기. 크기는 큰 package.json을 읽기 전에 거르는 데 쓴다.
     const files = new Map(tree.tree.filter((e) => e.type === 'blob').map((e): [string, number | undefined] => [e.path, e.size]))
@@ -82,7 +81,7 @@ export class ReposService {
         return this.fetchPackageJson(ref, rev, file, files.get(file))
       }),
     )
-    return { repo: repo.full_name, commit: sha ?? null, projects: buildProjects(dirs, packages, files), truncated: tree.truncated || truncated }
+    return { repo: repo.full_name, commit, projects: buildProjects(dirs, packages, files), truncated: tree.truncated || truncated }
   }
 
   private async verifyOwnership(accessToken: string, repoUrl: unknown): Promise<{ ref: RepoRef; repo: GithubRepo }> {
@@ -193,20 +192,20 @@ export class ReposService {
     return body
   }
 
-  // rev(HEAD 또는 SHA)가 가리키는 commit의 전체 SHA. missing에 든 상태 코드는 "그 commit이 없다"는 뜻이라 undefined이고, 그 밖의 실패는 503이다.
-  private async fetchCommit({ owner, repo }: RepoRef, rev: string, missing: number[]): Promise<string | undefined> {
+  // rev(HEAD 또는 SHA)가 가리키는 commit의 전체 SHA. missing에 든 상태 코드는 "그 commit이 없다"는 뜻이라 null이고, 그 밖의 실패는 503이다.
+  private async fetchCommit({ owner, repo }: RepoRef, rev: string, missing: number[]): Promise<string | null> {
     const { status, ok, text } = await this.request(
       `https://api.github.com/repos/${owner}/${repo}/commits/${rev}`,
       GITHUB_SHA_HEADERS,
       githubUnavailable,
     )
-    if (missing.includes(status)) return undefined
-    const sha = text.trim()
-    if (!ok || !isCommitSha(sha)) {
+    if (missing.includes(status)) return null
+    // sha 미디어 타입의 답은 개행 없이 40자 그대로다(2026-11-10 확인). 그렇지 않으면 모양 검사에서 걸려 503이다.
+    if (!ok || !isCommitSha(text)) {
       this.logger.error(`GitHub GET /repos/${owner}/${repo}/commits/${rev} answered ${status}`)
       throw githubUnavailable()
     }
-    return sha
+    return text
   }
 
   // git/trees는 commit이 아닌 tree SHA도 받는데 그 SHA로는 raw 파일이 404다. 그대로 두면 모든 package.json이 조용히 "읽을 수 없음"이 되므로 먼저 commit인지 본다.
@@ -270,9 +269,9 @@ export interface DockerfilesResult {
   truncated: boolean
 }
 
-// commit이 없으면(undefined · null) undefined, 전체 SHA면 그 값이고, 그 밖의 값은 400이다.
-function requestedCommit(input: unknown): string | undefined {
-  if (input === undefined || input === null) return undefined
+// commit이 없으면(undefined · null) null, 전체 SHA면 그 값이고, 그 밖의 값은 400이다.
+function requestedCommit(input: unknown): string | null {
+  if (input === undefined || input === null) return null
   if (!isCommitSha(input)) throw invalidCommit()
   return input
 }
