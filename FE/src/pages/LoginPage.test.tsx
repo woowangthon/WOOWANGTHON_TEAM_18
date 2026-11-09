@@ -26,12 +26,14 @@ afterEach(() => {
 })
 
 // 성공하면 /dashboard로 가므로 그곳을 식별할 가짜 페이지를 둔다.
-const renderPage = () =>
+const renderPage = (state?: unknown) =>
   render(
-    <MemoryRouter initialEntries={['/login']}>
+    <MemoryRouter initialEntries={[{ pathname: '/login', state }]}>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/dashboard" element={<p>dashboard page</p>} />
+        <Route path="/profile" element={<p>profile page</p>} />
+        <Route path="//evil.example" element={<p>evil page</p>} />
       </Routes>
     </MemoryRouter>,
   )
@@ -206,4 +208,33 @@ it('shows and hides the password with the toggle button', () => {
   expect(passwordInput().getAttribute('type')).toBe('text')
   fireEvent.click(screen.getByRole('button', { name: '비밀번호 숨기기' }))
   expect(passwordInput().getAttribute('type')).toBe('password')
+})
+
+it('goes back to the page the visitor came from after logging in', async () => {
+  auth.signInWithPassword.mockResolvedValue(ok)
+  renderPage({ from: '/profile' })
+  fillAndSubmit('me@example.com', 'secret')
+  expect(await screen.findByText('profile page')).toBeTruthy()
+})
+
+it('ignores a "from" that is not an internal path', async () => {
+  auth.signInWithPassword.mockResolvedValue(ok)
+  renderPage({ from: '//evil.example' })
+  fillAndSubmit('me@example.com', 'secret')
+  expect(await screen.findByText('dashboard page')).toBeTruthy()
+})
+
+it('shows the session-expired notice, heading and button when the session ended', () => {
+  renderPage({ from: '/profile', expired: true })
+  expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('다시 로그인해 주세요')
+  expect(screen.getByText('로그인 시간이 지났어요')).toBeTruthy()
+  expect(
+    screen.getByText(/다시 로그인하면 하던 곳으로\s*돌아가요/),
+  ).toBeTruthy()
+  expect(screen.getByRole('button', { name: '로그인하고 돌아가기' })).toBeTruthy()
+})
+
+it('shows no expired notice on a plain visit', () => {
+  renderPage()
+  expect(screen.queryByText('로그인 시간이 지났어요')).toBeNull()
 })

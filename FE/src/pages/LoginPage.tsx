@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
-import { Link, useNavigate } from 'react-router'
+import { Link, useLocation, useNavigate } from 'react-router'
+import { readLoginState } from '../auth/login-state.ts'
 import { Alert } from '../components/ui/Alert.tsx'
 import { Button } from '../components/ui/Button.tsx'
 import { Card } from '../components/ui/Card.tsx'
@@ -10,7 +11,7 @@ import { supabase } from '../lib/supabase.ts'
 type Notice = 'invalid' | 'rate' | 'unverified' | 'failed'
 type Resend = 'idle' | 'sending' | 'sent' | 'rate' | 'failed'
 
-// 로그인 뒤 갈 곳. 원래 보던 화면으로 돌아가는 것은 #53에서 한다.
+// 원래 보던 화면을 모를 때 로그인 뒤 갈 곳.
 const AFTER_LOGIN = '/dashboard'
 const RATE_LIMIT_LOCK_MS = 60_000
 const EMAIL_FORMAT = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -56,6 +57,8 @@ function EyeIcon({ crossed }: { crossed: boolean }) {
 
 function LoginPage() {
   const navigate = useNavigate()
+  // 보호된 화면에서 튕겨 왔다면 돌아갈 곳(from)과, 세션이 저절로 끝났는지(expired)를 안다.
+  const { from, expired } = readLoginState(useLocation().state)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
@@ -94,7 +97,7 @@ function LoginPage() {
     setSubmitting(false)
 
     if (result === 'ok') {
-      void navigate(AFTER_LOGIN, { replace: true })
+      void navigate(from ?? AFTER_LOGIN, { replace: true })
       return
     }
     setNotice(result)
@@ -127,7 +130,14 @@ function LoginPage() {
     <main className="flex min-h-screen items-center justify-center px-4 py-8">
       <Card className="w-full max-w-md">
         <div className="flex flex-col gap-6 p-4">
-          <h1 className="text-xl">로그인</h1>
+          <h1 className="text-xl">{expired ? '다시 로그인해 주세요' : '로그인'}</h1>
+
+          {expired && (
+            <Alert variant="info" title="로그인 시간이 지났어요">
+              안전을 위해 오랫동안 쓰지 않으면 로그인이 풀려요. 다시 로그인하면 하던 곳으로
+              돌아가요.
+            </Alert>
+          )}
 
           {notice === 'invalid' && (
             <Alert title="이메일 또는 비밀번호가 올바르지 않아요">
@@ -227,7 +237,7 @@ function LoginPage() {
               disabled={submitting || locked}
               aria-busy={submitting}
             >
-              {submitting ? '로그인하는 중…' : '로그인'}
+              {submitting ? '로그인하는 중…' : expired ? '로그인하고 돌아가기' : '로그인'}
             </Button>
             {submitting && (
               <p role="status" className="text-sm text-muted">
