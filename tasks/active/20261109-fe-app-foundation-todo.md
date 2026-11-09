@@ -17,7 +17,7 @@ The FE draws nothing yet (`App` returns `null`), so every screen issue is blocke
 ## Todo
 
 - [ ] Router and five empty pages, replace the "renders nothing" smoke test with one test per route — files: `FE/src/main.tsx`, `FE/src/App.tsx`, `FE/src/pages/*.tsx`, `FE/src/App.test.tsx`, `FE/package.json`
-- [ ] Docs for the router — files: `docs/ai-scope.md` §1, `docs/design/design-system.md`
+- [ ] Docs for the router — files: `docs/ai-scope.md` §1
 - [ ] Supabase client that fails loudly on missing settings, with tests for both cases — files: `FE/src/lib/supabase.ts`, `FE/src/lib/supabase.test.ts`, `FE/src/vite-env.d.ts`, `FE/.env.example`
 - [ ] Docs for supabase-js — files: `docs/ai-scope.md` §1
 - [ ] Dev server proxy for `/api` — files: `FE/vite.config.ts`
