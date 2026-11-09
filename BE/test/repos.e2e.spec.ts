@@ -10,6 +10,7 @@ import { startApp } from './start-app.js'
 const SUPABASE_USER_URL = 'https://test.supabase.co/auth/v1/user'
 const API_KEY = 'sb_publishable_test'
 const GITHUB_ID = '4242'
+const FULL_NAME = 'Student/My-App'
 const REPO_URL = 'https://github.com/student/my-app'
 const VALID = { repoUrl: REPO_URL }
 
@@ -24,9 +25,14 @@ const linkedUser = (id = GITHUB_ID): Answer => () =>
   Response.json({ identities: [{ provider: 'email', id: 'user-1' }, { provider: 'github', id }] })
 const emailOnlyUser: Answer = () => Response.json({ identities: [{ provider: 'email', id: 'user-1' }] })
 const repoOwnedBy = (id: number | string, type = 'User'): Answer => () =>
-  Response.json({ full_name: 'Student/My-App', private: false, owner: { login: 'student', id, type } })
+  Response.json({ full_name: FULL_NAME, private: false, owner: { login: 'student', id, type } })
+// 끝에 /가 붙은 이름은 폴더다. GitHub는 폴더 항목의 path에 /를 붙이지 않고 type만 tree로 표시한다.
 const treeOf = (paths: string[], truncated = false): Answer => () =>
-  Response.json({ sha: 'abc', truncated, tree: paths.map((path) => ({ path, type: path.endsWith('/') ? 'tree' : 'blob' })) })
+  Response.json({
+    sha: 'abc',
+    truncated,
+    tree: paths.map((p) => (p.endsWith('/') ? { path: p.slice(0, -1), type: 'tree' } : { path: p, type: 'blob' })),
+  })
 const status = (code: number): Answer => () => new Response('{}', { status: code })
 const fails = (err: Error): Answer => () => {
   throw err
@@ -217,26 +223,20 @@ describe('POST /api/repos/check when an outside service is not working (503, nev
 })
 
 describe('POST /api/repos/dockerfiles finds Dockerfiles', () => {
-  it('at the repo root', async () => {
-    treeAnswer = treeOf(['Dockerfile', 'package.json', 'src/', 'src/index.ts'])
+  it.each<[string, Answer, string[], boolean]>([
+    ['at the repo root', treeOf(['Dockerfile', 'package.json', 'src/', 'src/index.ts']), ['Dockerfile'], false],
+    ['in every sub folder, in the order GitHub lists them', treeOf(['BE/', 'BE/Dockerfile', 'FE/', 'FE/web/', 'FE/web/Dockerfile']), ['BE/Dockerfile', 'FE/web/Dockerfile'], false],
+    ['none: 200 with an empty list, not an error', treeOf(['README.md', 'src/', 'src/index.ts']), [], false],
+    ['passes truncated through so an empty list is not read as "none"', treeOf(['a/Dockerfile'], true), ['a/Dockerfile'], true],
+    ['a repo with no commits (GitHub says 409): 200 with an empty list', status(409), [], false],
+  ])('%s', async (_, answer, found, truncated) => {
+    treeAnswer = answer
     const res = await dockerfiles(VALID)
     expect(res.status).toBe(200)
-    expect(res.body).toEqual({ repo: 'Student/My-App', dockerfiles: ['Dockerfile'], truncated: false })
+    expect(res.body).toEqual({ repo: FULL_NAME, dockerfiles: found, truncated })
   })
 
-  it('in every sub folder, in the order GitHub lists them', async () => {
-    treeAnswer = treeOf(['BE/', 'BE/Dockerfile', 'FE/', 'FE/web/', 'FE/web/Dockerfile'])
-    const res = await dockerfiles(VALID)
-    expect(res.body).toEqual({ repo: 'Student/My-App', dockerfiles: ['BE/Dockerfile', 'FE/web/Dockerfile'], truncated: false })
-  })
-
-  it('answers 200 with an empty list when there is none (not an error)', async () => {
-    treeAnswer = treeOf(['README.md', 'src/', 'src/index.ts'])
-    const res = await dockerfiles(VALID)
-    expect(res.status).toBe(200)
-    expect(res.body).toEqual({ repo: 'Student/My-App', dockerfiles: [], truncated: false })
-  })
-
+  // 'Dockerfile/'은 이름이 Dockerfile인 폴더(type tree)다. 파일이 아니므로 세지 않는다.
   it.each(['Dockerfile.prod', 'api.Dockerfile', 'MyDockerfile', 'docs/Dockerfile.md', 'dockerfile', 'Dockerfile/'])(
     'does not count %s',
     async (path) => {
@@ -245,25 +245,6 @@ describe('POST /api/repos/dockerfiles finds Dockerfiles', () => {
       expect(res.body).toMatchObject({ dockerfiles: [] })
     },
   )
-
-  it('does not count a folder named Dockerfile', async () => {
-    treeAnswer = () => Response.json({ truncated: false, tree: [{ path: 'Dockerfile', type: 'tree' }, { path: 'Dockerfile/x', type: 'blob' }] })
-    const res = await dockerfiles(VALID)
-    expect(res.body).toMatchObject({ dockerfiles: [] })
-  })
-
-  it('passes truncated through so an empty list is not read as "none"', async () => {
-    treeAnswer = treeOf(['a/Dockerfile'], true)
-    const res = await dockerfiles(VALID)
-    expect(res.body).toEqual({ repo: 'Student/My-App', dockerfiles: ['a/Dockerfile'], truncated: true })
-  })
-
-  it('answers 200 with an empty list for a repo with no commits (GitHub says 409)', async () => {
-    treeAnswer = status(409)
-    const res = await dockerfiles(VALID)
-    expect(res.status).toBe(200)
-    expect(res.body).toEqual({ repo: 'Student/My-App', dockerfiles: [], truncated: false })
-  })
 
   it('reads the default branch (HEAD) of the repo, with no credential and a time limit', async () => {
     const t = await token()
@@ -280,8 +261,6 @@ describe('POST /api/repos/dockerfiles finds Dockerfiles', () => {
 })
 
 describe('POST /api/repos/dockerfiles checks ownership first (same errors as /repos/check)', () => {
-  const noTreeCall = () => expect(callsTo('https://api.github.com/').filter(([url]) => urlOf(url).includes('/git/trees/'))).toHaveLength(0)
-
   it.each([
     ['a repo owned by another account', () => (githubAnswer = repoOwnedBy(1)), 403, 'REPO_NOT_OWNED'],
     ['an organization repo', () => (githubAnswer = repoOwnedBy(Number(GITHUB_ID), 'Organization')), 422, 'REPO_NOT_PERSONAL'],
@@ -292,7 +271,7 @@ describe('POST /api/repos/dockerfiles checks ownership first (same errors as /re
     const res = await dockerfiles(VALID)
     expect(res.status).toBe(code)
     expect(res.body).toEqual(errorBody(errorCode))
-    noTreeCall()
+    expect(callsTo('https://api.github.com/').filter(([url]) => urlOf(url).includes('/git/trees/'))).toHaveLength(0)
   })
 
   it('a bad repo address (400 INVALID_REPO_URL) before calling anyone', async () => {

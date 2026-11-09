@@ -14,6 +14,8 @@ import type { Env } from '../config/env.js'
 import { parseRepoUrl, type RepoRef } from './repo-url.js'
 
 const TIMEOUT_MS = 5000
+// 이름이 정확히 Dockerfile인 파일만(루트 또는 하위 폴더). Dockerfile.prod · *.Dockerfile은 MVP 제외.
+const DOCKERFILE_PATH = /(^|\/)Dockerfile$/
 const GITHUB_HEADERS = { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'woowangthon-platform' }
 
 const authUnavailable = () =>
@@ -38,11 +40,11 @@ export class ReposService {
     return { repo: repo.full_name }
   }
 
-  /** 소유 확인을 통과한 레포의 Dockerfile 경로를 모두 찾는다. 없으면 빈 목록이다(없을 때의 처리는 정해지지 않았다). */
-  async dockerfiles(accessToken: string, repoUrl: unknown): Promise<{ repo: string; dockerfiles: string[]; truncated: boolean }> {
+  /** 소유 확인을 통과한 레포의 Dockerfile 경로를 모두 찾는다. 없으면 빈 목록이다(오류가 아니다). */
+  async dockerfiles(accessToken: string, repoUrl: unknown): Promise<DockerfilesResult> {
     const { ref, repo } = await this.verifyOwnership(accessToken, repoUrl)
     const tree = await this.fetchTree(ref)
-    const dockerfiles = tree.tree.filter((e) => e.type === 'blob' && (e.path === 'Dockerfile' || e.path.endsWith('/Dockerfile'))).map((e) => e.path)
+    const dockerfiles = tree.tree.filter((e) => e.type === 'blob' && DOCKERFILE_PATH.test(e.path)).map((e) => e.path)
     return { repo: repo.full_name, dockerfiles, truncated: tree.truncated }
   }
 
@@ -160,8 +162,19 @@ interface GithubRepo {
   owner: { id: number; type: string }
 }
 
+interface GithubTreeEntry {
+  path: string
+  type: string
+}
+
 interface GithubTree {
-  tree: { path: string; type: string }[]
+  tree: GithubTreeEntry[]
+  truncated: boolean
+}
+
+export interface DockerfilesResult {
+  repo: string
+  dockerfiles: string[]
   truncated: boolean
 }
 
@@ -170,7 +183,10 @@ function isGithubTree(value: unknown): value is GithubTree {
   return (
     typeof truncated === 'boolean' &&
     Array.isArray(tree) &&
-    tree.every((e) => typeof (e as { path?: unknown } | null)?.path === 'string' && typeof (e as { type?: unknown }).type === 'string')
+    tree.every((e) => {
+      const { path, type } = (e ?? {}) as Partial<GithubTreeEntry>
+      return typeof path === 'string' && typeof type === 'string'
+    })
   )
 }
 
