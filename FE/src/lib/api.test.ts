@@ -146,6 +146,19 @@ it('갱신이 오프라인 · 서버 장애로 못 됐으면 로그아웃하지 
   expect(fetchMock).toHaveBeenCalledTimes(1)
 })
 
+it('함께 나간 요청이 이미 갱신했으면 다시 갱신하지 않고 그 토큰으로 다시 보낸다', async () => {
+  auth.getSession
+    .mockResolvedValueOnce({ data: { session: { access_token: 'tok-1' } } })
+    .mockResolvedValueOnce({ data: { session: { access_token: 'tok-9' } } })
+  fetchMock
+    .mockResolvedValueOnce(sessionError())
+    .mockResolvedValueOnce(json(200, { id: 'u1' }))
+  expect(await apiFetch('/api/me')).toEqual({ id: 'u1' })
+  expect(auth.refreshSession).not.toHaveBeenCalled()
+  expect(bearerOf(1)).toBe('Bearer tok-9')
+  expect(auth.signOut).not.toHaveBeenCalled()
+})
+
 it('다시 보낸 요청이 503이면 그 오류를 던지고 로그아웃하지 않는다', async () => {
   refreshed('tok-2')
   fetchMock

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link, NavLink, Outlet } from 'react-router'
+import { Link, NavLink, Outlet, useLocation } from 'react-router'
 import { useAuth } from '../auth/useAuth.ts'
 import { Alert } from '../components/ui/Alert.tsx'
 import { Button } from '../components/ui/Button.tsx'
@@ -10,16 +10,18 @@ const navLinkClass = ({ isActive }: { isActive: boolean }) =>
 // 로그인한 사용자의 화면 틀. RequireAuth 안쪽에서만 쓴다.
 function AppLayout() {
   const { state, signOut } = useAuth()
-  const [signOutFailed, setSignOutFailed] = useState(false)
+  const { pathname } = useLocation()
+  // 실패를 알린 화면을 기억해 두고, 다른 화면으로 가면 안내를 거둔다.
+  const [signOutFailedAt, setSignOutFailedAt] = useState<string | null>(null)
 
   if (state.status !== 'signedIn') return null
 
   async function handleSignOut() {
-    setSignOutFailed(false)
+    setSignOutFailedAt(null)
     try {
       await signOut()
     } catch {
-      setSignOutFailed(true)
+      setSignOutFailedAt(pathname)
     }
   }
 
@@ -50,7 +52,7 @@ function AppLayout() {
         </div>
       </header>
       <main className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-8">
-        {signOutFailed && (
+        {signOutFailedAt === pathname && (
           <Alert title="로그아웃하지 못했어요">
             연결을 확인하고 다시 시도해 주세요.
           </Alert>

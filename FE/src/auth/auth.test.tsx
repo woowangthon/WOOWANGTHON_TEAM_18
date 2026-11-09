@@ -175,4 +175,8 @@ it('readLoginState keeps an internal path and ignores everything else', () => {
   expect(readLoginState({ from: '/\\evil.example' }).from).toBeUndefined()
   expect(readLoginState({ from: 'https://evil.example' }).from).toBeUndefined()
   expect(readLoginState({ from: 42 }).from).toBeUndefined()
+  // 브라우저는 URL의 탭 · 줄바꿈을 지우므로 `/\t/host`는 `//host`와 같다.
+  expect(readLoginState({ from: '/\t/evil.example' }).from).toBeUndefined()
+  expect(readLoginState({ from: '/a\nb' }).from).toBeUndefined()
+  expect(readLoginState({ from: '/a b' }).from).toBeUndefined()
 })

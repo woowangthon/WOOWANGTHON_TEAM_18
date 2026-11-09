@@ -107,6 +107,16 @@ it('says so when logout fails and stays signed in', async () => {
   expect(h1()).toBe('대시보드')
 })
 
+it('removes the logout failure notice once the user goes to another page', async () => {
+  auth.signOut.mockResolvedValue({ error: new Error('offline') })
+  renderApp('/dashboard')
+  fireEvent.click(screen.getByRole('button', { name: '로그아웃' }))
+  await screen.findByText('로그아웃하지 못했어요')
+  fireEvent.click(screen.getByRole('link', { name: '프로필' }))
+  expect(h1()).toBe('프로필')
+  expect(screen.queryByText('로그아웃하지 못했어요')).toBeNull()
+})
+
 it('returns to the page the visitor came for after logging in', async () => {
   auth.signInWithPassword.mockImplementation(() => {
     emit('SIGNED_IN', session)
