@@ -17,5 +17,5 @@ Fix the W3 → W4 deploy input JSON so W0~W3 can be built in parallel, then chan
 ## Done when
 
 - [ ] W0~W3 owner can produce the deploy input from `deploy-handoff.md` alone
-- [ ] `deploy-workflow.md` has no execution modes (full, promote, rollback, candidate) left
+- [ ] `deploy-workflow.md` has no execution modes (full, promote, rollback, candidate) left; the only pipeline option is the fix-PR check (fork source, no Switch)
 - [ ] relative links in the changed docs resolve

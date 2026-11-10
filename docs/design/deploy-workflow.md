@@ -74,7 +74,7 @@ W0 접수 · 사전 검사 → W1 분석 → W2 배포 설정 → W3 비밀값 �
 - **실제 manifest**는 **배포할 때마다 Render 스테이지에서** 만든다. spec + 이미지 digest + 대상 슬롯 → `values.yaml` → `helm template` → `kubectl apply --dry-run=server`로 검사 → DB의 대상 슬롯 줄에 저장.
 - W2에서 미리 만들지 않는 이유: 이미지 digest는 Build 뒤에, 최종 spec은 AI 에이전트가 고친 뒤에 정해진다.
 - 사람도 AI 에이전트도 manifest를 직접 쓰지 않는다. 그래서 결과가 항상 같은 틀에서 나온다.
-- 파이프라인은 실행 모드가 없다. 매번 Build(해시가 같은 서비스는 기존 이미지 사용) → Render → Apply → W6 → 전환을 한다.
+- 파이프라인은 매번 Build(해시가 같은 서비스는 기존 이미지 사용) → Render → Apply → W6 → 전환을 한다. 옵션은 수정 PR 확인용 하나뿐이다: 소스를 봇 fork의 커밋으로 바꾸고 전환(Switch)을 건너뛴다. 이때 `live_slot`과 W7은 바뀌지 않는다.
 
 | manifest | 리소스 | 개수 |
 |---|---|---|
