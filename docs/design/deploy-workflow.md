@@ -62,11 +62,11 @@ W0 접수 · 사전 검사 → W1 분석 → W2 배포 설정 → W3 비밀값 �
 | **W2 배포 설정** | 플랫폼 서버 | 설정 파일 > README > 기본값 순서로 spec을 조립 | 빈칸 · 후보 여러 개 · README와 충돌 → **문제 티켓** |
 | **W3 비밀값 받기** | 플랫폼 서버 | 빠진 필수 env 값을 사용자에게 바로 요청. 받은 값은 **플랫폼 서버가 Tailscale로 k3s API에 접속해 Secret으로 만든다.** GoCD를 거치지 않으므로 실행 기록에 남지 않는다. DB에는 key 이름과 상태만 저장 | 응답이 없으면 "사용자 조치 필요"로 마감 |
 | **W4 빌드** | AWS 실행기 → CodeBuild | 배포 입력으로 서비스별 CodeBuild를 병렬 호출한다. 학생 Dockerfile(`build.dockerfile`) 또는 배포 입력 값(Dockerfile이 없을 때, 빌드 값 사용)으로 빌드 → 이미지 검사 → GHCR에 push. 빌드 입력 해시가 같으면 건너뜀 | 빌드 실패 → **문제 티켓** |
-| **W5 배포** | 리더 실행기 | Prepare: 배포 입력을 받고 필수 Secret key 확인, live 슬롯 보호 검사, 대상 슬롯 비우기(4절). Render: 대상 슬롯 manifest 생성(3절). Apply: AI → BE → FE 순서로 대상 슬롯에 적용 | 배포 실패 → live 슬롯은 그대로 → **문제 티켓** |
+| **W5 배포** | 리더 실행기 | Prepare: 배포 입력을 받고 필수 Secret key 확인, live 슬롯 보호 검사, 대상 슬롯 비우기(4절). Render: 대상 슬롯 manifest 생성(3절). Apply: AI → BE → FE 순서로 대상 슬롯에 적용하고 Ready를 기다린다. 기다리는 동안 대상 슬롯 Pod · 이벤트를 watch하다가 다시 기다려도 나아지지 않는 신호가 보이면 제한 시간 전에 바로 실패로 끝낸다(4절 "제한 시간") | 배포 실패 → live 슬롯은 그대로 → **문제 티켓** |
 | **W6 동작 확인** | 리더 실행기 | 대상 슬롯의 Pod Ready(readinessProbe 통과)와 Service Endpoints를 확인(BE → AI 같은 내부 연결 포함)한다. 공개 서비스(`ingressPath`가 있는 서비스)가 있으면 test Ingress의 대상을 대상 슬롯으로 적용하고, Traefik에 Host `<slug>.test.internal`로 **그 서비스에 있는 경로만** 요청한다(4절 "동작 확인과 전환"). 검사한 항목이 모두 성공해야 통과다 | 실패 → open Ingress를 바꾸지 않음 (live 슬롯은 그대로) → **문제 티켓** |
 | **전환** | 리더 실행기 | open Ingress의 대상을 대상 슬롯의 Service로 바꿔 적용. 첫 배포면 open Ingress를 만든다 | - |
 | **W7 완료 · 보고** | 플랫폼 서버 | DB의 `live_slot`을 대상 슬롯으로 바꾸고 이전 live 슬롯의 Deployment를 0개로 줄임, 사용자에게 주소 · 상태 · 경고 표시, 프로젝트 메모리에 기록, 운영 감시 시작 | - |
-| (운영 중) | 플랫폼 서버 | 재시작 반복 · 메모리 초과를 감시 | 재시작 1회 → **장애 대응 job**의 문제 티켓 |
+| (운영 중) | 플랫폼 서버 | 재시작 반복 · 메모리 초과를 감시. Tailscale로 리더 k3s API에 Pod · 이벤트 watch 연결을 유지해 바뀔 때마다 받는다(주기적으로 조회하지 않는다). 로그는 계속 받지 않고, 문제를 감지한 순간에 최근 10분만 읽는다 | 재시작 1회 → **장애 대응 job**의 문제 티켓 |
 
 ### 3. manifest는 언제 만드나
 
@@ -148,9 +148,18 @@ W6은 배포 입력에 있는 서비스와 설정된 경로만 검사한다. 정
 | 대상 | 제한 | 넘으면 |
 |---|---|---|
 | CodeBuild 빌드 하나 | 15분 (CodeBuild 프로젝트 `timeoutInMinutes`) | 빌드 실패 → 문제 티켓 |
-| Apply 뒤 Pod Ready 대기 | 서비스마다 `startupTimeoutSeconds` + 120초(이미지 pull 몫), 최대 7분 (`kubectl rollout status --timeout`) | 배포 실패 → 문제 티켓. Pod 상태 이유(`ImagePullBackOff`, ResourceQuota 초과 `FailedCreate`, `CrashLoopBackOff`, `Pending`)와 이벤트를 티켓에 넣는다 |
+| Apply 뒤 Pod Ready 대기 | 서비스마다 `startupTimeoutSeconds` + 120초(이미지 pull 몫), 최대 7분 (`kubectl rollout status --timeout`) | 배포 실패 → 문제 티켓. Pod 상태 이유(`ImagePullBackOff`, ResourceQuota 초과 `FailedCreate`, `CrashLoopBackOff`, `Pending`)와 이벤트를 티켓에 넣는다. 아래 신호는 제한 시간을 기다리지 않고 바로 실패로 끝낸다 |
 | W6 Traefik 요청 하나 | 10초, 5초 간격 3번까지 | 확인 실패 → 문제 티켓 |
 | 파이프라인 전체 | 30분 (GoCD job 제한 시간) | 파이프라인 실패 → 문제 티켓 |
+
+**Apply의 빠른 실패.** Apply는 Ready를 기다리는 동안 대상 슬롯의 Pod · 이벤트를 watch한다. 아래 신호는 더 기다려도 나아지지 않으므로, 보이는 즉시 실패로 끝낸다. 그 밖에는 위 제한 시간까지 기다린다.
+
+| 신호 | 어디서 보나 |
+|---|---|
+| `CrashLoopBackOff` | 컨테이너 대기 이유 (`startupProbe`가 끝내 실패해 재시작이 반복될 때도 여기로 온다) |
+| `OOMKilled` | 컨테이너 직전 종료 이유 |
+| ResourceQuota 초과 `FailedCreate` | ReplicaSet 이벤트 |
+| `ImagePullBackOff` · `ErrImagePull` | 컨테이너 대기 이유 (플랫폼 문제로 보고) |
 
 **흐름**
 
@@ -182,11 +191,11 @@ GoCD와 리더는 **이미지를 옮기지 않는다.** 이미지 주소만 mani
 
 ### 6. 문제가 생기면: 문제 티켓과 AI 에이전트
 
-1. 워크플로우가 그 단계에서 **멈추고** 상태를 저장한다(스레드가 기다리지 않는다).
+1. 실패한 GoCD job은 실패할 때만 도는 task(`run_if: failed`)로 그 즉시 플랫폼 서버에 알린다. 플랫폼 서버가 GoCD API를 주기적으로 조회하지 않으므로 알기까지 기다림이 없다. 워크플로우는 그 단계에서 **멈추고** 상태를 저장한다(스레드가 기다리지 않는다).
 2. 실패는 대상 슬롯에서만 난다. live 슬롯은 그대로 서비스하므로 되돌릴 것이 없다.
 3. 플랫폼 문제(CodeBuild API 오류, 이미지 받기 실패, live 슬롯 보호 중단 등)는 코드로 걸러 AI 에이전트를 부르지 않고 보고한다.
-4. 그 밖에는 **문제 티켓**(봉투 + CodeBuild · k3s 출력 원본 + 오류 10분 전부터의 로그)을 만들어 AI 서버에 보낸다. 워크플로우는 티켓 하나(`ticketId`)를 보관하고, 새 티켓이 나오면 덮어쓴다.
-5. AI 에이전트가 MCP 게이트웨이의 도구로 **대상 슬롯에서 직접** Build · Render · Deploy · Verify를 실행하고 결과를 보며 고친다. 에이전트는 사용자 코드를 직접 바꾸지 않는 범위에서 spec · 그 빌드의 CodeBuild 설정 · 대상 슬롯을 조정하고, YAML은 쓰지 않는다.
+4. 그 밖에는 알림을 받은 순간 **문제 티켓**(봉투 + CodeBuild · k3s 출력 원본 + 오류 10분 전부터의 로그)을 만들어 AI 서버에 보낸다. 티켓은 실패 순간의 스냅샷이다(실패한 Pod는 재시작되면 원본이 사라진다). 에이전트는 티켓의 `stage` · `service`로 실패한 단계에서 바로 고치기 시작하고, 그 뒤에 필요한 정보는 관찰 도구로 직접 읽는다. 워크플로우는 티켓 하나(`ticketId`)를 보관하고, 새 티켓이 나오면 덮어쓴다.
+5. AI 에이전트가 MCP 게이트웨이의 도구로 **대상 슬롯에서 직접** Build · Render · Deploy · Verify를 실행하고 결과를 보며 고친다. 실패한 단계부터 다시 하고, 앞 단계는 반복하지 않는다(예: Apply 실패를 `runtime`만 고쳐 다시 배포하면 빌드 입력 해시가 같아 기존 이미지를 쓴다). 에이전트는 사용자 코드를 직접 바꾸지 않는 범위에서 spec · 그 빌드의 CodeBuild 설정 · 대상 슬롯을 조정하고, YAML은 쓰지 않는다.
 6. 에이전트가 **해결 결과**를 돌려준다. `verified`면 플랫폼이 `specPatch`를 검증해 저장하고, 대상 슬롯을 한 번 더 확인한 뒤 **Switch와 W7만** 실행한다(파이프라인을 처음부터 다시 돌리지 않는다). 끝나면 에이전트에 **종료 알림**을 보낸다.
 
 도구, 입력 · 출력 스키마, 행위 범위, 횟수 제한, 장기 메모리는 [AI 에이전트 설계](AIagent.md)에 있다.

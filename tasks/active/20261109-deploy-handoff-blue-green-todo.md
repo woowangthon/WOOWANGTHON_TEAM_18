@@ -17,6 +17,7 @@ Fix the W3 → W4 deploy input JSON so W0~W3 can be built in parallel, then chan
 - [x] Deploy workflow §6: the agent tests fixes on the target slot itself; the platform re-verifies, then runs Switch and W7 — files: `docs/design/deploy-workflow.md`
 - [x] ADR-012: the agent acts only through the platform gateway — files: `docs/adr/012-agent-acts-through-platform-gateway.md`, `docs/system-definition.md`
 - [x] Agent framework PydanticAI instead of LangChain — files: `docs/ai-scope.md`, `docs/system-definition.md`
+- [x] How errors reach the agent: Apply fast-fails on watched Pod signals, failed jobs notify the platform at once (`run_if: failed`), runtime watch for operations, the ticket as a failure-moment snapshot — files: `docs/design/deploy-workflow.md`, `docs/design/AIagent.md`
 
 ## Done when
 
