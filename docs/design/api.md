@@ -154,6 +154,189 @@ FE 흐름은 ① `repos/check` → ② `repos/dockerfiles`와 이 API. 이 API�
 
 오류: `POST /api/repos/check`와 같고, `400 INVALID_COMMIT`(`commit`이 있는데 전체 SHA 모양이 아니다. 외부 호출 전에 거른다)과 `404 COMMIT_NOT_FOUND`(그 레포에 없는 SHA다. GitHub는 없는 SHA · 다른 레포의 SHA · commit이 아닌 tree SHA에 `422`, 커밋이 없는 빈 레포에 `409`, 그 밖에 `404`로 답하고, `200`이어도 돌려준 SHA가 요청한 SHA와 다르면 같은 경우라서 모두 이 오류로 돌려준다)를 더한다. 파일 목록이나 `package.json`을 못 받으면 `503 GITHUB_UNAVAILABLE`을 더한다(이미 소유 확인을 통과한 레포라 사용자 잘못이 아니다). 읽은 `package.json`이 JSON 객체가 아니거나 1,000,000바이트를 넘어 읽지 않았으면(크기는 파일 목록에 있다. 큰 파일로 서버 메모리를 쓰지 못하게 한다) 오류가 아니라, `package.json`에서 알아내는 항목(프레임워크 · 언어 · 빌드/시작 명령 · 출력 폴더 · 포트)이 그 폴더만 판단 필요다. 락 파일과 Dockerfile로 아는 값(패키지 매니저 · 설치 명령 · `dockerfile`)은 그대로 채운다. 읽는 사이 `package.json`이 사라져 `404`가 나도 같다(읽는 사이 push가 있을 수 있다).
 
+## 배포 입력 저장 (이슈 #76)
+
+접수 때 확정한 commit과 사용자가 검토해 고친 배포 설정(spec)을 서버가 검증해 Supabase에 저장한다. W3(비밀값), W4(빌드), 리더의 W5가 모두 같은 값을 읽는다. 배포마다 행 하나이고 저장한 뒤에는 바꾸지 않는다(고치려면 새로 저장한다). 행의 `id`가 배포 입력의 `deployId`다. 실행할 때마다 새로 만드는 `deploy_condition`(`buildInputHash` · `image` 등)은 여기에 담지 않는다([#44](https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/44)).
+
+### `POST /api/deploys` — 배포 입력(commit + spec) 확정 · 저장
+
+FE 흐름은 `repos/check`(commit 확정) → `repos/dockerfiles` · `repos/deploy-spec`(초안) → 사용자가 검토해 고침 → 이 API. 초안이 알 수 없는 칸(`slug` · `name` · `role` · `health` · `ingressPath` · `links` 등)은 사용자가 채우거나 FE가 기본값을 둔다. 서버는 FE가 보낸 값을 믿지 않고 아래 순서로 다시 확인한다(순서와 이유는 [`auth.md`](auth.md#배포-입력-저장)).
+
+요청:
+
+```json
+{
+  "repoUrl": "https://github.com/student/my-app",
+  "commit": "0123456789abcdef0123456789abcdef01234567",
+  "spec": {
+    "project": { "slug": "my-app", "repo": "student/my-app" },
+    "services": [
+      {
+        "name": "fe",
+        "role": "fe",
+        "dir": "FE",
+        "build": {
+          "context": "FE",
+          "dockerfile": null,
+          "framework": "vite-react",
+          "nodeVersion": "22",
+          "install": "pnpm install --frozen-lockfile",
+          "build": "pnpm run build",
+          "start": null,
+          "outputDir": "dist",
+          "buildEnv": { "VITE_API_URL": "/api" }
+        },
+        "runtime": {
+          "kind": "static",
+          "port": 8080,
+          "health": { "type": "http", "path": "/", "startupTimeoutSeconds": 10 },
+          "env": {},
+          "secretKeys": [],
+          "links": [],
+          "ingressPath": "/",
+          "stripPrefix": false,
+          "resources": null
+        }
+      },
+      {
+        "name": "be",
+        "role": "be",
+        "dir": "BE",
+        "build": {
+          "context": ".",
+          "dockerfile": "BE/Dockerfile",
+          "framework": null,
+          "nodeVersion": null,
+          "install": null,
+          "build": null,
+          "start": null,
+          "outputDir": null,
+          "buildEnv": {}
+        },
+        "runtime": {
+          "kind": "server",
+          "port": 3000,
+          "health": { "type": "http", "path": "/api/health", "startupTimeoutSeconds": 60 },
+          "env": { "NODE_ENV": "production" },
+          "secretKeys": ["DATABASE_URL"],
+          "links": [],
+          "ingressPath": "/api",
+          "stripPrefix": false,
+          "resources": null
+        }
+      }
+    ]
+  }
+}
+```
+
+응답 `201`:
+
+```json
+{
+  "id": "6f1c0a52-3b7e-4a40-9a6c-2f5d8e1b7c90",
+  "repo": "student/my-app",
+  "commit": "0123456789abcdef0123456789abcdef01234567",
+  "spec": { "project": { "slug": "my-app", "repo": "student/my-app" }, "services": ["…요청의 spec 그대로"] },
+  "createdAt": "2026-11-10T01:00:00.000Z"
+}
+```
+
+- 요청 본문은 100KB까지다(넘으면 `413 PAYLOAD_TOO_LARGE`). `repoUrl` · `commit` · `spec` 말고 다른 키(`user_id` 등)는 무시한다. 소유자는 항상 로그인 토큰의 사용자다.
+- `commit`은 필수이고 전체 SHA(40자 소문자 16진수)다. `repos/check`가 빈 레포에 주는 `null`은 받지 않는다(배포할 코드가 없다. `400 INVALID_COMMIT`).
+- `repo`는 GitHub가 돌려준 `owner/name` 표기다. `spec.project.repo`는 이 값과 같아야 한다(대소문자는 구분하지 않는다).
+- `spec`은 검증을 통과한 값 그대로 저장하고 돌려준다. 서버가 값을 고치거나 채우지 않는다.
+- `createdAt`은 UTC ISO 8601이다.
+
+**서버가 확인하는 순서** (앞에서 걸리면 뒤는 하지 않는다):
+
+1. 모양 검사(외부 호출 없음): `repoUrl` 모양 → `400 INVALID_REPO_URL`, `commit` → `400 INVALID_COMMIT`, `spec` → `400 INVALID_SPEC`
+2. `repos/check`와 같은 소유 확인(로그인 · GitHub 연동 · 공개 · 개인 레포 · 소유자 대조)
+3. `commit`이 이 레포의 commit인지 확인 → 아니면 `404 COMMIT_NOT_FOUND` (`deploy-spec`과 같다)
+4. `spec.project.repo`가 확인한 레포와 같은지 → 아니면 `400 INVALID_SPEC`
+5. `spec.project.slug`가 다른 사용자나 다른 레포에 이미 쓰이지 않는지 → 쓰이면 `409 SLUG_TAKEN` (같은 사용자의 같은 레포가 다시 저장하는 것은 된다. 클러스터 네임스페이스 `proj-<slug>`와 공개 주소가 `slug`로 정해지기 때문이다)
+6. 저장
+
+**`spec` 검증 규칙.** 표에 있는 칸은 **모두 필수**다(값이 없으면 키를 빼지 말고 `null`을 보낸다. 빠진 키는 `REQUIRED`). 모르는 키는 거부한다(오타가 조용히 저장되지 않게). `400 INVALID_SPEC`은 어긋난 칸을 **칸마다** 알려 준다. 오류 응답의 `error`에 선택 필드 `fields`가 더해진다(다른 오류에는 없다):
+
+```json
+{
+  "error": {
+    "code": "INVALID_SPEC",
+    "message": "spec has invalid fields (first: services[0].build.install)",
+    "fields": [
+      { "path": "services[0].build.install", "code": "REQUIRED" },
+      { "path": "services[1].runtime.port", "code": "OUT_OF_RANGE" }
+    ]
+  }
+}
+```
+
+- `path`: `spec` 안의 칸 경로(`project.slug`, `services[1].runtime.port`, `services[0].runtime.links[0].service`). 배열은 `[번호]`다. 칸 하나가 아니라 값 사이의 규칙을 어긴 경우는 그 규칙이 고치라고 가리키는 칸의 경로다.
+- `code`: 문장이 아니라 코드로 가른다. `message`는 사람이 읽는 요약이라 코드 대신 쓰지 않는다. 한 칸에 코드는 하나이고 최대 20칸까지 알려 준다.
+
+| `code` | 뜻 |
+| --- | --- |
+| `REQUIRED` | 있어야 하는데 없거나 `null`이다 (`dockerfile`이 없으면 필수인 칸 등) |
+| `MUST_BE_NULL` | `null`이어야 하는데 값이 있다 (`dockerfile`이 있으면 `framework` ~ `outputDir`, 정적이면 `start` 등) |
+| `INVALID_TYPE` | JSON 타입이 틀렸다 (문자열 자리에 숫자 등) |
+| `INVALID_VALUE` | 허용 값 목록이나 모양에 맞지 않는다 (`framework`, `nodeVersion`, 경로, 이름 등) |
+| `OUT_OF_RANGE` | 숫자 범위를 벗어났다 (`port`, `startupTimeoutSeconds`, 서비스 개수) |
+| `DUPLICATE` | 서로 달라야 하는 값이 같다 (`services[].name`, `secretKeys`, `links[].env`) |
+| `UNKNOWN_KEY` | 모르는 키다 |
+| `UNKNOWN_SERVICE` | `links[].service`가 `spec.services`에 없는 이름이다 |
+| `RESERVED` | 예약된 이름이다 (`project.slug`) |
+| `CONFLICT` | 칸 사이가 맞지 않는다 (`buildEnv`의 키가 `secretKeys`와 겹침, `env`의 키가 `secretKeys`와 겹침, `links[].env`가 `env`의 키나 `secretKeys`와 겹침, 정적인데 `port`가 8080이 아님, `env` · `secretKeys` · `links`가 비어 있지 않음) |
+| `MISMATCH` | 확인한 레포와 다르다 (`project.repo`) |
+
+FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind` = `server` · `static`, `build.framework` = `vite-react` · `nextjs` · `nest`(또는 `null`), `runtime.health.type` = `http` · `tcp`. `build.nodeVersion`은 서버가 `22` · `22.1` · `22.1.0` 모양만 받고 **변환하지 않는다**(초안의 `engines.node` 원문 `>=22`는 받지 않는다. FE가 `22` 같은 값을 미리 채워 두거나 사용자가 고르게 한다). 초안(`deploy-spec`의 `projects[]`)을 입력(`spec.services[]`)으로 옮기는 것도 이번에는 FE가 한다(초안이 모르는 칸은 사용자가 채운다). 서버는 `spec` 하나를 받아 검증할 뿐이다.
+
+| 칸 | 규칙 |
+| --- | --- |
+| `project.slug` | 소문자 영숫자와 `-`, 영숫자로 시작하고 끝남, 1~58자(`proj-` 접두사를 붙여도 DNS 이름 한도 63자). 예약 이름 불가(초기 목록: `www` · `api` · `admin` · `app` · `platform` · `default` · `kube-system`. 인프라 담당 확인 전 임시) |
+| `project.repo` | `owner/name` |
+| `services` | 1~3개. `name`은 서비스 사이에서 유일 |
+| `services[].name` | 소문자로 시작하는 소문자 영숫자와 `-`, 영숫자로 끝남, 1~52자(시험 배포의 `-candidate`를 붙여도 63자 이내). Deployment · Service 이름이자 클러스터 안 DNS 이름 |
+| `role` | `fe` · `be` · `ai` |
+| `dir` · `build.context` · `build.dockerfile` · `build.outputDir` | 레포 안 상대 경로: `.` 하나이거나 영숫자 · `.` · `_` · `@` · `+` · `-`로 된 조각을 `/`로 이은 것(200자 이하, `/`로 시작 · `..` · `.` 조각 · 빈 조각 · `\` · 공백 불가, 조각은 `-`로 시작할 수 없다: 명령 옵션으로 읽히지 않게). `dockerfile` · `outputDir`은 `null` 가능 |
+| `build.framework` | `null` · `vite-react` · `nextjs` · `nest` |
+| `build.nodeVersion` | `null` 또는 `22` · `22.1` · `22.1.0` 모양 |
+| `build.install` · `build` · `start` | `null` 또는 비어 있지 않은 한 줄 문자열(공백만이거나 줄바꿈이 있으면 불가, 1000자 이하) |
+| `build.buildEnv` · `runtime.env` | 키는 `[A-Za-z_][A-Za-z0-9_]*`(128자 이하, `__proto__` 불가), 값은 문자열(4096자 이하). 항목은 100개까지 |
+| `runtime.kind` | `server` · `static` |
+| `runtime.port` | 1~65535 정수 |
+| `runtime.health` | `type`이 `http`면 `path`는 `/`로 시작하고 공백이 없는 문자열(200자 이하), `tcp`면 `path`는 `null`. `startupTimeoutSeconds`는 1~600 정수 |
+| `runtime.secretKeys` | env 이름 배열(중복 불가, 100개까지). 값은 저장하지 않는다(W3이 Secret으로 따로 넣는다) |
+| `runtime.links` | `{ env, service }` 배열(30개까지, `env`는 서로 달라야 함). `env`는 env 이름이고 `service`는 `spec.services`에 있는 `name` |
+| `runtime.ingressPath` | `null`(내부 전용), `/`, 또는 `/api` · `/api/v1`처럼 끝 슬래시 없는 경로(영숫자 · `.` · `_` · `~` · `-` 조각, 200자 이하) |
+| `runtime.stripPrefix` | 불리언 |
+| `runtime.resources` | 지금은 `null`만 받는다(모양이 정해지면 추가) |
+
+칸 사이의 규칙:
+
+- `build.dockerfile`이 있으면 `framework` · `nodeVersion` · `install` · `build` · `start` · `outputDir`은 모두 `null`
+- `build.dockerfile`이 `null`이면 `framework` · `nodeVersion` · `install` · `build`가 필수, `kind: server`면 `start` 필수 · `outputDir`은 `null`, `kind: static`이면 `outputDir` 필수 · `start`는 `null`
+- `kind: static`이면 `port`는 8080, `env` · `secretKeys` · `links`는 비어 있음
+- `buildEnv`의 키와 `secretKeys`는 겹칠 수 없다(`buildEnv`는 번들에 박히는 공개 값이다)
+- `env`의 키와 `secretKeys`는 겹칠 수 없다(비밀 값이 평문으로 저장되지 않게). `links[].env`도 `env`의 키나 `secretKeys`와 겹칠 수 없다
+
+오류 (`code`: 의미):
+
+- `400 INVALID_REPO_URL` · `400 INVALID_COMMIT` · `400 INVALID_SPEC`: 위 1 · 4번. `INVALID_SPEC`에는 `fields`가 있다. 본문이 JSON이 아니거나 객체 · 배열이 아닌 최상위 값(`"x"`)이면 JSON 파서가 먼저 `400 BAD_REQUEST`로 거른다
+- `413 PAYLOAD_TOO_LARGE`: 요청 본문이 100KB를 넘는다
+- `401 AUTH_REQUIRED` · `401 INVALID_TOKEN`: 로그인 토큰 문제
+- `403 GITHUB_NOT_LINKED` · `403 REPO_NOT_OWNED` · `404 REPO_NOT_FOUND` · `422 REPO_NOT_PERSONAL`: `POST /api/repos/check`와 같다
+- `404 COMMIT_NOT_FOUND`: 그 레포에 없는 commit. 이번에는 "검사한 commit과 입력의 commit이 다르다"는 오류가 따로 없다. 서버가 아직 검사한 commit(#45 보안 검사 결과)을 기억하지 않아서이고, 보안 검사가 들어오면 그 commit과 다를 때의 오류를 이 문서에 더한다. FE는 `COMMIT_NOT_FOUND`를 받으면 `repos/check`부터 다시 하게 하면 된다
+- `409 SLUG_TAKEN`: 다른 사용자나 다른 레포가 쓰는 `slug`
+- `503 AUTH_UNAVAILABLE` · `503 GITHUB_UNAVAILABLE`: `repos/check`와 같다
+- `503 DATABASE_UNAVAILABLE`: 저장소(Supabase)에 닿지 못했거나 서버의 키가 거부당했다. 사용자 잘못이 아니므로 다시 시도하게 한다. 저장됐는지 알 수 없는 시간 초과면 같은 입력을 다시 보내도 된다(이미 저장됐다면 행이 하나 더 생길 뿐 같은 배포를 덮어쓰지 않는다)
+
+### `GET /api/deploys/:id` — 저장한 배포 입력 읽기
+
+응답 `200`: `POST /api/deploys`의 `201`과 같은 모양(`id` · `repo` · `commit` · `spec` · `createdAt`).
+
+오류: `401`(위와 같다), `404 DEPLOY_NOT_FOUND`(없는 `id`이거나 내 것이 아니다. `id`가 UUID 모양이 아니어도 같다. 남의 배포가 있는지 알려 주지 않으려는 것이다), `503 DATABASE_UNAVAILABLE`.
+
 ## <그룹명> (SRS §2.4)
 
 ### `METHOD /path` — 한 줄 설명 (FR-NNN)

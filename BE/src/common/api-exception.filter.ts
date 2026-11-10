@@ -11,7 +11,11 @@ export class ApiExceptionFilter implements ExceptionFilter {
 
     if (exception instanceof HttpException) {
       const status = exception.getStatus()
-      res.status(status).json({ error: { code: codeOf(exception.getResponse(), status), message: exception.message } })
+      const body = exception.getResponse()
+      const error: Record<string, unknown> = { code: codeOf(body, status), message: exception.message }
+      // 검증 오류가 칸마다 알리는 목록(INVALID_SPEC). 다른 오류에는 없다.
+      if (typeof body === 'object' && 'fields' in body && Array.isArray(body.fields)) error.fields = body.fields
+      res.status(status).json({ error })
       return
     }
 

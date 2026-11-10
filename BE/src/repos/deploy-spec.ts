@@ -1,5 +1,6 @@
 // 배포 설정 초안: package.json과 락 파일 이름으로 프레임워크 · 패키지 매니저 · 명령을 채운다. 규칙 코드이고 AI가 아니다.
 // 규칙과 응답 모양은 docs/design/api.md의 `POST /api/repos/deploy-spec`.
+import { isRecord } from '../common/is-record.js'
 
 /** 한 번에 읽는 package.json 폴더 수. 큰 모노레포(vite 레포는 317개)가 호출 수를 키우지 못하게 한다. */
 export const MAX_PACKAGES = 10
@@ -66,7 +67,6 @@ const FRAMEWORKS: Record<Framework, { outputDir: string | null; port: number | n
 const none = { value: null, source: null } as const
 const noCommand: Command = { value: null, script: null, source: null }
 
-const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 export const join = (dir: string, name: string) => (dir === '.' ? name : `${dir}/${name}`)
 // 경로의 폴더. 폴더 이름에도 쓴다(레포 루트는 '.').
 const parent = (path: string) => (path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '.')
