@@ -337,6 +337,112 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
 
 오류: `401`(위와 같다), `404 DEPLOY_NOT_FOUND`(없는 `id`이거나 내 것이 아니다. `id`가 UUID 모양이 아니어도 같다. 남의 배포가 있는지 알려 주지 않으려는 것이다), `503 DATABASE_UNAVAILABLE`.
 
+## AI 에이전트 (플랫폼 서버 ↔ AI 서버)
+
+배포 실패를 고치는 AI 에이전트와 플랫폼 서버가 주고받는 약속이다. 흐름 · 티켓 · 결과의 뜻은 [AI 에이전트 설계](AIagent.md), 언제 부르는지는 [배포 워크플로우](deploy-workflow.md) §6에 있다. 두 서버는 같은 EC2의 컨테이너이고, 이 API는 **컨테이너 사이 내부 망에서만** 열고 공개 주소(`/api`)에 붙이지 않는다. 로그인 토큰(사용자)이 아니라 아래 서버 사이 토큰을 쓴다.
+
+| 방향 | 무엇 | 어디 |
+| --- | --- | --- |
+| 플랫폼 → AI | 티켓 접수, 종료 알림 | AI 서버 `POST /agent/tickets` · `POST /agent/tickets/{ticketId}/close` |
+| AI → 플랫폼 | 도구 호출, 해결 결과 제출 | 플랫폼 서버 MCP 게이트웨이 (Streamable HTTP), 결과는 도구 `submit_result` |
+
+**토큰**
+
+| 토큰 | 누가 만드나 | 어디에 쓰나 | 범위 |
+| --- | --- | --- | --- |
+| `AGENT_API_TOKEN` | 운영자가 두 서버의 env에 같은 값으로 넣는다 | 플랫폼 → AI 요청의 `Authorization: Bearer` | 고정. 비밀값이라 로그 · 응답에 남기지 않는다 |
+| 게이트웨이 토큰 | 플랫폼 서버가 티켓마다 무작위로 만든다 | AI → 게이트웨이 요청의 `Authorization: Bearer` | 그 티켓 하나. 종료 알림을 보내거나, 해결 결과를 받거나, 15분(파이프라인 대기 제외)이 지나면 무효 |
+
+게이트웨이 토큰이 티켓을 가리키므로 도구에는 `ticketId` 인자가 없다. 게이트웨이 주소는 AI 서버 env(`GATEWAY_URL`)로 고정하고, 요청 본문으로 받지 않는다(AI 서버가 받은 주소로 토큰을 보내지 않게).
+
+### `POST /agent/tickets` — 문제 티켓 접수 (AI 서버)
+
+요청:
+
+```json
+{
+  "ticket": { "ticketId": "t_0013", "commitSha": "…", "stage": "apply", "service": "be", "targetSlot": "b", "deployInput": {}, "errorMessage": "…", "raw": { "codebuild": null, "k8s": { "pod": {}, "events": [] } }, "logs": { "from": "…", "to": "…", "lines": [] }, "previous": null },
+  "gateway": { "token": "gw_…", "expiresAt": "2026-11-10T13:27:00Z" }
+}
+```
+
+- `ticket`: [AI 에이전트 설계](AIagent.md) §5의 티켓 그대로. 플랫폼이 실패 알림을 받은 순간의 스냅샷이고, 외부 전송 필터를 거친 값이다.
+- `gateway.token`: 이 티켓에만 쓰는 게이트웨이 토큰.
+
+응답 `202`: `{ "ticketId": "t_0013" }`. 에이전트 실행은 응답 뒤에 시작한다(플랫폼은 끝날 때까지 기다리지 않는다). 같은 `ticketId`를 다시 보내면 새로 시작하지 않고 같은 `202`를 준다(재전송용).
+
+오류: `401 AUTH_REQUIRED`(토큰 없음 · 틀림), `400 INVALID_TICKET`(모양이 §5와 다름. `fields`는 `POST /api/deploys`의 `INVALID_SPEC`과 같은 모양), `503 AGENT_BUSY`(동시에 돌 수 있는 에이전트 수를 넘음. 플랫폼은 잠시 뒤 다시 보낸다).
+
+### `POST /agent/tickets/{ticketId}/close` — 종료 알림 (AI 서버)
+
+요청: [AI 에이전트 설계](AIagent.md) §7 그대로 `{ "ticketId", "commitSha", "reason": "success" | "superseded" | "stopped" }`.
+
+응답 `204`. 실행 중이면 멈추고, `success`면 그 티켓에 쓴 case의 `stats.solved`를 올린다. 모르는 `ticketId`도 `204`다(이미 끝난 티켓의 재전송).
+
+오류: `401 AUTH_REQUIRED`, `400 INVALID_CLOSE`.
+
+### MCP 게이트웨이 — 도구 (플랫폼 서버)
+
+- 전송: MCP Streamable HTTP, 플랫폼 서버의 내부 포트(`GATEWAY_PORT`, 공개 포트와 다르다) `POST /mcp`.
+- 도구 목록 · 하는 일 · 티켓당 횟수는 [AI 에이전트 설계](AIagent.md) §3이다. 여기는 인자와 결과의 모양만 고정한다.
+- 결과는 MCP 도구 결과의 `structuredContent`에 아래 JSON으로 담는다. 실행이 실패해도(빌드 실패, Ready 안 됨) 도구 호출은 성공이고 `ok: false`다. 게이트웨이가 거절한 호출만 `isError: true`이고 `structuredContent`는 `{ "code", "message" }`다.
+- `run_*` · `wait_target_ready`는 파이프라인이 끝날 때까지 기다렸다가 답한다(최대 30분). AI 서버의 MCP 클라이언트는 호출 제한 시간을 35분으로 둔다.
+- `specPatch`는 JSON Patch(RFC 6902) 배열이고 경로 규칙은 §6과 같다. 그 실행에만 적용한다.
+- `source`는 `{ "commitSha": "<봇 fork의 40자 SHA>" }`이고 `edit_repo_file`이 돌려준 값만 받는다.
+- 로그 · 원본은 외부 전송 필터를 거친 값이다. 원본 k3s 객체에서 `metadata.managedFields`와 적용 기록 annotation은 뺀다.
+
+**실행**
+
+| 도구 | 인자 | 결과 `structuredContent` |
+| --- | --- | --- |
+| `run_build` | `service`, `specPatch?`, `source?`, `buildOverrides?` (`{ computeType?, timeoutMinutes?, image?, cache? }`) | `{ ok, reused, build: <BatchGetBuilds builds[0] 원본> \| null, failedPhase: string \| null, logTail: string[] (최대 200줄), image: string \| null }` |
+| `run_render` | `specPatch?` | `{ ok, status: <k3s Status 원본> \| null }` |
+| `run_deploy` | `specPatch?`, `source?` | `{ ok, services: [{ service, ready, reason: string \| null }], pods: [<Pod 원본>], events: [<Event 원본>] }` |
+| `run_verify` | 없음 | `{ ok, ready: [{ service, ready }], requests: [{ service, path, status: number \| null, ms: number \| null, error: string \| null }] }` |
+
+**관찰**
+
+| 도구 | 인자 | 결과 |
+| --- | --- | --- |
+| `get_target_status` | `service?` (없으면 대상 슬롯 전체) | `{ pods: [<Pod 원본>], events: [<Event 원본>], rollouts: [{ service, ready, updated, available }] }` |
+| `read_pod_logs` | `service`, `lines?` (1~200, 기본 100), `previous?` (기본 `false`) | `{ lines: string[] }` |
+| `read_build_logs` | `service`, `fromLine?` (기본 마지막 200줄), `lines?` (1~200) | `{ fromLine, lines: string[] }` |
+| `read_repo` | `path` (레포 안 상대 경로, `.`은 루트), `source?` (없으면 티켓의 `commitSha`) | 폴더: `{ type: "dir", entries: [{ name, type: "file" \| "dir", size }] }`, 파일: `{ type: "file", content, truncated }` (200KB 넘으면 자름) |
+| `read_memory` | `stage?`, `caseId?` | `{ cases: [<case, §8 모양>] }` |
+
+**대상 슬롯 운영**
+
+| 도구 | 인자 | 결과 |
+| --- | --- | --- |
+| `restart_target` | `service` | `{ ok }` |
+| `scale_target` | `service`, `replicas` (`0` \| `1`) | `{ ok }` |
+| `wait_target_ready` | `service`, `timeoutSeconds?` (1~420, 기본 300) | `{ ok, pods: [<Pod 원본>], events: [<Event 원본>] }` |
+
+**레포 수정 · 끝내기**
+
+| 도구 | 인자 | 결과 |
+| --- | --- | --- |
+| `edit_repo_file` | `files: [{ path, content }]` (한 번에 바꿀 파일 전체 내용), `message` (commit 메시지) | `{ source: { commitSha }, files: string[], changedLines }` |
+| `open_pr` | `source`, `title`, `body` | `{ url }` \| fork가 막혔으면 `{ url: null, patch }` |
+| `submit_result` | `result` ([AI 에이전트 설계](AIagent.md) §6 그대로) | `{ accepted: true }`. 이 호출 뒤 게이트웨이 토큰은 무효다 |
+
+**게이트웨이가 거절할 때의 `code`**
+
+| `code` | 뜻 |
+| --- | --- |
+| `INVALID_ARGUMENT` | 인자 모양이 틀림 (모르는 서비스 이름 포함) |
+| `TOOL_LIMIT` | 그 도구의 티켓당 횟수 또는 전체 20회를 넘음 |
+| `TIME_LIMIT` | 에이전트 작업 15분(파이프라인 대기 제외)을 넘음 |
+| `REPEATED_CALL` | 같은 도구 · 같은 인자를 연속 세 번째로 부름 |
+| `PATCH_FORBIDDEN` | `specPatch` 경로가 허용 밖이거나, 첫 배포 뒤 `name` · `slug`를 고침 |
+| `INVALID_SPEC` | 패치를 적용한 spec이 배포 입력 검증 규칙을 어김 (`fields` 포함) |
+| `OVERRIDE_LIMIT` | `buildOverrides`가 상한 밖 |
+| `LIVE_SLOT_PROTECTED` | 대상 슬롯이 live 슬롯과 같아 보여 중단함 (플랫폼 문제로도 보고된다) |
+| `EDIT_FORBIDDEN` | 금지 파일(`.env` · `.github/`), 파일 5개 · 50줄 초과, 비밀값처럼 보이는 문자열 |
+| `NOT_VERIFIED` | `open_pr`의 `source`로 `run_verify`를 통과한 적이 없음 |
+| `INVALID_RESULT` | `submit_result`의 `result`가 §6 스키마와 다르거나 `commitSha`가 티켓과 다름 |
+| `TICKET_CLOSED` | 토큰이 무효 (종료 알림 · 결과 제출 · 시간 초과 뒤) |
+
 ## <그룹명> (SRS §2.4)
 
 ### `METHOD /path` — 한 줄 설명 (FR-NNN)

@@ -18,6 +18,7 @@ Fix the W3 → W4 deploy input JSON so W0~W3 can be built in parallel, then chan
 - [x] ADR-012: the agent acts only through the platform gateway — files: `docs/adr/012-agent-acts-through-platform-gateway.md`, `docs/system-definition.md`
 - [x] Agent framework PydanticAI instead of LangChain — files: `docs/ai-scope.md`, `docs/system-definition.md`
 - [x] How errors reach the agent: Apply fast-fails on watched Pod signals, failed jobs notify the platform at once (`run_if: failed`), runtime watch for operations, the ticket as a failure-moment snapshot — files: `docs/design/deploy-workflow.md`, `docs/design/AIagent.md`
+- [x] Platform ↔ AI server contract (ticket intake, close notice, per-ticket gateway token, MCP tool arguments/results, rejection codes) so the pipeline and agent tracks can be built in parallel — files: `docs/design/api.md`, `docs/design/AIagent.md`
 
 ## Done when
 
