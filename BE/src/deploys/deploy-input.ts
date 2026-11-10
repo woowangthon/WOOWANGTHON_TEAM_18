@@ -57,8 +57,11 @@ interface Service {
   }
 }
 
-// 공개 주소 <slug>.<도메인>의 예약 이름. 인프라 담당이 확정하기 전의 임시 목록이다.
-const RESERVED_SLUGS = new Set(['www', 'api', 'admin', 'app', 'platform', 'default', 'kube-system'])
+// 공개 주소 <slug>.<도메인>의 예약 이름. 목록의 정본은 docs/design/cluster.md §9(예약 이름)이고, 그 목록과 같게 둔다.
+const RESERVED_SLUGS = new Set([
+  ...['app', 'api', 'www', 'admin', 'account', 'auth', 'login', 'platform', 'dashboard', 'status', 'docs', 'blog', 'cdn', 'static', 'grafana'],
+  ...['mail', 'smtp', 'demo', 'test', 'dev', 'staging', 'default', 'kube-system'],
+])
 const MAX_SERVICES = 3
 const MAX_MAP_ENTRIES = 100
 const MAX_VALUE_LENGTH = 4096
@@ -66,9 +69,9 @@ const MAX_COMMAND_LENGTH = 1000
 const MAX_PATH_LENGTH = 200
 const MAX_LINKS = 30
 
-const SLUG = /^[a-z0-9]([a-z0-9-]{0,56}[a-z0-9])?$/
+const SLUG = /^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/
 const REPO = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/
-const SERVICE_NAME = /^[a-z]([a-z0-9-]{0,50}[a-z0-9])?$/
+const SERVICE_NAME = /^[a-z]([a-z0-9-]{0,28}[a-z0-9])?$/
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/
 const NODE_VERSION = /^\d{1,2}(\.\d{1,3}){0,2}$/
 // 공개 경로는 `/` 하나이거나 `/api` · `/api/v1`처럼 끝 슬래시 없는 경로 조각이다.
@@ -115,6 +118,12 @@ export function validateSpec(input: unknown): { ok: true; spec: Spec } | { ok: f
     if (!ok(v)) return void add(path, 'INVALID_VALUE')
     return v
   }
+  // 서로 달라야 하는 값. 읽지 못한 칸(undefined)은 세지 않고, 겹치면 뒤에 나온 쪽 칸에 알린다.
+  const unique = (seen: Set<string>, v: string | undefined, path: string) => {
+    if (v === undefined) return
+    if (seen.has(v)) add(path, 'DUPLICATE')
+    seen.add(v)
+  }
   const oneOf = (v: unknown, path: string, allowed: string[]) => text(v, path, (s) => allowed.includes(s))
   const int = (v: unknown, path: string, min: number, max: number): number | undefined => {
     if (typeof v !== 'number' || !Number.isInteger(v)) return void add(path, 'INVALID_TYPE')
@@ -155,19 +164,18 @@ export function validateSpec(input: unknown): { ok: true; spec: Spec } | { ok: f
     // links의 service가 가리킬 수 있는 이름. 문자열이 아닌 name은 칸 검사에서 이미 걸린다.
     const names = new Set(services?.map((s) => (isRecord(s) && typeof s.name === 'string' ? s.name : '')))
     const taken = new Set<string>()
+    const roles = new Set<string>()
+    const ingressPaths = new Set<string>()
     services?.forEach((raw, i) => {
       const path = `services[${i}]`
       const svc = shape(raw, path, ['name', 'role', 'dir', 'build', 'runtime'])
       if (!svc) return
       const name = text(svc.name, `${path}.name`, (s) => SERVICE_NAME.test(s))
-      if (name !== undefined) {
-        if (taken.has(name)) add(`${path}.name`, 'DUPLICATE')
-        taken.add(name)
-      }
-      oneOf(svc.role, `${path}.role`, ROLES)
+      unique(taken, name, `${path}.name`)
+      unique(roles, oneOf(svc.role, `${path}.role`, ROLES), `${path}.role`)
       relPath(svc.dir, `${path}.dir`)
 
-      const { kind, secretKeys } = runtimeOf(svc.runtime, `${path}.runtime`, names)
+      const { kind, secretKeys } = runtimeOf(svc.runtime, `${path}.runtime`, names, ingressPaths)
       buildOf(svc.build, `${path}.build`, kind, secretKeys)
     })
   }
@@ -175,7 +183,7 @@ export function validateSpec(input: unknown): { ok: true; spec: Spec } | { ok: f
   return issues.length === 0 ? { ok: true, spec: input as Spec } : { ok: false, issues }
 
   // runtime 칸. build의 규칙이 kind와 secretKeys를 보므로 그 두 값을 돌려준다(읽지 못했으면 undefined).
-  function runtimeOf(raw: unknown, path: string, names: Set<string>): { kind?: string; secretKeys?: unknown[] } {
+  function runtimeOf(raw: unknown, path: string, names: Set<string>, ingressPaths: Set<string>): { kind?: string; secretKeys?: unknown[] } {
     const runtime = shape(raw, path, ['kind', 'port', 'health', 'env', 'secretKeys', 'links', 'ingressPath', 'stripPrefix', 'resources'])
     if (!runtime) return {}
     const kind = oneOf(runtime.kind, `${path}.kind`, KINDS)
@@ -187,7 +195,7 @@ export function validateSpec(input: unknown): { ok: true; spec: Spec } | { ok: f
       const type = oneOf(health.type, `${path}.health.type`, HEALTH_TYPES)
       if (type === 'http') text(health.path, `${path}.health.path`, (s) => HEALTH_PATH.test(s) && s.length <= MAX_PATH_LENGTH)
       else if (type === 'tcp' && health.path !== null) add(`${path}.health.path`, 'MUST_BE_NULL')
-      int(health.startupTimeoutSeconds, `${path}.health.startupTimeoutSeconds`, 1, 600)
+      int(health.startupTimeoutSeconds, `${path}.health.startupTimeoutSeconds`, 5, 300)
     }
 
     const env = stringMap(runtime.env, `${path}.env`)
@@ -219,7 +227,11 @@ export function validateSpec(input: unknown): { ok: true; spec: Spec } | { ok: f
       if (links && links.length > 0) add(`${path}.links`, 'CONFLICT')
     }
 
-    if (runtime.ingressPath !== null) text(runtime.ingressPath, `${path}.ingressPath`, (s) => URL_PATH.test(s) && s.length <= MAX_PATH_LENGTH)
+    if (runtime.ingressPath !== null) {
+      const ingressPath = text(runtime.ingressPath, `${path}.ingressPath`, (s) => URL_PATH.test(s) && s.length <= MAX_PATH_LENGTH)
+      // 같은 문자열만 겹침으로 본다. 앞부분이 겹치는 경로(`/`와 `/api`, `/api`와 `/api/v1`)는 deploy-handoff.md대로 허용한다.
+      unique(ingressPaths, ingressPath, `${path}.ingressPath`)
+    }
     if (typeof runtime.stripPrefix !== 'boolean') add(`${path}.stripPrefix`, 'INVALID_TYPE')
     // 모양이 정해지지 않았다. 정해지면 이 검사를 넓힌다.
     if (runtime.resources !== null) add(`${path}.resources`, 'INVALID_VALUE')
