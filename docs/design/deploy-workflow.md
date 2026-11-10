@@ -113,6 +113,7 @@ W0 접수 · 사전 검사 → W1 분석 → W2 배포 설정 → W3 비밀값 �
 - Pod 라벨은 `app: <서비스>`, `slot: a | b`. 슬롯 Service의 selector도 같은 두 라벨을 쓴다.
 - 서비스 사이 주소(`links`)는 같은 슬롯끼리 잇는다. 슬롯 B의 BE에는 `AI_URL=http://ai-b:<port>`를 넣는다.
 - 일반 env(ConfigMap)는 spec으로 슬롯마다 만든다. 비밀값은 Secret 하나를 두 슬롯이 같이 쓴다.
+- 확인 중에는 live 슬롯과 대상 슬롯의 Pod가 같이 떠서, 둘 다 네임스페이스 하나의 ResourceQuota([클러스터 설계](cluster.md) §6: Pod 10개, 요청 CPU 4 · 메모리 16Gi, 상한 CPU 8 · 메모리 32Gi)를 나눠 쓴다. 컨테이너 상한을 LimitRange 기본값(CPU 2)에 맡기면 서비스 3개 × 슬롯 2 = CPU 12로 상한을 넘어 대상 슬롯 Pod가 만들어지지 않는다. 그래서 Render가 `resources`가 `null`인 컨테이너에 요청 CPU 250m · 메모리 256Mi, 상한 CPU 1 · 메모리 2Gi를 직접 넣고, 배포 입력 검증에서 자원 합계 × 2가 ResourceQuota 안인지 확인한다([배포 입력](deploy-handoff.md) 검증 규칙).
 - open Ingress는 live 슬롯의 Service 이름(`fe-a`, `be-a` 등)을 가리킨다. 전환은 이 이름을 바꿔 다시 적용하는 것이다. FE · BE가 한 번에 바뀐다.
 
 **동작 확인과 전환**
