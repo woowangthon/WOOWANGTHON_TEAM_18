@@ -134,7 +134,24 @@
 |---|---|---|---|
 | `commitSha` | 문자열 (40자 hex) | W0 | 빌드할 커밋. 브랜치 이름이나 `HEAD`를 쓰지 않는다 |
 | `deploy_condition.secretHash` | 문자열 \| `null` | W3 | W3이 Secret에 넣은 값들의 sha256. 비밀 env가 없으면 `null`. 값이 바뀌면 W4가 Pod를 다시 띄운다 |
-| `deploy_condition.services` | `null` | W4 | W3까지는 항상 `null` |
+| `deploy_condition.services` | `null` \| 객체 | W4 | W3까지는 항상 `null`. W4가 아래 모양으로 채운다 |
+
+**`deploy_condition.services`** (W4가 채운다)
+
+키는 `spec.services[].name`이고, 값은 서비스마다 아래 객체다.
+
+```json
+"services": {
+  "fe": { "buildInputHash": "sha256:...", "build": "reuse", "image": "ghcr.io/woowangthon/my-app-fe@sha256:..." },
+  "be": { "buildInputHash": "sha256:...", "build": "run", "image": null }
+}
+```
+
+| 필드 | 타입 | 뜻 |
+|---|---|---|
+| `buildInputHash` | 문자열 (`sha256:` + 64자 hex) | `commitSha` + 그 서비스의 `spec.build` + 플랫폼 기본 Dockerfile 버전의 해시 |
+| `build` | `run` \| `reuse` | `build_cache`에 같은 해시의 이미지가 있으면 `reuse`, 없으면 `run` |
+| `image` | 문자열 \| `null` | 이미지 digest 주소. `reuse`면 W4 시작 때, `run`이면 빌드가 끝난 뒤 채운다 |
 
 **`spec.project`**
 
@@ -198,7 +215,8 @@ W4는 배포 입력을 받으면 아래 규칙으로 검사한다. 하나라도 
 | `links[].service` | `spec.services`에 있는 `name` |
 | `ingressPath` | 서비스끼리 겹치지 않음 |
 | `health.type: http` | `health.path` 필수 |
-| `deploy_condition.services` | 검사하지 않음 (W4가 덮어쓴다) |
+| `deploy_condition.services` (W3에서 받을 때) | 검사하지 않음 (W4가 덮어쓴다) |
+| `deploy_condition.services` (W4가 채운 뒤) | 키 집합이 `spec.services[].name`과 같음. `build: reuse`면 `image` 필수, `build: run`이면 빌드 전 `image`는 `null` |
 
 ## 알려진 한계
 
