@@ -48,6 +48,7 @@ Checkable rules: [`docs/conventions.md`](docs/conventions.md).
 | Code rules, markers, commits | [`docs/conventions.md`](docs/conventions.md) |
 | Commands, versions and pitfalls of `FE/` | [`FE/CLAUDE.md`](FE/CLAUDE.md) |
 | Commands, versions and pitfalls of `BE/` | [`BE/CLAUDE.md`](BE/CLAUDE.md) |
+| Commands, versions and pitfalls of `AI/` | [`AI/CLAUDE.md`](AI/CLAUDE.md) |
 | What is AI / mock / external / unverified | [`docs/ai-scope.md`](docs/ai-scope.md) |
 | Presentation and demo video | [`docs/pitch.md`](docs/pitch.md) |
 | Task notes | [`tasks/`](tasks/README.md) |
@@ -57,13 +58,13 @@ Link to docs with plain paths, never `@path` — an `@` import loads the whole f
 
 ## Commands
 
-Run `pnpm verify` in the folder you changed (`FE/` or `BE/`) before every commit. Commands, versions and stack pitfalls are in [`FE/CLAUDE.md`](FE/CLAUDE.md) and [`BE/CLAUDE.md`](BE/CLAUDE.md).
+Run `pnpm verify` in the folder you changed (`FE/` or `BE/`) before every commit; in `AI/` run its verify line. Commands, versions and stack pitfalls are in [`FE/CLAUDE.md`](FE/CLAUDE.md), [`BE/CLAUDE.md`](BE/CLAUDE.md) and [`AI/CLAUDE.md`](AI/CLAUDE.md).
 
-AI and the mutation-test command: TBD — added with each stack.
+The mutation-test command: TBD.
 
 ## Pitfalls
 
 - **`pkill -f <word>` kills the agent's own shell.** The word is in the shell's own command line, so the shell dies (exit 144). Stop a process by port or pid, or use a `[n]est`-style pattern.
 - **Edit draw.io diagrams through the model embedded in the SVG.** Pull the `content` attribute out as a `.drawio`, change cells by id and re-export with `draw.io -x -f svg -e`; the CLI export rewrites the whole file, and a web save renames cell ids and can rename tabs. Scripted edits find cells by their whole text and assert how many matched.
 
-Add more lessons everyone should know as they come up ([CONTRIBUTING.md §1 step 8](CONTRIBUTING.md#1-how-we-work-sdd--task-workflow)); stack-specific ones go to [`FE/CLAUDE.md`](FE/CLAUDE.md) or [`BE/CLAUDE.md`](BE/CLAUDE.md).
+Add more lessons everyone should know as they come up ([CONTRIBUTING.md §1 step 8](CONTRIBUTING.md#1-how-we-work-sdd--task-workflow)); stack-specific ones go to [`FE/CLAUDE.md`](FE/CLAUDE.md), [`BE/CLAUDE.md`](BE/CLAUDE.md) or [`AI/CLAUDE.md`](AI/CLAUDE.md).

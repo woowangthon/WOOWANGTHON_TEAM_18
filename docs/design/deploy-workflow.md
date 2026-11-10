@@ -169,7 +169,7 @@ W6은 배포 입력에 있는 서비스와 설정된 경로만 검사한다. 정
 | 새 커밋 | B | 슬롯 B에 배포 → W6 → open Ingress를 B로 변경 → 슬롯 A Deployment 0개 | A → B |
 | 그다음 커밋 | A | 슬롯 A 비우기 → 슬롯 A에 배포 → W6 → open Ingress를 A로 변경 → 슬롯 B Deployment 0개 | B → A |
 
-- 대상 슬롯은 W4 시작 때 플랫폼 서버가 `live_slot`의 반대쪽으로 정한다. 첫 배포는 A다.
+- 대상 슬롯은 W4 시작 때 플랫폼 서버가 `live_slot`의 반대쪽으로 정한다. 첫 배포는 A다. 이 계산과 `deploy_condition.services`(빌드 입력 해시 · run/reuse) 채우기는 플랫폼 서버의 `DeployConditionService.prepare`(`BE/src/deploys/`)가 하고 아무것도 저장하지 않는다. 슬롯 줄은 Prepare가 바꾼다.
 - **live 슬롯 보호**: Prepare는 비우기 전에 클러스터의 open Ingress를 읽어 backend Service 이름의 슬롯(`-a` / `-b`)을 확인한다. 그 슬롯이 대상 슬롯과 같거나, backend들이 서로 다른 슬롯을 가리키면 비우지 않고 파이프라인을 중단한다. DB의 `live_slot`이 틀려도 live 슬롯은 지워지지 않는다. open Ingress가 없으면(첫 배포) 그대로 진행한다. 이 중단은 플랫폼 문제로 보고하고 AI 에이전트를 부르지 않는다.
 - **슬롯 비우기**: 그 슬롯에 배포하기 직전에 `slot` 라벨이 그 슬롯인 Deployment · Service · ConfigMap을 모두 지우고, DB의 그 슬롯 줄을 새 배포 입력으로 통째로 바꾼다. Secret과 `build_cache`는 지우지 않는다.
 - 전환 직후에는 이전 live 슬롯을 지우지 않고 Deployment만 0개로 줄인다.
