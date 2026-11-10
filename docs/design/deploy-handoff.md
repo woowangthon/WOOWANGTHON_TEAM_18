@@ -142,7 +142,7 @@
 
 ```json
 "services": {
-  "fe": { "buildInputHash": "sha256:...", "build": "reuse", "image": "ghcr.io/woowangthon/my-app-fe@sha256:..." },
+  "fe": { "buildInputHash": "sha256:...", "build": "reuse", "image": "ghcr.io/<봇 계정>/student-apps@sha256:..." },
   "be": { "buildInputHash": "sha256:...", "build": "run", "image": null }
 }
 ```
@@ -152,6 +152,8 @@
 | `buildInputHash` | 문자열 (`sha256:` + 64자 hex) | `commitSha` + 그 서비스의 `spec.build` + 플랫폼 기본 Dockerfile 버전의 해시 |
 | `build` | `run` \| `reuse` | `build_cache`에 같은 해시의 이미지가 있으면 `reuse`, 없으면 `run` |
 | `image` | 문자열 \| `null` | 이미지 digest 주소. `reuse`면 W4 시작 때, `run`이면 빌드가 끝난 뒤 채운다 |
+
+이미지는 모든 프로젝트 · 서비스가 공개 패키지 하나 `ghcr.io/<봇 계정>/student-apps`를 쓴다. 태그는 `<slug>-<name>-<buildInputHash 앞 12자>`이고, manifest에는 태그가 아니라 digest(`@sha256:...`)를 넣는다. GHCR은 새 패키지를 비공개로 만들므로([ADR-003](../adr/003-registry-ghcr.md)), 프로젝트 · 서비스마다 패키지를 만들면 노드가 토큰 없이 받을 수 없다.
 
 **`spec.project`**
 
