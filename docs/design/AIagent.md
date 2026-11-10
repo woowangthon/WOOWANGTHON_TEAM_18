@@ -299,11 +299,10 @@ buildspec · 서비스 역할(IAM) · 환경 변수 override는 받지 않는다
   "stage": "apply",
   "category": "spec",
   "title": "헬스체크 실패 (포트 · 경로 · 시작 시간)",
-  "match": {
-    "path": "raw.k8s.events[*].reason",
-    "equals": "Unhealthy",
-    "messageRegex": "(Readiness|Startup) probe failed"
-  },
+  "match": { "all": [
+    { "path": "raw.k8s.events[*].reason", "equals": "Unhealthy" },
+    { "path": "raw.k8s.events[*].message", "regex": "(Readiness|Startup|Liveness) probe failed" }
+  ] },
   "playbook": [
     { "tool": "read_pod_logs", "args": { "lines": 100 } },
     { "tool": "run_render", "when": "로그의 listen 포트가 runtime.port와 다름", "args": { "specPatch": [{ "op": "replace", "path": "/spec/services/{i}/runtime/port", "value": "{listenPort}" }] } },
@@ -315,6 +314,11 @@ buildspec · 서비스 역할(IAM) · 환경 변수 override는 받지 않는다
 ```
 
 - `match`는 티켓 원본의 JSON 경로로 쓴다. 중간 스키마가 없어서 원본 필드 이름만 따라가면 된다.
+  - 조건 하나는 `{ "path", 시험 하나 }`이고 시험은 `equals` · `notEquals` · `regex` 중 하나다. 경로가 가리키는 값 하나라도 맞으면 참이다(`[*]`는 배열 전체, `[0]`은 한 칸, 없는 칸은 거짓). `regex`는 문자열 값에만 댄다.
+  - 조건은 `{ "all": [...] }` · `{ "any": [...] }`로 묶는다. `all` 안의 조건은 서로 다른 원소에서 맞아도 된다(같은 이벤트인지 보지 않는다).
+  - 코드 분류는 티켓의 `stage`와 같은 case만 파일 순서대로 대조해 처음 맞는 것을 고른다. 그래서 좁은 case를 넓은 case 앞에 둔다(`A3` OOMKilled는 `A2` CrashLoopBackOff 앞).
+  - 초기 case 데이터는 [`AI/ai_server/agent/cases.json`](../../AI/ai_server/agent/cases.json)이다. `playbook`의 `when`과 `{i}` 같은 자리 표시는 에이전트에게 주는 설명이고 코드가 판정하지 않는다.
+  - `stats`(`hits` · `solved`)는 AI 서버 메모리에만 있어 재시작하면 0부터다.
 - planning으로 해결한 새 case는 바로 넣지 않는다. 사람이 확인한 뒤 넣는다.
 
 **초기 case** (개인 · 소규모 팀의 Node 웹 프로젝트 기준 추정. 실패 주입 시험으로 고친다)
@@ -352,5 +356,6 @@ PydanticAI에서 두 모델을 OpenAI 호환 provider로 붙이고, 추론 모�
 
 - 학생 DB 자체의 문제(테이블 없음, migration 안 함)는 에이전트가 학생 DB에 닿지 못해 고칠 수 없다. `needs_user`로 넘긴다.
 - 초기 case 목록과 신호는 추정이다. 실패 주입 시험 전이다.
+- `prepare` · `render` case(`P1` ~ `P3`, `R1` ~ `R3`)는 `errorMessage` 문장으로 대조한다. 티켓의 `raw`에는 dry-run의 k3s Status와 검증 규칙 결과를 담는 칸이 없어서다. 플랫폼 서버가 쓰는 실제 문장으로 정규식을 맞춰야 한다.
 - CodeBuild API의 오류 이름 · phase 값은 AWS 문서와 대조하지 않았다.
 - 로컬 8B 모델의 분류 · 도구 호출 품질은 검증하지 않았다.

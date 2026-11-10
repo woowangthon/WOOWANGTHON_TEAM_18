@@ -1,0 +1,185 @@
+[
+  {
+    "caseId": "B1", "stage": "build", "category": "repo",
+    "title": "락 파일 불일치",
+    "match": { "path": "logs.lines[*]", "regex": "ERR_PNPM_OUTDATED_LOCKFILE|npm ci` can only install packages when your package.json and package-lock.json|are not in sync|lockfile needs to be updated|YN0028" },
+    "playbook": [
+      { "tool": "read_build_logs", "args": { "lines": 200 } },
+      { "tool": "read_repo", "args": { "path": "." } },
+      { "tool": "edit_repo_file", "when": "락 파일을 package.json에 맞게 다시 만들 수 있을 때 (파일 5개 · 50줄 안)" },
+      { "tool": "run_build", "args": { "source": "edit_repo_file이 돌려준 source" } },
+      { "tool": "run_deploy", "args": { "source": "같은 source" } },
+      { "tool": "run_verify" },
+      { "tool": "open_pr", "when": "run_verify 통과" }
+    ]
+  },
+  {
+    "caseId": "B2", "stage": "build", "category": "spec",
+    "title": "Node 버전 불일치",
+    "match": { "path": "logs.lines[*]", "regex": "engine \"node\" is incompatible|Unsupported engine|ERR_PNPM_UNSUPPORTED_ENGINE|SyntaxError: Unexpected token" },
+    "playbook": [
+      { "tool": "read_build_logs", "args": { "lines": 200 } },
+      { "tool": "read_repo", "args": { "path": "package.json" } },
+      { "tool": "run_build", "when": "package.json engines.node · .nvmrc가 가리키는 버전으로", "args": { "specPatch": [{ "op": "replace", "path": "/spec/services/{i}/build/nodeVersion", "value": "{nodeVersion}" }] } },
+      { "tool": "run_deploy", "args": { "specPatch": "앞 단계와 같음" } },
+      { "tool": "run_verify" }
+    ]
+  },
+  {
+    "caseId": "B5", "stage": "build", "category": "spec",
+    "title": "COPY 대상 없음",
+    "match": { "path": "logs.lines[*]", "regex": "COPY failed|failed to compute cache key|\"/[^\"]*\": not found" },
+    "playbook": [
+      { "tool": "read_build_logs", "args": { "lines": 200 } },
+      { "tool": "read_repo", "args": { "path": "." } },
+      { "tool": "run_build", "when": "실제 폴더 구조에 맞춘 context · outputDir · dockerfile로", "args": { "specPatch": [{ "op": "replace", "path": "/spec/services/{i}/build/outputDir", "value": "{outputDir}" }] } },
+      { "tool": "run_deploy", "args": { "specPatch": "앞 단계와 같음" } },
+      { "tool": "run_verify" }
+    ]
+  },
+  {
+    "caseId": "B3", "stage": "build", "category": "spec",
+    "title": "빌드 시점 env 누락",
+    "match": { "path": "logs.lines[*]", "regex": "VITE_[A-Z0-9_]+.*(undefined|not defined|is required|missing)|import\\.meta\\.env\\.[A-Z0-9_]+.*undefined" },
+    "playbook": [
+      { "tool": "read_build_logs", "args": { "lines": 200 } },
+      { "tool": "read_repo", "args": { "path": ".env.example" } },
+      { "tool": "run_build", "when": "값이 공개 값이라 레포(.env.example 등)에서 알 수 있을 때", "args": { "specPatch": [{ "op": "add", "path": "/spec/services/{i}/build/buildEnv/{key}", "value": "{value}" }] } },
+      { "tool": "run_deploy", "args": { "specPatch": "앞 단계와 같음" } },
+      { "tool": "run_verify" },
+      { "tool": "submit_result", "when": "값을 알 수 없거나 비밀값이면 needs_user로" }
+    ]
+  },
+  {
+    "caseId": "B4", "stage": "build", "category": "repo",
+    "title": "대소문자 · import 경로",
+    "match": { "path": "logs.lines[*]", "regex": "Module not found|Cannot find module|Could not resolve|Failed to resolve import" },
+    "playbook": [
+      { "tool": "read_build_logs", "args": { "lines": 200 } },
+      { "tool": "read_repo", "args": { "path": "로그가 가리키는 파일과 그 폴더" } },
+      { "tool": "edit_repo_file", "when": "실제 파일 이름과 import 경로의 대소문자 · 경로가 다를 때" },
+      { "tool": "run_build", "args": { "source": "edit_repo_file이 돌려준 source" } },
+      { "tool": "run_deploy", "args": { "source": "같은 source" } },
+      { "tool": "run_verify" },
+      { "tool": "open_pr", "when": "run_verify 통과" }
+    ]
+  },
+  {
+    "caseId": "P1", "stage": "prepare", "category": "user",
+    "title": "필수 Secret key 없음",
+    "match": { "path": "errorMessage", "regex": "(?i)secret.*(missing|빠짐|not found)|빠진 비밀값" },
+    "playbook": [
+      { "tool": "submit_result", "when": "빠진 key 이름을 userRequest.secretKeys에 넣어 needs_user로" }
+    ]
+  },
+  {
+    "caseId": "P2", "stage": "prepare", "category": "spec",
+    "title": "자원 합계 초과",
+    "match": { "path": "errorMessage", "regex": "(?i)resources.*(exceed|초과|quota)|자원 합계" },
+    "playbook": [
+      { "tool": "run_render", "when": "서비스들의 resources 합계를 프로젝트 쿼터 안으로 줄여서", "args": { "specPatch": [{ "op": "replace", "path": "/spec/services/{i}/runtime/resources", "value": "{resources}" }] } },
+      { "tool": "run_deploy", "args": { "specPatch": "앞 단계와 같음" } },
+      { "tool": "run_verify" }
+    ]
+  },
+  {
+    "caseId": "P3", "stage": "prepare", "category": "spec",
+    "title": "ingressPath 충돌",
+    "match": { "path": "errorMessage", "regex": "(?i)ingressPath" },
+    "playbook": [
+      { "tool": "run_render", "when": "겹치지 않는 경로로", "args": { "specPatch": [{ "op": "replace", "path": "/spec/services/{i}/runtime/ingressPath", "value": "{ingressPath}" }] } },
+      { "tool": "run_deploy", "args": { "specPatch": "앞 단계와 같음" } },
+      { "tool": "run_verify" }
+    ]
+  },
+  {
+    "caseId": "R3", "stage": "render", "category": "spec",
+    "title": "쿼터 초과",
+    "match": { "path": "errorMessage", "regex": "exceeded quota" },
+    "playbook": [
+      { "tool": "run_render", "when": "resources를 쿼터 안으로 줄여서", "args": { "specPatch": [{ "op": "replace", "path": "/spec/services/{i}/runtime/resources", "value": "{resources}" }] } },
+      { "tool": "run_deploy", "args": { "specPatch": "앞 단계와 같음" } },
+      { "tool": "run_verify" }
+    ]
+  },
+  {
+    "caseId": "R1", "stage": "render", "category": "spec",
+    "title": "이름 규칙 위반",
+    "match": { "path": "errorMessage", "regex": "DNS-1035|DNS-1123|a lowercase RFC 1123" },
+    "playbook": [
+      { "tool": "run_render", "when": "첫 배포 전이면 규칙에 맞는 name으로 (첫 배포 뒤면 needs_user)", "args": { "specPatch": [{ "op": "replace", "path": "/spec/services/{i}/name", "value": "{name}" }] } },
+      { "tool": "run_deploy", "args": { "specPatch": "앞 단계와 같음" } },
+      { "tool": "run_verify" }
+    ]
+  },
+  {
+    "caseId": "R2", "stage": "render", "category": "spec",
+    "title": "포트 · probe 값 오류",
+    "match": { "all": [
+      { "path": "errorMessage", "regex": "(?i)invalid" },
+      { "path": "errorMessage", "regex": "containerPort|Port|probe" }
+    ] },
+    "playbook": [
+      { "tool": "read_repo", "args": { "path": "." } },
+      { "tool": "run_render", "when": "port · health 값을 범위 안으로", "args": { "specPatch": [{ "op": "replace", "path": "/spec/services/{i}/runtime/port", "value": "{port}" }] } },
+      { "tool": "run_deploy", "args": { "specPatch": "앞 단계와 같음" } },
+      { "tool": "run_verify" }
+    ]
+  },
+  {
+    "caseId": "A3", "stage": "apply", "category": "spec",
+    "title": "메모리 초과",
+    "match": { "any": [
+      { "path": "raw.k8s.pod.status.containerStatuses[*].lastState.terminated.reason", "equals": "OOMKilled" },
+      { "path": "raw.k8s.pod.status.containerStatuses[*].state.terminated.reason", "equals": "OOMKilled" }
+    ] },
+    "playbook": [
+      { "tool": "read_pod_logs", "args": { "previous": true, "lines": 100 } },
+      { "tool": "run_render", "when": "memory를 프로젝트 쿼터 안에서 올려서", "args": { "specPatch": [{ "op": "replace", "path": "/spec/services/{i}/runtime/resources/memory", "value": "{memory}" }] } },
+      { "tool": "run_deploy", "args": { "specPatch": "앞 단계와 같음" } },
+      { "tool": "run_verify" }
+    ]
+  },
+  {
+    "caseId": "A4", "stage": "apply", "category": "spec",
+    "title": "Pod 생성 실패 (쿼터)",
+    "match": { "all": [
+      { "path": "raw.k8s.events[*].reason", "equals": "FailedCreate" },
+      { "path": "raw.k8s.events[*].message", "regex": "exceeded quota" }
+    ] },
+    "playbook": [
+      { "tool": "get_target_status" },
+      { "tool": "run_render", "when": "resources를 쿼터 안으로 줄여서", "args": { "specPatch": [{ "op": "replace", "path": "/spec/services/{i}/runtime/resources", "value": "{resources}" }] } },
+      { "tool": "run_deploy", "args": { "specPatch": "앞 단계와 같음" } },
+      { "tool": "run_verify" }
+    ]
+  },
+  {
+    "caseId": "A1", "stage": "apply", "category": "spec",
+    "title": "헬스체크 실패 (포트 · 경로 · 시작 시간)",
+    "match": { "all": [
+      { "path": "raw.k8s.events[*].reason", "equals": "Unhealthy" },
+      { "path": "raw.k8s.events[*].message", "regex": "(Readiness|Startup|Liveness) probe failed" }
+    ] },
+    "playbook": [
+      { "tool": "read_pod_logs", "args": { "lines": 100 } },
+      { "tool": "run_render", "when": "로그의 listen 포트가 runtime.port와 다름", "args": { "specPatch": [{ "op": "replace", "path": "/spec/services/{i}/runtime/port", "value": "{listenPort}" }] } },
+      { "tool": "run_deploy", "args": { "specPatch": "앞 단계와 같음" } },
+      { "tool": "run_verify" }
+    ]
+  },
+  {
+    "caseId": "A2", "stage": "apply", "category": "spec",
+    "title": "시작 직후 종료",
+    "match": { "any": [
+      { "path": "raw.k8s.pod.status.containerStatuses[*].state.waiting.reason", "equals": "CrashLoopBackOff" },
+      { "path": "raw.k8s.pod.status.containerStatuses[*].lastState.terminated.exitCode", "notEquals": 0 }
+    ] },
+    "playbook": [
+      { "tool": "read_pod_logs", "args": { "previous": true, "lines": 100 } },
+      { "tool": "run_deploy", "when": "로그가 빠진 env를 가리키고 값이 공개 값일 때", "args": { "specPatch": [{ "op": "add", "path": "/spec/services/{i}/runtime/env/{key}", "value": "{value}" }] } },
+      { "tool": "run_verify" },
+      { "tool": "submit_result", "when": "DB 연결 실패 · 비밀값 문제면 needs_user로" }
+    ]
+  }
+]
