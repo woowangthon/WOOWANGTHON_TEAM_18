@@ -1,7 +1,7 @@
 # 디자인 시스템 — 설계
 
 - **상태**: 구현됨 (2026-11-01). 스타일 가이드 페이지는 2026-11-03에 삭제했다
-- **관련**: FR 없는 기반 작업 · [NFR-USA-01~03, NFR-PER-02](../SRS.md#5-비기능-요구사항) · [ADR-001](../adr/001-stack-and-deployment.md) · task `tasks/active/20261101-fe-design-system-todo.md`
+- **관련**: FR 없는 기반 작업 · [NFR-USA-01~03, NFR-PER-02](../SRS.md#5-비기능-요구사항) · [ADR-001](../adr/001-stack-and-deployment.md) · task `tasks/archive/20261101-fe-design-system-todo.md`
 
 ## 범위
 
