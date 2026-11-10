@@ -19,6 +19,25 @@ expect() { # expect <ok|blocked> <label> <result line "exit code time_connect">
   if [ "$got" = "$want" ]; then echo "PASS $label ($got)"; else echo "FAIL $label (want $want, got $got)"; fail=1; fi
 }
 
+# A Pod that passes the build-09 student Pod rule (no API token, NET_RAW dropped), plus the lines under test.
+testpod() { # testpod <name> [pod spec line] [extra securityContext fields] [container line]
+  cat <<EOF
+apiVersion: v1
+kind: Pod
+metadata: {name: $1, namespace: proj-demo}
+spec:
+  automountServiceAccountToken: false
+  restartPolicy: Never
+  ${2:-terminationGracePeriodSeconds: 1}
+  containers:
+  - name: c
+    image: busybox:1.37
+    command: ["sleep", "60"]
+    securityContext: {${3:+$3, }capabilities: {drop: ["NET_RAW"]}}
+    ${4:-imagePullPolicy: IfNotPresent}
+EOF
+}
+
 cleanup() {
   k delete namespace proj-check netpol-control --ignore-not-found --wait=false >/dev/null
   k -n proj-demo delete pod check-client pin-leader no-selector --ignore-not-found >/dev/null
@@ -70,8 +89,8 @@ for ns in proj-demo proj-check netpol-control; do
   case $node in k3s-w1|k3s-w2) echo "PASS $ns: client on a worker ($node)";; *) echo "FAIL $ns: client on $node"; fail=1;; esac
 done
 # No nodeSelector: the leader taint alone must keep it off the leader. Only scheduling is checked.
-k -n proj-demo run no-selector --image=busybox:1.37 --restart=Never "--overrides='{\"spec\":{\"automountServiceAccountToken\":false}}'" -- sleep 60 >/dev/null 2>&1
-k -n proj-demo run pin-leader --image=busybox:1.37 --restart=Never "--overrides='{\"spec\":{\"nodeSelector\":{\"kubernetes.io/hostname\":\"k3s-leader\"},\"automountServiceAccountToken\":false}}'" -- sleep 60 >/dev/null 2>&1
+testpod no-selector | k create -f - >/dev/null 2>&1
+testpod pin-leader 'nodeSelector: {kubernetes.io/hostname: k3s-leader}' | k create -f - >/dev/null 2>&1
 sleep 10
 phase=$(k -n proj-demo get pod pin-leader -o "jsonpath='{.status.phase}'")
 if [ "$phase" = Pending ]; then echo "PASS Pod pinned to the leader stays Pending"; else echo "FAIL Pod pinned to the leader is $phase"; fail=1; fi
@@ -123,14 +142,18 @@ done
 if [ "$code" = 200 ]; then echo "PASS Traefik -> proj-check web (200)"; else echo "FAIL Traefik -> proj-check web ($code)"; fail=1; fi
 
 echo "== admission (server dry run)"
-deny() { # deny <label> <kubectl args...>
-  local label=$1; shift
-  if k "$@" --dry-run=server 2>&1 | grep -q forbidden; then echo "PASS $label rejected"; else echo "FAIL $label accepted"; fail=1; fi
+# The test Pods pass the build-09 student Pod rule, so a refusal here comes from Pod Security or the cap.
+deny() { # deny <label> <expected text> <kubectl args...>   stdin = manifest, if any
+  local label=$1 want=$2 out; shift 2
+  out=$(k "$@" --dry-run=server 2>&1)
+  if echo "$out" | grep -q ValidatingAdmissionPolicy; then echo "FAIL $label refused by the admission policy, not by what is under test"; fail=1
+  elif echo "$out" | grep -q "$want"; then echo "PASS $label rejected"
+  else echo "FAIL $label: $(echo "$out" | head -1)"; fail=1; fi
 }
-deny "hostNetwork Pod" -n proj-demo run x --image=busybox:1.37 "--overrides='{\"spec\":{\"hostNetwork\":true}}'"
-deny "privileged Pod" -n proj-demo run x --image=busybox:1.37 "--overrides='{\"spec\":{\"containers\":[{\"name\":\"x\",\"image\":\"busybox:1.37\",\"securityContext\":{\"privileged\":true}}]}}'"
-deny "Pod asking 5 CPU" -n proj-demo run x --image=busybox:1.37 "--overrides='{\"spec\":{\"containers\":[{\"name\":\"x\",\"image\":\"busybox:1.37\",\"resources\":{\"requests\":{\"cpu\":\"5\"},\"limits\":{\"cpu\":\"5\"}}}]}}'"
-deny "NodePort Service" -n proj-demo create service nodeport x --tcp=80:9898
+deny "hostNetwork Pod" PodSecurity create -f - < <(testpod x 'hostNetwork: true')
+deny "privileged Pod" PodSecurity create -f - < <(testpod x '' 'privileged: true')
+deny "Pod asking 5 CPU" "exceeded quota" create -f - < <(testpod x '' '' 'resources: {requests: {cpu: "5"}, limits: {cpu: "5"}}')
+deny "NodePort Service" "exceeded quota" -n proj-demo create service nodeport x --tcp=80:9898 </dev/null
 
 echo "== cleanup"
 [ $fail = 0 ] && echo "ALL PASS" || { echo "SOME FAILED"; exit 1; }

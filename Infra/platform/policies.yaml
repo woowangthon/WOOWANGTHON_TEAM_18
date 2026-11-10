@@ -1,0 +1,231 @@
+# Admission policies for the platform server account and for student Pods (build 09, first part).
+# Design and reasons: docs/design/cluster.md §8.
+#   wanggane-platform-server   the server account writes only in proj- spaces; namespace and Secret rules
+#   wanggane-space-*           cap, defaults and isolation are created only with the template's name and values
+#   wanggane-student-pods      Pods and Deployments in proj- spaces drop NET_RAW and carry no API token
+# The template values are not copied here: the three wanggane-space-* policies compare against the objects
+# in the namespace student-template, which is Infra/student/space.yaml under another name. Apply it first
+# (and again whenever space.yaml changes):
+#   sed 's/proj-demo/student-template/g' Infra/student/space.yaml | ssh k3s-leader 'sudo k3s kubectl apply -f -'
+#   ssh k3s-leader 'sudo k3s kubectl apply -f -' < Infra/platform/policies.yaml
+# The server account cannot touch student-template (not a proj- name). If the reference object is missing,
+# the request is denied.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: wanggane-platform-server
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups: ["*"]
+      apiVersions: ["*"]
+      operations: ["CREATE", "UPDATE", "DELETE", "CONNECT"]
+      resources: ["*/*"]
+      scope: "*"
+    # "What may I do" questions change nothing.
+    excludeResourceRules:
+    - apiGroups: ["authorization.k8s.io", "authentication.k8s.io"]
+      apiVersions: ["*"]
+      operations: ["*"]
+      resources: ["selfsubjectaccessreviews", "selfsubjectrulesreviews", "selfsubjectreviews"]
+  matchConditions:
+  - name: platform-server-account
+    expression: request.userInfo.username == 'system:serviceaccount:platform:platform-server'
+  variables:
+  - name: isNamespace
+    expression: request.resource.group == '' && request.resource.resource == 'namespaces'
+  - name: isSecret
+    expression: request.resource.group == '' && request.resource.resource == 'secrets'
+  # The space a request touches: the namespace's own name, or the namespace of the object.
+  - name: space
+    expression: >-
+      variables.isNamespace
+        ? (request.operation == 'DELETE' ? oldObject.metadata.name : object.metadata.name)
+        : request.namespace
+  validations:
+  - expression: variables.space.startsWith('proj-')
+    message: the platform server may write only in proj-<id> spaces
+  - expression: "!variables.isNamespace || request.operation in ['CREATE', 'DELETE']"
+    message: the platform server may only create or delete a space
+  - expression: >-
+      !variables.isNamespace || request.operation != 'CREATE' || (
+        has(object.metadata.labels)
+        && object.metadata.labels.all(k, k in [
+             'kubernetes.io/metadata.name',
+             'pod-security.kubernetes.io/enforce',
+             'pod-security.kubernetes.io/warn'])
+        && 'pod-security.kubernetes.io/enforce' in object.metadata.labels
+        && object.metadata.labels['pod-security.kubernetes.io/enforce'] == 'baseline'
+        && 'pod-security.kubernetes.io/warn' in object.metadata.labels
+        && object.metadata.labels['pod-security.kubernetes.io/warn'] == 'restricted'
+      )
+    message: "a space needs exactly the labels pod-security.kubernetes.io/enforce=baseline and pod-security.kubernetes.io/warn=restricted"
+  # A service-account-token Secret would mint an API token inside the space.
+  - expression: >-
+      !variables.isSecret || request.operation == 'DELETE' || (
+        object.type == 'Opaque' && object.metadata.name.endsWith('-secrets') && object.metadata.name.size() > 8
+      )
+    message: "Secrets must be of type Opaque and named <service>-secrets"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: wanggane-platform-server
+spec:
+  policyName: wanggane-platform-server
+  validationActions: ["Deny"]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: wanggane-space-quota
+spec:
+  failurePolicy: Fail
+  paramKind:
+    apiVersion: v1
+    kind: ResourceQuota
+  matchConstraints:
+    resourceRules:
+    - apiGroups: [""]
+      apiVersions: ["v1"]
+      operations: ["CREATE"]
+      resources: ["resourcequotas"]
+  matchConditions:
+  - name: platform-server-account
+    expression: request.userInfo.username == 'system:serviceaccount:platform:platform-server'
+  validations:
+  - expression: object.metadata.name == params.metadata.name && dyn(object.spec) == dyn(params.spec)
+    message: the ResourceQuota must have the name and values of Infra/student/space.yaml
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: wanggane-space-quota
+spec:
+  policyName: wanggane-space-quota
+  validationActions: ["Deny"]
+  paramRef:
+    name: project-cap
+    namespace: student-template
+    parameterNotFoundAction: Deny
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: wanggane-space-limits
+spec:
+  failurePolicy: Fail
+  paramKind:
+    apiVersion: v1
+    kind: LimitRange
+  matchConstraints:
+    resourceRules:
+    - apiGroups: [""]
+      apiVersions: ["v1"]
+      operations: ["CREATE"]
+      resources: ["limitranges"]
+  matchConditions:
+  - name: platform-server-account
+    expression: request.userInfo.username == 'system:serviceaccount:platform:platform-server'
+  validations:
+  - expression: object.metadata.name == params.metadata.name && dyn(object.spec) == dyn(params.spec)
+    message: the LimitRange must have the name and values of Infra/student/space.yaml
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: wanggane-space-limits
+spec:
+  policyName: wanggane-space-limits
+  validationActions: ["Deny"]
+  paramRef:
+    name: container-defaults
+    namespace: student-template
+    parameterNotFoundAction: Deny
+---
+# The name is fixed as well as the values: NetworkPolicies add up, so a second policy under another
+# name could open what the first one closes.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: wanggane-space-isolation
+spec:
+  failurePolicy: Fail
+  paramKind:
+    apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+  matchConstraints:
+    resourceRules:
+    - apiGroups: ["networking.k8s.io"]
+      apiVersions: ["v1"]
+      operations: ["CREATE"]
+      resources: ["networkpolicies"]
+  matchConditions:
+  - name: platform-server-account
+    expression: request.userInfo.username == 'system:serviceaccount:platform:platform-server'
+  validations:
+  - expression: object.metadata.name == params.metadata.name && dyn(object.spec) == dyn(params.spec)
+    message: the NetworkPolicy must have the name and values of Infra/student/space.yaml
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: wanggane-space-isolation
+spec:
+  policyName: wanggane-space-isolation
+  validationActions: ["Deny"]
+  paramRef:
+    name: project-isolation
+    namespace: student-template
+    parameterNotFoundAction: Deny
+---
+# Applies to every account, operators included. Pods are what runs; Deployments are checked too so that
+# the deploy executor gets the refusal when it applies, not later as a ReplicaSet event.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: wanggane-student-pods
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups: [""]
+      apiVersions: ["v1"]
+      operations: ["CREATE", "UPDATE"]
+      resources: ["pods", "pods/ephemeralcontainers"]
+    - apiGroups: ["apps"]
+      apiVersions: ["v1"]
+      operations: ["CREATE", "UPDATE"]
+      resources: ["deployments"]
+  matchConditions:
+  - name: student-space
+    expression: request.namespace.startsWith('proj-')
+  variables:
+  - name: podSpec
+    expression: "request.resource.resource == 'deployments' ? object.spec.template.spec : object.spec"
+  - name: containers
+    expression: >-
+      variables.podSpec.containers
+      + (has(variables.podSpec.initContainers) ? variables.podSpec.initContainers : [])
+      + (has(variables.podSpec.ephemeralContainers) ? variables.podSpec.ephemeralContainers : [])
+  validations:
+  - expression: has(variables.podSpec.automountServiceAccountToken) && variables.podSpec.automountServiceAccountToken == false
+    message: "student Pods must set automountServiceAccountToken: false"
+  # baseline keeps NET_RAW, which lets a Pod spoof ARP on its worker.
+  - expression: >-
+      variables.containers.all(c,
+        has(c.securityContext) && has(c.securityContext.capabilities)
+        && has(c.securityContext.capabilities.drop)
+        && c.securityContext.capabilities.drop.exists(d, d == 'NET_RAW' || d == 'ALL')
+        && (!has(c.securityContext.capabilities.add)
+            || !c.securityContext.capabilities.add.exists(a, a == 'NET_RAW' || a == 'ALL')))
+    message: "every container in a student Pod must drop the NET_RAW capability"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: wanggane-student-pods
+spec:
+  policyName: wanggane-student-pods
+  validationActions: ["Deny"]

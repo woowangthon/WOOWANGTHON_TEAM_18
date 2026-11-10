@@ -36,7 +36,7 @@ spec:
     requests:
       storage: 30Gi
 ---
-# Only Pods in this namespace may reach vLLM for now. The EC2 path over Tailscale is added in build stage 09.
+# Only Pods in this namespace may reach vLLM for now. The EC2 path over Tailscale is added once the EC2 has joined the tailnet.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

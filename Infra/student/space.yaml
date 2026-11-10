@@ -1,7 +1,7 @@
 # Student project space template, applied as the test space proj-demo.
 # Design and reasons: docs/design/cluster.md §6.
 # The platform server creates one of these per project with the name proj-<id> (only the name changes;
-# the admission policy planned for build 09 will accept only these values). The server may only create these objects
+# the admission policies in Infra/platform/policies.yaml accept only these values). The server may only create these objects
 # (cluster.md §8), so the space's default ServiceAccount is left as Kubernetes makes it; the API token is
 # turned off on each Pod instead. App resources (Deployment, Service, Ingress) come from the leader's
 # deploy executor, see app-example.yaml.

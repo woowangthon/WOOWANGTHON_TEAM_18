@@ -1,0 +1,69 @@
+# Platform server account (build 09, first part). Design and reasons: docs/design/cluster.md §8.
+# The platform server (Nest, on the EC2) calls the leader's API over Tailscale with this account's token.
+# RBAC cannot filter by namespace name, so these rights are cluster-wide here and policies.yaml narrows
+# them to proj- spaces and to the template values. Apply this file together with policies.yaml.
+# Apply (from the operator's machine):
+#   ssh k3s-leader 'sudo k3s kubectl apply -f -' < Infra/platform/account.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: platform
+  labels:
+    # Holds the account and its token only. No Pods run here.
+    pod-security.kubernetes.io/enforce: restricted
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: platform-server
+  namespace: platform
+automountServiceAccountToken: false
+---
+# Long-lived token, filled in by Kubernetes. No expiring credential to renew during the contest;
+# deleting this Secret revokes the token (return, cluster.md §13). Read it only when it goes into the
+# EC2's secret settings:
+#   ssh k3s-leader 'sudo k3s kubectl -n platform get secret platform-server-token -o jsonpath={.data.token}' | base64 -d
+apiVersion: v1
+kind: Secret
+metadata:
+  name: platform-server-token
+  namespace: platform
+  annotations:
+    kubernetes.io/service-account.name: platform-server
+type: kubernetes.io/service-account-token
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: platform-server
+rules:
+# The only cluster-scoped writes. No get, list, update or patch.
+- apiGroups: [""]
+  resources: ["namespaces"]
+  verbs: ["create", "delete"]
+# Create only: if the server could change or delete a space's cap and isolation, a leaked server
+# credential would lift them first.
+- apiGroups: [""]
+  resources: ["resourcequotas", "limitranges"]
+  verbs: ["create"]
+- apiGroups: ["networking.k8s.io"]
+  resources: ["networkpolicies"]
+  verbs: ["create"]
+# Write only. No patch: the response to a patch is the whole Secret, so an empty patch would read it.
+# An update (PUT) replaces the object and returns only what was sent.
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["create", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: platform-server
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: platform-server
+subjects:
+- kind: ServiceAccount
+  name: platform-server
+  namespace: platform
