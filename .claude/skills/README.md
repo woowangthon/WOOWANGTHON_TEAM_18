@@ -8,7 +8,7 @@ What this repository ships for agents, and which external plugins are worth inst
 
 | Skill | What it does | When |
 | --- | --- | --- |
-| [`devlog`](devlog/SKILL.md) | Collects today's commits, PRs and task-file updates, writes a Korean devlog entry to the team's Notion devlog database | End of each working day, by each member. Feeds the Notion special prize ([`docs/hackathon.md`](../../docs/hackathon.md) §시상) |
+| [`devlog`](devlog/SKILL.md) | Collects today's commits, PRs and task-file updates, writes a Korean devlog entry to the team's Notion devlog database | Optional, at the end of a working day, by a member who wants it; the Notion devlog DB URL in [`CLAUDE.md`](../../CLAUDE.md) §0 must be filled in first. Feeds the Notion special prize ([`docs/hackathon.md`](../../docs/hackathon.md) §시상) |
 
 ### Deliberately not skills
 
