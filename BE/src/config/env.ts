@@ -6,6 +6,8 @@ export interface Env {
   SUPABASE_URL: string
   /** Supabase의 공개 키(publishable 또는 anon). 사용자 토큰으로 Supabase를 부를 때 `apikey` 헤더에 넣는다. 비밀키가 아니다. */
   SUPABASE_PUBLISHABLE_KEY: string
+  /** Supabase의 secret key(service role). 서버만 `deploys`에 쓴다. 비밀이라 로그 · 응답에 남기지 않고 SUPABASE_URL로만 보낸다. */
+  SUPABASE_SECRET_KEY: string
 }
 
 // 값이 틀리면 부팅을 멈춘다. 틀린 설정으로 뜬 서버가 조용히 다르게 동작하지 않게 한다.
@@ -16,6 +18,7 @@ export function validateEnv(raw: Record<string, string | undefined>): Env {
     CORS_ORIGINS: parseOrigins(raw.CORS_ORIGINS),
     SUPABASE_URL: parseSupabaseUrl(raw.SUPABASE_URL),
     SUPABASE_PUBLISHABLE_KEY: parsePublishableKey(raw.SUPABASE_PUBLISHABLE_KEY),
+    SUPABASE_SECRET_KEY: parseSecretKey(raw.SUPABASE_SECRET_KEY),
   }
 }
 
@@ -55,6 +58,16 @@ function parsePublishableKey(value: string | undefined): string {
   if (value === undefined || !/^\S+$/.test(value)) {
     throw new Error(
       'SUPABASE_PUBLISHABLE_KEY is required and must not contain whitespace (the public key from Supabase Project Settings → API Keys)',
+    )
+  }
+  return value
+}
+
+// 틀린 값이 오류 메시지(로그)에 남지 않도록 값은 메시지에 싣지 않는다.
+function parseSecretKey(value: string | undefined): string {
+  if (value === undefined || !/^\S+$/.test(value)) {
+    throw new Error(
+      'SUPABASE_SECRET_KEY is required and must not contain whitespace (the secret key from Supabase Project Settings → API Keys)',
     )
   }
   return value

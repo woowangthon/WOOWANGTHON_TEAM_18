@@ -7,5 +7,6 @@ import { ReposService } from './repos.service.js'
   imports: [ConfigModule],
   controllers: [ReposController],
   providers: [ReposService],
+  exports: [ReposService],
 })
 export class ReposModule {}

@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { validateEnv } from './env.js'
 
 // 필수값만 채운 입력. 각 테스트는 보려는 값만 덮어쓴다.
-const base = { SUPABASE_URL: 'https://abc.supabase.co', SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_test' }
+const base = {
+  SUPABASE_URL: 'https://abc.supabase.co',
+  SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_test',
+  SUPABASE_SECRET_KEY: 'sb_secret_test',
+}
 
 describe('PORT', () => {
   it('defaults to 3000 when unset or empty', () => {
@@ -51,6 +55,26 @@ describe('SUPABASE_PUBLISHABLE_KEY', () => {
 
   it.each([' abc', 'abc ', 'a b', 'abc\n'])('rejects whitespace in %j', (key) => {
     expect(() => validateEnv({ ...base, SUPABASE_PUBLISHABLE_KEY: key })).toThrow(/whitespace/)
+  })
+})
+
+describe('SUPABASE_SECRET_KEY', () => {
+  it('is passed through', () => {
+    expect(validateEnv(base).SUPABASE_SECRET_KEY).toBe('sb_secret_test')
+  })
+
+  it.each([undefined, ''])('is required (%s)', (key) => {
+    expect(() => validateEnv({ ...base, SUPABASE_SECRET_KEY: key })).toThrow(/SUPABASE_SECRET_KEY is required/)
+  })
+
+  it.each([' abc', 'abc ', 'a b', 'abc\n'])('rejects whitespace in %j', (key) => {
+    expect(() => validateEnv({ ...base, SUPABASE_SECRET_KEY: key })).toThrow(/whitespace/)
+  })
+
+  it('does not put the key in the error message', () => {
+    expect(() => validateEnv({ ...base, SUPABASE_SECRET_KEY: 'sb_secret_leak me' })).toThrow(
+      expect.objectContaining({ message: expect.not.stringContaining('sb_secret_leak') as string }),
+    )
   })
 })
 

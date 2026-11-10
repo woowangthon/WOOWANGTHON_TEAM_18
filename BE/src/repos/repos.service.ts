@@ -84,7 +84,8 @@ export class ReposService {
     return { repo: repo.full_name, commit, projects: buildProjects(dirs, packages, files), truncated: tree.truncated || truncated }
   }
 
-  private async verifyOwnership(accessToken: string, repoUrl: unknown): Promise<{ ref: RepoRef; repo: GithubRepo }> {
+  /** repoUrl을 소유자 · 레포 이름으로 푼다. 모양이 틀리면 400 INVALID_REPO_URL이고 외부 호출은 없다. */
+  requireRepoRef(repoUrl: unknown): RepoRef {
     const ref = parseRepoUrl(repoUrl)
     if (!ref) {
       throw new BadRequestException({
@@ -92,6 +93,12 @@ export class ReposService {
         message: 'repoUrl must look like https://github.com/<owner>/<repo>',
       })
     }
+    return ref
+  }
+
+  /** 로그인 계정에 연동된 GitHub 계정이 이 공개 개인 레포의 소유자인지 확인한다. 순서와 오류는 docs/design/auth.md. */
+  async verifyOwnership(accessToken: string, repoUrl: unknown): Promise<{ ref: RepoRef; repo: GithubRepo }> {
+    const ref = this.requireRepoRef(repoUrl)
 
     const githubId = await this.linkedGithubId(accessToken)
     if (!githubId) {
@@ -210,7 +217,7 @@ export class ReposService {
 
   // git/trees는 commit이 아닌 tree SHA도 받는데 그 SHA로는 raw 파일이 404다. 그대로 두면 모든 package.json이 조용히 "읽을 수 없음"이 되므로 먼저 commit인지 본다.
   // GitHub는 없는 SHA · tree SHA · 다른 레포의 SHA에 422로 답한다(2026-11-10 실제 응답).
-  private async assertCommit(ref: RepoRef, sha: string): Promise<void> {
+  async assertCommit(ref: RepoRef, sha: string): Promise<void> {
     if ((await this.fetchCommit(ref, sha, [404, 409, 422])) !== sha) {
       throw new NotFoundException({ code: 'COMMIT_NOT_FOUND', message: 'No such commit in this repository' })
     }
@@ -240,7 +247,7 @@ interface SupabaseUser {
   identities?: { provider?: unknown; id?: unknown }[]
 }
 
-interface GithubRepo {
+export interface GithubRepo {
   full_name: string
   owner: { id: number; type: string }
 }
