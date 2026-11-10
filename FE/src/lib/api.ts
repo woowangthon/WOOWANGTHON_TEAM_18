@@ -5,12 +5,20 @@ import { supabase } from './supabase.ts'
 export class ApiError extends Error {
   readonly status: number
   readonly code: string
+  // 400 INVALID_SPEC만 칸마다의 오류를 싣는다. 다른 오류에는 없다.
+  readonly fields: { path: string; code: string }[]
 
-  constructor(status: number, code: string, message: string) {
+  constructor(
+    status: number,
+    code: string,
+    message: string,
+    fields: { path: string; code: string }[] = [],
+  ) {
     super(message)
     this.name = 'ApiError'
     this.status = status
     this.code = code
+    this.fields = fields
   }
 }
 
@@ -25,16 +33,24 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 async function readError(response: Response): Promise<ApiError> {
   let code = `HTTP_${response.status}`
   let message = response.statusText
+  const fields: { path: string; code: string }[] = []
   try {
     const body: unknown = await response.json()
     if (isRecord(body) && isRecord(body.error)) {
       if (typeof body.error.code === 'string') code = body.error.code
       if (typeof body.error.message === 'string') message = body.error.message
+      if (Array.isArray(body.error.fields)) {
+        for (const field of body.error.fields as unknown[]) {
+          if (isRecord(field) && typeof field.path === 'string' && typeof field.code === 'string') {
+            fields.push({ path: field.path, code: field.code })
+          }
+        }
+      }
     }
   } catch {
     // 본문이 JSON이 아니면 HTTP 상태로 만든 코드를 그대로 쓴다.
   }
-  return new ApiError(response.status, code, message)
+  return new ApiError(response.status, code, message, fields)
 }
 
 // 요청 한 번. 네트워크 자체가 실패하면 ApiError로 바꿔 던진다.

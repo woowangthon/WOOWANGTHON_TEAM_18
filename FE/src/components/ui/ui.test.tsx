@@ -6,6 +6,7 @@ import { Button } from './Button.tsx'
 import { Field } from './Field.tsx'
 import { Input } from './Input.tsx'
 import { LogBlock } from './LogBlock.tsx'
+import { SelectField } from './Select.tsx'
 import { Table, Td, Th, THead } from './Table.tsx'
 
 const renderTable = () =>
@@ -213,4 +214,21 @@ it('LogBlock colors level words in mixed string children and leaves elements unt
   expect(screen.getByRole('region', { name: 'logs' }).textContent).toBe(
     '09:12 ERROR pulled WARN',
   )
+})
+
+it('SelectField names its select with the visible label and lists the options', () => {
+  render(<SelectField label="역할" value="be" onChange={() => undefined} options={[{ value: '', label: '골라 주세요' }, { value: 'be', label: 'be' }]} />)
+  const select = screen.getByRole<HTMLSelectElement>('combobox', { name: '역할' })
+  expect(select.value).toBe('be')
+  expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual(['골라 주세요', 'be'])
+  expect(select.getAttribute('aria-invalid')).toBeNull()
+})
+
+it('SelectField with an error marks the select invalid and ties the message to it', () => {
+  render(<SelectField label="역할" value="" onChange={() => undefined} options={[{ value: '', label: '골라 주세요' }]} error="입력해 주세요" />)
+  const select = screen.getByRole('combobox', { name: '역할' })
+  expect(select.getAttribute('aria-invalid')).toBe('true')
+  const message = screen.getByRole('alert')
+  expect(select.getAttribute('aria-describedby')).toBe(message.id)
+  expect(message.textContent).toBe('입력해 주세요')
 })

@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { beforeEach, expect, it, vi } from 'vitest'
+import { COMMIT, draftOf, feProject } from '../deploy/fixtures.ts'
 import { ApiError } from '../lib/api.ts'
 import DeployNewPage from './DeployNewPage.tsx'
 
@@ -29,15 +30,18 @@ const submit = (value: string) => {
 }
 const rejectWith = (status: number, code: string) =>
   api.apiFetch.mockRejectedValue(new ApiError(status, code, 'x'))
-// 확인(check)을 통과하면 이어서 Dockerfile 확인(dockerfiles)도 부른다. 경로별로 답한다.
-const passCheck = (dockerfiles: string[] = ['Dockerfile']) =>
+// 확인(check)을 통과하면 이어서 Dockerfile 확인(dockerfiles)과 배포 설정 초안(deploy-spec)을 부른다. 경로별로 답한다.
+const passCheck = (dockerfiles: string[] = ['Dockerfile'], commit: string | null = COMMIT) =>
   api.apiFetch.mockImplementation((path: string) =>
     Promise.resolve(
       path === '/api/repos/dockerfiles'
         ? { repo: 'student/my-app', dockerfiles, truncated: false }
-        : { repo: 'student/my-app' },
+        : path === '/api/repos/deploy-spec'
+          ? draftOf([feProject])
+          : { repo: 'student/my-app', commit },
     ),
   )
+const callsTo = (path: string) => api.apiFetch.mock.calls.filter((call) => call[0] === path)
 
 it('shows the title, the field with its hint and the check button', () => {
   renderPage()
@@ -158,9 +162,72 @@ it('checks for Dockerfiles only after the repo check passed', async () => {
   renderPage()
   submit('https://github.com/student/my-app')
   expect(await screen.findByText('BE/Dockerfile')).toBeTruthy()
+  await screen.findByRole('region', { name: '서비스 1' })
   expect(api.apiFetch.mock.calls.map((call) => String(call[0]))).toEqual([
     '/api/repos/check',
     '/api/repos/dockerfiles',
+    '/api/repos/deploy-spec',
+  ])
+})
+
+it('shows the first 7 characters of the commit and passes the full one on to the draft, once', async () => {
+  passCheck()
+  renderPage()
+  submit('  https://github.com/student/my-app ')
+  expect(await screen.findByText(COMMIT.slice(0, 7))).toBeTruthy()
+  expect(screen.getByRole('button', { name: 'commit 전체 해시 복사' })).toBeTruthy()
+  await screen.findByRole('region', { name: '서비스 1' })
+  expect(callsTo('/api/repos/deploy-spec')).toEqual([
+    ['/api/repos/deploy-spec', { repoUrl: 'https://github.com/student/my-app', commit: COMMIT }],
+  ])
+})
+
+it('blocks the confirm button for an empty repo and never asks for a draft', async () => {
+  passCheck(['Dockerfile'], null)
+  renderPage()
+  submit('https://github.com/student/my-app')
+  expect(await screen.findByText('이 레포에는 아직 commit이 없어요')).toBeTruthy()
+  expect(screen.getByText('없음 (빈 레포)')).toBeTruthy()
+  expect(screen.getByRole<HTMLButtonElement>('button', { name: '배포 설정 확정' }).disabled).toBe(true)
+  expect(callsTo('/api/repos/deploy-spec')).toHaveLength(0)
+})
+
+it('does not show the draft before the Dockerfile check is done, and hides it when the address is edited', async () => {
+  api.apiFetch.mockImplementation((path: string) =>
+    path === '/api/repos/dockerfiles' ? new Promise(() => undefined) : Promise.resolve({ repo: 'student/my-app', commit: COMMIT }),
+  )
+  renderPage()
+  submit('https://github.com/student/my-app')
+  await screen.findByText('Dockerfile을 확인하는 중…')
+  expect(callsTo('/api/repos/deploy-spec')).toHaveLength(0)
+  expect(screen.queryByRole('heading', { name: '배포 설정' })).toBeNull()
+})
+
+it('hides the settings when the address is edited after a pass', async () => {
+  passCheck()
+  renderPage()
+  submit('https://github.com/student/my-app')
+  await screen.findByRole('region', { name: '서비스 1' })
+  fireEvent.change(urlInput(), { target: { value: 'https://github.com/student/other' } })
+  expect(screen.queryByRole('heading', { name: '배포 설정' })).toBeNull()
+})
+
+it('checks the repo again, with a new commit, when the draft says the commit is gone', async () => {
+  const NEW_COMMIT = 'f'.repeat(40)
+  let checks = 0
+  api.apiFetch.mockImplementation((path: string) => {
+    if (path === '/api/repos/check') return Promise.resolve({ repo: 'student/my-app', commit: ++checks === 1 ? COMMIT : NEW_COMMIT })
+    if (path === '/api/repos/dockerfiles') return Promise.resolve({ repo: 'student/my-app', dockerfiles: [], truncated: false })
+    return checks === 1 ? Promise.reject(new ApiError(404, 'COMMIT_NOT_FOUND', 'x')) : Promise.resolve(draftOf([feProject]))
+  })
+  renderPage()
+  submit('https://github.com/student/my-app')
+  fireEvent.click(await screen.findByRole('button', { name: '레포 다시 확인하기' }))
+  expect(await screen.findByRole('region', { name: '서비스 1' })).toBeTruthy()
+  expect(callsTo('/api/repos/check')).toHaveLength(2)
+  expect(callsTo('/api/repos/deploy-spec')).toEqual([
+    ['/api/repos/deploy-spec', { repoUrl: 'https://github.com/student/my-app', commit: COMMIT }],
+    ['/api/repos/deploy-spec', { repoUrl: 'https://github.com/student/my-app', commit: NEW_COMMIT }],
   ])
 })
 
