@@ -62,7 +62,7 @@ W0 접수 · 사전 검사 → W1 분석 → W2 배포 설정 → W3 비밀값 �
 | **W2 배포 설정** | 플랫폼 서버 | 설정 파일 > README > 기본값 순서로 spec을 조립 | 빈칸 · 후보 여러 개 · README와 충돌 → **문제 티켓** |
 | **W3 비밀값 받기** | 플랫폼 서버 | 빠진 필수 env 값을 사용자에게 바로 요청. 받은 값은 **플랫폼 서버가 Tailscale로 k3s API에 접속해 Secret으로 만든다.** GoCD를 거치지 않으므로 실행 기록에 남지 않는다. DB에는 key 이름과 상태만 저장 | 응답이 없으면 "사용자 조치 필요"로 마감 |
 | **W4 빌드** | AWS 실행기 → CodeBuild | 배포 입력으로 서비스별 CodeBuild를 병렬 호출한다. 학생 Dockerfile(`build.dockerfile`) 또는 배포 입력 값(Dockerfile이 없을 때, 빌드 값 사용)으로 빌드 → 이미지 검사 → GHCR에 push. 빌드 입력 해시가 같으면 건너뜀 | 빌드 실패 → **문제 티켓** |
-| **W5 배포** | 리더 실행기 | Prepare: 배포 입력을 받고 필수 Secret key 확인, 대상 슬롯 비우기(4절). Render: 대상 슬롯 manifest 생성(3절). Apply: AI → BE → FE 순서로 대상 슬롯에 적용 | 배포 실패 → live 슬롯은 그대로 → **문제 티켓** |
+| **W5 배포** | 리더 실행기 | Prepare: 배포 입력을 받고 필수 Secret key 확인, live 슬롯 보호 검사, 대상 슬롯 비우기(4절). Render: 대상 슬롯 manifest 생성(3절). Apply: AI → BE → FE 순서로 대상 슬롯에 적용 | 배포 실패 → live 슬롯은 그대로 → **문제 티켓** |
 | **W6 동작 확인** | 리더 실행기 | 대상 슬롯의 Pod Ready와 Service Endpoints를 확인(BE → AI 같은 내부 연결 포함)한다. test Ingress의 대상을 대상 슬롯으로 적용하고, Traefik에 Host `<slug>.test.internal`로 화면(`/`) · JS·CSS · BE 헬스체크 경로(`/api/...`)를 요청해 모두 성공해야 통과다 | 실패 → open Ingress를 바꾸지 않음 (live 슬롯은 그대로) → **문제 티켓** |
 | **전환** | 리더 실행기 | open Ingress의 대상을 대상 슬롯의 Service로 바꿔 적용. 첫 배포면 open Ingress를 만든다 | - |
 | **W7 완료 · 보고** | 플랫폼 서버 | DB의 `live_slot`을 대상 슬롯으로 바꾸고 이전 live 슬롯의 Deployment를 0개로 줄임, 사용자에게 주소 · 상태 · 경고 표시, 프로젝트 메모리에 기록, 운영 감시 시작 | - |
@@ -131,6 +131,7 @@ W0 접수 · 사전 검사 → W1 분석 → W2 배포 설정 → W3 비밀값 �
 | 그다음 커밋 | A | 슬롯 A 비우기 → 슬롯 A에 배포 → W6 → open Ingress를 A로 변경 → 슬롯 B Deployment 0개 | B → A |
 
 - 대상 슬롯은 W4 시작 때 플랫폼 서버가 `live_slot`의 반대쪽으로 정한다. 첫 배포는 A다.
+- **live 슬롯 보호**: Prepare는 비우기 전에 클러스터의 open Ingress를 읽어 backend Service 이름의 슬롯(`-a` / `-b`)을 확인한다. 그 슬롯이 대상 슬롯과 같거나, backend들이 서로 다른 슬롯을 가리키면 비우지 않고 파이프라인을 중단한다. DB의 `live_slot`이 틀려도 live 슬롯은 지워지지 않는다. open Ingress가 없으면(첫 배포) 그대로 진행한다. 이 중단은 플랫폼 문제로 보고하고 AI 에이전트를 부르지 않는다.
 - **슬롯 비우기**: 그 슬롯에 배포하기 직전에 `slot` 라벨이 그 슬롯인 Deployment · Service · ConfigMap을 모두 지우고, DB의 그 슬롯 줄을 새 배포 입력으로 통째로 바꾼다. Secret과 `build_cache`는 지우지 않는다.
 - 전환 직후에는 이전 live 슬롯을 지우지 않고 Deployment만 0개로 줄인다.
 - 대상 슬롯 배포나 W6이 실패하면 open Ingress를 바꾸지 않는다. live 슬롯은 그대로 서비스한다. 실패한 대상 슬롯은 다음 배포에서 비운다.
