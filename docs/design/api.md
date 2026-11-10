@@ -282,7 +282,7 @@ FE 흐름은 `repos/check`(commit 확정) → `repos/dockerfiles` · `repos/depl
 | `INVALID_TYPE` | JSON 타입이 틀렸다 (문자열 자리에 숫자 등) |
 | `INVALID_VALUE` | 허용 값 목록이나 모양에 맞지 않는다 (`framework`, `nodeVersion`, 경로, 이름 등) |
 | `OUT_OF_RANGE` | 숫자 범위를 벗어났다 (`port`, `startupTimeoutSeconds`, 서비스 개수) |
-| `DUPLICATE` | 서로 달라야 하는 값이 같다 (`services[].name`, `secretKeys`, `links[].env`) |
+| `DUPLICATE` | 서로 달라야 하는 값이 같다 (`services[].name`, `services[].role`, `runtime.ingressPath`, `secretKeys`, `links[].env`). 뒤에 나온 쪽 칸에 알린다 |
 | `UNKNOWN_KEY` | 모르는 키다 |
 | `UNKNOWN_SERVICE` | `links[].service`가 `spec.services`에 없는 이름이다 |
 | `RESERVED` | 예약된 이름이다 (`project.slug`) |
@@ -293,11 +293,11 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
 
 | 칸 | 규칙 |
 | --- | --- |
-| `project.slug` | 소문자 영숫자와 `-`, 영숫자로 시작하고 끝남, 1~58자(`proj-` 접두사를 붙여도 DNS 이름 한도 63자). 예약 이름 불가(목록의 정본은 [`cluster.md`](cluster.md) §9 공개 진입. 서버 코드는 그 목록을 따른다) |
+| `project.slug` | 소문자 영숫자와 `-`, 영숫자로 시작하고 끝남, 1~40자(`deploy-handoff.md`의 검증 규칙과 같다. 공간 이름 `proj-<slug>`와 이미지 태그가 DNS · 태그 한도 안에 들어간다). 예약 이름 불가(목록의 정본은 [`cluster.md`](cluster.md) §9 공개 진입. 서버 코드는 그 목록을 따른다) |
 | `project.repo` | `owner/name` |
-| `services` | 1~3개. `name`은 서비스 사이에서 유일 |
-| `services[].name` | 소문자로 시작하는 소문자 영숫자와 `-`, 영숫자로 끝남, 1~52자(시험 배포의 `-candidate`를 붙여도 63자 이내). Deployment · Service 이름이자 클러스터 안 DNS 이름 |
-| `role` | `fe` · `be` · `ai` |
+| `services` | 1~3개. `name`은 서비스 사이에서 유일하고, `role`은 역할마다 최대 하나, `runtime.ingressPath`는 서비스끼리 같지 않다(`null`은 제외. 같은 문자열만 겹침으로 본다. `/`와 `/api`는 같이 쓴다) |
+| `services[].name` | 소문자로 시작하는 소문자 영숫자와 `-`, 영숫자로 끝남, 1~30자. Deployment · Service 이름의 앞부분이자 클러스터 안 DNS 이름이다(슬롯 이름 `<name>-a` · `<name>-b`가 붙어도 63자 이내) |
+| `role` | `fe` · `be` · `ai`, 역할마다 서비스 하나까지 |
 | `dir` · `build.context` · `build.dockerfile` · `build.outputDir` | 레포 안 상대 경로: `.` 하나이거나 영숫자 · `.` · `_` · `@` · `+` · `-`로 된 조각을 `/`로 이은 것(200자 이하, `/`로 시작 · `..` · `.` 조각 · 빈 조각 · `\` · 공백 불가, 조각은 `-`로 시작할 수 없다: 명령 옵션으로 읽히지 않게). `dockerfile` · `outputDir`은 `null` 가능 |
 | `build.framework` | `null` · `vite-react` · `nextjs` · `nest` |
 | `build.nodeVersion` | `null` 또는 `22` · `22.1` · `22.1.0` 모양 |
@@ -305,7 +305,7 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
 | `build.buildEnv` · `runtime.env` | 키는 `[A-Za-z_][A-Za-z0-9_]*`(128자 이하, `__proto__` 불가), 값은 문자열(4096자 이하). 항목은 100개까지 |
 | `runtime.kind` | `server` · `static` |
 | `runtime.port` | 1~65535 정수 |
-| `runtime.health` | `type`이 `http`면 `path`는 `/`로 시작하고 공백이 없는 문자열(200자 이하), `tcp`면 `path`는 `null`. `startupTimeoutSeconds`는 1~600 정수 |
+| `runtime.health` | `type`이 `http`면 `path`는 `/`로 시작하고 공백이 없는 문자열(200자 이하), `tcp`면 `path`는 `null`. `startupTimeoutSeconds`는 5~300 정수 |
 | `runtime.secretKeys` | env 이름 배열(중복 불가, 100개까지). 값은 저장하지 않는다(W3이 Secret으로 따로 넣는다) |
 | `runtime.links` | `{ env, service }` 배열(30개까지, `env`는 서로 달라야 함). `env`는 env 이름이고 `service`는 `spec.services`에 있는 `name` |
 | `runtime.ingressPath` | `null`(내부 전용), `/`, 또는 `/api` · `/api/v1`처럼 끝 슬래시 없는 경로(영숫자 · `.` · `_` · `~` · `-` 조각, 200자 이하) |
