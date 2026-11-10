@@ -153,7 +153,7 @@
 | `build` | `run` \| `reuse` | `build_cache`에 같은 해시의 이미지가 있으면 `reuse`, 없으면 `run` |
 | `image` | 문자열 \| `null` | 이미지 digest 주소. `reuse`면 W4 시작 때, `run`이면 빌드가 끝난 뒤 채운다 |
 
-이미지는 모든 프로젝트 · 서비스가 공개 패키지 하나 `ghcr.io/<봇 계정>/student-apps`를 쓴다. 태그는 `<slug>-<name>-<buildInputHash 앞 12자>`이고, manifest에는 태그가 아니라 digest(`@sha256:...`)를 넣는다. GHCR은 새 패키지를 비공개로 만들므로([ADR-003](../adr/003-registry-ghcr.md)), 프로젝트 · 서비스마다 패키지를 만들면 노드가 토큰 없이 받을 수 없다.
+이미지는 모든 프로젝트 · 서비스가 공개 패키지 하나 `ghcr.io/<봇 계정>/student-apps`를 쓴다. 태그는 `<slug>-<name>-<hex 앞 12자>`(`buildInputHash`에서 `sha256:`을 뗀 hex의 앞 12자. 태그에는 `:`을 쓸 수 없다)이고, manifest에는 태그가 아니라 digest(`@sha256:...`)를 넣는다. GHCR은 새 패키지를 비공개로 만들므로([ADR-003](../adr/003-registry-ghcr.md)), 프로젝트 · 서비스마다 패키지를 만들면 노드가 토큰 없이 받을 수 없다.
 
 **`spec.project`**
 
@@ -208,14 +208,14 @@ W4는 배포 입력을 받으면 아래 규칙으로 검사한다. 하나라도 
 |---|---|
 | `commitSha` | 40자 소문자 hex |
 | `slug` | 소문자 영숫자 · 하이픈, 1~40자, 하이픈으로 시작 · 끝나지 않음, 예약 이름(`www` · `api` · `admin` · `mail` 등) 아님 |
-| `services` | 1~3개. `name`은 소문자 영숫자 · 하이픈, 1~30자, 프로젝트 안에서 유일. `role`은 역할마다 최대 하나 |
+| `services` | 1~3개. `name`은 소문자 영숫자 · 하이픈, 1~30자, 첫 글자는 소문자 영문자, 마지막 글자는 소문자 영숫자, 프로젝트 안에서 유일. `role`은 역할마다 최대 하나 |
 | `build.dockerfile` 있음 | `framework` · `nodeVersion` · `install` · `build` · `start` · `outputDir`은 모두 `null` |
 | `build.dockerfile` 없음 | `framework` · `nodeVersion` · `install` · `build` 필수. `kind: server`면 `start` 필수, `kind: static`이면 `outputDir` 필수 |
 | `kind: static` | `start`는 `null`, `port`는 `8080`, `env` · `secretKeys` · `links`는 비어 있음 |
 | `kind: server` | `outputDir`는 `null` |
 | `buildEnv` | key가 `secretKeys`와 겹치지 않음 |
 | `links[].service` | `spec.services`에 있는 `name` |
-| `ingressPath` | 서비스끼리 겹치지 않음 |
+| `ingressPath` | 서비스끼리 같은 경로 금지. 한 경로가 다른 경로의 앞부분인 것(`/`와 `/api`, `/api`와 `/api/v1`)은 허용하고, 요청은 더 긴 경로가 가져간다(Ingress `pathType: Prefix`의 가장 긴 경로 우선). 앞부분 비교는 `/` 단위로 한다(`/api`는 `/apix`의 앞부분이 아니다) |
 | `health.type: http` | `health.path` 필수 |
 | `health.startupTimeoutSeconds` | 5 이상 300 이하 |
 | `resources` 합계 | 모든 서비스의 요청 합 × 2 ≤ 프로젝트 요청 상한(CPU 4 · 메모리 16Gi), 상한 합 × 2 ≤ 프로젝트 상한(CPU 8 · 메모리 32Gi). × 2는 확인 중 두 슬롯이 같이 뜨기 때문이다. 숫자는 [클러스터 설계](cluster.md) §6의 ResourceQuota 값을 따른다 |

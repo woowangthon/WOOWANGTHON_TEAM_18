@@ -120,7 +120,7 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 
 1. **권한(RBAC)**: ServiceAccount 둘.
    - **플랫폼 서버**: 클러스터 범위 쓰기는 네임스페이스 만들기 · 삭제 둘뿐이다. 공간 안에서는 ResourceQuota · LimitRange · NetworkPolicy **만들기만**, Secret **만들기 · 고치기만**(`get` · `list` · `watch` 없음), 조치용 Deployment 고치기(재시작 · 중지/재개), 읽기(노드 · Pod 상태, 로그, Prometheus 프록시)를 준다. 서버가 자기 공간의 상한과 차단 규칙을 고치거나 지울 수 있으면, 서버 계정이 털렸을 때 그 제한부터 풀린다.
-   - **배포 실행기**: 공간 안 Deployment · Service · Ingress · ConfigMap 만들기 · 고치기 · 지우기와, 동작 확인용 읽기(Pod · Endpoints · 이벤트 · 롤아웃 상태)만 준다. Secret은 읽지 않는다. 필요한 키가 들어갔는지는 플랫폼 서버가 남긴 키 이름으로 확인한다(값은 보지 않는다). 네임스페이스 · 상한 · 차단 규칙은 건드리지 못한다. 실행기 계정의 토큰은 리더 밖으로 나가지 않는다.
+   - **배포 실행기**: 공간 안 Deployment · Service · Ingress · ConfigMap 만들기 · 고치기 · 지우기와, 읽기(Ingress — Prepare의 live 슬롯 보호 검사가 open Ingress를 읽는다 — 와 동작 확인용 Pod · Endpoints · 이벤트 · 롤아웃 상태)만 준다. Secret은 읽지 않는다. 필요한 키가 들어갔는지는 플랫폼 서버가 남긴 키 이름으로 확인한다(값은 보지 않는다). 네임스페이스 · 상한 · 차단 규칙은 건드리지 못한다. 실행기 계정의 토큰은 리더 밖으로 나가지 않는다.
 2. **검사 규칙(ValidatingAdmissionPolicy)**: 두 계정 모두 공간 안 쓰기 · 삭제는 `proj-`로 시작하는 공간에서만 통과한다. 네임스페이스는 이름이 `proj-`로 시작하고 보안 등급 라벨이 붙었을 때만 만들어지고, **삭제도 이름이 `proj-`로 시작할 때만** 통과하며, 그 라벨은 지울 수 없다. Pod는 `NET_RAW`를 빼고 API 토큰 자동 마운트를 끈(`automountServiceAccountToken: false`) 것만 통과한다. 공간의 기본 ServiceAccount는 서버가 고칠 수 없어서(만들기만 가능) 토큰은 Pod마다 끈다. ResourceQuota · LimitRange · NetworkPolicy는 §6 양식과 같은 값일 때만 만들어진다. RBAC만으로는 네임스페이스 이름 조건을 걸 수 없어서 겹친다.
 
 사설망 접근 규칙(Tailscale ACL)은 서버 태그 → 리더 `:6443`, 리더 → EC2의 GoCD 서버 포트(실행기가 일감을 받는 길) 둘만, SSH는 운영자 기기만 허용한다. 서버 접속 정보는 AWS의 비밀 설정에만 둔다.
