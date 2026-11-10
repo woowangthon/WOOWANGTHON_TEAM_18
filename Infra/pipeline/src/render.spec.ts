@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, type Mock, vi } from 'vitest'
 import type { DeployInput } from './deploy-input.js'
 import { deployInput, digest } from './fixtures.js'
 import { checkQuota, DEFAULT_RESOURCES, hasPublicService, quantity, type RenderTools, renderValues, runRender, type Values } from './render.js'
@@ -180,9 +180,10 @@ describe('checkQuota', () => {
 })
 
 describe('runRender', () => {
-  const tools = (over: Partial<RenderTools> = {}) => ({
-    helmTemplate: vi.fn((values: Values) => Promise.resolve(`# ${values.part} ${values.slot}\n`)),
-    dryRun: vi.fn((): ReturnType<RenderTools['dryRun']> => Promise.resolve({ ok: true })),
+  type Fakes = { helmTemplate: Mock<RenderTools['helmTemplate']>; dryRun: Mock<RenderTools['dryRun']> }
+  const tools = (over: Partial<Fakes> = {}): Fakes => ({
+    helmTemplate: vi.fn<RenderTools['helmTemplate']>((values: Values) => Promise.resolve(`# ${values.part} ${values.slot}\n`)),
+    dryRun: vi.fn<RenderTools['dryRun']>(() => Promise.resolve({ ok: true })),
     ...over,
   })
 
@@ -219,7 +220,7 @@ describe('runRender', () => {
   })
 
   it('reports a helm failure as a chart failure', async () => {
-    const t = tools({ helmTemplate: vi.fn(() => Promise.reject(new Error('template: bad'))) })
+    const t = tools({ helmTemplate: vi.fn<RenderTools['helmTemplate']>(() => Promise.reject(new Error('template: bad'))) })
     expect(await runRender(built(), 'a', 'd', t)).toEqual({ ok: false, slot: 'a', manifests: { slot: null, open: null }, failure: { kind: 'helm', message: 'template: bad' } })
   })
 
@@ -231,7 +232,7 @@ describe('runRender', () => {
 
   it('keeps the k3s Status of a dry-run failure as it is, with its message', async () => {
     const status = { kind: 'Status', apiVersion: 'v1', status: 'Failure', message: 'deployments.apps "fe-a" is forbidden: exceeded quota', reason: 'Forbidden', code: 403 }
-    const t = tools({ dryRun: vi.fn(() => Promise.resolve({ ok: false as const, status, message: status.message })) })
+    const t = tools({ dryRun: vi.fn<RenderTools['dryRun']>(() => Promise.resolve({ ok: false, status, message: status.message })) })
     const report = await runRender(built(), 'a', 'd', t)
     expect(report.ok).toBe(false)
     expect(report.failure).toEqual({ kind: 'dry-run', part: 'slot', status, errorMessage: status.message })
@@ -242,7 +243,7 @@ describe('runRender', () => {
   })
 
   it('reports a dry-run failure of the open part', async () => {
-    const t = tools({ dryRun: vi.fn((m: string) => Promise.resolve(m.includes('open') ? { ok: false as const, status: null, message: 'x' } : { ok: true as const })) })
+    const t = tools({ dryRun: vi.fn<RenderTools['dryRun']>((m) => Promise.resolve(m.includes('open') ? { ok: false, status: null, message: 'x' } : { ok: true })) })
     expect((await runRender(built(), 'a', 'd', t)).failure).toEqual({ kind: 'dry-run', part: 'open', status: null, errorMessage: 'x' })
   })
 })
