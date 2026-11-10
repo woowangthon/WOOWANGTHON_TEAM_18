@@ -147,6 +147,14 @@ function EnvRows({ legend, rows, path, issues, disabled, hint, onChange }: EnvRo
   )
 }
 
+// 포트 칸 아래 안내. 정적은 8080 고정이라 Dockerfile로 빌드하는 컨테이너도 8080에서 서빙해야 한다.
+function portHint(s: ServiceForm, isStatic: boolean, hasDockerfile: boolean): string | undefined {
+  if (isStatic) {
+    return hasDockerfile ? `정적 사이트는 ${STATIC_PORT} 고정이에요. Dockerfile로 빌드한 컨테이너가 ${STATIC_PORT}에서 서빙해야 해요.` : `정적 사이트는 ${STATIC_PORT} 고정`
+  }
+  return hintText(s.hints.port) ?? (hasDockerfile ? 'Dockerfile의 컨테이너가 받는 포트(EXPOSE)를 적어 주세요' : undefined)
+}
+
 type ServiceProps = {
   service: ServiceForm
   index: number
@@ -211,7 +219,7 @@ function ServiceFields({ service: s, index, names, dockerfiles, issues, disabled
           error={err('runtime.kind')}
           disabled={disabled}
         />
-        <Text label="포트" value={isStatic ? String(STATIC_PORT) : s.port} onChange={(port) => { set({ port }) }} error={err('runtime.port')} disabled={disabled || isStatic} mono hint={isStatic ? `정적 사이트는 ${STATIC_PORT} 고정` : hintText(s.hints.port)} />
+        <Text label="포트" value={isStatic ? String(STATIC_PORT) : s.port} onChange={(port) => { set({ port }) }} error={err('runtime.port')} disabled={disabled || isStatic} mono hint={portHint(s, isStatic, hasDockerfile)} />
         <SelectField label="상태 확인 방식" value={s.healthType} options={HEALTH_OPTIONS} onChange={(type) => { set({ healthType: type === 'tcp' ? 'tcp' : 'http' }) }} error={err('runtime.health.type')} disabled={disabled} />
         {s.healthType === 'http' && <Text label="상태 확인 경로" value={s.healthPath} onChange={(healthPath) => { set({ healthPath }) }} error={err('runtime.health.path')} disabled={disabled} mono />}
         <Text label="시작 대기 시간(초)" value={s.timeout} onChange={(timeout) => { set({ timeout }) }} error={err('runtime.health.startupTimeoutSeconds')} disabled={disabled} mono hint={`${TIMEOUT_MIN}~${TIMEOUT_MAX}초`} />

@@ -56,6 +56,12 @@ describe('serviceFromProject', () => {
     })
   })
 
+  it('starts a Vite project with a Dockerfile as a server, because the static port 8080 is the platform build rule', () => {
+    const s = serviceFromProject(feProject, ['FE/Dockerfile'])
+    expect(s).toMatchObject({ dockerfile: 'FE/Dockerfile', kind: 'server', role: 'fe', port: '' })
+    expect(serviceFromProject(feProject, []).kind).toBe('static')
+  })
+
   it('takes the Dockerfile found in the folder and leaves role, name and port to the user', () => {
     const s = serviceFromProject(beProject, ['BE/Dockerfile', 'Dockerfile'])
     expect(s).toMatchObject({ dockerfile: 'BE/Dockerfile', role: '', name: '', kind: 'server', port: '', ingressPath: '' })

@@ -23,11 +23,11 @@ Issue #71 is the scope: after `repos/check` and `repos/dockerfiles`, call `repos
 - [x] Field errors from `INVALID_SPEC.fields` by code; `SLUG_TAKEN` on the slug; `DATABASE_UNAVAILABLE` retry — files: `lib/api.ts` (`ApiError.fields`), `deploy/issues.ts`
 - [x] Saved result with id, commit, services, secret names — files: `deploy/DeploySaved.tsx`
 - [x] Tests with the code; docs touched (`ai-scope.md`, `design-system.md`)
-- [ ] Screenshots (light and dark, 1440px and 390px) for the PR; browser check against a real BE
-- [ ] Re-check the limits against merged api.md once BE #80 lands
+- [x] Browser check against a real BE (user: UI + 2 saves; automated: real validation responses). Screenshots (light and dark, 1440px and 390px) are attached to the PR by the user
+- [x] Re-check the limits against merged api.md once BE #80 lands
 
 ## Done when
 
 - [x] `pnpm verify` passes
-- [ ] The flow works in a browser against the real BE and Supabase (not done: only fake responses so far)
+- [x] The flow works in a browser against the real BE and Supabase (not covered: `SLUG_TAKEN`, `COMMIT_NOT_FOUND` after ownership, multi-service save; they need a GitHub-linked account)
 - [ ] Mutation testing: not run

@@ -122,14 +122,16 @@ export function blankService(dir = '.'): ServiceForm {
 export function serviceFromProject(project: DraftProject, dockerfiles: string[]): ServiceForm {
   const framework = project.framework.value ?? ''
   const found = dockerfileIn(project.dir)
-  const kind = framework === 'vite-react' ? 'static' : 'server'
+  const dockerfile = dockerfiles.includes(found) ? found : ''
+  // 정적(포트 8080 고정)은 플랫폼이 빌드할 때의 규칙이다. 학생 Dockerfile은 자기 포트(nginx 기본 80 등)로 서빙하므로 서버로 시작한다.
+  const kind = framework === 'vite-react' && dockerfile === '' ? 'static' : 'server'
   // 역할은 프레임워크로 추측할 수 있을 때만 채운다(vite-react → fe). 이름은 역할과 같게 시작한다.
   const role = framework === 'vite-react' ? 'fe' : ''
   return {
     ...blankService(project.dir),
     name: role,
     role,
-    dockerfile: dockerfiles.includes(found) ? found : '',
+    dockerfile,
     // 락 파일이 있는 폴더에서 설치해야 하므로 빌드 위치도 그 폴더다(루트에 있으면 `.`).
     context: project.lockfile ? dirnameOf(project.lockfile) : project.dir,
     framework,

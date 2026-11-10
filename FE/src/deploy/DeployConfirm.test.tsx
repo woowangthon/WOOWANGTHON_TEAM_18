@@ -101,6 +101,25 @@ it('fixes the port of a static site and hides the server-only lists', async () =
   expect(service(1).getByRole<HTMLInputElement>('textbox', { name: '포트' }).value).toBe('3000')
 })
 
+it('starts a Vite folder that has a Dockerfile as a server and asks for the port the container listens on', async () => {
+  respond([feProject])
+  renderConfirm({ dockerfiles: ['FE/Dockerfile'] })
+  await ready()
+  expect(service(1).getByRole<HTMLSelectElement>('combobox', { name: '실행 방식' }).value).toBe('server')
+  expect(service(1).getByText(/Dockerfile의 컨테이너가 받는 포트/)).toBeTruthy()
+})
+
+it('warns that a static service with a Dockerfile must serve on 8080, and only then', async () => {
+  respond([feProject])
+  renderConfirm({ dockerfiles: ['FE/Dockerfile'] })
+  await ready()
+  fireEvent.change(service(1).getByRole('combobox', { name: '실행 방식' }), { target: { value: 'static' } })
+  expect(service(1).getByText(/Dockerfile로 빌드한 컨테이너가 8080에서 서빙해야 해요/)).toBeTruthy()
+  fireEvent.change(service(1).getByRole('combobox', { name: 'Dockerfile' }), { target: { value: '' } })
+  expect(service(1).queryByText(/Dockerfile로 빌드한 컨테이너가/)).toBeNull()
+  expect(service(1).getByText('정적 사이트는 8080 고정')).toBeTruthy()
+})
+
 it('blocks confirm and shows the reason when the repo has no commit, without asking for a draft', () => {
   renderConfirm({ commit: null })
   expect(screen.getByText('이 레포에는 아직 commit이 없어요')).toBeTruthy()
