@@ -38,7 +38,7 @@ kind: ClusterRole
 metadata:
   name: platform-server
 rules:
-# The only cluster-scoped writes. No get, list, update or patch.
+# The only cluster-scoped writes. No get, list, update or patch on namespaces.
 - apiGroups: [""]
   resources: ["namespaces"]
   verbs: ["create", "delete"]
@@ -55,6 +55,35 @@ rules:
 - apiGroups: [""]
   resources: ["secrets"]
   verbs: ["create", "update"]
+# Reads inside a space come from a RoleBinding the server creates with the space (space.yaml).
+# It may bind the role proj-reader only, and policies.yaml fixes the binding's name and subject.
+- apiGroups: ["rbac.authorization.k8s.io"]
+  resources: ["rolebindings"]
+  verbs: ["create"]
+- apiGroups: ["rbac.authorization.k8s.io"]
+  resources: ["clusterroles"]
+  resourceNames: ["proj-reader"]
+  verbs: ["bind"]
+# Nodes belong to no space. Name, addresses and Ready state, for the operator view.
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "list"]
+---
+# What the platform server may read in a space it was bound into. Not bound cluster-wide.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: proj-reader
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["pods/log"]
+  verbs: ["get"]
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

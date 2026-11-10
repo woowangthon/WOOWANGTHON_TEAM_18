@@ -84,7 +84,7 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 
 ### 6. 학생 공간 양식 (구현됨, 2026-11-10)
 
-프로젝트마다 만드는 공간의 틀. 공간 · 보안 등급 · 자원 상한 · 차단 규칙은 플랫폼 서버가 처음에 만들고, 앱 자원(Deployment · Service · Ingress)은 리더의 배포 실행기가 배포 설정에서 값을 뽑아 채운다. 양식은 [`Infra/student/space.yaml`](../../Infra/student/space.yaml)이고 시험 공간 `proj-demo`에 적용해 두었다. 서버는 이 파일에서 이름만 `proj-<id>`로 바꿔 Namespace · LimitRange · ResourceQuota · NetworkPolicy 넷을 만든다. 배포 실행기의 `student-app` 차트가 서비스마다 넣어야 할 필드는 [`Infra/student/app-example.yaml`](../../Infra/student/app-example.yaml)에 있다.
+프로젝트마다 만드는 공간의 틀. 공간 · 보안 등급 · 자원 상한 · 차단 규칙은 플랫폼 서버가 처음에 만들고, 앱 자원(Deployment · Service · Ingress)은 리더의 배포 실행기가 배포 설정에서 값을 뽑아 채운다. 양식은 [`Infra/student/space.yaml`](../../Infra/student/space.yaml)이고 시험 공간 `proj-demo`에 적용해 두었다. 서버는 이 파일에서 이름만 `proj-<id>`로 바꿔 Namespace · LimitRange · ResourceQuota · NetworkPolicy · RoleBinding 다섯을 만든다(RoleBinding은 서버가 그 공간을 읽게 하는 권한 연결이다, §8). 배포 실행기의 `student-app` 차트가 서비스마다 넣어야 할 필드는 [`Infra/student/app-example.yaml`](../../Infra/student/app-example.yaml)에 있다.
 
 | 항목 | 값 |
 | --- | --- |
@@ -118,20 +118,22 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 
 배포는 리더의 배포 실행기(GoCD Agent)가 하고, 플랫폼 서버는 비밀값 · 조치 · 조회만 한다([ADR-009](../adr/009-deploy-runs-on-leader-gocd-agent.md)). 계정을 둘로 나누고 두 겹으로 막는다.
 
-**만든 것 (구축 09 1차, [`Infra/platform/`](../../Infra/platform/))**: 플랫폼 서버가 공간을 만들고 비밀값을 넣는 데 쓰는 것까지다.
+**만든 것 (구축 09, [`Infra/platform/`](../../Infra/platform/))**: 플랫폼 서버가 공간을 만들고, 비밀값을 넣고, 자기가 만든 공간을 읽는 데 쓰는 것까지다.
 
 - 계정: 운영 공간 `platform`의 ServiceAccount `platform-server`. 토큰은 만료 없는 것 하나(Secret `platform-server-token`)이고, 그 Secret을 지우면 폐기된다.
-- 권한: 네임스페이스 만들기 · 삭제, ResourceQuota · LimitRange · NetworkPolicy 만들기, Secret 만들기 · 통째로 바꾸기(`create` · `update`). 읽기와 `patch`는 없다. patch의 응답은 Secret 전체라, 빈 patch 하나로 값을 읽을 수 있기 때문이다. 통째로 바꾸기(PUT)의 응답은 보낸 값뿐이다.
-- 검사 규칙 다섯
+- 권한: 네임스페이스 만들기 · 삭제, ResourceQuota · LimitRange · NetworkPolicy 만들기, Secret 만들기 · 통째로 바꾸기(`create` · `update`), 권한 연결(RoleBinding) 만들기, 노드 읽기. Secret 읽기와 `patch`는 없다. patch의 응답은 Secret 전체라, 빈 patch 하나로 값을 읽을 수 있기 때문이다. 통째로 바꾸기(PUT)의 응답은 보낸 값뿐이다.
+- 읽기: 서버는 `proj-` 공간 안의 Pod · 로그 · Deployment만 읽는다. 검사 규칙은 쓰기만 걸러서 읽기는 이름으로 좁힐 수 없다. 그래서 읽기 권한을 클러스터 전체에 주지 않고, 읽기 역할 `proj-reader`를 따로 두고 서버가 공간을 만들 때 그 공간에 권한 연결 `platform-server-read`를 같이 만든다(양식의 다섯째 객체). 서버가 연결할 수 있는 역할은 `proj-reader` 하나뿐이다(RBAC `bind`). 연결이 없는 공간과 `kube-system` · `vllm` 등은 읽지 못한다. 노드는 공간에 속하지 않아 클러스터 범위로 읽는다(이름 · 주소 · Ready 상태).
+- 검사 규칙 여섯
   - `wanggane-platform-server`: 서버 계정의 쓰기 · 삭제는 `proj-`로 시작하는 공간에서만 통과한다. 네임스페이스는 만들기 · 삭제만 되고, 만들 때 라벨이 보안 등급 둘(`enforce=baseline`, `warn=restricted`)뿐이어야 한다. Secret은 타입이 `Opaque`이고 이름이 `<서비스>-secrets`일 때만 통과한다(서비스 계정 토큰 타입 Secret으로 공간 안에서 토큰을 찍어내지 못하게).
-  - `wanggane-space-quota` · `-limits` · `-isolation`: 서버 계정이 만드는 ResourceQuota · LimitRange · NetworkPolicy는 이름과 값이 §6 양식과 같을 때만 통과한다. 양식 값을 규칙에 베끼지 않고, 양식을 그대로 적용해 둔 기준 공간 `student-template`의 객체와 비교한다. 기준 객체가 없으면 거절한다. 이름까지 묶는 것은 NetworkPolicy가 여러 개면 허용이 합쳐져, 다른 이름으로 하나 더 만들면 차단이 풀리기 때문이다.
+  - `wanggane-space-quota` · `-limits` · `-isolation`: 서버 계정이 만드는 ResourceQuota · LimitRange · NetworkPolicy는 이름과 값이 §6 양식과 같을 때만 통과한다. 양식 값을 규칙에 베끼지 않고, 양식을 그대로 적용해 둔 기준 공간 `student-template`의 객체와 비교한다. 기준 객체가 없으면 그 종류를 만드는 요청이 계정 · 공간을 가리지 않고 모두 거절된다(기준을 계정보다 먼저 찾는다). 기준 공간만은 규칙에서 빼 두어 기준을 언제든 다시 넣을 수 있다. 이름까지 묶는 것은 NetworkPolicy가 여러 개면 허용이 합쳐져, 다른 이름으로 하나 더 만들면 차단이 풀리기 때문이다.
+  - `wanggane-space-readers`: 서버 계정이 만드는 권한 연결은 이름 · 역할 · 대상 계정이 양식과 같을 때만 통과한다. 같은 방식으로 기준 공간의 객체와 비교한다.
   - `wanggane-student-pods`: `proj-` 공간의 Pod와 Deployment는 모든 컨테이너에서 `NET_RAW`를 빼고 API 토큰 자동 마운트를 끈 것만 통과한다. 같은 토큰을 손으로 마운트하는 길(projected 볼륨의 `serviceAccountToken`)도 거절한다. 운영자를 포함한 모든 계정에 걸린다. Deployment도 보는 것은 배포 실행기가 적용할 때 바로 거절을 받게 하려는 것이다(Pod만 보면 거절이 ReplicaSet 이벤트로만 남는다).
 - 서버가 받는 응답: 권한이 없으면 `403`, 검사 규칙에 걸리면 `422`(메시지에 규칙 이름과 이유), 이미 있으면 `409`, 토큰이 틀리면 `401`.
-- 시험(2026-11-10, [`Infra/platform/check.sh`](../../Infra/platform/check.sh), 운영자 기기에서 실행): 서버 계정으로(impersonation) 양식 그대로 공간 하나를 만들고 Secret을 만들고 바꾼다. 거절되는 것: `proj-` 아닌 이름, 라벨이 없거나 다르거나 더 붙은 공간, `vllm` · `student-template` · `kube-system` 삭제, 값을 바꾼 상한 · 기본값 · 차단 규칙, 다른 이름의 차단 규칙, 상한 · 차단 규칙 지우기 · 고치기, Secret 읽기 · 목록 · patch · 삭제, 다른 이름이나 토큰 타입의 Secret, `proj-` 밖 Secret 쓰기, Pod 만들기, Pod · 노드 읽기. 실제 토큰으로 리더의 Tailscale 주소를 불러 `201` · `409` · `422` · `403` · `401`도 확인했다. EC2에서 닿는지는 EC2가 사설망에 들어온 뒤 본다.
+- 시험(2026-11-10, [`Infra/platform/check.sh`](../../Infra/platform/check.sh), 운영자 기기에서 실행): 서버 계정으로(impersonation) 양식 그대로 공간 하나를 만들고 Secret을 만들고 바꾼다. 거절되는 것: `proj-` 아닌 이름, 라벨이 없거나 다르거나 더 붙은 공간, `vllm` · `student-template` · `kube-system` 삭제, 값을 바꾼 상한 · 기본값 · 차단 규칙, 다른 이름의 차단 규칙, 상한 · 차단 규칙 지우기 · 고치기, Secret 읽기 · 목록 · patch · 삭제, 다른 이름이나 토큰 타입의 Secret, `proj-` 밖 Secret 쓰기, Pod · Deployment 만들기, 다른 이름이나 다른 계정의 권한 연결, `cluster-admin` 연결, 권한 연결 지우기. 읽기: 자기가 만든 공간과 `proj-demo`의 Pod · 로그 · Deployment, 노드는 읽힌다. `kube-system` · `vllm`의 Pod와 로그, 모든 공간 한꺼번에 읽기, 권한 연결이 없는 공간, Secret · ConfigMap 읽기, Pod 안에서 명령 실행은 거절된다. 실제 객체를 겨누는 거절 시험은 server dry run으로 보낸다. 실제 토큰으로 리더의 Tailscale 주소를 불러 `201` · `409` · `422` · `403` · `401`도 확인했다. EC2에서 닿는지는 EC2가 사설망에 들어온 뒤 본다.
 
 **남은 것**
 
-- 플랫폼 서버의 조치 · 조회(구축 09 2차): 조치용 Deployment 고치기(재시작 · 중지/재개), 읽기(노드 · Pod 상태, 로그). 검사 규칙은 쓰기만 걸러서, 읽기를 `proj-` 공간으로 좁히려면 공간마다 권한 연결(RoleBinding)을 두는 방법을 먼저 정한다. Prometheus 프록시 읽기는 구축 11.
+- 플랫폼 서버의 조치(구축 09 2차): 조치용 Deployment 고치기(재시작 · 중지/재개)와, 그 고치기를 scale과 재시작 주석으로만 좁히는 검사 규칙. Prometheus 프록시 읽기는 구축 11.
 - 배포 실행기 계정(구축 09′), 네임스페이스 라벨 지우기 막기(지금은 서버에 고치기 권한이 없어 필요 없다).
 
 **전체 설계**
@@ -209,6 +211,7 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 | 학생 공간의 API 토큰은 Pod마다 끄고 검사 규칙으로 강제 (2026-11-10) | 서버 계정이 공간 안 객체를 만들기만 하는 설계(§8)를 지킨다. Pod가 덮어쓸 수 없는 검사 규칙이 공간 설정보다 단단하다 | 양식에 `default` ServiceAccount를 넣어 자동 마운트 끄기(서버에 고치기 권한이 필요하고, 공간 생성 직후 쿠버네티스가 만든 것과 부딪혀 `AlreadyExists`가 난다) |
 | 학생 공간에 NodePort · LoadBalancer Service 0개 (2026-11-10) | 방문자 길을 Traefik 하나로 묶는다. NodePort는 NetworkPolicy · Traefik을 거치지 않고 노드 대역에 앱을 연다 | 노드 대역 제한(§4)만 믿기 |
 | 양식 값은 검사 규칙에 베끼지 않고 기준 공간과 비교 (2026-11-10) | 양식 파일 하나만 고치면 된다. 규칙 안에 값을 다시 적으면 둘이 어긋난다 | 규칙에 값을 직접 적기(상한 11개 · 차단 대역 5개를 두 군데서 관리), 값 검사 없이 권한만(서버 계정이 느슨한 상한을 만들 수 있다) |
+| 서버의 읽기는 공간마다 권한 연결로 (2026-11-10) | 서버 토큰은 클러스터 밖(EC2)에 있다. 새더라도 학생 공간 밖의 Pod · 로그(Traefik 접근 기록, 로컬 모델 요청 등)는 읽히지 않는다 | 클러스터 전체 읽기(서버가 만드는 객체는 하나 줄지만 시스템 공간까지 읽힌다) |
 | 서버 계정의 Secret 권한은 만들기와 통째로 바꾸기만 (2026-11-10) | patch 응답이 Secret 전체라 "쓰기만"이 깨진다 | patch 허용(빈 patch로 읽힌다), server-side apply(patch 권한이 필요하다) |
 | 서버 계정 토큰은 만료 없는 것 하나 (2026-11-10) | 대회 기간에 갱신할 인증 정보를 두지 않는다. 폐기는 Secret 삭제로 한다 | 기한 있는 토큰(`kubectl create token`. 만료 전에 EC2 설정을 다시 넣어야 하고, 개별 폐기가 안 된다) |
 | 학생 DB는 학생 것, 학생 Pod는 인터넷으로 나간다 (2026-11-07) | 배포 구조 v15에서 MVP 범위를 줄였다. 클러스터에 학생 데이터가 없어 볼륨 복제 · 페일오버 시험이 빠진다 | 플랫폼 MySQL + Longhorn 사본 2(이전 계획), 학생 DB 주소만 허용하는 egress(주소를 미리 알 수 없다) |
@@ -231,5 +234,7 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 - 플랫폼 서버 계정은 공간만 만들고 상한 · 차단 규칙을 만들지 않을 수 있다. 검사 규칙은 만들어지는 것의 값만 본다. 서버 계정은 Pod를 만들 수 없어 그 공간에 앱이 뜨려면 배포 실행기를 거쳐야 하므로, 실행기가 배포 전에 셋이 있는지 확인하는 것을 구축 09′에서 본다.
 - 서버 계정의 권한(RBAC)은 클러스터 전체에 걸려 있고, `proj-` 공간으로 좁히는 것은 검사 규칙뿐이다. 검사 규칙이 없거나 경고 모드인 동안에는 이 계정으로 어느 공간의 Secret이든 쓰고 네임스페이스를 지울 수 있다. 그래서 검사 규칙을 먼저 적용하고 계정을 나중에 만들며, 없앨 때는 계정부터 지운다. 서버 계정에 걸린 규칙은 계정이 있는 동안 경고 모드로 내리지 않는다. 시험 스크립트도 실제 객체(`vllm` 등)를 겨누는 거절 시험은 dry run으로 보낸다.
 - 양식 값 비교는 저장된 모양 그대로의 문자열 비교다. 값이 같아도 단위가 다르면(`16Gi` 대신 `17179869184`) 거절된다. 서버는 양식 파일의 글자를 그대로 보낸다.
+- 기준 공간 `student-template`의 객체가 하나라도 없어지면 그 종류(상한 · 기본값 · 차단 규칙 · 권한 연결)는 클러스터 어디서도 만들 수 없다. 닫히는 쪽으로 실패하지만 다른 설치(구축 11의 모니터링 등)도 같이 막힌다. 기준 공간을 다시 적용하면 풀린다.
+- 서버가 읽는 Pod 스펙에는 환경 변수 이름과 Secret 참조가 보인다(값은 아니다). 로그에 학생 앱이 찍은 값은 그대로 읽힌다.
 - 서버 계정의 토큰은 만료가 없다. 새면 리더에서 Secret을 지워 폐기하고 다시 만든다.
 - 프로젝트 자원 상한은 기본값 컨테이너 4개분이라, 한 프로젝트에서 두 서비스를 동시에 배포하면 하나가 기다린다(§6).

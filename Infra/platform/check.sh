@@ -17,12 +17,13 @@ allow() { # allow <label> <command...>   stdin = manifest
   local label=$1 out; shift
   if out=$("$@" 2>&1); then echo "PASS $label"; else echo "FAIL $label: $(echo "$out" | head -1)"; fail=1; fi
 }
-deny() { # deny <rbac|policy|exists|builtin> <label> <command...>   stdin = manifest
+deny() { # deny <rbac|policy|exists|escalation|builtin> <label> <command...>   stdin = manifest
   local why=$1 label=$2 out pat; shift 2
   case $why in
     rbac) pat='cannot .* (resource|at the cluster scope)';;
     policy) pat='ValidatingAdmissionPolicy';;
     exists) pat='AlreadyExists';;
+    escalation) pat='not currently held|ValidatingAdmissionPolicy';; # RBAC refuses to bind a role the account may not bind
     builtin) pat='may not be deleted';; # Kubernetes itself protects kube-system, before any policy runs
   esac
   if out=$("$@" 2>&1); then echo "FAIL $label accepted"; fail=1
@@ -66,7 +67,7 @@ trap cleanup EXIT
 k delete namespace proj-srvcheck proj-srvcheck2 --ignore-not-found >/dev/null
 
 echo "== server account: what #81 and #43 do"
-allow "create a space from the template (4 objects)" ks create -f - < <(space proj-srvcheck)
+allow "create a space from the template (5 objects)" ks create -f - < <(space proj-srvcheck)
 deny exists "create the same space again" ks create -f - < <(space proj-srvcheck)
 allow "create a Secret" ks create -f - < <(secret proj-srvcheck be-secrets Opaque first)
 allow "replace the Secret (PUT)" ks replace -f - < <(secret proj-srvcheck be-secrets Opaque second)
@@ -90,6 +91,10 @@ deny policy "NetworkPolicy without the private-range block" ks create -f - < <(d
 deny policy "second NetworkPolicy under another name" ks create -f - < <(doc NetworkPolicy proj-srvcheck2 | sed 's/name: project-isolation/name: allow-more/')
 deny rbac "delete the ResourceQuota" ks -n proj-srvcheck delete resourcequota project-cap
 deny rbac "delete the NetworkPolicy" ks -n proj-srvcheck delete networkpolicy project-isolation
+deny policy "read binding under another name" ks create -f - < <(doc RoleBinding proj-srvcheck2 | sed 's/name: platform-server-read/name: more-read/')
+deny policy "read binding for another account" ks create -f - < <(printf 'apiVersion: rbac.authorization.k8s.io/v1\nkind: RoleBinding\nmetadata: {name: platform-server-read, namespace: proj-srvcheck2}\nroleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: proj-reader}\nsubjects: [{kind: ServiceAccount, name: default, namespace: proj-srvcheck2}]\n')
+deny escalation "binding to cluster-admin" ks create -f - < <(printf 'apiVersion: rbac.authorization.k8s.io/v1\nkind: RoleBinding\nmetadata: {name: platform-server-read, namespace: proj-srvcheck2}\nroleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-admin}\nsubjects: [{kind: ServiceAccount, name: platform-server, namespace: platform}]\n')
+deny rbac "delete the read binding" ks -n proj-srvcheck delete rolebinding platform-server-read
 deny rbac "patch the ResourceQuota" ks -n proj-srvcheck patch resourcequota project-cap --type=merge -p "'{\"spec\":{\"hard\":{\"pods\":\"100\"}}}'"
 
 echo "== server account: Secrets"
@@ -105,8 +110,22 @@ deny policy "replace the vLLM key" ks replace --dry-run=server -f - < <(secret v
 
 echo "== server account: everything else"
 deny rbac "create a Pod in a space" ks create -f - < <(pod false NET_RAW | sed 's/proj-demo/proj-srvcheck/')
-deny rbac "read Pods" ks -n proj-demo get pods
-deny rbac "read nodes" ks get nodes
+deny rbac "create a Deployment in a space" ks -n proj-srvcheck create deployment x --image=busybox:1.37
+
+echo "== server account: reads (through the read binding of each space)"
+allow "read Pods in an own space" ks -n proj-srvcheck get pods
+allow "read Pods in proj-demo" ks -n proj-demo get pods
+allow "read a Pod log in proj-demo" ks -n proj-demo logs -l app=web --tail=1
+allow "read Deployments in proj-demo" ks -n proj-demo get deployments
+allow "read nodes" ks get nodes
+deny rbac "read Pods in kube-system" ks -n kube-system get pods
+deny rbac "read Pods in vllm" ks -n vllm get pods
+deny rbac "read a log in vllm" ks -n vllm logs -l app=vllm --tail=1
+deny rbac "read Pods in every namespace" ks get pods -A
+deny rbac "read Pods in a space without the binding" ks -n proj-srvcheck2 get pods
+deny rbac "read Secrets in proj-demo" ks -n proj-demo get secrets
+deny rbac "read ConfigMaps in proj-demo" ks -n proj-demo get configmaps
+deny rbac "exec into a Pod" ks -n proj-demo exec deploy/web -- true
 allow "delete an own space" ks delete namespace proj-srvcheck2 --wait=false
 
 echo "== student Pod rule (as the operator, server dry run)"
