@@ -15,7 +15,7 @@ export const targetSlot = (live: Slot | null): Slot => (live === 'a' ? 'b' : 'a'
  * 플랫폼 기본 Dockerfile의 버전. 그 Dockerfile을 바꾸면 여기 숫자를 올린다: 올리지 않으면 바뀌기 전 Dockerfile로 만든 이미지를
  * 빌드 캐시가 그대로 다시 쓴다. 학생 Dockerfile로 빌드하는 서비스의 해시에는 들어가지 않는다.
  */
-export const DEFAULT_DOCKERFILE_VERSIONS = { 'vite-react': '1', nextjs: '2', nest: '2' } as const
+export const DEFAULT_DOCKERFILE_VERSIONS = { 'vite-react': '1', nextjs: '3', nest: '2' } as const
 
 type Build = Spec['services'][number]['build']
 

@@ -4,8 +4,8 @@
     "sha256": "f3cdc8864b9b82ad84f360ef4acc787503cc69f68ca1339acfe6a796a463b225"
   },
   "nextjs": {
-    "version": "2",
-    "sha256": "46d1535917fe7ba24890f4b5aa627a6cf21b67c506411a6aab927fe6bbc81522"
+    "version": "3",
+    "sha256": "e5bbfda3df153d2743908bfbbab9575288cfeb406f20bf8376defa62c91bfc67"
   },
   "nest": {
     "version": "2",
