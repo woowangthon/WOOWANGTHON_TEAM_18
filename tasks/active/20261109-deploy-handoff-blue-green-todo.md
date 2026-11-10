@@ -16,7 +16,7 @@ Fix the W3 → W4 deploy input JSON so W0~W3 can be built in parallel, then chan
 - [x] AI agent design: ticket in (envelope + raw CodeBuild/k3s output + 10-minute logs), result out, close notice, tools through the MCP gateway, allowed and forbidden actions, long-term memory cases, diagram — files: `docs/design/AIagent.md`, `docs/architecture/agent-flow.drawio.svg`
 - [x] Deploy workflow §6: the agent tests fixes on the target slot itself; the platform re-verifies, then runs Switch and W7 — files: `docs/design/deploy-workflow.md`
 - [x] ADR-012: the agent acts only through the platform gateway — files: `docs/adr/012-agent-acts-through-platform-gateway.md`, `docs/system-definition.md`
-- [ ] Agent framework PydanticAI instead of LangChain — files: `docs/ai-scope.md`, `docs/system-definition.md`
+- [x] Agent framework PydanticAI instead of LangChain — files: `docs/ai-scope.md`, `docs/system-definition.md`
 
 ## Done when
 
