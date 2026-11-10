@@ -10,10 +10,24 @@ TOKEN = "s3cret-" + "x" * 25  # 32자
 @pytest.fixture(autouse=True)
 def base_env(monkeypatch: pytest.MonkeyPatch) -> None:
     # 개발자의 실제 env가 섞이지 않게 비우고, 필수값만 채운다. 각 테스트는 보려는 값만 덮어쓴다.
-    for name in ("HOST", "PORT", "AGENT_API_TOKEN", "GATEWAY_URL", "AGENT_MAX_RUNS"):
+    for name in (
+        "HOST",
+        "PORT",
+        "AGENT_API_TOKEN",
+        "GATEWAY_URL",
+        "AGENT_MAX_RUNS",
+        "LOCAL_MODEL_URL",
+        "LOCAL_MODEL_NAME",
+        "LOCAL_MODEL_API_KEY",
+        "PLANNER_MODEL_URL",
+        "PLANNER_MODEL_NAME",
+        "PLANNER_MODEL_API_KEY",
+    ):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("AGENT_API_TOKEN", TOKEN)
     monkeypatch.setenv("GATEWAY_URL", "http://platform:4000/mcp")
+    monkeypatch.setenv("LOCAL_MODEL_URL", "http://vllm:8000/v1")
+    monkeypatch.setenv("LOCAL_MODEL_NAME", "Qwen/Qwen3-8B-AWQ")
 
 
 def test_defaults_and_required_values() -> None:
@@ -23,6 +37,45 @@ def test_defaults_and_required_values() -> None:
     assert s.agent_api_token.get_secret_value() == TOKEN
     assert str(s.gateway_url) == "http://platform:4000/mcp"
     assert s.agent_max_runs == 2
+    assert (str(s.local_model_url), s.local_model_name) == (
+        "http://vllm:8000/v1",
+        "Qwen/Qwen3-8B-AWQ",
+    )
+    assert s.local_model_api_key is None
+    assert (s.planner_model_url, s.planner_model_name, s.planner_model_api_key) == (
+        None,
+        None,
+        None,
+    )
+
+
+def test_planner_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PLANNER_MODEL_URL", "https://api.example.com/v1")
+    monkeypatch.setenv("PLANNER_MODEL_NAME", "reasoner")
+    monkeypatch.setenv("PLANNER_MODEL_API_KEY", "sk-" + "z" * 20)
+    s = load_settings(env_file=None)
+    assert (str(s.planner_model_url), s.planner_model_name) == (
+        "https://api.example.com/v1",
+        "reasoner",
+    )
+    assert s.planner_model_api_key is not None
+
+
+@pytest.mark.parametrize("name", ["PLANNER_MODEL_URL", "PLANNER_MODEL_NAME"])
+def test_planner_url_and_name_go_together(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
+    monkeypatch.setenv(name, "https://api.example.com/v1" if name.endswith("URL") else "reasoner")
+    with pytest.raises(ConfigError, match="PLANNER_MODEL_URL and PLANNER_MODEL_NAME"):
+        load_settings(env_file=None)
+
+
+def test_planner_key_is_not_shown(monkeypatch: pytest.MonkeyPatch) -> None:
+    key = "sk-leaky" + "q" * 20
+    monkeypatch.setenv("PLANNER_MODEL_URL", "not a url")
+    monkeypatch.setenv("PLANNER_MODEL_NAME", "reasoner")
+    monkeypatch.setenv("PLANNER_MODEL_API_KEY", key)
+    with pytest.raises(ConfigError, match="PLANNER_MODEL_URL") as e:
+        load_settings(env_file=None)
+    assert key not in str(e.value)
 
 
 def test_agent_max_runs(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -54,7 +107,9 @@ def test_rejects_bad_port(monkeypatch: pytest.MonkeyPatch, port: str) -> None:
         load_settings(env_file=None)
 
 
-@pytest.mark.parametrize("name", ["AGENT_API_TOKEN", "GATEWAY_URL"])
+@pytest.mark.parametrize(
+    "name", ["AGENT_API_TOKEN", "GATEWAY_URL", "LOCAL_MODEL_URL", "LOCAL_MODEL_NAME"]
+)
 @pytest.mark.parametrize("value", [None, ""])
 def test_required(monkeypatch: pytest.MonkeyPatch, name: str, value: str | None) -> None:
     if value is None:

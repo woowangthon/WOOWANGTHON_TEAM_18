@@ -28,15 +28,6 @@ class TicketRun:
 Runner = Callable[[TicketRun, CaseMemory], Awaitable[None]]
 
 
-async def classify_only(run: TicketRun, memory: CaseMemory) -> None:
-    """에이전트 루프(F12) 전의 실행: 코드 분류(①)만 하고 끝난다. 해결 결과는 내지 않는다."""
-    case = memory.classify(run.ticket)
-    run.case_id = case.case_id if case else None
-    log.info(
-        "ticket %s classified as %s; agent loop not built yet", run.ticket.ticket_id, run.case_id
-    )
-
-
 class RunRegistry:
     """티켓별 실행 기록.
 

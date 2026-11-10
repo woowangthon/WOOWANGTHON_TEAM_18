@@ -1,4 +1,6 @@
-from pydantic import AnyHttpUrl, Field, SecretStr, ValidationError
+from typing import Self
+
+from pydantic import AnyHttpUrl, Field, SecretStr, ValidationError, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -16,6 +18,22 @@ class Settings(BaseSettings):
     gateway_url: AnyHttpUrl
     # 동시에 도는 에이전트 수. 넘으면 503 AGENT_BUSY(플랫폼이 잠시 뒤 다시 보낸다).
     agent_max_runs: int = Field(default=2, ge=1)
+    # 로컬 모델(리더 vLLM, OpenAI 호환 API): LLM 분류 · playbook 실행, 추론 API가 없을 때 planning.
+    local_model_url: AnyHttpUrl
+    local_model_name: str = Field(min_length=1)
+    local_model_api_key: SecretStr | None = None
+    # 추론 모델 API(OpenAI 호환): planning. 비워 두면 planning도 로컬 모델이 한다.
+    planner_model_url: AnyHttpUrl | None = None
+    planner_model_name: str | None = None
+    planner_model_api_key: SecretStr | None = None
+
+    @model_validator(mode="after")
+    def _planner_url_and_name_together(self) -> Self:
+        if (self.planner_model_url is None) != (self.planner_model_name is None):
+            raise ValueError(
+                "PLANNER_MODEL_URL and PLANNER_MODEL_NAME are set together or not at all"
+            )
+        return self
 
 
 class ConfigError(Exception):

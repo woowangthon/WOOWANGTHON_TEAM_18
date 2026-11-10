@@ -355,10 +355,30 @@ buildspec · 서비스 역할(IAM) · 환경 변수 override는 받지 않는다
 
 PydanticAI에서 두 모델을 OpenAI 호환 provider로 붙이고, 추론 모델 API를 못 쓰면 로컬 모델로 넘긴다.
 
+### 10. AI 서버 구현 (`AI/ai_server/agent/`)
+
+| 단계 | 모델 | 하는 일 |
+|---|---|---|
+| ① 코드 분류 | 없음 | §8 `match`로 같은 stage의 case를 고른다 |
+| ② LLM 분류 | 로컬 | 같은 stage의 case 목록(id · 제목)에서 하나를 고르거나 null. 목록에 없는 id는 모르는 것으로 본다 |
+| ③ playbook | 로컬 | case의 playbook을 따라 도구를 부르고 해결 결과(§6의 status · `specPatch` · `pr` · `userRequest` · `evidence` · `summary`)를 낸다 |
+| ④ 재계획 | 추론 API | ③이 `gave_up`이면 playbook · 지금까지의 도구 호출 · ③의 요약을 받아 다시 계획하고 실행한다 |
+| ⑤ planning | 추론 API | ②가 null이면 처음부터 계획하고 실행한다 |
+
+- **결과는 코드가 낸다.** 모델에게 `submit_result`를 주지 않는다. 모델의 출력(위 ③의 칸들)이 모양에 맞지 않으면 PydanticAI가 다시 만들게 하고(2번까지), 코드가 봉투(`ticketId` · `commitSha` · `classification` · `actions`)를 붙여 게이트웨이 `submit_result`를 한 번 부른다. `actions`는 모델이 말한 것이 아니라 게이트웨이에 실제로 한 호출의 기록이다(`ok`는 결과의 `ok`, 거절은 `ok: false`와 `rejected <code>`).
+- **거절 코드.** `TOOL_LIMIT` · `TIME_LIMIT` · `LIVE_SLOT_PROTECTED`는 실행을 멈추고 이유와 할 일을 담은 `gave_up`을 낸다(재계획하지 않는다). `TICKET_CLOSED`는 토큰이 무효라 아무것도 내지 않는다. 그 밖의 거절은 코드와 메시지를 모델에게 돌려줘 인자를 고치게 한다.
+- **모델 호출 실패**(연결 실패, 출력이 계속 틀림)는 `gave_up`과 그 사실을 적은 `summary`로 낸다. 그럴듯한 결과로 대신하지 않는다.
+- **가림 필터**(FR-102): 추론 모델 API로 가는 요청의 지시문 · 프롬프트 · 도구 결과 · 이전 도구 인자에서 비밀값 같은 키의 값, Authorization 헤더 값, 주소 안의 비밀번호, 모양으로 아는 토큰(GitHub · OpenAI · AWS · Slack · Supabase · 게이트웨이 · JWT · 개인 키)을 `[REDACTED]`로 바꾼다. 로컬 모델은 클러스터 안이라 걸지 않는다. 게이트웨이로 내는 결과의 기록은 원본이다.
+- **모델 연결**: 두 모델 모두 OpenAI 호환 API이고 env로 받는다(`LOCAL_MODEL_*` 필수, `PLANNER_MODEL_*` 선택). 추론 API가 없으면 ④ · ⑤도 로컬 모델이 하고, 있는데 호출이 실패하면 그 요청은 로컬 모델로 넘어간다.
+- **모델로 보내는 글**은 `prompts.py` 한 곳에서 만든다(티켓 JSON 전체, case · playbook, 재계획 때 지난 호출). 도구 결과는 게이트웨이 결과 그대로 모델에 간다.
+
 ## 알려진 한계
 
 - 학생 DB 자체의 문제(테이블 없음, migration 안 함)는 에이전트가 학생 DB에 닿지 못해 고칠 수 없다. `needs_user`로 넘긴다.
 - 초기 case 목록과 신호는 추정이다. 실패 주입 시험 전이다.
 - `render` case(`R1` ~ `R3`)는 `raw.k8s.status`(코드 · `message` · `details.causes`)로 대조한다. `prepare` case(`P1` ~ `P3`)는 Status가 없어 `errorMessage` 문장으로 대조하므로, 플랫폼 서버가 쓰는 실제 문장으로 정규식을 맞춰야 한다.
 - CodeBuild API의 오류 이름 · phase 값은 AWS 문서와 대조하지 않았다.
-- 로컬 8B 모델의 분류 · 도구 호출 품질은 검증하지 않았다.
+- 로컬 8B 모델의 분류 · 도구 호출 품질은 검증하지 않았다. 실제 모델(로컬 · 추론 API)은 아직 한 번도 붙여 돌리지 않았다.
+- 로컬 모델 16K 컨텍스트 예산(경계에서 크기 제한, 프롬프트 조립, 지난 도구 결과 요약)은 정하지 않았다. 지금은 티켓 전체와 도구 결과 원본이 그대로 간다. 큰 티켓 · 결과는 컨텍스트를 넘을 수 있다.
+- 에이전트가 낸 `verified`가 정말 `run_verify` 통과 뒤인지 AI 서버는 따로 확인하지 않는다. 플랫폼이 대상 슬롯을 다시 확인한다(§1).
+- 가림 필터는 정해진 모양만 가린다. 이름 없이 나온 임의의 비밀 문자열은 못 가린다.
