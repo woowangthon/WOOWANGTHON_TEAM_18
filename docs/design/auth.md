@@ -1,6 +1,6 @@
 # 인증 — 설계
 
-- **상태**: 구현됨 (로그인 토큰 검증, 레포 소유 확인, FE의 연동 버튼 — 프로필 화면)
+- **상태**: 구현됨 (로그인 토큰 검증, 레포 소유 확인, FE의 연동 버튼 — 프로필 화면, FE의 가입 · 비밀번호 재설정 화면)
 - **관련**: SRS NFR-SEC-03 · NFR-SEC-04 · [ADR-007](../adr/007-login-email-password-github-link.md) · [API 계약](api.md)의 인증 그룹
 
 ## 범위
@@ -48,6 +48,18 @@
 | 공개 키를 받지 못함 (Supabase 장애 · 네트워크 · 시간 초과) | `503 AUTH_UNAVAILABLE` |
 
 `503`을 따로 두는 이유: 인증 서버 쪽 장애를 "토큰이 틀렸다"(`401`)로 돌려주면 FE가 멀쩡한 사용자를 로그아웃시킨다. 그렇다고 검증 없이 통과시키지도 않는다([`conventions.md`](../conventions.md) F-1).
+
+## 가입과 비밀번호 재설정
+
+둘 다 FE가 supabase-js로 Supabase에 직접 하고 플랫폼 서버는 관여하지 않는다. 메일은 Supabase 내장 메일 서버로 보낸다.
+
+- **가입**(`/signup`): `signUp`에 `emailRedirectTo = <FE 주소>/profile`을 준다. 이메일 확인(Confirm email)이 켜져 있어 가입만으로는 토큰이 나오지 않고, 메일의 링크를 누르면 로그인된 채로 프로필에 도착해 GitHub 연동 안내를 만난다. 인증 전에 로그인하면 `email_not_confirmed`라 로그인 화면이 재발송을 안내하고, 그 재발송도 같은 주소로 돌아온다.
+- **비밀번호 재설정**(`/reset-password`): `resetPasswordForEmail`에 `redirectTo = <FE 주소>/reset-password`를 준다. 링크를 누르면 주소의 `#access_token=…&type=recovery`로 돌아오고, supabase-js가 이 토큰으로 세션을 만든다. 화면은 `PASSWORD_RECOVERY` 이벤트를 쓰지 않고(구독이 늦으면 놓친다) 주소로 링크인지 가린다. 토큰이 있는 `type=recovery` 주소면 `getSession()`을 기다려, 세션이 있고 주소의 토큰이 지워졌으면 새 비밀번호 화면, 아니면 "링크가 만료됐어요" 화면이다(쓰지 못한 토큰은 supabase-js가 주소에 그대로 남긴다는 것은 라이브러리 코드를 읽어 정한 것이다. 실제로는 이미 쓴 재설정 주소를 시크릿 탭에서 열면 열리지 않는 것까지 확인했다). 비밀번호를 바꾸면 재설정으로 얻은 세션을 끝내고 새 비밀번호로 다시 로그인하게 한다.
+- **계정이 있는지 알려 주지 않는다.** 이미 가입한 주소로 가입해도, 없는 주소로 재설정을 요청해도 Supabase는 성공으로 답하고 화면도 같은 "메일을 확인해 주세요"를 보인다.
+- **비밀번호 규칙**: 8자 이상, 영문과 숫자를 함께, 이메일 주소와 다를 것(FE `auth/form-rules.ts`). Supabase가 더 엄격하면 `weak_password`로 돌아와 입력칸에 알린다.
+- **Supabase 설정**(대시보드, #49): Confirm email 켜기. Redirect URLs에 위 두 경로를 쓰는 FE 주소 등록(개발 `http://localhost:5173`은 확인했고, 배포 주소는 배포 때 추가한다. 등록되지 않은 주소는 Site URL로 돌아간다).
+- **내장 메일 서버의 제한**([공식 문서](https://supabase.com/docs/guides/auth/auth-smtp)): 팀(조직) 멤버 주소로만 보내고, 시간당 2통이며, 운영용이 아니다. 팀 밖 주소는 `email_address_not_authorized`, 한도는 `over_email_send_rate_limit`(HTTP 429)로 오는 것으로 보고 FE가 안내를 나눠 두었지만, **실제 응답은 확인하지 못했다**. 메일을 더 보내야 하거나 외부 사용자가 직접 가입해야 하면 Custom SMTP로 바꾼다. 심사용 계정은 가입하지 않고 대시보드에서 직접 만든다(위 관리자 절차의 Add user + Auto Confirm User).
+- **알려진 한계**: 로그인한 사람이 `/signup`을 열었을 때의 처리, 만료된 가입 링크(설명 없이 로그인 화면으로 감), 메일 안내 화면은 새로고침하면 사라진다.
 
 ## GitHub 연동과 레포 소유 확인
 

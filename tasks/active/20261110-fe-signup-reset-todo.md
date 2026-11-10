@@ -19,7 +19,7 @@ Two screens on one branch, one commit per issue. They share the password rules, 
 - [x] #55 reset page + tests, `docs/ai-scope.md` — files: `FE/src/pages/ResetPasswordPage.tsx`
 - [x] Check both screens in Chromium with faked responses (light/dark, 1440/390), including a recovery link landing
 - [x] `/code-review` and `/simplify` on the range (run with the worktree path), fixes applied (see lessons)
-- [ ] Real mail round trip by the user (needs #49): signup mail, verification link back to `/profile`, reset mail, new password
+- [x] Real mail round trip by the user on the dev server (#49): signup mail, verification link back to `/profile`, reset mail, new password. Not checked: a deployed address, an address outside the team, the mail rate limit
 
 ## Done when
 

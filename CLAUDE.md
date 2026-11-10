@@ -85,4 +85,7 @@ AI and the mutation-test command: TBD — added with each stack.
 
 ## Pitfalls
 
-None yet — add lessons everyone should know as they come up ([CONTRIBUTING.md §1 step 8](CONTRIBUTING.md#1-how-we-work-sdd--task-workflow)).
+- **When the user asks to log out, call `useAuth().signOut()`, not `supabase.auth.signOut()`.** The provider's manual-logout flag is what keeps the next protected page from showing the "session expired" screen (`apiFetch` calls the Supabase one on purpose after a 401, because there the expired screen is wanted).
+- **Supabase's built-in mail server is tiny.** It sends only to team members, 2 mails per hour. Test signup and password reset with faked responses, and create demo or judge accounts in the dashboard (Add user + Auto Confirm User) instead of signing them up ([auth.md](docs/design/auth.md#가입과-비밀번호-재설정)).
+
+Add more lessons everyone should know as they come up ([CONTRIBUTING.md §1 step 8](CONTRIBUTING.md#1-how-we-work-sdd--task-workflow)).
