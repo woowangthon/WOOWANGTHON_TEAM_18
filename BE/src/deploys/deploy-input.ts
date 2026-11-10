@@ -83,10 +83,10 @@ const isEnvName = (s: string) => ENV_NAME.test(s) && s !== '__proto__'
 type Obj = Record<string, unknown>
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v)
 
-/** 레포 안 상대 경로: `.` 하나이거나 `FE/dist`처럼 안전한 글자의 조각들(`/`로 시작 · `..` · `\` · 빈 조각 불가). */
+/** 레포 안 상대 경로: `.` 하나이거나 `FE/dist`처럼 안전한 글자의 조각들(`/`로 시작 · `..` · `\` · 빈 조각 불가, 조각은 `-`로 시작할 수 없다: 명령 옵션으로 읽히지 않게). */
 export function isRelativePath(v: string): boolean {
   if (v === '.') return true
-  return v.length <= MAX_PATH_LENGTH && v.split('/').every((seg) => /^[A-Za-z0-9._@+-]+$/.test(seg) && seg !== '.' && seg !== '..')
+  return v.length <= MAX_PATH_LENGTH && v.split('/').every((seg) => /^[A-Za-z0-9._@+][A-Za-z0-9._@+-]*$/.test(seg) && seg !== '.' && seg !== '..')
 }
 
 /**
@@ -191,6 +191,8 @@ export function validateSpec(input: unknown): { ok: true; spec: Spec } | { ok: f
 
     const env = stringMap(runtime.env, `${path}.env`)
     const secretKeys = list(runtime.secretKeys, `${path}.secretKeys`, MAX_MAP_ENTRIES)
+    // secretKeys의 값은 따로 들어가므로, 같은 이름의 평문 env가 spec에 저장되면 안 된다.
+    if (env && secretKeys) for (const k of Object.keys(env)) if (secretKeys.includes(k)) add(`${path}.env.${k}`, 'CONFLICT')
     secretKeys?.forEach((k, j) => {
       const key = envName(k, `${path}.secretKeys[${j}]`)
       if (key !== undefined && secretKeys.indexOf(key) !== j) add(`${path}.secretKeys[${j}]`, 'DUPLICATE')
@@ -204,6 +206,7 @@ export function validateSpec(input: unknown): { ok: true; spec: Spec } | { ok: f
       const linkEnv = envName(link.env, `${linkPath}.env`)
       if (linkEnv !== undefined) {
         if (linkEnvs.has(linkEnv)) add(`${linkPath}.env`, 'DUPLICATE')
+        else if ((env && Object.hasOwn(env, linkEnv)) || secretKeys?.includes(linkEnv)) add(`${linkPath}.env`, 'CONFLICT')
         linkEnvs.add(linkEnv)
       }
       if (typeof link.service !== 'string') add(`${linkPath}.service`, 'INVALID_TYPE')

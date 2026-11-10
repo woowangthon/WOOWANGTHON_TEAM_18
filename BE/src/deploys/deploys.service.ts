@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common'
 import type { AuthUser } from '../auth/auth.decorators.js'
 import { isCommitSha } from '../repos/repo-url.js'
-import { ReposService } from '../repos/repos.service.js'
+import { invalidCommit, ReposService } from '../repos/repos.service.js'
 import { validateSpec } from './deploy-input.js'
 import { type DeployRow, DeploysStore } from './deploys.store.js'
 
@@ -38,9 +38,7 @@ export class DeploysService {
    */
   async create(user: AuthUser, accessToken: string, repoUrl: unknown, commit: unknown, input: unknown): Promise<Deploy> {
     const ref = this.repos.requireRepoRef(repoUrl)
-    if (!isCommitSha(commit)) {
-      throw new BadRequestException({ code: 'INVALID_COMMIT', message: 'commit must be a full 40-character lowercase hex SHA' })
-    }
+    if (!isCommitSha(commit)) throw invalidCommit()
     const checked = validateSpec(input)
     if (!checked.ok) {
       throw new BadRequestException({

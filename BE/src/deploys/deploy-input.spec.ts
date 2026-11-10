@@ -232,7 +232,7 @@ describe('services', () => {
     expect(issuesOf(make(['services[0].role', role]))).toEqual(only('services[0].role', 'INVALID_VALUE'))
   })
 
-  it.each(['/etc', '..', 'a/../b', 'a//b', 'a/', 'FE\\x', '', 'a b', './a', 'a/./b', 'é'])('rejects dir "%s"', (dir) => {
+  it.each(['/etc', '..', 'a/../b', 'a//b', 'a/', 'FE\\x', '', 'a b', './a', 'a/./b', 'é', '-x', 'a/--out', '-'])('rejects dir "%s"', (dir) => {
     expect(issuesOf(make(['services[0].dir', dir]))).toEqual(only('services[0].dir', 'INVALID_VALUE'))
   })
 
@@ -435,6 +435,17 @@ describe('runtime', () => {
       expect(issuesOf(make(['services[1].runtime.secretKeys', keys(101)]))).toEqual(only('services[1].runtime.secretKeys', 'OUT_OF_RANGE'))
       expect(issuesOf(make(['services[1].runtime.links', links(30)]))).toEqual([])
       expect(issuesOf(make(['services[1].runtime.links', links(31)]))).toEqual(only('services[1].runtime.links', 'OUT_OF_RANGE'))
+    })
+
+    it('rejects a plain env that is also a secret key, at the env', () => {
+      expect(issuesOf(make(['services[1].runtime.env', { DATABASE_URL: 'postgres://x' }]))).toEqual(
+        only('services[1].runtime.env.DATABASE_URL', 'CONFLICT'),
+      )
+    })
+
+    it('rejects a link env that is also a plain env or a secret key, at the link', () => {
+      expect(issuesOf(make(['services[1].runtime.env', { FE_URL: 'x' }]))).toEqual(only('services[1].runtime.links[0].env', 'CONFLICT'))
+      expect(issuesOf(make(['services[1].runtime.secretKeys', ['FE_URL']]))).toEqual(only('services[1].runtime.links[0].env', 'CONFLICT'))
     })
 
     it('rejects a link to a service that does not exist', () => {

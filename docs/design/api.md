@@ -286,7 +286,7 @@ FE 흐름은 `repos/check`(commit 확정) → `repos/dockerfiles` · `repos/depl
 | `UNKNOWN_KEY` | 모르는 키다 |
 | `UNKNOWN_SERVICE` | `links[].service`가 `spec.services`에 없는 이름이다 |
 | `RESERVED` | 예약된 이름이다 (`project.slug`) |
-| `CONFLICT` | 칸 사이가 맞지 않는다 (`buildEnv`의 키가 `secretKeys`와 겹침, 정적인데 `port`가 8080이 아님, `env` · `secretKeys` · `links`가 비어 있지 않음) |
+| `CONFLICT` | 칸 사이가 맞지 않는다 (`buildEnv`의 키가 `secretKeys`와 겹침, `env`의 키가 `secretKeys`와 겹침, `links[].env`가 `env`의 키나 `secretKeys`와 겹침, 정적인데 `port`가 8080이 아님, `env` · `secretKeys` · `links`가 비어 있지 않음) |
 | `MISMATCH` | 확인한 레포와 다르다 (`project.repo`) |
 
 FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind` = `server` · `static`, `build.framework` = `vite-react` · `nextjs` · `nest`(또는 `null`), `runtime.health.type` = `http` · `tcp`. `build.nodeVersion`은 서버가 `22` · `22.1` · `22.1.0` 모양만 받고 **변환하지 않는다**(초안의 `engines.node` 원문 `>=22`는 받지 않는다. FE가 `22` 같은 값을 미리 채워 두거나 사용자가 고르게 한다). 초안(`deploy-spec`의 `projects[]`)을 입력(`spec.services[]`)으로 옮기는 것도 이번에는 FE가 한다(초안이 모르는 칸은 사용자가 채운다). 서버는 `spec` 하나를 받아 검증할 뿐이다.
@@ -298,7 +298,7 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
 | `services` | 1~3개. `name`은 서비스 사이에서 유일 |
 | `services[].name` | 소문자로 시작하는 소문자 영숫자와 `-`, 영숫자로 끝남, 1~52자(시험 배포의 `-candidate`를 붙여도 63자 이내). Deployment · Service 이름이자 클러스터 안 DNS 이름 |
 | `role` | `fe` · `be` · `ai` |
-| `dir` · `build.context` · `build.dockerfile` · `build.outputDir` | 레포 안 상대 경로: `.` 하나이거나 영숫자 · `.` · `_` · `@` · `+` · `-`로 된 조각을 `/`로 이은 것(200자 이하, `/`로 시작 · `..` · `.` 조각 · 빈 조각 · `\` · 공백 불가). `dockerfile` · `outputDir`은 `null` 가능 |
+| `dir` · `build.context` · `build.dockerfile` · `build.outputDir` | 레포 안 상대 경로: `.` 하나이거나 영숫자 · `.` · `_` · `@` · `+` · `-`로 된 조각을 `/`로 이은 것(200자 이하, `/`로 시작 · `..` · `.` 조각 · 빈 조각 · `\` · 공백 불가, 조각은 `-`로 시작할 수 없다: 명령 옵션으로 읽히지 않게). `dockerfile` · `outputDir`은 `null` 가능 |
 | `build.framework` | `null` · `vite-react` · `nextjs` · `nest` |
 | `build.nodeVersion` | `null` 또는 `22` · `22.1` · `22.1.0` 모양 |
 | `build.install` · `build` · `start` | `null` 또는 비어 있지 않은 한 줄 문자열(공백만이거나 줄바꿈이 있으면 불가, 1000자 이하) |
@@ -318,6 +318,7 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
 - `build.dockerfile`이 `null`이면 `framework` · `nodeVersion` · `install` · `build`가 필수, `kind: server`면 `start` 필수 · `outputDir`은 `null`, `kind: static`이면 `outputDir` 필수 · `start`는 `null`
 - `kind: static`이면 `port`는 8080, `env` · `secretKeys` · `links`는 비어 있음
 - `buildEnv`의 키와 `secretKeys`는 겹칠 수 없다(`buildEnv`는 번들에 박히는 공개 값이다)
+- `env`의 키와 `secretKeys`는 겹칠 수 없다(비밀 값이 평문으로 저장되지 않게). `links[].env`도 `env`의 키나 `secretKeys`와 겹칠 수 없다
 
 오류 (`code`: 의미):
 

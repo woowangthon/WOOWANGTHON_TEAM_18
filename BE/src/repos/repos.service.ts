@@ -29,7 +29,7 @@ const authUnavailable = () =>
   new ServiceUnavailableException({ code: 'AUTH_UNAVAILABLE', message: 'Could not check the linked GitHub account' })
 const githubUnavailable = () =>
   new ServiceUnavailableException({ code: 'GITHUB_UNAVAILABLE', message: 'Could not reach GitHub' })
-const invalidCommit = () =>
+export const invalidCommit = () =>
   new BadRequestException({ code: 'INVALID_COMMIT', message: 'commit must be a full 40-character lowercase hex SHA' })
 
 @Injectable()
