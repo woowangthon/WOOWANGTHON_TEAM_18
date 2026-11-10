@@ -19,11 +19,12 @@ Put the platform ↔ AI contract into code so track A can call the AI server bef
 - [x] Models — files: `AI/ai_server/agent/models.py`, `AI/tests/test_models.py`
 - [x] Cases + classification — files: `AI/ai_server/agent/memory.py`, `AI/ai_server/agent/cases.json`, `AI/tests/test_memory.py`
 - [x] Ticket and close API, run registry, error shape — files: `AI/ai_server/agent/api.py`, `AI/ai_server/agent/runs.py`, `AI/ai_server/errors.py`, `AI/ai_server/main.py`, `AI/ai_server/config.py`, `AI/tests/test_tickets_api.py`
+- [x] Contract follow-up agreed with track A (raw shapes, `raw.k8s.status`, `previous.status`, field paths, `read_memory` location) — files: `docs/design/api.md`, `docs/design/AIagent.md`, `docs/design/deploy-workflow.md`, `AI/ai_server/agent/models.py`, `AI/ai_server/errors.py`, `AI/ai_server/agent/cases.json`, tests
 - [x] Docs — files: `docs/design/AIagent.md` §8 + known limits, `docs/ai-scope.md`, `AI/CLAUDE.md`, `AI/.env.example`
 
 ## Done when
 
-- [x] ruff, mypy strict, pytest pass (161 tests)
+- [ ] ruff, mypy strict, pytest pass — PASS from the test session
 - [x] every case in the §8 table is found by a ticket carrying its signal; tickets of another stage or without a signal are not
 - [x] api.md behaviours each have a test: 401, 400 BAD_REQUEST / INVALID_TICKET fields (≤20) / INVALID_CLOSE, 202 and resend, 503, 204 close (success counted once, others not, unknown ticket)
 - [x] tests added; hand mutants (64, run without bytecode cache) all killed or removed as dead code

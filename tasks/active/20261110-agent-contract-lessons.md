@@ -8,6 +8,8 @@
 - 2026-11-10: Hand mutants found dead code: pydantic folds `X | None` into one error per field, so the loc filter and the per-path dedupe in `invalid_fields` never ran; `except CancelledError: raise` before `except Exception` is a no-op since 3.8; four error-type mappings had no field that could produce them. All deleted.
 - 2026-11-10: A hand mutant run reused stale `.pyc` files: a mutant the same size as the original, restored within the same second, kept its bytecode, so later tests ran the mutant (a config test then failed on clean code, and one survivor had been reported killed). Re-ran every F09 and F10 mutant with `PYTHONDONTWRITEBYTECODE=1`; the true survivor (`i <= len(v)` in `select`) got a boundary test.
 - 2026-11-10: Open contract questions sent to the coordinating session (not changed here): where `read_memory` runs, the `previous.status` values, the `stage: build` ticket's `raw.k8s`.
+- 2026-11-10: The coordinating session accepted all six proposals. Applied them in code and in `api.md` · `AIagent.md` on this branch: `raw` has exactly two shapes by stage (checked with field paths `REQUIRED` / `MUST_BE_NULL`), `raw.k8s.status` holds the render dry-run Status and R1–R3 match on it, `previous.status` is one of five values, `read_memory` is an AI-server tool (removed from the gateway list).
+- 2026-11-10: From here on checks run in the test session, not here.
 
 ## Lessons
 
