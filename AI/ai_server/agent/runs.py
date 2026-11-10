@@ -3,8 +3,8 @@
 import asyncio
 import logging
 from collections.abc import Callable, Coroutine
-from typing import Any
 from dataclasses import dataclass, field
+from typing import Any
 
 from ai_server.agent.memory import CaseMemory
 from ai_server.agent.models import GatewayGrant, Ticket

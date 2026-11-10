@@ -1,7 +1,7 @@
 """에이전트 흐름 ① ~ ⑤를 대역 모델(FunctionModel)과 대역 게이트웨이로 시험한다."""
 
 import asyncio
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from fastapi.testclient import TestClient
@@ -136,8 +136,9 @@ def test_read_memory_is_answered_inside_the_ai_server() -> None:
         for p in local.requests[1][-1].parts
         if isinstance(p, ToolReturnPart) and p.tool_name == "read_memory"
     ]
-    assert isinstance(answer, dict)
-    ids = [c["caseId"] for c in answer["cases"]]
+    # 도구 결과의 타입은 PydanticAI가 여러 모양의 합으로 두므로, 우리 도구가 돌려준 모양으로 읽는다.
+    cases = cast(dict[str, Any], answer)["cases"]
+    ids = [c["caseId"] for c in cases]
     assert ids == ["A3", "A4", "A1", "A2"]
     assert gw.tool_calls() == []
     assert only_result(gw)["actions"] == []
