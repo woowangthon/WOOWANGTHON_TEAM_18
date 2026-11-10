@@ -2,7 +2,7 @@
 
 - **SRS**: none yet (W2–W3 of [ADR-010](../../docs/adr/010-repo-analysis-and-security-scan-in-platform-server.md); issue [#76](https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/76), also the last item of [#41](https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/41) and the decision in [#42](https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/42)). SRS §2.4 has no row for it; adding one needs the matching Notion change first.
 - **Owner**: TaeTaeJin
-- **Branch**: feat/be-deploy-store (stacked on feat/be-commit-pin = PR #70, because saving needs `assertCommit`; rebase onto `upstream/main` with `--onto` once #70 is squash-merged)
+- **Branch**: feat/be-deploy-store (based on `upstream/main` after PR #70 merged: saving needs `assertCommit`)
 
 ## Plan
 
@@ -20,13 +20,13 @@ Not decided by us, so not invented: the `resources` shape (only `null` is accept
 
 ## Todo
 
-- [ ] Docs first: `docs/design/api.md` (contract), `auth.md` (server key, owner-only reads, order of checks), `docs/ai-scope.md` — files: `docs/`
-- [ ] Review round R0 (agy `w4:p2`, BE group): gaps in the contract, hostile inputs
-- [ ] Spec types + validation (pure functions, table tests) — files: `BE/src/deploys/deploy-input.ts`, `.spec.ts`
-- [ ] Env `SUPABASE_SECRET_KEY` (required, validated at boot, never logged) — files: `BE/src/config/env.ts`, `BE/.env.example`, `BE/vitest.config.ts`
-- [ ] Migration SQL + RLS (read own rows only; no write policy) — files: `supabase/migrations/`
-- [ ] Save/read service and controller; e2e with a fake Supabase REST — files: `BE/src/deploys/`, `BE/test/deploys.e2e.spec.ts`
-- [ ] Hand-made mutants for the new code; survivors get a test or a reason
+- [x] Docs first: `docs/design/api.md` (contract), `auth.md` (server key, owner-only reads, order of checks), `docs/ai-scope.md` — files: `docs/`
+- [x] Review round R0 (agy, read-only): gaps in the contract, hostile inputs
+- [x] Spec types + validation (pure functions, table tests) — files: `BE/src/deploys/deploy-input.ts`, `.spec.ts`
+- [x] Env `SUPABASE_SECRET_KEY` (required, validated at boot, never logged) — files: `BE/src/config/env.ts`, `BE/.env.example`, `BE/vitest.config.ts`
+- [x] Migration SQL + RLS (read own rows only; no write policy) — files: `supabase/migrations/`
+- [x] Save/read service and controller; e2e with a fake Supabase REST — files: `BE/src/deploys/`, `BE/test/deploys.e2e.spec.ts`
+- [x] Hand-made mutants for the new code (123: 108 killed at first, 13 more killed after added tests, 2 survivors explained in lessons); survivors get a test or a reason
 - [ ] `pnpm verify`, `/code-review medium`, `/simplify`
 - [ ] Owner applies the migration, sets `SUPABASE_SECRET_KEY`, and runs the real save/read once (until then the REST calls are unverified against real Supabase)
 

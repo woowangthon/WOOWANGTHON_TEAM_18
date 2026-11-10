@@ -3,8 +3,15 @@
 ## Log
 
 - 2026-11-10: Owner asked to build the Supabase save first so the FE can work in parallel. The BE has no database code yet (no client, no migrations, no server key in `BE/.env`), so this is the first database slice. Decisions in the todo (server key, one `deploys` table, SQL migrations, contract + save/read in one PR).
-- 2026-11-10: Branch is stacked on `feat/be-commit-pin` (PR #70, not merged): saving must check that the commit belongs to the repo, and `assertCommit` only exists there.
+- 2026-11-10: Branch was stacked on `feat/be-commit-pin` (PR #70) because saving needs `assertCommit`. After the squash merge, `git rebase --onto upstream/main <old tip>` was clean: the squash tree equals the old tip tree.
+- 2026-11-10: Review round R0 (a small read-only model on the docs): 8 findings, 4 taken (body size limit, `__proto__` env names, validate the id before any DB call, no `user_id` in the query), 4 rejected as already specified or out of scope (token whitespace, atomic slug check → documented known limit, `resources` omitted → REQUIRED already, `?user_id=` → there is no list endpoint).
+- 2026-11-10: Hand-made mutants on the new code: 123 (validator 78, service and store 42, env 1, filter 2). 108 died at first. 15 survived → 13 got a test (the literal 20 and 30/100 limits, NUL in a value, the 200-char health path, `spec` returned as the same object, an error status with a list body, the status in the log, two valid rows from an insert, a row without `spec`/`created_at`, a slug-owner row without a text `repo`, repo letter case in the slug check) and died on the re-run. 2 are left, both equivalent: `body not read on error` (the body is read only to free the connection; the result is the same 503) and `query not encoded` (every value that reaches the store is already a UUID or a slug that passed a regex, so encoding cannot change the request; kept as defence in depth, stated in `auth.md`).
+- 2026-11-10: Real Supabase was not available to this agent. The PostgREST calls and the `apikey`-only header for the new secret key are checked against a fake, not against Supabase.
 
 ## Lessons
 
-<filled when done>
+- A constant imported by the test cannot be tested with itself: `toHaveLength(MAX_ISSUES)` passes when `MAX_ISSUES` becomes 21. Assert the number in the contract (20) as a literal.
+- `toEqual` on a returned object does not prove it is the same object; use `toBe` when "returned as is" is the promise.
+- A fake that only answers `[{}, {}]` for "two rows" tests the row-shape check, not the row count. Give the fake a fully valid row so each guard is tested by itself.
+- On this machine `pnpm verify` fails on health/hook timeouts even on untouched `main`; run `pnpm exec vitest run --testTimeout=60000 --hookTimeout=60000` and say so in the PR. Run FE and BE sequentially (parallel runs time out vitest workers).
+- A hand-made mutation runner must not run two jobs at once on the same source file, and the tests must not be edited while a run is in progress; wait, then edit.

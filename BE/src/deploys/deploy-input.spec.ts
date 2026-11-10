@@ -103,8 +103,10 @@ const beNoDockerfile: [string, unknown][] = [
 describe('a valid spec', () => {
   it('passes and is returned as is', () => {
     const input = valid()
-    expect(validateSpec(input)).toEqual({ ok: true, spec: input })
-    expect(validateSpec(input)).toHaveProperty('spec', input)
+    const result = validateSpec(input)
+    expect(result.ok).toBe(true)
+    // 같은 객체다(복사본이 아니다).
+    expect(result.ok && result.spec).toBe(input)
   })
 
   it('allows a server without a Dockerfile (framework, node version, install, build, start)', () => {
@@ -294,6 +296,7 @@ describe('build', () => {
       expect(issuesOf(make(['services[0].build.buildEnv', { A: 5 }]))).toEqual(only('services[0].build.buildEnv.A', 'INVALID_TYPE'))
       expect(issuesOf(make(['services[0].build.buildEnv', { A: 'x'.repeat(4097) }]))).toEqual(only('services[0].build.buildEnv.A', 'INVALID_VALUE'))
       expect(issuesOf(make(['services[0].build.buildEnv', { A: 'x'.repeat(4096) }]))).toEqual([])
+      expect(issuesOf(make(['services[0].build.buildEnv', { A: 'a\0b' }]))).toEqual(only('services[0].build.buildEnv.A', 'INVALID_VALUE'))
     })
 
     it('rejects more than 100 entries', () => {
@@ -385,6 +388,13 @@ describe('runtime', () => {
       expect(issuesOf(make(['services[1].runtime.health', { type: 'tcp', path: null, startupTimeoutSeconds: 5 }]))).toEqual([])
     })
 
+    it('limits the http path to 200 characters', () => {
+      expect(issuesOf(make(['services[1].runtime.health.path', `/${'a'.repeat(199)}`]))).toEqual([])
+      expect(issuesOf(make(['services[1].runtime.health.path', `/${'a'.repeat(200)}`]))).toEqual(
+        only('services[1].runtime.health.path', 'INVALID_VALUE'),
+      )
+    })
+
     it.each([0, 601, -5])('rejects startupTimeoutSeconds %d as out of range', (seconds) => {
       expect(issuesOf(make(['services[1].runtime.health.startupTimeoutSeconds', seconds]))).toEqual(
         only('services[1].runtime.health.startupTimeoutSeconds', 'OUT_OF_RANGE'),
@@ -416,6 +426,15 @@ describe('runtime', () => {
       expect(issuesOf(make(['services[1].runtime.secretKeys', ['a-b']]))).toEqual(only('services[1].runtime.secretKeys[0]', 'INVALID_VALUE'))
       expect(issuesOf(make(['services[1].runtime.secretKeys', 'A']))).toEqual(only('services[1].runtime.secretKeys', 'INVALID_TYPE'))
       expect(issuesOf(make(['services[1].runtime.secretKeys', [5]]))).toEqual(only('services[1].runtime.secretKeys[0]', 'INVALID_TYPE'))
+    })
+
+    it('allows 100 secret keys and 30 links, and rejects one more', () => {
+      const keys = (n: number) => Array.from({ length: n }, (_, i) => `K${i}`)
+      const links = (n: number) => keys(n).map((env) => ({ env, service: 'fe' }))
+      expect(issuesOf(make(['services[1].runtime.secretKeys', keys(100)]))).toEqual([])
+      expect(issuesOf(make(['services[1].runtime.secretKeys', keys(101)]))).toEqual(only('services[1].runtime.secretKeys', 'OUT_OF_RANGE'))
+      expect(issuesOf(make(['services[1].runtime.links', links(30)]))).toEqual([])
+      expect(issuesOf(make(['services[1].runtime.links', links(31)]))).toEqual(only('services[1].runtime.links', 'OUT_OF_RANGE'))
     })
 
     it('rejects a link to a service that does not exist', () => {
@@ -492,8 +511,9 @@ describe('reporting', () => {
     spec.services = [bad, bad, bad, bad, bad].map((s) => ({ ...s }))
     spec.project = { slug: 1, repo: 1 }
     const issues = issuesOf(spec)
-    expect(issues).toHaveLength(MAX_ISSUES)
-    expect(new Set(issues.map((i) => i.path)).size).toBe(MAX_ISSUES)
+    expect(MAX_ISSUES).toBe(20)
+    expect(issues).toHaveLength(20)
+    expect(new Set(issues.map((i) => i.path)).size).toBe(20)
   })
 
   it('does not change or fill the input', () => {

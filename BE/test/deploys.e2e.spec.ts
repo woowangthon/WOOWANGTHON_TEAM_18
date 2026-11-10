@@ -110,6 +110,15 @@ const status = (code: number): Answer => () => new Response('{}', { status: code
 const fails = (err: Error): Answer => () => {
   throw err
 }
+const storedRow = (): Row => ({
+  id: randomUUID(),
+  user_id: USER_ID,
+  slug: 'my-app',
+  repo: FULL_NAME,
+  commit_sha: SHA,
+  spec: spec(),
+  created_at: CREATED_AT,
+})
 // 어느 서비스든 닿지 못하거나 알아볼 수 없게 답하면 같은 결과여야 한다.
 const outage: [string, Answer][] = [
   ['network error', fails(new TypeError('fetch failed'))],
@@ -401,6 +410,11 @@ describe('POST /api/deploys and slugs', () => {
     expect(rows).toHaveLength(1)
   })
 
+  it('treats the repo name of an earlier save as the same repo whatever its letter case', async () => {
+    rows.push(existing(USER_ID, FULL_NAME.toLowerCase()))
+    expect((await create(body())).status).toBe(201)
+  })
+
   it('allows the same user to use the slug again for the same repo', async () => {
     rows.push(existing(USER_ID, FULL_NAME))
     expect((await create(body())).status).toBe(201)
@@ -426,7 +440,9 @@ describe('POST /api/deploys when the database cannot be used', () => {
 
   it.each([
     ['an empty list', () => Response.json([], { status: 201 })],
-    ['two rows', () => Response.json([{}, {}], { status: 201 })],
+    ['two rows that are deploys', () => Response.json([storedRow(), storedRow()], { status: 201 })],
+    ['a row without a spec object', () => Response.json([{ ...storedRow(), spec: 'x' }], { status: 201 })],
+    ['a row without created_at', () => Response.json([{ ...storedRow(), created_at: undefined }], { status: 201 })],
     ['a row that is not a deploy', () => Response.json([{ id: 1 }], { status: 201 })],
   ])('the insert answers with %s', async (_name, answer) => {
     restFail.POST = answer
@@ -435,11 +451,25 @@ describe('POST /api/deploys when the database cannot be used', () => {
     expect(res.body).toEqual(errorBody('DATABASE_UNAVAILABLE'))
   })
 
-  it('a slug lookup that answers with a row that is not a deploy owner', async () => {
-    restFail.GET = () => Response.json([{ nope: true }])
+  it.each([
+    ['without a user_id', { repo: FULL_NAME }],
+    ['without a repo', { user_id: USER_ID }],
+    ['with a repo that is not text', { user_id: USER_ID, repo: 5 }],
+  ])('a slug lookup that answers with a row %s', async (_name, row) => {
+    restFail.GET = () => Response.json([row])
     const res = await create(body())
     expect(res.status).toBe(503)
     expect(res.body).toEqual(errorBody('DATABASE_UNAVAILABLE'))
+  })
+
+  it.each(['GET', 'POST'] as const)('an error status is an outage even when the %s body is a list', async (method) => {
+    restFail[method] = () => new Response('[]', { status: 500 })
+    const res = await create(body())
+    expect(res.status).toBe(503)
+    expect(res.body).toEqual(errorBody('DATABASE_UNAVAILABLE'))
+    expect(rows).toHaveLength(0)
+    // 상태 코드는 로그에 남는다(본문은 남기지 않는다).
+    expect(logError).toHaveBeenCalledWith(expect.stringContaining(`${method} /rest/v1/deploys answered 500`))
   })
 
   it('never puts the server key or the spec in a log or a response', async () => {
