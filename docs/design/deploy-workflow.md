@@ -61,7 +61,7 @@ W0 접수 · 사전 검사 → W1 분석 → W2 배포 설정 → W3 비밀값 �
 | **W1 분석** | 플랫폼 서버 + 로컬 LLM | 설정 파일을 규칙으로 읽어 프레임워크 · 포트 · env key · 서비스 연결을 찾음. README는 정규식으로 먼저 보고, **남은 문장 부분만 로컬 LLM이 한 번** 정리(결과는 캐시). 보안 검사(gitleaks · Trivy)는 기다리지 않고 따로 돈다 | 프레임워크를 못 알아보면 W2에서 "판단 필요" |
 | **W2 배포 설정** | 플랫폼 서버 | 설정 파일 > README > 기본값 순서로 spec을 조립 | 빈칸 · 후보 여러 개 · README와 충돌 → **문제 티켓** |
 | **W3 비밀값 받기** | 플랫폼 서버 | 빠진 필수 env 값을 사용자에게 바로 요청. 받은 값은 **플랫폼 서버가 Tailscale로 k3s API에 접속해 Secret으로 만든다.** GoCD를 거치지 않으므로 실행 기록에 남지 않는다. DB에는 key 이름과 상태만 저장 | 응답이 없으면 "사용자 조치 필요"로 마감 |
-| **W4 빌드** | AWS 실행기 → CodeBuild | 서비스별로 CodeBuild를 병렬 호출. 배포 입력(Dockerfile이 없을 때) 또는 학생 Dockerfile로 빌드 → 이미지 검사 → GHCR에 push. 빌드 입력 해시가 같으면 건너뜀 | 빌드 실패 → **문제 티켓** |
+| **W4 빌드** | AWS 실행기 → CodeBuild | 배포 입력으로 서비스별 CodeBuild를 병렬 호출한다. 학생 Dockerfile(`build.dockerfile`) 또는 배포 입력 값(Dockerfile이 없을 때, 빌드 값 사용)으로 빌드 → 이미지 검사 → GHCR에 push. 빌드 입력 해시가 같으면 건너뜀 | 빌드 실패 → **문제 티켓** |
 | **W5 배포** | 리더 실행기 | Prepare: 배포 입력을 받고 필수 Secret key 확인, 대상 슬롯 비우기(4절). Render: 대상 슬롯 manifest 생성(3절). Apply: AI → BE → FE 순서로 대상 슬롯에 적용 | 배포 실패 → live 슬롯은 그대로 → **문제 티켓** |
 | **W6 동작 확인** | 리더 실행기 | 대상 슬롯의 Pod Ready와 Service Endpoints를 확인(BE → AI 같은 내부 연결 포함)한다. test Ingress의 대상을 대상 슬롯으로 적용하고, Traefik에 Host `<slug>.test.internal`로 화면(`/`) · JS·CSS · BE 헬스체크 경로(`/api/...`)를 요청해 모두 성공해야 통과다 | 실패 → open Ingress를 바꾸지 않음 (live 슬롯은 그대로) → **문제 티켓** |
 | **전환** | 리더 실행기 | open Ingress의 대상을 대상 슬롯의 Service로 바꿔 적용. 첫 배포면 open Ingress를 만든다 | - |
