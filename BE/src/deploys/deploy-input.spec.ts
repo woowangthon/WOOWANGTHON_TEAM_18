@@ -65,6 +65,13 @@ const valid = (): Json => ({
   ],
 })
 
+// 서비스를 하나 더한다: services[1]을 복제하고 이름 · 역할을 바꾸며, 공개 경로는 겹치지 않게 `/<name>`으로 준다.
+function addService(spec: Json, name: string, role: string): void {
+  const services = spec.services as Json[]
+  const runtime = { ...(structuredClone(services[1].runtime) as Json), ingressPath: `/${name}` }
+  services.push({ ...structuredClone(services[1]), name, role, runtime })
+}
+
 // 유효한 spec에서 칸 몇 개를 바꾼다. 경로는 `services[1].runtime.port` 모양이고 REMOVE를 주면 키를 지운다.
 function make(...changes: [string, unknown][]): Json {
   const spec = valid()
@@ -121,8 +128,7 @@ describe('a valid spec', () => {
 
   it('allows 3 services', () => {
     const spec = valid()
-    const services = spec.services as Json[]
-    services.push({ ...structuredClone(services[1]), name: 'ai', role: 'ai' })
+    addService(spec, 'ai', 'ai')
     expect(issuesOf(spec)).toEqual([])
   })
 })
@@ -174,15 +180,20 @@ describe('shape', () => {
 })
 
 describe('project', () => {
-  it.each(['a', 'my-app', 'a1', '1a', 'a'.repeat(58)])('accepts slug "%s"', (slug) => {
+  it.each(['a', 'my-app', 'a1', '1a', 'a'.repeat(40)])('accepts slug "%s"', (slug) => {
     expect(issuesOf(make(['project.slug', slug]))).toEqual([])
   })
 
-  it.each(['', 'My-App', '-a', 'a-', 'a_b', 'a.b', 'a b', 'a'.repeat(59), 'ㄱ'])('rejects slug "%s"', (slug) => {
+  it.each(['', 'My-App', '-a', 'a-', 'a_b', 'a.b', 'a b', 'a'.repeat(41), 'ㄱ'])('rejects slug "%s"', (slug) => {
     expect(issuesOf(make(['project.slug', slug]))).toEqual(only('project.slug', 'INVALID_VALUE'))
   })
 
-  it.each(['www', 'api', 'admin', 'app', 'platform', 'default', 'kube-system'])('rejects the reserved slug "%s"', (slug) => {
+  // docs/design/cluster.md §9의 목록을 그대로 옮겼다(코드의 집합을 가져오지 않는 이유: 같은 값을 같은 값과 비교하게 된다).
+  const reserved = [
+    ...['app', 'api', 'www', 'admin', 'account', 'auth', 'login', 'platform', 'dashboard', 'status', 'docs', 'blog', 'cdn', 'static', 'grafana'],
+    ...['mail', 'smtp', 'demo', 'test', 'dev', 'staging', 'default', 'kube-system'],
+  ]
+  it.each(reserved)('rejects the reserved slug "%s"', (slug) => {
     expect(issuesOf(make(['project.slug', slug]))).toEqual(only('project.slug', 'RESERVED'))
   })
 
@@ -203,9 +214,13 @@ describe('services', () => {
   it('needs at least one and at most three', () => {
     expect(issuesOf(make(['services', []]))).toEqual(only('services', 'OUT_OF_RANGE'))
     const spec = valid()
-    const services = spec.services as Json[]
-    for (const [name, role] of [['ai', 'ai'], ['extra', 'ai']]) services.push({ ...structuredClone(services[1]), name, role })
-    expect(issuesOf(spec)).toEqual(only('services', 'OUT_OF_RANGE'))
+    // 역할은 셋뿐이라 네 번째 서비스는 역할도 겹친다. 그 칸만 따로 알린다.
+    addService(spec, 'ai', 'ai')
+    addService(spec, 'extra', 'ai')
+    expect(issuesOf(spec)).toEqual([
+      { path: 'services', code: 'OUT_OF_RANGE' },
+      { path: 'services[3].role', code: 'DUPLICATE' },
+    ])
   })
 
   it.each([null, {}, 'fe'])('rejects services that is not an array (%j)', (services) => {
@@ -216,16 +231,27 @@ describe('services', () => {
     expect(issuesOf(make(['services[1].name', 'fe']))).toEqual(only('services[1].name', 'DUPLICATE'))
   })
 
-  it.each(['be', 'my-api', 'a1', 'a'.repeat(52)])('accepts name "%s"', (name) => {
+  it.each(['be', 'my-api', 'a1', 'a'.repeat(30)])('accepts name "%s"', (name) => {
     expect(issuesOf(make(['services[1].name', name]))).toEqual([])
   })
 
-  it.each(['', 'Fe', '1fe', '-fe', 'fe-', 'fe_1', 'a'.repeat(53)])('rejects name "%s"', (name) => {
+  it.each(['', 'Fe', '1fe', '-fe', 'fe-', 'fe_1', 'a'.repeat(31)])('rejects name "%s"', (name) => {
     expect(issuesOf(make(['services[1].name', name]))).toEqual(only('services[1].name', 'INVALID_VALUE'))
   })
 
   it('rejects a name that is not a string', () => {
     expect(issuesOf(make(['services[1].name', 5]))).toEqual(only('services[1].name', 'INVALID_TYPE'))
+  })
+
+  it('rejects a role used twice, at the later service', () => {
+    expect(issuesOf(make(['services[1].role', 'fe']))).toEqual(only('services[1].role', 'DUPLICATE'))
+  })
+
+  it('does not count an invalid role', () => {
+    expect(issuesOf(make(['services[0].role', 'db'], ['services[1].role', 'db']))).toEqual([
+      { path: 'services[0].role', code: 'INVALID_VALUE' },
+      { path: 'services[1].role', code: 'INVALID_VALUE' },
+    ])
   })
 
   it.each(['db', 'FE', ''])('rejects role "%s"', (role) => {
@@ -395,13 +421,13 @@ describe('runtime', () => {
       )
     })
 
-    it.each([0, 601, -5])('rejects startupTimeoutSeconds %d as out of range', (seconds) => {
+    it.each([0, 4, 301, 600, -5])('rejects startupTimeoutSeconds %d as out of range', (seconds) => {
       expect(issuesOf(make(['services[1].runtime.health.startupTimeoutSeconds', seconds]))).toEqual(
         only('services[1].runtime.health.startupTimeoutSeconds', 'OUT_OF_RANGE'),
       )
     })
 
-    it.each([1, 600])('accepts startupTimeoutSeconds %d', (seconds) => {
+    it.each([5, 300])('accepts startupTimeoutSeconds %d', (seconds) => {
       expect(issuesOf(make(['services[1].runtime.health.startupTimeoutSeconds', seconds]))).toEqual([])
     })
 
@@ -483,7 +509,23 @@ describe('runtime', () => {
 
   describe('ingressPath', () => {
     it.each(['/', '/api', '/api/v1', '/a.b_c-d~e'])('accepts "%s"', (path) => {
-      expect(issuesOf(make(['services[1].runtime.ingressPath', path]))).toEqual([])
+      expect(issuesOf(make(['services[0].runtime.ingressPath', null], ['services[1].runtime.ingressPath', path]))).toEqual([])
+    })
+
+    it('rejects the same ingressPath in two services, at the later one', () => {
+      expect(issuesOf(make(['services[1].runtime.ingressPath', '/']))).toEqual(only('services[1].runtime.ingressPath', 'DUPLICATE'))
+    })
+
+    it('allows several services without an ingressPath, and paths that only share a prefix', () => {
+      expect(issuesOf(make(['services[0].runtime.ingressPath', null], ['services[1].runtime.ingressPath', null]))).toEqual([])
+      expect(issuesOf(make(['services[0].runtime.ingressPath', '/api'], ['services[1].runtime.ingressPath', '/api/v1']))).toEqual([])
+    })
+
+    it('does not count an ingressPath that is itself invalid', () => {
+      expect(issuesOf(make(['services[0].runtime.ingressPath', 'api'], ['services[1].runtime.ingressPath', 'api']))).toEqual([
+        { path: 'services[0].runtime.ingressPath', code: 'INVALID_VALUE' },
+        { path: 'services[1].runtime.ingressPath', code: 'INVALID_VALUE' },
+      ])
     })
 
     it.each(['api', '/api/', '//', '/a b', '/a//b', '', '/a?b', '/'.padEnd(202, 'a')])('rejects "%s"', (path) => {
