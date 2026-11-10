@@ -96,6 +96,17 @@ Supabase `GET /auth/v1/user`의 `401`과 `403`은 책임이 다르다(2026-11-09
 
 외부 서비스 장애는 사용자 잘못(`4xx`)으로 바꾸지 않고 `503`으로 돌려준다([`conventions.md`](../conventions.md) F-1). 내가 소유자인 레포를 다른 레포에서 fork한 경우도 소유자는 나이므로 통과한다. 관리자도 같은 확인을 받는다(관리자는 제출하지 않고 보기만 하므로 예외를 두지 않는다).
 
+## 배포 입력 저장
+
+`POST /api/deploys`는 사용자가 검토해 고친 spec과 접수 때 확정한 commit을 Supabase `deploys` 테이블에 저장하고, `GET /api/deploys/:id`는 그 행을 읽는다(계약은 [`api.md`](api.md#배포-입력-저장-이슈-76)).
+
+- **쓰기는 서버만 한다.** 서버가 Supabase의 **secret key**(`SUPABASE_SECRET_KEY`, service role)로 PostgREST(`<SUPABASE_URL>/rest/v1/deploys`)를 부른다. 사용자 토큰과 publishable key로는 쓰지 못하게 `deploys`에 쓰기 정책을 두지 않는다(RLS가 켜져 있고 정책은 읽기 하나뿐이다). 사용자가 FE에서 Supabase로 직접 써서 아래 확인을 건너뛰는 길을 막으려는 것이다.
+- **읽기도 서버를 거친다.** 서버가 secret key로 읽되 질의에 로그인한 사용자의 `user_id` 조건을 서버가 붙인다. 행의 `user_id`는 검증한 토큰의 `sub`에서 오고 요청 본문에서 오지 않는다. RLS의 읽기 정책(`user_id = auth.uid()`)은 사용자가 같은 테이블을 Supabase로 직접 읽어도 자기 행만 보이게 하는 이중 장치다.
+- **저장 순서**는 api.md의 "서버가 확인하는 순서"다: 모양 검사(외부 호출 없음) → 소유 확인(`repos/check`와 같은 1~6단계) → `commit`이 이 레포의 commit인지(`deploy-spec`과 같은 확인) → `spec.project.repo`가 확인한 레포와 같은지 → `slug` 충돌 → 저장. 서버가 믿는 commit은 이 단계에서 확인한 값이라, 클라이언트가 보낸 값을 읽기용으로만 쓰던 `deploy-spec`과 달리 **저장된 commit은 서버가 검증한 값**이다.
+- **PostgREST 질의에 사용자 입력이 그대로 들어가지 않는다.** `id`는 UUID 모양, `slug`는 위 규칙의 모양일 때만 질의에 쓰고, 값은 URL 인코딩한다. `user_id`는 토큰에서 온다.
+- 저장소에 닿지 못하거나 시간 초과, `5xx`, `401` · `403`(키 거부)이면 `503 DATABASE_UNAVAILABLE`이다. secret key는 로그와 응답에 남기지 않고 `SUPABASE_URL`로만 보낸다.
+- **지금은 secret key가 BE에만 있다.** 플랫폼 서버를 리더로 옮기면([시스템 정의서](../system-definition.md) 열린 질문 8) 이 키도 리더에 올라가므로 그때 권한 범위를 다시 본다.
+
 ## 결정과 대안
 
 | 결정 | 이유 | 버린 대안 |
@@ -106,6 +117,10 @@ Supabase `GET /auth/v1/user`의 `401`과 `403`은 책임이 다르다(2026-11-09
 | jose 하나로 구현 | JWKS 받기 · 캐시 · 검증을 다 하고, 가드는 몇십 줄이다 | `@nestjs/passport` + `passport-jwt` + `jwks-rsa` — 같은 일에 패키지 3개 |
 
 ## 알려진 한계
+
+- `slug` 충돌 확인(`409 SLUG_TAKEN`)은 "읽고 나서 쓰기"라 같은 `slug`를 서로 다른 사용자가 동시에 처음 저장하면 둘 다 통과할 수 있다. DB에서 막으려면 `projects` 테이블(`slug` 유일)이 필요하고, 프로젝트 단위 관리(슬롯 · 삭제)를 만들 때 함께 한다.
+- 저장하는 spec의 `build.dockerfile`이 그 commit에 실제로 있는지, `dir`이 있는 폴더인지는 확인하지 않는다(모양만 본다). 빌드(#44)가 읽을 때 드러난다.
+- 예약 `slug` 목록과 `resources`의 모양은 인프라 담당이 정하는 값이다. 지금은 임시 목록과 `null`만 받는다.
 
 - GitHub 공개 API를 인증 없이 부르면 서버 IP당 시간당 60번까지다. 소유 확인(`repos/check`)은 두 번(레포 조회 + commit), Dockerfile 확인은 두 번, 배포 설정 초안은 `commit`을 주면 세 번이라, 사용자 한 명이 제출 한 번에 일곱 번을 쓴다(서버 IP당 시간당 약 8건). 여러 사용자가 같은 서버 IP를 쓰므로 데모 인원이 많으면 모자랄 수 있다. 데모 전에 봇 계정(ADR-002)의 토큰(5000번까지) 또는 결과 캐시로 다시 본다(구현은 아직 없다). 한도에 걸리면 `503 GITHUB_UNAVAILABLE`이다.
 - 배포 설정 초안(`deploy-spec`)의 `package.json` 읽기는 `raw.githubusercontent.com`을 쓴다. 이 주소의 응답에는 한도 헤더가 없고 API 한도(`core`)가 줄지 않는 것을 2026-11-09에 직접 확인했다. 다만 이 주소에도 따로 정해지지 않은 한도가 있을 수 있고 응답이 5분 캐시된다(`cache-control: max-age=300`). 그래서 방금 push한 변경이 초안에 늦게 보일 수 있다. `commit`을 주지 않아 `HEAD`를 읽으면 파일 목록과 내용을 서로 다른 시점에 읽게 되어 그 사이 push가 있으면 어긋날 수 있다. `commit`을 주면 SHA 경로는 바뀌지 않으므로 어긋남도 5분 캐시 문제도 없다([#41](https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/41) · [#60](https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/60)).
