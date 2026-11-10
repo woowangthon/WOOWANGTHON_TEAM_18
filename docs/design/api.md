@@ -242,6 +242,7 @@ FE 흐름은 `repos/check`(commit 확정) → `repos/dockerfiles` · `repos/depl
 }
 ```
 
+- 요청 본문은 100KB까지다(넘으면 `413 PAYLOAD_TOO_LARGE`). `repoUrl` · `commit` · `spec` 말고 다른 키(`user_id` 등)는 무시한다. 소유자는 항상 로그인 토큰의 사용자다.
 - `commit`은 필수이고 전체 SHA(40자 소문자 16진수)다. `repos/check`가 빈 레포에 주는 `null`은 받지 않는다(배포할 코드가 없다. `400 INVALID_COMMIT`).
 - `repo`는 GitHub가 돌려준 `owner/name` 표기다. `spec.project.repo`는 이 값과 같아야 한다(대소문자는 구분하지 않는다).
 - `spec`은 검증을 통과한 값 그대로 저장하고 돌려준다. 서버가 값을 고치거나 채우지 않는다.
@@ -256,16 +257,16 @@ FE 흐름은 `repos/check`(commit 확정) → `repos/dockerfiles` · `repos/depl
 5. `spec.project.slug`가 다른 사용자나 다른 레포에 이미 쓰이지 않는지 → 쓰이면 `409 SLUG_TAKEN` (같은 사용자의 같은 레포가 다시 저장하는 것은 된다. 클러스터 네임스페이스 `proj-<slug>`와 공개 주소가 `slug`로 정해지기 때문이다)
 6. 저장
 
-**`spec` 검증 규칙.** 모르는 키는 거부한다(오타가 조용히 저장되지 않게). `400 INVALID_SPEC`은 어긋난 칸을 **칸마다** 알려 준다. 오류 응답의 `error`에 선택 필드 `fields`가 더해진다(다른 오류에는 없다):
+**`spec` 검증 규칙.** 표에 있는 칸은 **모두 필수**다(값이 없으면 키를 빼지 말고 `null`을 보낸다. 빠진 키는 `REQUIRED`). 모르는 키는 거부한다(오타가 조용히 저장되지 않게). `400 INVALID_SPEC`은 어긋난 칸을 **칸마다** 알려 준다. 오류 응답의 `error`에 선택 필드 `fields`가 더해진다(다른 오류에는 없다):
 
 ```json
 {
   "error": {
     "code": "INVALID_SPEC",
-    "message": "spec has 2 invalid fields (first: services[1].runtime.port)",
+    "message": "spec has invalid fields (first: services[0].build.install)",
     "fields": [
-      { "path": "services[1].runtime.port", "code": "OUT_OF_RANGE" },
-      { "path": "services[0].build.install", "code": "REQUIRED" }
+      { "path": "services[0].build.install", "code": "REQUIRED" },
+      { "path": "services[1].runtime.port", "code": "OUT_OF_RANGE" }
     ]
   }
 }
@@ -297,17 +298,17 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
 | `services` | 1~3개. `name`은 서비스 사이에서 유일 |
 | `services[].name` | 소문자로 시작하는 소문자 영숫자와 `-`, 영숫자로 끝남, 1~52자(시험 배포의 `-candidate`를 붙여도 63자 이내). Deployment · Service 이름이자 클러스터 안 DNS 이름 |
 | `role` | `fe` · `be` · `ai` |
-| `dir` · `build.context` · `build.dockerfile` · `build.outputDir` | 레포 안 상대 경로(`.` 가능, `/`로 시작 · `..` · `\` 불가). `dockerfile` · `outputDir`은 `null` 가능 |
+| `dir` · `build.context` · `build.dockerfile` · `build.outputDir` | 레포 안 상대 경로: `.` 하나이거나 영숫자 · `.` · `_` · `@` · `+` · `-`로 된 조각을 `/`로 이은 것(200자 이하, `/`로 시작 · `..` · `.` 조각 · 빈 조각 · `\` · 공백 불가). `dockerfile` · `outputDir`은 `null` 가능 |
 | `build.framework` | `null` · `vite-react` · `nextjs` · `nest` |
 | `build.nodeVersion` | `null` 또는 `22` · `22.1` · `22.1.0` 모양 |
-| `build.install` · `build` · `start` | `null` 또는 비어 있지 않은 한 줄 문자열(1000자 이하) |
-| `build.buildEnv` · `runtime.env` | 키는 `[A-Za-z_][A-Za-z0-9_]*`, 값은 문자열 |
+| `build.install` · `build` · `start` | `null` 또는 비어 있지 않은 한 줄 문자열(공백만이거나 줄바꿈이 있으면 불가, 1000자 이하) |
+| `build.buildEnv` · `runtime.env` | 키는 `[A-Za-z_][A-Za-z0-9_]*`(128자 이하, `__proto__` 불가), 값은 문자열(4096자 이하). 항목은 100개까지 |
 | `runtime.kind` | `server` · `static` |
 | `runtime.port` | 1~65535 정수 |
-| `runtime.health` | `type`이 `http`면 `path`는 `/`로 시작하는 문자열, `tcp`면 `path`는 `null`. `startupTimeoutSeconds`는 1~600 정수 |
-| `runtime.secretKeys` | env 이름 배열(중복 불가). 값은 저장하지 않는다(W3이 Secret으로 따로 넣는다) |
-| `runtime.links` | `{ env, service }` 배열. `env`는 env 이름이고 `service`는 `spec.services`에 있는 `name` |
-| `runtime.ingressPath` | `null`(내부 전용) 또는 `/`로 시작하는 문자열 |
+| `runtime.health` | `type`이 `http`면 `path`는 `/`로 시작하고 공백이 없는 문자열(200자 이하), `tcp`면 `path`는 `null`. `startupTimeoutSeconds`는 1~600 정수 |
+| `runtime.secretKeys` | env 이름 배열(중복 불가, 100개까지). 값은 저장하지 않는다(W3이 Secret으로 따로 넣는다) |
+| `runtime.links` | `{ env, service }` 배열(30개까지, `env`는 서로 달라야 함). `env`는 env 이름이고 `service`는 `spec.services`에 있는 `name` |
+| `runtime.ingressPath` | `null`(내부 전용), `/`, 또는 `/api` · `/api/v1`처럼 끝 슬래시 없는 경로(영숫자 · `.` · `_` · `~` · `-` 조각, 200자 이하) |
 | `runtime.stripPrefix` | 불리언 |
 | `runtime.resources` | 지금은 `null`만 받는다(모양이 정해지면 추가) |
 
@@ -320,7 +321,8 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
 
 오류 (`code`: 의미):
 
-- `400 INVALID_REPO_URL` · `400 INVALID_COMMIT` · `400 INVALID_SPEC`: 위 1 · 4번. `INVALID_SPEC`에는 `fields`가 있다
+- `400 INVALID_REPO_URL` · `400 INVALID_COMMIT` · `400 INVALID_SPEC`: 위 1 · 4번. `INVALID_SPEC`에는 `fields`가 있다. 본문이 JSON이 아니거나 객체 · 배열이 아닌 최상위 값(`"x"`)이면 JSON 파서가 먼저 `400 BAD_REQUEST`로 거른다
+- `413 PAYLOAD_TOO_LARGE`: 요청 본문이 100KB를 넘는다
 - `401 AUTH_REQUIRED` · `401 INVALID_TOKEN`: 로그인 토큰 문제
 - `403 GITHUB_NOT_LINKED` · `403 REPO_NOT_OWNED` · `404 REPO_NOT_FOUND` · `422 REPO_NOT_PERSONAL`: `POST /api/repos/check`와 같다
 - `404 COMMIT_NOT_FOUND`: 그 레포에 없는 commit. 이번에는 "검사한 commit과 입력의 commit이 다르다"는 오류가 따로 없다. 서버가 아직 검사한 commit(#45 보안 검사 결과)을 기억하지 않아서이고, 보안 검사가 들어오면 그 commit과 다를 때의 오류를 이 문서에 더한다. FE는 `COMMIT_NOT_FOUND`를 받으면 `repos/check`부터 다시 하게 하면 된다
