@@ -85,7 +85,13 @@ Decided for BE:
 - Unit tests sit next to the code as `BE/src/**/*.spec.ts` (Nest's naming, what `nest g` generates). Tests that boot the app go in `BE/test/*.e2e.spec.ts` (Vitest's default pattern) and start it with `BE/test/start-app.ts`, which calls `setupApp` the way `main.ts` does, so they run with the real prefix, CORS, error filter and auth guard.
 - `BE/vitest.config.ts` only sets the required env (`SUPABASE_URL`, a fake origin) because `ConfigModule` validates env when it is imported. Tests never reach the network: the auth tests stub `fetch` to serve a key set generated in the test.
 
-Fill in once the stack is decided (AI, and the mutation tool for all):
+Decided for AI:
+
+- Test library: pytest with FastAPI's `TestClient` (`uv run pytest` in `AI/`). Lint and format are ruff; types are mypy in strict mode over `ai_server/` and `tests/`.
+- Tests sit in `AI/tests/test_*.py`, named after the module or route they cover (`test_config.py`, `test_health.py`). Shared fixtures (settings, app client) are in `AI/tests/conftest.py`.
+- Tests never call a real LLM or the real gateway: PydanticAI's `TestModel` · `FunctionModel` stand in for the model, and a fake gateway stands in for the platform server.
+
+Fill in once the mutation tool is decided (for all):
 
 - Mutation tool, and its scope (changed files only, to keep it fast). Until one is chosen, say "mutation testing not run: no tool chosen" in the PR body.
 - What counts as an acceptable surviving mutant.
