@@ -23,7 +23,7 @@ Defaults I chose where the owner's answer did not say (revisit in review): no lo
 - [x] Hand-made mutants; survivors get a test or a reason in the PR body
 - [x] Review rounds R2 (agy), `/simplify`; `/code-review medium` and R3 (docs ↔ code) run before the final push
 - [x] Spec-consumer table and storage proposal (R4), written into the PR body
-- [ ] `pnpm verify`, rebase, push, open the **draft** PR
+- [x] `pnpm verify`, rebase, push, open the **draft** PR (#48, merged 2026-11-09)
 - [ ] FE: show the draft on the confirm screen (separate task; the wireframe's F3 screen still cites the README)
 - [ ] Next PR: the API that saves the confirmed spec, after the project / round data model is drawn in `docs/design/`
 
@@ -32,7 +32,7 @@ Defaults I chose where the owner's answer did not say (revisit in review): no lo
 (CI green is left for the PR checks to show.)
 
 - [x] `pnpm verify` passes on the final tree (311 tests)
-- [ ] The test fixtures have the shape of the real GitHub / raw answers probed above
-- [ ] Real Supabase + linked test account run on one of the owner's own public personal repos (throwaway local page, not committed), or the PR body says that path is unverified
+- [x] The test fixtures have the shape of the real GitHub / raw answers probed above
+- [ ] (not run; PR #48 said this path is unverified) Real Supabase + linked test account run on one of the owner's own public personal repos (throwaway local page, not committed), or the PR body says that path is unverified
 - [ ] Tests added; mutation testing not run with a tool (none chosen yet, conventions §6); hand-made mutants listed in lessons, survivors resolved or explained
-- [ ] A draft PR is open with: stacked-on-#47 note, undecided items, defaults above, known limits, storage proposal
+- [x] A draft PR is open with: stacked-on-#47 note, undecided items, defaults above, known limits, storage proposal

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseRepoUrl } from './repo-url.js'
+import { isCommitSha, parseRepoUrl } from './repo-url.js'
 
 describe('parseRepoUrl accepts', () => {
   it.each([
@@ -54,5 +54,34 @@ describe('parseRepoUrl rejects', () => {
 
   it.each([undefined, null, 123, {}, ['https://github.com/a/b']])('a non-string (%j)', (input) => {
     expect(parseRepoUrl(input)).toBeNull()
+  })
+})
+
+describe('isCommitSha', () => {
+  const SHA = '0123456789abcdef0123456789abcdef01234567'
+
+  it.each([SHA, 'f'.repeat(40), '0'.repeat(40)])('accepts a full lower-case SHA (%s)', (input) => {
+    expect(isCommitSha(input)).toBe(true)
+  })
+
+  it.each([
+    ['empty', ''],
+    ['a short SHA', SHA.slice(0, 7)],
+    ['39 characters', SHA.slice(0, 39)],
+    ['41 characters', `${SHA}0`],
+    ['a 64-character SHA-256', SHA + SHA.slice(0, 24)],
+    ['upper case', SHA.toUpperCase()],
+    ['a non-hex character', `g${SHA.slice(1)}`],
+    ['a leading space', ` ${SHA}`],
+    ['a trailing newline', `${SHA}\n`],
+    ['a branch name', 'main'],
+    ['HEAD', 'HEAD'],
+    ['a path', `${SHA}/../x`],
+  ])('rejects %s', (_, input) => {
+    expect(isCommitSha(input)).toBe(false)
+  })
+
+  it.each([undefined, null, 123, true, {}, [SHA]])('rejects a non-string (%j)', (input) => {
+    expect(isCommitSha(input)).toBe(false)
   })
 })

@@ -21,6 +21,19 @@ it('uses the code given when the exception was thrown', () => {
   })
 })
 
+it('passes a list of invalid fields through when the exception carries one', () => {
+  const fields = [{ path: 'services[0].name', code: 'REQUIRED' }]
+  expect(run(new BadRequestException({ code: 'INVALID_SPEC', message: 'spec is invalid', fields })).body).toEqual({
+    error: { code: 'INVALID_SPEC', message: 'spec is invalid', fields },
+  })
+})
+
+it('ignores fields that are not a list', () => {
+  expect(run(new BadRequestException({ code: 'X', message: 'm', fields: 'nope' })).body).toEqual({
+    error: { code: 'X', message: 'm' },
+  })
+})
+
 it('falls back to the HTTP status name', () => {
   expect(run(new BadRequestException('Bad input'))).toEqual({
     status: 400,

@@ -1,6 +1,6 @@
 # 인증 — 설계
 
-- **상태**: 구현됨 (로그인 토큰 검증, 레포 소유 확인. FE의 연동 버튼은 예정)
+- **상태**: 구현됨 (로그인 토큰 검증, 레포 소유 확인, FE의 연동 버튼 — 프로필 화면, FE의 가입 · 비밀번호 재설정 화면)
 - **관련**: SRS NFR-SEC-03 · NFR-SEC-04 · [ADR-007](../adr/007-login-email-password-github-link.md) · [API 계약](api.md)의 인증 그룹
 
 ## 범위
@@ -13,6 +13,8 @@
 
 1. FE가 이메일 · 비밀번호로 Supabase에 로그인해 access token(JWT, 기본 수명 1시간)과 refresh token을 받는다. 갱신은 supabase-js가 한다.
 2. FE는 플랫폼 서버를 부를 때마다 `Authorization: Bearer <access token>`을 붙인다.
+   - 서버가 `401 AUTH_REQUIRED` · `401 INVALID_TOKEN`을 주면 FE는 `refreshSession()`으로 한 번 갱신해 같은 요청을 다시 보낸다. 그래도 401이거나 갱신이 거부되면 **이 기기만** 로그아웃(`signOut({ scope: 'local' })`)하고 로그인 화면(X1)으로 보낸다. 갱신이 오프라인 · 서버 장애로 안 된 경우와 `503`은 로그아웃하지 않는다.
+   - 세션 연장 버튼은 두지 않는다. 갱신은 supabase-js가 자동으로 한다.
 3. 플랫폼 서버의 전역 가드가 토큰을 검증한다.
    - 서명: Supabase의 공개 키 목록(JWKS, `<SUPABASE_URL>/auth/v1/.well-known/jwks.json`)으로 확인한다. 공개 키는 처음 필요할 때 받아 두고, 모르는 `kid`가 오면 다시 받는다. 그래서 Supabase에서 키를 교체해도 재배포 없이 따라간다. 키를 받는 주소라 `SUPABASE_URL`은 `https`여야 한다(평문이면 중간에서 키를 바꿔 위조 토큰을 통과시킬 수 있다. 로컬 Supabase용 loopback 주소만 `http`를 허용한다).
    - 알고리즘 허용 목록은 따로 두지 않는다. jose는 토큰의 `alg`에 맞는 종류의 키만 키 목록에서 고르는데, 공개 키 목록에는 HMAC 키가 있을 수 없고 `alg: none`은 항상 거부한다. 그래서 `alg`를 `HS256` · `none`으로 바꾼 토큰은 통과하지 못한다(자동 테스트). 목록을 따로 두어도 결과가 같다는 것을 뮤턴트로 확인했다.
@@ -47,6 +49,18 @@
 
 `503`을 따로 두는 이유: 인증 서버 쪽 장애를 "토큰이 틀렸다"(`401`)로 돌려주면 FE가 멀쩡한 사용자를 로그아웃시킨다. 그렇다고 검증 없이 통과시키지도 않는다([`conventions.md`](../conventions.md) F-1).
 
+## 가입과 비밀번호 재설정
+
+둘 다 FE가 supabase-js로 Supabase에 직접 하고 플랫폼 서버는 관여하지 않는다. 메일은 Supabase 내장 메일 서버로 보낸다.
+
+- **가입**(`/signup`): `signUp`에 `emailRedirectTo = <FE 주소>/profile`을 준다. 이메일 확인(Confirm email)이 켜져 있어 가입만으로는 토큰이 나오지 않고, 메일의 링크를 누르면 로그인된 채로 프로필에 도착해 GitHub 연동 안내를 만난다. 인증 전에 로그인하면 `email_not_confirmed`라 로그인 화면이 재발송을 안내하고, 그 재발송도 같은 주소로 돌아온다.
+- **비밀번호 재설정**(`/reset-password`): `resetPasswordForEmail`에 `redirectTo = <FE 주소>/reset-password`를 준다. 링크를 누르면 주소의 `#access_token=…&type=recovery`로 돌아오고, supabase-js가 이 토큰으로 세션을 만든다. 화면은 `PASSWORD_RECOVERY` 이벤트를 쓰지 않고(구독이 늦으면 놓친다) 주소로 링크인지 가린다. 토큰이 있는 `type=recovery` 주소면 `getSession()`을 기다려, 세션이 있고 주소의 토큰이 지워졌으면 새 비밀번호 화면, 아니면 "링크가 만료됐어요" 화면이다(쓰지 못한 토큰은 supabase-js가 주소에 그대로 남긴다는 것은 라이브러리 코드를 읽어 정한 것이다. 실제로는 이미 쓴 재설정 주소를 시크릿 탭에서 열면 열리지 않는 것까지 확인했다). 비밀번호를 바꾸면 재설정으로 얻은 세션을 끝내고 새 비밀번호로 다시 로그인하게 한다.
+- **계정이 있는지 알려 주지 않는다.** 이미 가입한 주소로 가입해도, 없는 주소로 재설정을 요청해도 Supabase는 성공으로 답하고 화면도 같은 "메일을 확인해 주세요"를 보인다.
+- **비밀번호 규칙**: 8자 이상, 영문과 숫자를 함께, 이메일 주소와 다를 것(FE `auth/form-rules.ts`). Supabase가 더 엄격하면 `weak_password`로 돌아와 입력칸에 알린다.
+- **Supabase 설정**(대시보드, #49): Confirm email 켜기. Redirect URLs에 위 두 경로를 쓰는 FE 주소 등록(개발 `http://localhost:5173`은 확인했고, 배포 주소는 배포 때 추가한다. 등록되지 않은 주소는 Site URL로 돌아간다).
+- **내장 메일 서버의 제한**([공식 문서](https://supabase.com/docs/guides/auth/auth-smtp)): 팀(조직) 멤버 주소로만 보내고, 시간당 2통이며, 운영용이 아니다. 팀 밖 주소는 `email_address_not_authorized`, 한도는 `over_email_send_rate_limit`(HTTP 429)로 오는 것으로 보고 FE가 안내를 나눠 두었지만, **실제 응답은 확인하지 못했다**. 메일을 더 보내야 하거나 외부 사용자가 직접 가입해야 하면 Custom SMTP로 바꾼다. 심사용 계정은 가입하지 않고 대시보드에서 직접 만든다(위 관리자 절차의 Add user + Auto Confirm User).
+- **알려진 한계**: 로그인한 사람이 `/signup`을 열었을 때의 처리, 만료된 가입 링크(설명 없이 로그인 화면으로 감), 메일 안내 화면은 새로고침하면 사라진다.
+
 ## GitHub 연동과 레포 소유 확인
 
 연동은 FE가, 확인은 플랫폼 서버가 한다. 확인 API는 [`api.md`](api.md)의 `POST /api/repos/check`이고, 나중에 만들 제출 API가 같은 확인을 그대로 쓴다.
@@ -74,11 +88,24 @@
 
 Supabase `GET /auth/v1/user`의 `401`과 `403`은 책임이 다르다(2026-11-09 실제 응답으로 확인). 틀린 `apikey`는 `401 Invalid API key`, `apikey` 없음은 `401 No API key found in request`(둘 다 `error_code` 없음)이고, 위조 토큰은 `403 bad_jwt`, 로그아웃된 세션은 `403 session_not_found`다. 사용자 쪽 토큰 문제는 모두 `403`이고 `401`은 우리 쪽 설정 문제이므로, `401`을 `INVALID_TOKEN`으로 돌려주면 공개 키가 틀렸을 때 모든 사용자가 "토큰이 틀렸다"를 받고 원인이 로그에 남지 않는다.
 
+`POST /api/repos/check`는 위 1~6단계를 통과한 **뒤에** 접수할 commit을 확정한다(소유 오류는 이 호출에 닿지 않는다). `GET /repos/{소유자}/{레포}/commits/HEAD`를 `Accept: application/vnd.github.sha`로 인증 없이 부르면 40자 SHA만 텍스트로 온다(JSON 응답은 4.7KB이고 commit이 바꾼 파일 목록까지 실려 와 크기가 커질 수 있어 쓰지 않는다. 2026-11-10 실제 공개 레포로 확인). 커밋이 없는 빈 레포는 `409`로 답할 것으로 보고 `commit: null`과 `200`을 돌려준다(이 호출의 `409`는 빈 공개 레포가 없어 직접 확인하지 못했다. 파일 목록의 `409`는 아래 `dockerfiles`의 7단계처럼 확인했다). 그 밖에 SHA를 못 읽으면 `503 GITHUB_UNAVAILABLE`이다. 한 요청에 GitHub를 두 번 부른다(레포 조회 + commit).
+
 `POST /api/repos/dockerfiles`는 위 1~6단계를 그대로 거친 뒤에야 7단계로 간다. 7단계는 파일 목록을 한 번 더 받는다(`GET /repos/{소유자}/{레포}/git/trees/HEAD?recursive=1`, 인증 없이. `HEAD`는 기본 브랜치다). 커밋이 없는 빈 레포는 GitHub가 `409 Git Repository is empty.`로 답하는데(2026-11-09 실제 공개 빈 레포로 확인), 파일이 없는 정상 상태이므로 빈 목록과 `200`을 돌려준다. 그 밖에 목록을 못 받으면(없음 · 한도 · 장애 · 네트워크 · 시간 초과) `503 GITHUB_UNAVAILABLE`이다. 소유 확인을 이미 통과했으므로 `404`를 `REPO_NOT_FOUND`로 돌려주지 않는다. 한 요청에 GitHub를 두 번 부른다(레포 조회 + 파일 목록).
 
-`POST /api/repos/deploy-spec`도 1~7단계를 그대로 거친 뒤 8단계로 간다. 8단계는 7단계 파일 목록에서 고른 `package.json`(최대 10개)의 내용을 `https://raw.githubusercontent.com/{소유자}/{레포}/HEAD/{경로}`로 **인증 없이 병렬로** 읽는다(사용자 토큰은 보내지 않고, 경로는 세그먼트마다 인코딩한다). 락 파일은 7단계 목록의 이름만 보고 내용은 읽지 않는다. 읽지 못하면(한도 · 장애 · 네트워크 · 시간 초과) `503 GITHUB_UNAVAILABLE`이고, 읽는 사이 파일이 사라져 `404`가 나면 그 폴더만 판단 필요로 둔다. GitHub API 호출은 `repos/dockerfiles`와 같은 두 번이다(레포 조회 + 파일 목록).
+`POST /api/repos/deploy-spec`는 1~6단계를 그대로 거친 뒤 7단계(파일 목록), 8단계(파일 내용)로 간다. `commit`의 모양(전체 SHA인지)은 외부 호출이 없는 검사라 1단계보다도 앞서 본다(레포 주소와 `commit`이 둘 다 틀리면 `INVALID_COMMIT`이다). 요청에 `commit`이 있으면 6단계와 7단계 사이에 그 SHA가 이 레포의 commit인지 확인한다. `git/trees`는 commit이 아닌 tree SHA도 받는데 그 SHA로는 raw 파일이 `404`라, 그대로 두면 모든 `package.json`이 조용히 "읽을 수 없음"이 되기 때문이다. `GET /repos/{소유자}/{레포}/commits/{sha}`(위와 같은 `Accept`)가 `200`이면 commit이다. 없는 SHA · tree SHA · 다른 레포의 SHA는 모두 `422`(2026-11-10 실제 응답)이고, 이를 `404 COMMIT_NOT_FOUND`로 돌려준다(`404` · `409`도 같다. 커밋이 없는 레포에는 commit이 없다. `200`이어도 본문의 SHA가 요청한 SHA와 다르면 같다). 그 밖의 실패는 `503 GITHUB_UNAVAILABLE`이다. 이어서 7단계 파일 목록은 `git/trees/{sha}?recursive=1`로 받는다(`commit`이 없으면 위 7단계와 같이 `HEAD`). 8단계는 7단계 파일 목록에서 고른 `package.json`(최대 10개)의 내용을 `https://raw.githubusercontent.com/{소유자}/{레포}/{commit 또는 HEAD}/{경로}`로 **인증 없이 병렬로** 읽는다(사용자 토큰은 보내지 않고, 경로는 세그먼트마다 인코딩한다). 락 파일은 7단계 목록의 이름만 보고 내용은 읽지 않는다. 읽지 못하면(한도 · 장애 · 네트워크 · 시간 초과) `503 GITHUB_UNAVAILABLE`이고, 읽는 사이 파일이 사라져 `404`가 나면 그 폴더만 판단 필요로 둔다. GitHub API 호출은 `commit`이 없으면 두 번(레포 조회 + 파일 목록), 있으면 세 번(레포 조회 + commit 확인 + 파일 목록)이다.
 
 외부 서비스 장애는 사용자 잘못(`4xx`)으로 바꾸지 않고 `503`으로 돌려준다([`conventions.md`](../conventions.md) F-1). 내가 소유자인 레포를 다른 레포에서 fork한 경우도 소유자는 나이므로 통과한다. 관리자도 같은 확인을 받는다(관리자는 제출하지 않고 보기만 하므로 예외를 두지 않는다).
+
+## 배포 입력 저장
+
+`POST /api/deploys`는 사용자가 검토해 고친 spec과 접수 때 확정한 commit을 Supabase `deploys` 테이블에 저장하고, `GET /api/deploys/:id`는 그 행을 읽는다(계약은 [`api.md`](api.md#배포-입력-저장-이슈-76)).
+
+- **쓰기는 서버만 한다.** 서버가 Supabase의 **secret key**(`SUPABASE_SECRET_KEY`, service role)로 PostgREST(`<SUPABASE_URL>/rest/v1/deploys`)를 부른다. 사용자 토큰과 publishable key로는 쓰지 못하게 `deploys`에 쓰기 정책을 두지 않는다(RLS가 켜져 있고 정책은 읽기 하나뿐이다). 사용자가 FE에서 Supabase로 직접 써서 아래 확인을 건너뛰는 길을 막으려는 것이다.
+- **읽기도 서버를 거친다.** 서버가 secret key로 읽되 질의에 로그인한 사용자의 `user_id` 조건을 서버가 붙인다. 행의 `user_id`는 검증한 토큰의 `sub`에서 오고 요청 본문에서 오지 않는다. RLS의 읽기 정책(`user_id = auth.uid()`)은 사용자가 같은 테이블을 Supabase로 직접 읽어도 자기 행만 보이게 하는 이중 장치다.
+- **저장 순서**는 api.md의 "서버가 확인하는 순서"다: 모양 검사(외부 호출 없음) → 소유 확인(`repos/check`와 같은 1~6단계) → `commit`이 이 레포의 commit인지(`deploy-spec`과 같은 확인) → `spec.project.repo`가 확인한 레포와 같은지 → `slug` 충돌 → 저장. 서버가 믿는 commit은 이 단계에서 확인한 값이라, 클라이언트가 보낸 값을 읽기용으로만 쓰던 `deploy-spec`과 달리 **저장된 commit은 서버가 검증한 값**이다.
+- **PostgREST 질의에 사용자 입력이 그대로 들어가지 않는다.** `id`는 UUID 모양, `slug`는 위 규칙의 모양일 때만 질의에 쓰고, 값은 URL 인코딩한다. `user_id`는 토큰에서 온다.
+- 저장소에 닿지 못하거나 시간 초과, `5xx`, `401` · `403`(키 거부)이면 `503 DATABASE_UNAVAILABLE`이다. secret key는 로그와 응답에 남기지 않고 `SUPABASE_URL`로만 보낸다.
+- **지금은 secret key가 BE에만 있다.** 플랫폼 서버를 리더로 옮기면([시스템 정의서](../system-definition.md) 열린 질문 8) 이 키도 리더에 올라가므로 그때 권한 범위를 다시 본다.
 
 ## 결정과 대안
 
@@ -91,8 +118,16 @@ Supabase `GET /auth/v1/user`의 `401`과 `403`은 책임이 다르다(2026-11-09
 
 ## 알려진 한계
 
-- GitHub 공개 API를 인증 없이 부르면 서버 IP당 시간당 60번까지다. 소유 확인은 요청마다 한 번, Dockerfile 확인과 배포 설정 초안은 각각 두 번(레포 조회 + 파일 목록) 부르므로 데모에는 충분하지만, 부족해지면 봇 계정(ADR-002)의 토큰으로 5000번까지 늘린다. 한도에 걸리면 `503 GITHUB_UNAVAILABLE`이다.
-- 배포 설정 초안(`deploy-spec`)의 `package.json` 읽기는 `raw.githubusercontent.com`을 쓴다. 이 주소의 응답에는 한도 헤더가 없고 API 한도(`core`)가 줄지 않는 것을 2026-11-09에 직접 확인했다. 다만 이 주소에도 따로 정해지지 않은 한도가 있을 수 있고 응답이 5분 캐시된다(`cache-control: max-age=300`). 그래서 방금 push한 변경이 초안에 늦게 보일 수 있다. 파일 목록과 내용을 서로 다른 시점에 읽으므로 그 사이 push가 있으면 어긋날 수 있는데, 빌드할 commit을 확정하는 일([#41](https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/41))로 풀린다.
+- `slug` 충돌 확인(`409 SLUG_TAKEN`)은 "읽고 나서 쓰기"라 같은 `slug`를 서로 다른 사용자가 동시에 처음 저장하면 둘 다 통과할 수 있다. DB에서 막으려면 `projects` 테이블(`slug` 유일)이 필요하고, 프로젝트 단위 관리(슬롯 · 삭제)를 만들 때 함께 한다.
+- 저장하는 spec의 `build.dockerfile`이 그 commit에 실제로 있는지, `dir`이 있는 폴더인지는 확인하지 않는다(모양만 본다). 빌드(#44)가 읽을 때 드러난다.
+- `slug`는 처음 저장한 레포에 묶인다. 레포 이름을 바꾸거나 옮기면 같은 `slug`가 `409 SLUG_TAKEN`이 된다(풀어 주는 길은 `projects` 테이블과 함께 만든다).
+- 서비스 사이의 `ingressPath` 겹침(같은 경로 둘, `/` 둘)은 검증하지 않는다. 경로 배정은 인프라 담당의 규칙(W5)이다.
+- 사용자당 저장 개수나 요청 횟수 제한은 없다. 본문 100KB 제한만 있다.
+- 예약 `slug` 목록과 `resources`의 모양은 인프라 담당이 정하는 값이다. 지금은 임시 목록과 `null`만 받는다.
+
+- GitHub 공개 API를 인증 없이 부르면 서버 IP당 시간당 60번까지다. 소유 확인(`repos/check`)은 두 번(레포 조회 + commit), Dockerfile 확인은 두 번, 배포 설정 초안은 `commit`을 주면 세 번이라, 사용자 한 명이 제출 한 번에 일곱 번을 쓴다(서버 IP당 시간당 약 8건). 여러 사용자가 같은 서버 IP를 쓰므로 데모 인원이 많으면 모자랄 수 있다. 데모 전에 봇 계정(ADR-002)의 토큰(5000번까지) 또는 결과 캐시로 다시 본다(구현은 아직 없다). 한도에 걸리면 `503 GITHUB_UNAVAILABLE`이다.
+- 배포 설정 초안(`deploy-spec`)의 `package.json` 읽기는 `raw.githubusercontent.com`을 쓴다. 이 주소의 응답에는 한도 헤더가 없고 API 한도(`core`)가 줄지 않는 것을 2026-11-09에 직접 확인했다. 다만 이 주소에도 따로 정해지지 않은 한도가 있을 수 있고 응답이 5분 캐시된다(`cache-control: max-age=300`). 그래서 방금 push한 변경이 초안에 늦게 보일 수 있다. `commit`을 주지 않아 `HEAD`를 읽으면 파일 목록과 내용을 서로 다른 시점에 읽게 되어 그 사이 push가 있으면 어긋날 수 있다. `commit`을 주면 SHA 경로는 바뀌지 않으므로 어긋남도 5분 캐시 문제도 없다([#41](https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/41) · [#60](https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/60)).
+- `commit`은 클라이언트가 보낸 값이라 아직 서버가 믿을 SHA가 아니다. 지금은 읽기 전용 초안에만 쓰이고 공개 레포라 노출되는 정보가 없다. 검사한 commit과 확정 spec의 commit이 같은지는 확정 spec을 저장하는 작업에서 확인한다. GitHub는 같은 포크 네트워크의 다른 레포 commit을 이 레포 주소로 읽게 해 줄 수 있는데, 이는 직접 확인하지 못했다.
 - 토큰은 수명(기본 1시간) 동안 유효하다. 로그아웃 · 계정 정지 · 관리자 해제가 플랫폼 서버에 바로 반영되지 않는다. 계정 정지 기능을 만들 때 DB 확인을 더할지 다시 본다.
 - `alg` 처리와 401 · 503 구분은 jose의 동작과 오류 종류에 기대고 있다. jose를 올리거나 바꾸면 `BE/test/auth.e2e.spec.ts`가 이를 다시 확인한다.
 - 자동 테스트는 테스트에서 만든 키로 서명한 토큰으로 검증 경로를 확인한다. 실제 Supabase 토큰은 테스트 계정으로 로그인해 직접(`curl`) 확인한다.

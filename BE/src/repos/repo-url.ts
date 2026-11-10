@@ -8,6 +8,12 @@ export interface RepoRef {
 const OWNER = /^[A-Za-z0-9-]{1,39}$/
 const REPO = /^[A-Za-z0-9._-]{1,100}$/
 
+// 전체 SHA만 받는다. 짧은 SHA · 브랜치 이름 · 대문자는 GitHub가 받아 주더라도 우리는 거른다(경로에 그대로 붙이는 값이라 모양을 고정한다).
+const COMMIT_SHA = /^[0-9a-f]{40}$/
+
+/** commit의 전체 SHA(40자, 소문자 16진수)인가. */
+export const isCommitSha = (input: unknown): input is string => typeof input === 'string' && COMMIT_SHA.test(input)
+
 /** `https://github.com/<소유자>/<레포>`(끝의 `.git` · `/`는 허용)만 받는다. 그 밖의 모든 입력은 null이다. */
 export function parseRepoUrl(input: unknown): RepoRef | null {
   if (typeof input !== 'string') return null

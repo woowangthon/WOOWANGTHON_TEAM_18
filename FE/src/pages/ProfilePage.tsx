@@ -1,6 +1,12 @@
-// 빈 화면. 내용은 #56에서 채운다.
+import GithubLinkCard from './GithubLinkCard.tsx'
+
 function ProfilePage() {
-  return <h1>프로필</h1>
+  return (
+    <>
+      <h1 className="text-xl">프로필</h1>
+      <GithubLinkCard />
+    </>
+  )
 }
 
 export default ProfilePage
