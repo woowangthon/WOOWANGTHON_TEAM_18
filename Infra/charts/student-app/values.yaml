@@ -1,0 +1,14 @@
+# 이 차트의 값은 사람이 쓰지 않는다. Infra/pipeline/src/render.ts의 renderValues()가 배포 입력 · 이미지 digest · 슬롯에서 만든다
+# (docs/design/deploy-workflow.md §3). 아래는 모양을 보이려는 빈 값이다.
+#
+# part: slot  → 대상 슬롯의 앱(서비스마다 Deployment · Service · ConfigMap)과, 그 슬롯을 가리키는 test Ingress
+# part: open  → live로 바꿀 슬롯을 가리키는 open Ingress (Switch가 적용한다)
+part: slot
+slot: a
+secretHash: null
+hosts:
+  open: ""
+  test: ""
+# 서비스마다: name, fullName(<name>-<slot>), image(digest), port, env(ConfigMap), secretKeys, resources,
+# startupProbe, readinessProbe, ingressPath(null이면 내부 전용), stripPrefix
+services: []

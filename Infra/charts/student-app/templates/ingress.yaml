@@ -1,0 +1,41 @@
+{{- /*
+open · test Ingress. 프로젝트마다 하나씩이고 공개 서비스(ingressPath가 있는 서비스)의 경로를 모두 담는다(docs/design/deploy-workflow.md §3 · §4).
+part slot이면 test(<slug>.test.internal → 대상 슬롯), part open이면 open(<slug>.<도메인> → live로 바꿀 슬롯). 경로 규칙이 같아 test를 통과하면 open도 같다.
+Ingress에는 slot 라벨이 없다: 슬롯을 비울 때 지워지면 live 주소가 끊긴다.
+stripPrefix는 아직 만들지 않는다(Traefik Middleware 권한과 Ingress 모양을 정하는 중). true인 서비스가 있으면 조용히 무시하지 않고 렌더를 멈춘다.
+*/ -}}
+{{- $kind := ternary "test" "open" (eq .Values.part "slot") }}
+{{- $host := ternary .Values.hosts.test .Values.hosts.open (eq .Values.part "slot") }}
+{{- $public := list }}
+{{- range .Values.services }}
+{{- if .ingressPath }}
+{{- if .stripPrefix }}
+{{- fail (printf "service %s: stripPrefix is not supported yet" .name) }}
+{{- end }}
+{{- $public = append $public . }}
+{{- end }}
+{{- end }}
+{{- if $public }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $kind }}
+  labels:
+    wanggane/ingress: {{ $kind }}
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: {{ $host | quote }}
+      http:
+        paths:
+          {{- range $public }}
+          - path: {{ .ingressPath | quote }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .fullName }}
+                port:
+                  number: {{ .port }}
+          {{- end }}
+{{- end }}

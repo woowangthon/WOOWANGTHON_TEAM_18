@@ -55,6 +55,9 @@ export interface DeployInput {
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 
 const HASH = /^sha256:[0-9a-f]{64}$/
+// BE의 저장 검사와 같은 모양(docs/design/deploy-handoff.md 검증 규칙): slug 1~40자, 서비스 이름 1~30자. 리소스 이름 `<name>-a`가 DNS 이름 한도 안이다.
+const SLUG = /^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/
+const SERVICE_NAME = /^[a-z]([a-z0-9-]{0,28}[a-z0-9])?$/
 const IMAGE = /^ghcr\.io\/[a-z0-9][a-z0-9-]{0,38}\/student-apps@sha256:[0-9a-f]{64}$/
 
 /** 이미지 digest 주소(태그가 아니라 `@sha256:`)인가. */
@@ -70,7 +73,7 @@ export function parseDeployInput(text: string): DeployInput {
   if (!isRecord(input) || !isRecord(input.spec) || !isRecord(input.deploy_condition)) throw fail('not an object with spec and deploy_condition')
   if (typeof input.commitSha !== 'string' || !/^[0-9a-f]{40}$/.test(input.commitSha)) throw fail('commitSha is not a 40-char SHA')
   const { spec, deploy_condition: condition } = input
-  if (!isRecord(spec.project) || typeof spec.project.slug !== 'string' || !/^[a-z0-9]([a-z0-9-]{0,56}[a-z0-9])?$/.test(spec.project.slug)) {
+  if (!isRecord(spec.project) || typeof spec.project.slug !== 'string' || !SLUG.test(spec.project.slug)) {
     throw fail('spec.project.slug is invalid')
   }
   if (!Array.isArray(spec.services) || spec.services.length === 0) throw fail('spec.services is empty')
@@ -78,7 +81,7 @@ export function parseDeployInput(text: string): DeployInput {
   const services = condition.services
   for (const svc of spec.services as unknown[]) {
     const name = isRecord(svc) ? svc.name : undefined
-    if (typeof name !== 'string' || !/^[a-z]([a-z0-9-]{0,50}[a-z0-9])?$/.test(name)) throw fail('a service name is invalid')
+    if (typeof name !== 'string' || !SERVICE_NAME.test(name)) throw fail('a service name is invalid')
     const c = services[name]
     if (!isRecord(c) || typeof c.buildInputHash !== 'string' || !HASH.test(c.buildInputHash)) throw fail(`deploy_condition.services.${name} has no build input hash`)
     if (c.build === 'reuse' ? !isImageDigest(c.image) : c.build !== 'run') throw fail(`deploy_condition.services.${name} is neither a run nor a reuse with an image`)

@@ -1,0 +1,297 @@
+---
+# Source: student-app/templates/slot.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fe-b
+  labels:
+    app: fe
+    slot: b
+data: {}
+---
+# Source: student-app/templates/slot.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: be-b
+  labels:
+    app: be
+    slot: b
+data:
+  AI_URL: http://ai-b:8000
+  NODE_ENV: production
+---
+# Source: student-app/templates/slot.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ai-b
+  labels:
+    app: ai
+    slot: b
+data: {}
+---
+# Source: student-app/templates/slot.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: fe-b
+  labels:
+    app: fe
+    slot: b
+spec:
+  selector:
+    app: fe
+    slot: b
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+# Source: student-app/templates/slot.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: be-b
+  labels:
+    app: be
+    slot: b
+spec:
+  selector:
+    app: be
+    slot: b
+  ports:
+    - port: 3000
+      targetPort: 3000
+---
+# Source: student-app/templates/slot.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-b
+  labels:
+    app: ai
+    slot: b
+spec:
+  selector:
+    app: ai
+    slot: b
+  ports:
+    - port: 8000
+      targetPort: 8000
+---
+# Source: student-app/templates/slot.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fe-b
+  labels:
+    app: fe
+    slot: b
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fe
+      slot: b
+  template:
+    metadata:
+      labels:
+        app: fe
+        slot: b
+      annotations:
+        wanggane/secret-hash: "sha256:abc"
+    spec:
+      nodeSelector:
+        wanggane/pool: student
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      containers:
+        - name: fe
+          image: "ghcr.io/woowang-bot/student-apps@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: fe-b
+          securityContext:
+            capabilities:
+              drop: ["NET_RAW"]
+          resources:
+            limits:
+              cpu: "1"
+              ephemeral-storage: 4Gi
+              memory: 2Gi
+            requests:
+              cpu: 250m
+              ephemeral-storage: 1Gi
+              memory: 256Mi
+          startupProbe:
+            failureThreshold: 2
+            httpGet:
+              path: /
+              port: 8080
+            periodSeconds: 5
+          readinessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /
+              port: 8080
+            periodSeconds: 5
+---
+# Source: student-app/templates/slot.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: be-b
+  labels:
+    app: be
+    slot: b
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: be
+      slot: b
+  template:
+    metadata:
+      labels:
+        app: be
+        slot: b
+      annotations:
+        wanggane/secret-hash: "sha256:abc"
+    spec:
+      nodeSelector:
+        wanggane/pool: student
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      containers:
+        - name: be
+          image: "ghcr.io/woowang-bot/student-apps@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          ports:
+            - containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: be-b
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: be-secrets
+                  key: DATABASE_URL
+          securityContext:
+            capabilities:
+              drop: ["NET_RAW"]
+          resources:
+            limits:
+              cpu: "1"
+              ephemeral-storage: 4Gi
+              memory: 2Gi
+            requests:
+              cpu: 250m
+              ephemeral-storage: 1Gi
+              memory: 256Mi
+          startupProbe:
+            failureThreshold: 12
+            httpGet:
+              path: /api/health
+              port: 3000
+            periodSeconds: 5
+          readinessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /api/health
+              port: 3000
+            periodSeconds: 5
+---
+# Source: student-app/templates/slot.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-b
+  labels:
+    app: ai
+    slot: b
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ai
+      slot: b
+  template:
+    metadata:
+      labels:
+        app: ai
+        slot: b
+      annotations:
+        wanggane/secret-hash: "sha256:abc"
+    spec:
+      nodeSelector:
+        wanggane/pool: student
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      containers:
+        - name: ai
+          image: "ghcr.io/woowang-bot/student-apps@sha256:9999999999999999999999999999999999999999999999999999999999999999"
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: ai-b
+          env:
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ai-secrets
+                  key: OPENAI_API_KEY
+          securityContext:
+            capabilities:
+              drop: ["NET_RAW"]
+          resources:
+            limits:
+              cpu: "1"
+              ephemeral-storage: 4Gi
+              memory: 2Gi
+            requests:
+              cpu: 250m
+              ephemeral-storage: 1Gi
+              memory: 256Mi
+          startupProbe:
+            failureThreshold: 24
+            httpGet:
+              path: /health
+              port: 8000
+            periodSeconds: 5
+          readinessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /health
+              port: 8000
+            periodSeconds: 5
+---
+# Source: student-app/templates/ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: test
+  labels:
+    wanggane/ingress: test
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: "my-app.test.internal"
+      http:
+        paths:
+          - path: "/"
+            pathType: Prefix
+            backend:
+              service:
+                name: fe-b
+                port:
+                  number: 8080
+          - path: "/api"
+            pathType: Prefix
+            backend:
+              service:
+                name: be-b
+                port:
+                  number: 3000

@@ -1,0 +1,28 @@
+---
+# Source: student-app/templates/ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: open
+  labels:
+    wanggane/ingress: open
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: "my-app.stairnoworks.com"
+      http:
+        paths:
+          - path: "/"
+            pathType: Prefix
+            backend:
+              service:
+                name: fe-b
+                port:
+                  number: 8080
+          - path: "/api"
+            pathType: Prefix
+            backend:
+              service:
+                name: be-b
+                port:
+                  number: 3000

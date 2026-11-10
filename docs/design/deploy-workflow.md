@@ -70,8 +70,10 @@ W0 접수 · 사전 검사 → W1 분석 → W2 배포 설정 → W3 비밀값 �
 
 ### 3. manifest는 언제 만드나
 
-- **차트**(`Infra/charts/student-app`, 만들 예정: Deployment · Service · ConfigMap · Ingress의 틀)는 개발 기간에 **한 번** 만든다. NetworkPolicy · ResourceQuota · LimitRange는 차트에 넣지 않는다. 플랫폼 서버가 네임스페이스를 만들 때 넣고, 실행기는 건드리지 못한다([클러스터 설계](cluster.md) §8).
+- **차트**(`Infra/charts/student-app`: Deployment · Service · ConfigMap · Ingress의 틀)는 개발 기간에 **한 번** 만든다. NetworkPolicy · ResourceQuota · LimitRange는 차트에 넣지 않는다. 플랫폼 서버가 네임스페이스를 만들 때 넣고, 실행기는 건드리지 못한다([클러스터 설계](cluster.md) §8).
 - **실제 manifest**는 **배포할 때마다 Render 스테이지에서** 만든다. spec + 이미지 digest + 대상 슬롯 → `values.yaml` → `helm template` → `kubectl apply --dry-run=server`로 검사 → DB의 대상 슬롯 줄에 저장.
+- **Render 구현**(`Infra/pipeline/src/render.ts`, `src/cli/render.ts`): 쿼터 합계 검사 → values(`renderValues`) → `helm template`을 두 번(`part: slot` = 대상 슬롯 앱 + test Ingress, `part: open` = Switch가 적용할 open Ingress. 공개 서비스가 없으면 open은 만들지 않는다) → 둘 다 `kubectl apply --dry-run=server`. 결과는 `slot.yaml` · `open.yaml` · `render-report.json`이다. 실패는 `quota`(spec의 `resources`로 고친다), `helm`(차트 렌더 실패: 플랫폼 문제), `dry-run`(k3s 거절)으로 나눈다. Pod에는 `nodeSelector: wanggane/pool=student`, API 토큰 끔, Service 환경 변수 끔, `NET_RAW` 뺌, 복제본 1을 넣고, `secretHash`는 Pod 주석이라 비밀값이 바뀌면 Pod가 다시 뜬다. 비밀 env는 Secret `<서비스>-secrets`의 key로 하나씩 읽는다.
+- `stripPrefix: true`는 아직 만들지 않았다. Traefik에서 앞 경로를 떼려면 Middleware 객체(실행기 권한)가 필요하고, 미들웨어가 Ingress 단위로 걸려 Ingress 모양도 정해야 한다. 그동안 차트는 `true`인 서비스가 있으면 조용히 무시하지 않고 렌더를 실패시킨다.
 - W2에서 미리 만들지 않는 이유: 이미지 digest는 Build 뒤에, 최종 spec은 AI 에이전트가 고친 뒤에 정해진다.
 - 사람도 AI 에이전트도 manifest를 직접 쓰지 않는다. 그래서 결과가 항상 같은 틀에서 나온다.
 - 파이프라인은 매번 Build(해시가 같은 서비스는 기존 이미지 사용) → Render → Apply → W6 → 전환을 한다. 옵션은 AI 에이전트의 시험 실행용 하나뿐이다: 시작 스테이지 지정, `DRY_RUN_ONLY`(Render까지), 소스를 봇 fork 커밋으로, 전환(Switch) 건너뜀. 이때 `live_slot`과 W7은 바뀌지 않는다.
@@ -113,7 +115,7 @@ W0 접수 · 사전 검사 → W1 분석 → W2 배포 설정 → W3 비밀값 �
 - Pod 라벨은 `app: <서비스>`, `slot: a | b`. 슬롯 Service의 selector도 같은 두 라벨을 쓴다.
 - 서비스 사이 주소(`links`)는 같은 슬롯끼리 잇는다. 슬롯 B의 BE에는 `AI_URL=http://ai-b:<port>`를 넣는다.
 - 일반 env(ConfigMap)는 spec으로 슬롯마다 만든다. 비밀값은 Secret 하나를 두 슬롯이 같이 쓴다.
-- 확인 중에는 live 슬롯과 대상 슬롯의 Pod가 같이 떠서, 둘 다 네임스페이스 하나의 ResourceQuota([클러스터 설계](cluster.md) §6: Pod 10개, 요청 CPU 4 · 메모리 16Gi, 상한 CPU 8 · 메모리 32Gi)를 나눠 쓴다. 컨테이너 상한을 LimitRange 기본값(CPU 2)에 맡기면 서비스 3개 × 슬롯 2 = CPU 12로 상한을 넘어 대상 슬롯 Pod가 만들어지지 않는다. 그래서 Render가 `resources`가 `null`인 컨테이너에 요청 CPU 250m · 메모리 256Mi, 상한 CPU 1 · 메모리 2Gi를 직접 넣고, 배포 입력 검증에서 자원 합계 × 2가 ResourceQuota 안인지 확인한다([배포 입력](deploy-handoff.md) 검증 규칙).
+- 확인 중에는 live 슬롯과 대상 슬롯의 Pod가 같이 떠서, 둘 다 네임스페이스 하나의 ResourceQuota([클러스터 설계](cluster.md) §6: Pod 10개, 요청 CPU 4 · 메모리 16Gi, 상한 CPU 8 · 메모리 32Gi)를 나눠 쓴다. 컨테이너 상한을 LimitRange 기본값(CPU 2 · 임시 저장소 8Gi)에 맡기면 서비스 3개 × 슬롯 2 = CPU 12 > 8, 임시 저장소 3 × 2 × 8Gi = 48Gi > 40Gi로 상한을 넘어 대상 슬롯의 마지막 Pod가 만들어지지 않는다. 그래서 Render가 `resources`가 `null`인 컨테이너에 요청 CPU 250m · 메모리 256Mi · 임시 저장소 1Gi, 상한 CPU 1 · 메모리 2Gi · 임시 저장소 4Gi를 직접 넣고(`resources`가 있으면 CPU · 메모리만 그 값이고 임시 저장소는 같은 기본값), Render가 맨 먼저 자원 합계 × 2와 Pod 수 × 2가 ResourceQuota 안인지 확인한다([배포 입력](deploy-handoff.md) 검증 규칙). 기본값으로 서비스 셋이 두 슬롯에 뜨면 상한 CPU 6/8, 임시 저장소 요청 6Gi/10Gi · 상한 24Gi/40Gi, Pod 6/10이다(2026-11-10, 로컬 k3s v1.34.1에 학생 공간 양식을 넣고 두 슬롯을 적용해 쿼터 사용량으로 확인).
 - open Ingress는 live 슬롯의 Service 이름(`fe-a`, `be-a` 등)을 가리킨다. 전환은 이 이름을 바꿔 다시 적용하는 것이다. FE · BE가 한 번에 바뀐다.
 
 **동작 확인과 전환**
