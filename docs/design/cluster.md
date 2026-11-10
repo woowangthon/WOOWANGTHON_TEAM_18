@@ -1,7 +1,7 @@
 # 클러스터 — 설계
 
-- **상태**: 일부 구현됨 (노드 · 네트워크 · 방화벽 2026-11-06, k3s 설치 2026-11-07, 재부팅 시험 2026-11-08, 리더 GPU · 로컬 모델 2026-11-09, 이미지 캐시 · 학생 공간 양식 2026-11-10). 서버 연결부터는 초안
-- **관련**: SRS NFR-OPS-01 · NFR-SEC-01 · [ADR-003](../adr/003-registry-ghcr.md) 레지스트리 · [ADR-004](../adr/004-server-cluster-link-tailscale.md) 서버 연결 · [ADR-005](../adr/005-k3s-cluster-on-school-pcs.md) 클러스터 구성 · [ADR-006](../adr/006-metrics-on-leader-prometheus.md) 지표 · [ADR-008](../adr/008-node-network-on-school-wired-lan.md) 노드망 · [ADR-009](../adr/009-deploy-runs-on-leader-gocd-agent.md) 배포 실행기 · [시스템 정의서 §5](../system-definition.md#5-인프라) · 구축 task [`20261106-k3s-cluster-build`](../../tasks/active/20261106-k3s-cluster-build-todo.md)
+- **상태**: 일부 구현됨 (노드 · 네트워크 · 방화벽 2026-11-06, k3s 설치 2026-11-07, 재부팅 시험 2026-11-08, 리더 GPU · 로컬 모델 2026-11-09, 이미지 캐시 · 학생 공간 양식 · 서버 계정 1차 · 공개 진입 2026-11-10). 배포 실행기 권한 · 지표는 초안
+- **관련**: SRS NFR-OPS-01 · NFR-SEC-01 · [ADR-003](../adr/003-registry-ghcr.md) 레지스트리 · [ADR-004](../adr/004-server-cluster-link-tailscale.md) 서버 연결 · [ADR-005](../adr/005-k3s-cluster-on-school-pcs.md) 클러스터 구성 · [ADR-006](../adr/006-metrics-on-leader-prometheus.md) 지표 · [ADR-008](../adr/008-node-network-on-school-wired-lan.md) 노드망 · [ADR-009](../adr/009-deploy-runs-on-leader-gocd-agent.md) 배포 실행기 · [ADR-013](../adr/013-visitor-entry-cloudflare-tunnel.md) 공개 진입 · [시스템 정의서 §5](../system-definition.md#5-인프라) · 구축 task [`20261106-k3s-cluster-build`](../../tasks/active/20261106-k3s-cluster-build-todo.md)
 
 ## 범위
 
@@ -49,7 +49,7 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 | 나감 | 53, 123/udp | DNS, 시간 동기화 |
 | 나감 | 80/tcp, 443/tcp | 패키지, 레지스트리, Tailscale 제어 · 중계, Discord 알림 |
 | 나감 | 41641/udp, 3478/udp | Tailscale 직접 연결 시도 (막혀도 443 중계로 붙는다) |
-| 나감 (리더만) | 7844 (tcp · udp) | Cloudflare Tunnel |
+| 나감 (리더만) | 7844 (tcp · udp) | Cloudflare Tunnel을 호스트에서 돌릴 때의 길. 지금 cloudflared는 Pod라 이 줄을 쓰지 않는다(아래 Pod 줄, §9) |
 | 거쳐 감 (FORWARD) | 출발지 또는 목적지 `10.42.0.0/16` | Pod 통신. NetworkPolicy(k3s의 kube-router)가 이보다 앞에서 걸린다 |
 
 - 나가는 쪽을 도메인이 아니라 포트로 거르는 것은 ufw가 도메인을 모르고, 레지스트리 · 패키지 저장소 · Tailscale이 CDN 뒤라 IP가 바뀌기 때문이다.
@@ -72,7 +72,7 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 - 재부팅 시험(2026-11-08): w1 → w2 → 리더를 한 대씩 원격으로 재부팅했다. 셋 다 35~45초 만에 사람 손 없이 돌아왔고, k3s · ufw(FORWARD 줄 포함) · 노드 주소 · Pod 경로가 그대로 켜졌다. 재부팅이 NotReady 판정(약 50초)보다 짧아 Pod가 다른 노드로 옮겨지지 않고 같은 노드에서 다시 떴다. 전원을 통째로 뽑는 시험은 아직이다.
 - 배치 규칙: 워커에 학생용 라벨, 리더에 `NoSchedule` taint. 학생 Pod는 라벨로 워커에 가고, 서버 양식이 nodeSelector를 빠뜨려도 taint가 막는다. 리더에는 toleration을 단 운영 도구만 뜬다.
 - CoreDNS는 k3s 기본을 끄고 직접 띄운다: 워커 둘에 하나씩(복제본 2), 클러스터 DNS 주소는 k3s 기본값 `10.43.0.10`. k3s 기본은 복제본 1이라 리더에 뜰 수 있고, k3s가 시작할 때마다 기본 설정으로 되돌린다. 매니페스트는 [`Infra/coredns/coredns.yaml`](../../Infra/coredns/coredns.yaml)이다(k3s v1.37.2의 것에서 복제본 2, 워커 라벨, 노드당 하나만 바꿨다). k3s는 자기 CoreDNS를 끄면 `NodeHosts`를 채우지 않아서 세 노드 이름을 그 파일에 적었다.
-- Traefik(k3s 기본 Ingress)은 `HelmChartConfig`로 워커에만, 복제본 2로 둔다(예정). 하나뿐이면 그 워커가 죽을 때 터널이 보낼 곳이 없다. 지금은 k3s 기본(복제본 1)이고, 리더의 taint 때문에 워커 하나에 떠 있을 뿐이다.
+- Traefik(k3s 기본 Ingress)은 `HelmChartConfig`([`Infra/k3s/traefik-config.yaml`](../../Infra/k3s/traefik-config.yaml), 2026-11-10)로 워커 둘에 하나씩 둔다(복제본 2, 학생용 라벨, 같은 노드에 둘을 못 두는 규칙). k3s 기본은 복제본 1이라 그 워커가 죽으면 터널이 살아 있어도 보낼 곳이 없었다. 워커가 둘뿐이라 업데이트 때 하나를 더 띄울 자리가 없으므로 하나씩 내렸다 올린다(`maxUnavailable 1` · `maxSurge 0`. 차트 기본 `maxSurge 1`이면 끝나지 않는다). 공개 진입 설정은 §9.
 - k3s 토큰(서버 토큰)은 리더에 있고, 조인에 쓴 사본이 워커 둘의 `/etc/rancher/k3s/token`(권한 600)에도 있다. 레포 · 노션 · 채팅에는 올리지 않고, 운영자가 비밀번호 관리자에 사본을 둔다. 서버 토큰은 워커뿐 아니라 리더로도 붙을 수 있는 열쇠라서, 학생 앱을 받기 전(08)에 워커에는 워커 전용 `agent-token`을 줄지 정한다.
 
 ### 5. 이미지 (구현됨, 2026-11-10)
@@ -102,7 +102,7 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 
 - 상한에서 먼저 닿는 것은 CPU 상한 합계다. 기본값만 쓰는 컨테이너는 상한 8 ÷ 2 = 4개까지 뜬다(CPU 요청으로는 16개, 메모리로는 8개, 임시 저장소로는 5개, Pod 10개). FE · BE · AI 셋이면 상한 합계 6이고, Deployment는 새 Pod를 먼저 띄우고 옛 Pod를 지우므로(복제본 1이면 하나 더) 배포 하나가 도는 동안 8로 꽉 찬다. 두 서비스를 동시에 배포하면 두 번째 새 Pod는 첫 배포가 끝날 때까지 만들어지지 않는다(실패가 아니라 기다린다). 그래서 배포 실행기는 한 프로젝트의 서비스를 하나씩 차례로 배포한다. 차트가 서비스마다 상한을 적으면 기본값은 쓰이지 않는다.
 - 공간을 만든 직후 잠깐은 `default` ServiceAccount가 아직 없어 Pod를 만들 수 없다. 서버는 기다리지 않는다(ServiceAccount를 읽을 권한도 없다, §8). Pod는 배포 실행기의 Deployment에서 나오고, Deployment 컨트롤러가 ServiceAccount가 생길 때까지 다시 시도한다.
-- 시험(2026-11-10, [`Infra/student/check.sh`](../../Infra/student/check.sh), 운영자 기기에서 실행): 같은 양식으로 공간을 하나 더(`proj-check`), 정책 없는 대조 공간을 하나 만들고 각 공간의 시험 Pod에서 재 본 뒤 지운다.
+- 시험(2026-11-10, [`Infra/student/check.sh`](../../Infra/student/check.sh), 운영자 기기에서 실행): 같은 양식으로 공간을 하나 더(`proj--check`. 하이픈이 둘이라 어떤 `slug`도 이 이름이 되지 않는다), 정책 없는 대조 공간을 하나 만들고 각 공간의 시험 Pod에서 재 본 뒤 지운다.
   - 된다: 같은 공간 Service, 클러스터 DNS, 인터넷 HTTPS, 바깥 DB 포트 3306 · 5432(학교망에서도 열려 있다), Traefik → 학생 Service(Ingress 시험 호스트로 200. 다른 워커 쪽은 스크립트를 만들기 전에 손으로 쟀다).
   - 막힌다: 리더 API(Service 주소 · 노드 주소), 이미지 캐시, 두 워커의 kubelet, 학교망 DNS 서버, 리더의 Tailscale 주소, 로컬 모델(`vllm`), Traefik Service에 직접, 다른 학생 공간(Service · Pod 주소, 양쪽 방향). 대조 공간에서는 같은 대상에 닿아, 막는 것이 이 정책임을 확인했다. 막힌 연결은 시간 초과가 아니라 바로 거절된다.
   - 받아들여지지 않는다(서버 쪽 dry run): hostNetwork · privileged Pod, CPU 5개를 요청하는 Pod(상한 초과), NodePort Service. 배치: 워커 라벨을 단 시험 Pod는 워커에, nodeSelector가 없는 Pod도 리더 taint 때문에 워커에 뜨고, 리더를 지정한 Pod는 Pending으로 남는다. 스크립트가 중간에 멈춰도 만든 것은 지우고, 시험 Pod에 들어가지 못한 측정과 연결 거절 · 시간 초과가 아닌 curl 오류(이름 풀이 실패 등)는 "막힘"이 아니라 실패로 센다.
@@ -145,17 +145,27 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 
 사설망 접근 규칙(Tailscale ACL)은 서버 태그 → 리더 `:6443`, 리더 → EC2의 GoCD 서버 포트(실행기가 일감을 받는 길) 둘만, SSH는 운영자 기기만 허용한다. 규칙은 [`Infra/tailscale/acl.hujson`](../../Infra/tailscale/acl.hujson)이고(주소는 비워 둔다), 2026-11-10에 사설망 관리 화면에 넣었다. 그 전에는 기본 정책(모든 기기가 서로 전부 허용)이었다. 넣은 뒤 확인: 운영자 기기에서 세 노드 SSH와 리더 API는 되고, 노드에서 다른 노드의 사설망 주소로는 닿지 않는다(노드 대역으로는 그대로 닿는다). 리더 → EC2의 GoCD 서버 포트 규칙은 구축 09′에서 더한다. 서버 태그 쪽 규칙은 EC2가 들어와야 확인된다. 서버 접속 정보는 리더의 Secret과 AWS의 비밀 설정에만 둔다(§12).
 
-### 9. 공개 진입 (예정)
+### 9. 공개 진입 (구현됨, 2026-11-10)
 
-- Cloudflare Tunnel. 와일드카드 도메인을 터널로 보내고 학생 주소는 `이름.<도메인>`(소문자 영숫자 · 하이픈만)으로 연다. 도메인은 구축 담당이 가진 `stairnoworks.com`을 쓸 계획이지만, 연결 범위 · 비용은 [시스템 정의서 §6](../system-definition.md#열린-질문) 열린 질문 5에서 팀이 정한다. 예약 이름(`www` · `api` · `admin` · `mail` 등)은 학생이 못 쓴다.
-- 터널 클라이언트(cloudflared)는 지금은 리더에서 돈다. 그래서 리더가 꺼지면 방문자도 끊긴다. 워커 둘로 옮겨(같은 터널에 커넥터 둘) 리더가 꺼져도 열리게 하는 것은 후순위다. 그때 워커의 나가는 규칙에 7844를 더한다.
-- 목적지는 워커의 Traefik이다. 터널 토큰은 클러스터 Secret에만 둔다.
+방문자 → Cloudflare(HTTPS) → 리더의 cloudflared가 먼저 걸어 둔 터널 → 워커의 Traefik(HTTP) → 학생 Service. 결정은 [ADR-013](../adr/013-visitor-entry-cloudflare-tunnel.md).
+
+- **도메인**: `stairnoworks.com`(구축 담당 소유, DNS는 Cloudflare). `*.stairnoworks.com`이 터널(`<터널 ID>.cfargotunnel.com`)을 가리키는 프록시 CNAME 하나다. 인증서는 Cloudflare의 무료 인증서(`*.stairnoworks.com` · `stairnoworks.com`)라 한 단계 하위 이름만 HTTPS가 된다.
+- **터널**: `wanggane`, 로컬 관리 방식이라 라우팅 규칙이 레포([`Infra/cloudflared/cloudflared.yaml`](../../Infra/cloudflared/cloudflared.yaml)의 ConfigMap)에 있다. `*.stairnoworks.com`은 전부 Traefik(`traefik.kube-system:80`)으로, 나머지는 404. 학생 주소가 하나 늘 때 DNS · 인증서 · 터널은 그대로고 Ingress 하나만 는다.
+- **cloudflared**: `cloudflare/cloudflared:2026.10.7`, 리더에 하나(공간 `cloudflared`, 보안 등급 restricted, non-root · 읽기 전용 · capability 없음, API 토큰 없음). 들어오는 통신은 NetworkPolicy로 전부 막는다(지표 포트는 구축 11에서 연다). Pod라서 §3의 호스트 규칙이 아니라 FORWARD의 Pod 대역 허용으로 나간다. 그래서 나가는 길은 이 공간의 NetworkPolicy가 좁힌다: 클러스터 DNS, Traefik Pod의 8000번, 사설 대역을 뺀 인터넷의 7844(TCP · UDP) · 443만. 인터넷 쪽 처리가 리더에서 도는 유일한 프로세스라, 뚫려도 k3s API · kubelet · 이미지 캐시 · 노드 주소에 닿지 않게 한다. 첫 실행에서 QUIC(UDP 7844)으로 연결 넷이 서울(icn06 · icn07)에 붙었다. 준비 검사는 `/ready`(연결이 하나라도 있으면 200)다. 생존 검사는 일부러 두지 않는다: 인터넷 길이 돌아오면 cloudflared가 혼자 다시 붙고(아래 시험), 끊긴 동안 생존 검사가 재시작을 거듭하면 kubelet의 재시작 대기(최대 5분)가 쌓여 오히려 늦게 붙는다.
+- **Traefik**: 워커 둘에 하나씩(§4). 터널이 평문 HTTP로 넘기므로 Traefik의 `web` 진입점이 리더 Pod 대역(`10.42.0.0/24`)이 보낸 `X-Forwarded-*`를 믿게 했다. 안 그러면 학생 앱에 `X-Forwarded-Proto: http`가 가서 https로 보내는 앱이 리다이렉트를 반복한다. 확인: 시험 앱이 `X-Forwarded-Proto: https` · `X-Forwarded-Port: 443`을 받는다. 터널을 워커로 옮기면 워커 Pod 대역도 더한다.
+- **학생 주소**: 공간 `proj-<slug>` ↔ 주소 `<slug>.stairnoworks.com`. `slug` 규칙은 서버의 것 그대로다(소문자 영숫자와 `-`, 영숫자로 시작 · 끝, 1~58자, [api.md](api.md)). Ingress는 HTTP만 쓴다(TLS는 Cloudflare에서 끝난다). 예시는 [`Infra/student/app-example.yaml`](../../Infra/student/app-example.yaml)의 `demo.stairnoworks.com`.
+- **예약 이름**(학생 `slug`로 못 쓴다): 플랫폼 `app` · `api` · `www` · `admin` · `account` · `auth` · `login` · `platform` · `dashboard` · `status` · `docs` · `blog` · `cdn` · `static` · `grafana`, 메일 `mail` · `smtp`, 시험 `demo` · `test` · `dev` · `staging`, 쿠버네티스 `default` · `kube-system`. `demo`는 시험 공간 `proj-demo`라 학생이 쓰면 시험 앱과 겹친다. 막는 것은 서버의 저장 검사고, 목록의 정본은 여기다([api.md](api.md)는 이 목록을 가리킨다).
+- **플랫폼 주소**: FE `app.stairnoworks.com`, BE `api.stairnoworks.com`(2026-11-10 정함). 이름을 따로 지정한 레코드가 와일드카드보다 먼저 걸리므로 배포처(CloudFront · EC2)가 생긴 날 레코드를 하나씩 더한다. 그 전에는 와일드카드가 받아 Traefik의 404가 난다.
+- **시험(2026-11-10)**: `https://demo.stairnoworks.com` 200(인증서 유효), 없는 이름 404. `http://`도 200이다(Cloudflare의 "Always Use HTTPS"가 꺼져 있다).
+- **워커 하나 끄기(2026-11-10)**: 시험 앱이 있던 w1에서 `k3s-killall.sh`로 k3s와 컨테이너를 모두 멈추고 데스크탑에서 1초마다 요청했다. 0~50초 응답 없음(Traefik 둘 다 w1의 앱으로 보낸다. cloudflared가 원본 주소를 찾는 DNS 조회도 w1의 CoreDNS로 가면 시간 초과가 났다), 49초에 NotReady가 되며 w1 쪽 엔드포인트가 빠지고 50~78초는 503(앱 엔드포인트가 비었다), 78초에 w2에 대체 Pod가 생겨 80초부터 200. 방문자가 본 공백은 약 80초다(NotReady 약 50초 + 포기 대기 30초, §4). 앱이 살아 있는 워커에 있었다면 NotReady 전 50초 동안 죽은 워커의 Traefik · CoreDNS로 간 요청만 끊긴다(재지 않았다). 같은 Pod가 다른 노드에 둘 못 뜨는 규칙이라 대체 Traefik · CoreDNS는 w1이 돌아올 때까지 Pending이었고, w1은 k3s를 다시 켠 지 34초 만에 Ready가 됐다. 그 사이(189~270초) 요청 여섯 개가 3초 안에 답을 못 받았는데 cloudflared 로그에는 흔적이 없어 측정 기기와 Cloudflare 사이에서 끊긴 것으로 본다(정상 상태 40번 요청은 모두 200).
+- **리더 인터넷 길 끊기(2026-11-10)**: 리더의 기본 경로를 120초 지웠다 다시 붙였다(벽 랜선을 뽑는 것과 같은 효과를 원격으로 낸 것. 노드끼리는 그대로 통한다). 끊긴 동안 방문자는 처음 약 50초 502(Cloudflare가 아직 연결이 있다고 본다), 그다음 530(터널 오프라인)을 받았다. 경로가 돌아오고 Tailscale · SSH는 3초, 터널은 9초 만에 연결 넷이 다시 붙어 11초 뒤 200이 됐다. 사람 손은 들지 않았다. 몇 분 넘게 끊기는 경우와 실제 랜선을 뽑는 경우는 재지 않았다(현장에 갈 때).
+- 터널 클라이언트를 워커 둘로 옮겨(같은 터널에 커넥터 둘) 리더가 꺼져도 열리게 하는 것은 후순위다. Pod라서 워커 방화벽은 고칠 것이 없다.
 
 ### 10. 지표 (예정)
 
 - Prometheus · Grafana를 리더에(저장은 `local-path`, 보관 2주). 수집: 노드(node-exporter), Pod 사용량(kubelet), 재시작 · 배포 상태(kube-state-metrics), Traefik, cloudflared(터널 커넥터 수).
 - 플랫폼 서버는 사설망으로 리더 API의 서비스 프록시를 거쳐 Prometheus를 조회한다(ADR-006). Grafana는 운영자용이고 SSH 포트 포워딩으로만 연다.
-- 알림: Grafana 규칙(노드 NotReady, 터널 커넥터 0개, 디스크 · 메모리 임계) → Discord. 리더가 죽으면 Grafana도 같이 죽으므로 "리더 무응답"은 플랫폼 서버가 API 실패로 알린다.
+- 알림: Grafana 규칙(노드 NotReady, 터널 끊김, 디스크 · 메모리 임계. 터널 끊김은 cloudflared의 연결 수 지표로 보지 않는다: 리더 인터넷을 끊은 시험에서 그 값이 0으로 떨어지지 않았다(§9). `/ready`나 Cloudflare 쪽 상태로 본다) → Discord. 리더가 죽으면 Grafana도 같이 죽으므로 "리더 무응답"은 플랫폼 서버가 API 실패로 알린다.
 
 ### 11. 리더 GPU · 로컬 모델 (구현됨, 2026-11-09)
 
@@ -181,13 +191,13 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 | 서버용 Tailscale 인증 키 | 일회용. 등록 뒤 폐기 |
 | 배포 실행기의 GoCD 등록 키 | 리더의 클러스터 Secret (실행기 Pod만 읽는다) |
 | GHCR 쓰기 토큰(봇 계정) | 빌드 쪽에만 (ADR-003) |
-| Cloudflare 터널 토큰 | 클러스터 Secret |
+| Cloudflare 터널 자격 파일 | 리더의 클러스터 Secret(`cloudflared` 공간)만. 터널을 만든 기기에서는 넣은 뒤 지웠고, 계정 로그인 인증서(`cert.pem`)도 남기지 않는다(DNS를 고칠 때 다시 로그인한다) |
 | Discord 웹훅 URL | Grafana 설정 |
 | vLLM API 키 | 리더의 클러스터 Secret(`vllm` 공간), 팀 공유 보관함(AI 서버의 EC2 설정에 넣는다) |
 
 ### 13. 반납
 
-1. Cloudflare 와일드카드 · 터널 삭제, 위 비밀값 폐기, 서버 기기를 사설망에서 뺀다.
+1. Cloudflare 와일드카드 · 플랫폼(`app` · `api`) 레코드 · 터널 삭제(`cert.pem`을 남기지 않았으므로 `cloudflared tunnel login`부터 다시 한다), 위 비밀값 폐기, 서버 기기를 사설망에서 뺀다.
 2. 현장에서 한 대씩, 손대기 전에 떠 둔 디스크 이미지로 내장 디스크를 통째로 덮어쓴다. k3s, 공개키, 원격 설치용 설정, Tailscale, 이 문서의 설정 파일이 한 번에 사라진다.
 3. BIOS를 바꾸기 전에 찍어 둔 사진대로 되돌리고 장비(스위치 · 랜선)를 회수한다.
 
@@ -200,6 +210,8 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 | 나가는 연결을 포트로 거르기 | ufw가 도메인을 모르고 대상이 CDN 뒤다 | 도메인 허용 목록(별도 프록시 필요), 나가는 연결 전부 허용 |
 | 접속을 끊을 수 있는 변경은 되돌리기 예약 뒤에 | 실수하면 동아리방까지 가야 한다 | 그냥 적용 |
 | 터널은 리더에서 먼저 | 데모 경로에 필요한 것만 먼저 한다 | 처음부터 워커 둘(워커의 바깥 연결이 하나 늘고 시험이 더 든다) |
+| 터널은 로컬 관리 방식, 라우팅 규칙은 레포에 (2026-11-10) | 규칙이 리뷰 · 기록되고 클러스터에 적용된 것과 레포가 같다. 비밀은 자격 파일 하나라 Secret으로만 옮긴다 | 대시보드 관리 방식(규칙이 Cloudflare 화면에만 있고, 토큰 하나로 붙는다) |
+| 학생 주소는 한 단계 하위 이름 `<slug>.stairnoworks.com` (2026-11-10) | 무료 인증서가 덮고, 학생 앱이 루트 경로를 가정해도 깨지지 않는다 | 경로 나누기(`/<slug>`, 앱이 깨진다), 두 단계 이름(`<서비스>.<slug>.`, 무료 인증서가 못 덮는다) |
 | flannel host-gw, 다음 홉은 노드 주소 (2026-11-07) | VXLAN은 랜 카드의 첫 주소(학교 주소)를 출발지로 써서 방화벽에 막힌다. 세 대가 한 스위치라 경로만으로 된다 | VXLAN 그대로(출발지가 학교 주소), 노드 주소를 랜 카드 첫 주소로 올리기(netplan 적용 순서에 기대서 깨지기 쉽다), 학교 주소에서 8472 허용(학교 주소가 바뀌면 깨진다) |
 | ServiceLB 끄기, NodePort는 노드 대역만 (2026-11-07) | hostPort · NodePort가 ufw를 비켜 가서 학교망에 80/443이 열린다. 방문자는 터널로 들어온다 | ServiceLB 그대로(학교망에 Traefik이 열린다) |
 | CoreDNS · Traefik은 처음부터 워커 둘에 | 나중에 터널만 옮기면 되고, CoreDNS는 리더가 꺼져도 학생 앱이 바깥 주소(학생 DB 등)를 찾게 한다 | k3s 기본(복제본 1, 리더에 뜰 수 있음) |
@@ -220,6 +232,10 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 
 - 리더, 스위치, 벽 랜 포트(인터넷 길)가 단일 장애점이다. 스위치 전원이 잠깐 나가면 돌아오는 순간 학생 Pod가 전부 다시 뜬다.
 - 터널이 리더에 있는 동안은 리더가 꺼지면 방문자가 들어오지 못한다.
+- 워커 하나가 꺼지면 그 워커에 있던 학생 주소는 약 80초 동안 열리지 않는다(§9에서 잼). 앱 복제본이 1개라 다른 워커에 다시 뜰 때까지 기다린다.
+- Traefik은 리더 Pod 대역에서 온 `X-Forwarded-*`를 그대로 넘긴다. Cloudflare는 방문자가 보낸 `X-Forwarded-For`에 실제 주소를 덧붙이므로 맨 앞 값은 방문자가 지어낼 수 있다. 방문자 주소가 필요한 학생 앱은 `Cf-Connecting-Ip`를 쓴다. 리더의 다른 운영 도구 Pod도 Traefik에 직접 이 머리글을 보낼 수 있다(리더에는 학생 Pod가 뜨지 않는다).
+- 믿는 대역 `10.42.0.0/24`는 k3s가 리더를 등록할 때 준 Pod 대역이다(`kubectl get node k3s-leader -o jsonpath={.spec.podCIDR}`). 리더를 다시 붙이거나 새로 세우면 바뀔 수 있으니 [`Infra/k3s/traefik-config.yaml`](../../Infra/k3s/traefik-config.yaml)을 같이 고친다. 안 고치면 학생 앱이 다시 http로 보인다.
+- "Always Use HTTPS"를 켜기 전에는 학생 주소가 `http://`로도 열린다.
 - 사설망이 지금 중계(DERP)로 붙어 서버 → 리더 API 응답이 직접 연결보다 느리다.
 - 나가는 443은 목적지를 가리지 않는다. 워커 호스트가 뚫리면 443으로는 어디든 나갈 수 있다.
 - 학생 Pod가 인터넷으로 나가므로 학생 앱이 학교 공인 IP로 바깥에 요청을 보낼 수 있다(남용은 감수한다). 사설 대역 차단이 빠지면 학교망 · 노드 · 사설망에 닿으므로 NetworkPolicy의 예외 대역을 같이 적는다.

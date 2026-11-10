@@ -57,12 +57,16 @@ Priorities: the demo path first. Deferred (후순위): moving cloudflared from t
   - [x] reads (2026-11-10): kept to proj- spaces by a fifth template object, the RoleBinding `platform-server-read` to the role `proj-reader` (Pods, logs, Deployments), which the server creates with the space; nodes cluster-wide; policy `wanggane-space-readers`
   - [ ] second part: action rights for the server (restart, stop/resume) with a policy that limits the change to scale and the restart annotation
 - [ ] 09′ GoCD Agent on the leader — connects to the GoCD server on the EC2 over Tailscale, deploy rights move to its ServiceAccount (cluster.md §8 split, ADR-009), Verify path through Traefik; docs for the AI parts. Check the AI teammate's ArgoCD review first: if the team switches, this stage changes
-- [ ] 10 Public entry — Cloudflare Tunnel from the leader, Traefik (2 replicas) on the workers, the demo student address over HTTPS
+- [x] 10 Public entry (2026-11-10, issue #90) — locally managed tunnel `wanggane` with cloudflared 2026.10.7 on the leader (`Infra/cloudflared/`), `*.stairnoworks.com` as a proxied CNAME to it, Traefik with two replicas, one per worker (`Infra/k3s/traefik-config.yaml`), `https://demo.stairnoworks.com` open over HTTPS with a valid certificate; reserved slugs and platform names (`app`, `api`) in cluster.md §9 and ADR-013
+  - [x] one worker off: the demo address came back after ~80 s on the other worker
+  - [x] internet path cut on the leader for 120 s (default route removed): see the lessons log for the recovery times
+  - [ ] pull the real wall cable once on site (with the stage 06 power-pull test)
+  - [ ] deferred: cloudflared on both workers and the leader-off test
 - [ ] 11 Monitoring — Prometheus + Grafana on the leader (local-path), server queries Prometheus, Discord alerts
 - [ ] 12 Return — Clonezilla restore of all three disks, BIOS back to the photos, secrets revoked
 
 ## Done when
 
-- [ ] demo path on the cluster: the server deploys a test app into `proj-demo` and the demo student address (`demo.<domain>`, domain still an open team question) opens over HTTPS with one worker powered off
+- [ ] demo path on the cluster: the server deploys a test app into `proj-demo` and the demo student address (`demo.stairnoworks.com`) opens over HTTPS with one worker powered off
 - [ ] `docs/design/cluster.md`, ADRs and `docs/ai-scope.md` match what is installed
 - [ ] the three PCs are returned in their original state (stage 12)

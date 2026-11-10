@@ -2,7 +2,8 @@
 # must render for every service (design: docs/design/cluster.md §6). The image is a public test app.
 # Apply after space.yaml:
 #   ssh k3s-leader 'sudo k3s kubectl apply -f -' < Infra/student/app-example.yaml
-# The Ingress (public address) is added with the tunnel in build stage 10.
+# The Ingress gives the project its public address <name>.stairnoworks.com (cluster.md §9). The tunnel
+# sends every such name to Traefik, so an Ingress is all a new address needs.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -53,3 +54,23 @@ spec:
   ports:
   - port: 80
     targetPort: 9898
+---
+# HTTPS ends at Cloudflare; the tunnel reaches Traefik over plain HTTP inside the cluster, so no TLS here.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web
+  namespace: proj-demo
+spec:
+  ingressClassName: traefik
+  rules:
+  - host: demo.stairnoworks.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: web
+            port:
+              number: 80

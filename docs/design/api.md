@@ -293,7 +293,7 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
 
 | 칸 | 규칙 |
 | --- | --- |
-| `project.slug` | 소문자 영숫자와 `-`, 영숫자로 시작하고 끝남, 1~58자(`proj-` 접두사를 붙여도 DNS 이름 한도 63자). 예약 이름 불가(초기 목록: `www` · `api` · `admin` · `app` · `platform` · `default` · `kube-system`. 인프라 담당 확인 전 임시) |
+| `project.slug` | 소문자 영숫자와 `-`, 영숫자로 시작하고 끝남, 1~58자(`proj-` 접두사를 붙여도 DNS 이름 한도 63자). 예약 이름 불가(목록의 정본은 [`cluster.md`](cluster.md) §9 공개 진입. 서버 코드는 그 목록을 따른다) |
 | `project.repo` | `owner/name` |
 | `services` | 1~3개. `name`은 서비스 사이에서 유일 |
 | `services[].name` | 소문자로 시작하는 소문자 영숫자와 `-`, 영숫자로 끝남, 1~52자(시험 배포의 `-candidate`를 붙여도 63자 이내). Deployment · Service 이름이자 클러스터 안 DNS 이름 |

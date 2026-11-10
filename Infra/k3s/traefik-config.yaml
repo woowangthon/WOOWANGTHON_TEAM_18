@@ -1,0 +1,44 @@
+# Overrides for the Traefik that k3s installs (chart traefik 41.6.1, image 3.7.15). k3s merges these
+# values over its own, so only the changes are here. Deleting this object returns to the k3s defaults.
+# Design and reasons: docs/design/cluster.md §9.
+# Apply (from the operator's machine):
+#   ssh k3s-leader 'sudo k3s kubectl apply -f -' < Infra/k3s/traefik-config.yaml
+#
+# - Two replicas, workers only, one per worker. The default is one replica on any node, so losing that
+#   worker cut every student address even with the tunnel up.
+# - With two workers and one Pod each there is no room for a surge Pod, so a rollout replaces one Pod
+#   at a time instead (the chart default maxUnavailable 0 / maxSurge 1 would wait forever).
+# - The tunnel client runs on the leader and talks plain HTTP to Traefik; it sends the visitor's
+#   X-Forwarded-Proto (https) and X-Forwarded-For. Traefik only keeps those headers from trusted
+#   sources, so the leader's Pod range is trusted on the web entry point. That range is what k3s gave the
+#   leader when it registered (`kubectl get node k3s-leader -o jsonpath={.spec.podCIDR}`); a re-joined
+#   leader can get another one, so check it then. Moving the tunnel client to the workers (deferred)
+#   means adding their Pod ranges here.
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    deployment:
+      replicas: 2
+    nodeSelector:
+      wanggane/pool: student
+    affinity:
+      podAntiAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: traefik
+            topologyKey: kubernetes.io/hostname
+    updateStrategy:
+      type: RollingUpdate
+      rollingUpdate:
+        maxUnavailable: 1
+        maxSurge: 0
+    ports:
+      web:
+        forwardedHeaders:
+          trustedIPs:
+            - 10.42.0.0/24
