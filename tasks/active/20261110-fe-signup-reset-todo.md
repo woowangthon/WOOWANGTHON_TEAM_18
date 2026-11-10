@@ -25,5 +25,5 @@ Two screens on one branch, one commit per issue. They share the password rules, 
 
 - [x] `cd FE && pnpm verify` passes on every commit
 - [x] Each state is seen in a browser (Chromium, faked Supabase responses); no console errors, no horizontal scroll
-- [ ] Real signup and reset mails are confirmed by the user (needs #49)
+- [x] Real signup and reset mails are confirmed by the user (needs #49)
 - [ ] tests added; mutation testing not run — no mutation tool chosen yet (conventions §6, issue #67), noted in the PR body
