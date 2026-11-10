@@ -12,8 +12,8 @@
 ## 결정
 
 - AI 서버는 클러스터 · GoCD · 봇 계정 자격 증명을 갖지 않는다. 에이전트의 모든 도구는 플랫폼 서버(Nest)의 MCP 게이트웨이가 실행한다. 게이트웨이는 GoCD 파이프라인을 옵션(대상 슬롯, 시작 스테이지, Render까지만, 소스 커밋, Switch 건너뜀)으로 실행하고, k3s 읽기와 봇 계정 GitHub 호출을 대신한다.
-- 에이전트는 대상 슬롯에서 Build · Render · Deploy · Verify를 직접 실행해 수정을 확인한다. 에이전트는 spec 수정안(JSON Patch, `build` · `runtime` 아래만)만 내고 manifest는 플랫폼 코드가 만든다.
-- 전환(open Ingress), live 슬롯, Secret, ResourceQuota · LimitRange · NetworkPolicy는 도구로 주지 않는다. 게이트웨이가 횟수 제한 · live 슬롯 보호 · 수정안 경로를 검사한다.
+- 에이전트는 대상 슬롯에서 Build · Render · Deploy · Verify를 직접 실행하고, 결과를 보며 고치고 다시 실행하는 루프를 스스로 돈다. 행동 범위는 사용자 코드를 직접 바꾸는 것을 뺀 배포 설정 전부다: spec(`slug` · `name`은 첫 배포 전에만), 그 빌드에만 쓰는 CodeBuild 설정(컴퓨팅 크기 · 제한 시간 · 빌드 이미지 · 캐시, 상한 안), 대상 슬롯 운영(재시작 · 개수 조정). 코드 수정은 봇 계정 수정 PR로 제안한다(ADR-002). manifest는 플랫폼 코드가 spec으로 만든다.
+- 전환(open Ingress), live 슬롯, Secret 값, 플랫폼이 같이 쓰는 설정(CodeBuild 프로젝트 · buildspec · IAM, ResourceQuota · LimitRange · NetworkPolicy, 차트, 기본 Dockerfile)은 도구로 주지 않는다. 게이트웨이가 횟수 제한 · live 슬롯 보호 · 수정안 경로 · override 상한을 검사한다.
 - 에이전트가 `verified`를 돌려주면 플랫폼이 수정안을 검증 · 저장하고, 대상 슬롯을 다시 확인한 뒤 Switch와 W7을 실행한다.
 
 ## 대안

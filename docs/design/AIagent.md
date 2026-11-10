@@ -8,7 +8,8 @@
 ## 범위
 
 - **한다**: 문제 티켓을 받아 원인을 분류하고, MCP 게이트웨이의 도구로 대상 슬롯에서 Build · Render · Deploy · Verify를 실행 · 관찰하며 고친 뒤, 해결 결과를 플랫폼 서버에 돌려준다.
-- **하지 않는다**: live 전환, live 슬롯 변경, Secret 읽기 · 쓰기, ResourceQuota · LimitRange · NetworkPolicy 변경, manifest(YAML) 작성. 에이전트는 spec 수정안(`specPatch`)만 내고 YAML은 플랫폼 코드(Render)가 만든다.
+- **범위**: 사용자 코드를 직접 바꾸는 것을 빼고 배포 설정 전부다. spec, CodeBuild 빌드 설정(그 빌드에만), 대상 슬롯 운영을 에이전트가 조정한다. 코드 수정은 수정 PR로 제안하고 머지는 사용자가 한다.
+- **하지 않는다**: live 전환(플랫폼이 한다), live 슬롯 · 다른 프로젝트 변경, Secret 값 읽기 · 쓰기, 플랫폼이 같이 쓰는 설정(CodeBuild 프로젝트 · buildspec · IAM, ResourceQuota · LimitRange · NetworkPolicy, 차트, 기본 Dockerfile) 변경, manifest(YAML) 작성. YAML은 플랫폼 코드(Render)가 spec으로 만든다.
 
 ## 설계
 
@@ -51,7 +52,7 @@ AI 서버 (에이전트) → 플랫폼 서버 MCP 게이트웨이 → GoCD 서�
 
 | 도구 | 하는 일 | 입력 | 출력 | 티켓당 횟수 |
 |---|---|---|---|---|
-| `run_build` | Build (CodeBuild). 해시가 같으면 재사용 | `service`, `specPatch?`, `source?` | `BatchGetBuilds`의 `builds[0]` 원본, 실패 phase, 로그 마지막 200줄, 성공 시 이미지 digest | 2 |
+| `run_build` | Build (CodeBuild). 해시가 같으면 재사용 | `service`, `specPatch?`, `source?`, `buildOverrides?` | `BatchGetBuilds`의 `builds[0]` 원본, 실패 phase, 로그 마지막 200줄, 성공 시 이미지 digest | 2 |
 | `run_render` | Render + `kubectl apply --dry-run=server`. 클러스터에 적용하지 않는다 | `specPatch?` | 통과 여부, 실패 시 k3s Status 원본 | 5 |
 | `run_deploy` | Prepare(live 슬롯 보호 검사, 대상 슬롯 비우기) → Render → Apply → Ready 대기 | `specPatch?`, `source?` | Pod · 이벤트 원본, rollout 결과 | 2 |
 | `run_verify` | Verify (test Ingress, Traefik 요청) | 없음 | 요청별 경로 · 상태 코드 · 응답 시간 | 3 |
@@ -59,6 +60,16 @@ AI 서버 (에이전트) → 플랫폼 서버 MCP 게이트웨이 → GoCD 서�
 - `specPatch`는 시험용 수정안이다. 그 실행에만 적용하고 DB의 spec은 바꾸지 않는다. DB 저장은 플랫폼이 `verified`를 받은 뒤 한다.
 - `source`는 수정 PR 확인용 봇 fork 커밋이다.
 - `specPatch` 없이 다시 부르면 그대로 재실행이다 (일시적 실패용).
+- `buildOverrides`는 그 빌드에만 쓰는 CodeBuild 설정이다. 게이트웨이가 `StartBuild`의 override로 넘기고, CodeBuild 프로젝트 설정(`UpdateProject`)은 바꾸지 않는다. 모든 학생 프로젝트가 프로젝트 하나를 같이 쓰기 때문이다.
+
+| `buildOverrides` 칸 | CodeBuild 값 | 상한 (초기값) |
+|---|---|---|
+| `computeType` | `computeTypeOverride` | 기본보다 한 단계 위까지 |
+| `timeoutMinutes` | `timeoutInMinutesOverride` | 30분 |
+| `image` | `imageOverride` | 플랫폼이 정한 빌드 이미지 허용 목록 |
+| `cache` | `cacheOverride` (켬 · 끔) | - |
+
+buildspec · 서비스 역할(IAM) · 환경 변수 override는 받지 않는다. 빌드 명령을 바꿀 수 있으면 push 단계의 GHCR 토큰을 빼 갈 수 있다([배포 워크플로우](deploy-workflow.md) §8).
 
 **관찰 (읽기만)**
 
@@ -69,6 +80,14 @@ AI 서버 (에이전트) → 플랫폼 서버 MCP 게이트웨이 → GoCD 서�
 | `read_build_logs` | CodeBuild 로그의 지정 구간 | 로그 줄 |
 | `read_repo` | 티켓의 `commitSha` 시점 파일 · 폴더 목록 | 파일 내용 |
 | `read_memory` | 장기 메모리 case 검색 | case · playbook |
+
+**대상 슬롯 운영**
+
+| 도구 | 하는 일 | 티켓당 횟수 |
+|---|---|---|
+| `restart_target` | 대상 슬롯 Deployment 재시작 (Pod 다시 생성) | 3 |
+| `scale_target` | 대상 슬롯 Deployment를 0 또는 1개로 | 3 |
+| `wait_target_ready` | 대상 슬롯 Ready를 다시 기다림. 대기 시간은 최대 7분 | 3 |
 
 **레포 수정**
 
@@ -90,14 +109,27 @@ AI 서버 (에이전트) → 플랫폼 서버 MCP 게이트웨이 → GoCD 서�
 | 행위 | 범위 |
 |---|---|
 | 진단 | 관찰 도구로 로그 · 이벤트 · 레포를 읽는다 |
-| spec 수정 + 시험 | `build` · `runtime` 아래만: 포트, 헬스체크, Node 버전, 빌드 명령, `context` · `outputDir` · `dockerfile`, `buildEnv` key, `env`, `resources`(쿼터 안), `startupTimeoutSeconds` |
+| spec 수정 + 시험 | `build` · `runtime` 전체: 포트, 헬스체크, 빌드 · 설치 · 시작 명령, Node 버전, `context` · `dockerfile` · `outputDir`, `buildEnv`, `env`, `secretKeys` 목록, `links`, `ingressPath`, `stripPrefix`, `resources`(프로젝트 쿼터 안), `startupTimeoutSeconds` |
+| `slug` · `name` 수정 | 첫 배포 전에만 (첫 배포 뒤 바꾸면 네임스페이스와 Secret을 찾지 못한다) |
+| CodeBuild 빌드 설정 | 그 빌드에만, `buildOverrides` 상한 안 (§3) |
+| 대상 슬롯 운영 | 재시작, 0 · 1개 조정, Ready 다시 기다리기 |
 | 그대로 재실행 | 고칠 것이 없는 일시적 실패 (CodeBuild 준비 실패, 이미지 받기 시간 초과) |
 | dry-run 먼저 | 이름 · 포트 · 쿼터 오류는 `run_render`로 먼저 확인한다 |
 | 레포 수정 → PR | fork 커밋으로 `run_verify`까지 통과한 변경만 |
 | 사용자 요청 | 비밀값이 틀림 · 빠짐, 학생 DB에 닿지 않음, 학생 DB 스키마 문제 |
 | 플랫폼 문제 보고 | 이미지 공개 설정, 노드 자원 부족, 차트 · 기본 Dockerfile 문제 |
 
-**주지 않는 행위**: live 전환(open Ingress), live 슬롯 변경 · 슬롯 직접 삭제, Secret 읽기 · 쓰기, ResourceQuota · LimitRange · NetworkPolicy 변경, `slug` · `name` 변경, Pod 안 명령 실행(`kubectl exec`), 기본 Dockerfile · 차트 수정.
+**주지 않는 행위**
+
+| 대상 | 이유 |
+|---|---|
+| 사용자 코드 직접 수정 | 수정 PR로 제안하고 머지는 사용자가 한다 |
+| live 전환(open Ingress) | 사용자 요청이 바뀌는 단계라 플랫폼이 대상 슬롯을 다시 확인한 뒤 한다 |
+| live 슬롯 · 다른 프로젝트 | 사용자 서비스가 멈추거나 다른 학생에게 영향이 간다 |
+| Secret 값 | 사용자 데이터다. 값이 틀리면 사용자에게 요청한다 |
+| CodeBuild 프로젝트 설정 · buildspec · IAM · 환경 변수 override | 모든 프로젝트가 같이 쓰고, GHCR 토큰이 새어 나갈 수 있다 |
+| ResourceQuota · LimitRange · NetworkPolicy · 차트 · 기본 Dockerfile | 모든 프로젝트가 같이 쓰는 플랫폼 설정이다 |
+| Pod 안 명령 실행(`kubectl exec`) | 학생 컨테이너 안에서 임의 명령을 실행하는 권한이다 |
 
 ### 5. 입력: 문제 티켓
 
@@ -174,9 +206,19 @@ AI 서버 (에이전트) → 플랫폼 서버 MCP 게이트웨이 → GoCD 서�
         "required": ["op", "path"],
         "properties": {
           "op":    { "enum": ["replace", "add", "remove"] },
-          "path":  { "type": "string", "pattern": "^/spec/services/[0-9]+/(build|runtime)/" },
+          "path":  { "type": "string", "pattern": "^/spec/(services/[0-9]+/(build|runtime)/|services/[0-9]+/name$|project/slug$)" },
           "value": {}
         }
+      }
+    },
+    "buildOverrides": {
+      "type": ["object", "null"],
+      "description": "verified를 낸 빌드에 쓴 CodeBuild override. 플랫폼은 Switch만 하므로 기록용이다",
+      "properties": {
+        "computeType":    { "type": "string" },
+        "timeoutMinutes": { "type": "integer", "maximum": 30 },
+        "image":          { "type": "string" },
+        "cache":          { "type": "boolean" }
       }
     },
     "pr": {
@@ -216,7 +258,7 @@ AI 서버 (에이전트) → 플랫폼 서버 MCP 게이트웨이 → GoCD 서�
 | `needs_user` | `userRequest` | 사용자에게 요청 |
 | `gave_up` | `summary` | 보고 |
 
-- `JSON Patch`(RFC 6902) 경로는 `build` · `runtime` 아래만 허용한다. `slug` · `name`을 바꾸면 네임스페이스와 Secret을 잃는다.
+- `JSON Patch`(RFC 6902) 경로는 `build` · `runtime` 전체와 `name` · `slug`를 허용한다. 게이트웨이는 `name` · `slug` 수정을 첫 배포 전에만 받는다.
 - `summary`는 다음 티켓의 `previous.summary`로 쓴다.
 - PydanticAI 에이전트의 출력 타입을 이 스키마의 Pydantic 모델로 두어, 모양이 틀린 결과는 에이전트 안에서 다시 만들게 한다.
 
@@ -274,7 +316,7 @@ AI 서버 (에이전트) → 플랫폼 서버 MCP 게이트웨이 → GoCD 서�
 | `P1` | prepare | 필수 Secret key 없음 | W3 상태 "빠짐" | 사용자 요청 |
 | `P2` | prepare | 자원 합계 초과 | 검증 규칙 `resources` 합계 | `runtime.resources` |
 | `P3` | prepare | `ingressPath` 충돌 | 검증 규칙 `ingressPath` | `runtime.ingressPath` |
-| `R1` | render | 이름 규칙 위반 | `422 Invalid`, `FieldValueInvalid`, `DNS-1035` | 사용자 요청 (`name`은 바꾸지 않음) |
+| `R1` | render | 이름 규칙 위반 | `422 Invalid`, `FieldValueInvalid`, `DNS-1035` | 첫 배포 전이면 `name` 수정, 그 뒤면 사용자 요청 |
 | `R2` | render | 포트 · probe 값 오류 | `422 Invalid`, field `...containerPort` | `runtime.port` · `health` |
 | `R3` | render | 쿼터 초과 | `403 Forbidden`, `exceeded quota` | `runtime.resources` |
 | `A1` | apply | 헬스체크 실패 | 이벤트 `Unhealthy` | `runtime.port` · `health.path` · `startupTimeoutSeconds` |
