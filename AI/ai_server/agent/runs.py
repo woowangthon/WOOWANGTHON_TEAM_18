@@ -2,7 +2,8 @@
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable, Coroutine
+from typing import Any
 from dataclasses import dataclass, field
 
 from ai_server.agent.memory import CaseMemory
@@ -25,7 +26,7 @@ class TicketRun:
         return self.task is not None and not self.task.done()
 
 
-Runner = Callable[[TicketRun, CaseMemory], Awaitable[None]]
+Runner = Callable[[TicketRun, CaseMemory], Coroutine[Any, Any, None]]
 
 
 class RunRegistry:

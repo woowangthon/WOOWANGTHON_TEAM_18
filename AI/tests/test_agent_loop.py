@@ -136,6 +136,7 @@ def test_read_memory_is_answered_inside_the_ai_server() -> None:
         for p in local.requests[1][-1].parts
         if isinstance(p, ToolReturnPart) and p.tool_name == "read_memory"
     ]
+    assert isinstance(answer, dict)
     ids = [c["caseId"] for c in answer["cases"]]
     assert ids == ["A3", "A4", "A1", "A2"]
     assert gw.tool_calls() == []
@@ -221,7 +222,9 @@ def test_failed_playbook_is_replanned_by_the_planner() -> None:
 @pytest.mark.parametrize("status", ["verified", "needs_user"])
 def test_playbook_that_did_not_give_up_is_not_replanned(status: str) -> None:
     gw = FakeGateway()
-    extra = {"specPatch": []} if status == "verified" else {"userRequest": {"message": "x"}}
+    extra: dict[str, Any] = (
+        {"specPatch": []} if status == "verified" else {"userRequest": {"message": "x"}}
+    )
     local = Script(final(status=status, summary="끝", **extra))
     planner = Script()
     solve(make_run(**SIGNALS["A1"]), gw, local, planner)
@@ -283,7 +286,7 @@ def test_other_rejections_go_back_to_the_model() -> None:
     solve(make_run(**SIGNALS["A1"]), gw, local)
     assert "PATCH_FORBIDDEN" in local.sent(1) and "is not allowed" in local.sent(1)
     actions = only_result(gw)["actions"]
-    assert [(a["ok"], a["result"][:24]) for a in actions][0] == (False, "rejected PATCH_FORBIDDEN")
+    assert (actions[0]["ok"], actions[0]["result"][:24]) == (False, "rejected PATCH_FORBIDDEN")
     assert actions[1]["ok"] is True
 
 

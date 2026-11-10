@@ -86,4 +86,5 @@ def replan_prompt(ticket: Ticket, case: Case, actions: list[Action], summary: st
 
 
 def plan_prompt(ticket: Ticket) -> str:
-    return f"No known case matches. Find the cause, plan the fix and carry it out.\n\n{_ticket(ticket)}"
+    task = "No known case matches. Find the cause, plan the fix and carry it out."
+    return f"{task}\n\n{_ticket(ticket)}"

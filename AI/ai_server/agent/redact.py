@@ -56,7 +56,10 @@ def redact(text: str) -> str:
 
 
 def redact_value(value: Any) -> Any:
-    """문자열 · dict · list 안의 문자열을 모두 가린다. 이름이 비밀값 같은 키의 문자열 값은 통째로."""
+    """문자열 · dict · list 안의 문자열을 모두 가린다.
+
+    이름이 비밀값 같은 키의 문자열 값은 통째로 가린다.
+    """
     if isinstance(value, str):
         return redact(value)
     if isinstance(value, dict):

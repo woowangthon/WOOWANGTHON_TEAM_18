@@ -7,8 +7,8 @@ def test_connection_uses_the_ticket_token_and_the_configured_address() -> None:
     gw = connect_gateway("http://platform:4001/mcp", "gw_abc")
     transport = gw.client.transport
     assert type(transport).__name__ == "StreamableHttpTransport"
-    assert transport.url == "http://platform:4001/mcp"  # type: ignore[attr-defined]
-    assert transport.auth.token.get_secret_value() == "gw_abc"  # type: ignore[attr-defined]
+    assert transport.url == "http://platform:4001/mcp"
+    assert transport.auth.token.get_secret_value() == "gw_abc"
 
 
 def test_calls_may_wait_35_minutes() -> None:

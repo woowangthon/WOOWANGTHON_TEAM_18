@@ -165,7 +165,10 @@ class Evidence(Wire):
 
 
 class Outcome(Wire):
-    """해결 결과 중 에이전트(LLM)가 정하는 부분. 에이전트의 output_type이라 모양이 틀리면 다시 만든다."""
+    """해결 결과 중 에이전트(LLM)가 정하는 부분.
+
+    에이전트의 output_type이라 모양이 틀리면 에이전트가 다시 만든다.
+    """
 
     status: ResultStatus
     spec_patch: list[SpecPatchOp] | None = None
