@@ -17,7 +17,6 @@ export const RESERVED_SLUGS = [
 
 export const ROLES = ['fe', 'be', 'ai'] as const
 export const FRAMEWORKS = ['vite-react', 'nextjs', 'nest'] as const
-export const KINDS = ['server', 'static'] as const
 export const HEALTH_TYPES = ['http', 'tcp'] as const
 
 export const SLUG_PATTERN = new RegExp(`^[a-z0-9]([a-z0-9-]{0,${SLUG_MAX - 2}}[a-z0-9])?$`)

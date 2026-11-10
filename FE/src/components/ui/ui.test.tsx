@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { expect, it } from 'vitest'
 import { Alert } from './Alert.tsx'
 import { Badge } from './Badge.tsx'
@@ -231,4 +231,26 @@ it('SelectField with an error marks the select invalid and ties the message to i
   const message = screen.getByRole('alert')
   expect(select.getAttribute('aria-describedby')).toBe(message.id)
   expect(message.textContent).toBe('입력해 주세요')
+})
+
+it('Field and SelectField tie the hint to the control, after the error id when both exist', () => {
+  render(
+    <>
+      <Field label="이름" hint="소문자로 시작" error="입력해 주세요" />
+      <SelectField label="역할" value="" onChange={() => undefined} options={[{ value: '', label: '골라 주세요' }]} hint="하나만 고를 수 있어요" />
+    </>,
+  )
+  const input = screen.getByRole('textbox', { name: '이름' })
+  const [errorId, hintId] = (input.getAttribute('aria-describedby') ?? '').split(' ')
+  expect(document.getElementById(errorId ?? '')?.textContent).toBe('입력해 주세요')
+  expect(document.getElementById(hintId ?? '')?.textContent).toBe('소문자로 시작')
+  const select = screen.getByRole('combobox', { name: '역할' })
+  expect(document.getElementById(select.getAttribute('aria-describedby') ?? '')?.textContent).toBe('하나만 고를 수 있어요')
+})
+
+it('SelectField passes the chosen value, not the event', () => {
+  const seen: string[] = []
+  render(<SelectField label="역할" value="" onChange={(value) => seen.push(value)} options={[{ value: '', label: '골라 주세요' }, { value: 'be', label: 'be' }]} />)
+  fireEvent.change(screen.getByRole('combobox', { name: '역할' }), { target: { value: 'be' } })
+  expect(seen).toEqual(['be'])
 })

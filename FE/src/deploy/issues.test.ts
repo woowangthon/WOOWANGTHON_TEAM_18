@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest'
-import { issueMap, issueText, withoutField } from './issues.ts'
+import { ApiError } from '../lib/api.ts'
+import { issueMap, issuesOf, issueText, withoutField } from './issues.ts'
 
 it('turns a code into a sentence and falls back for a code it does not know', () => {
   expect(issueText('RESERVED')).toBe('예약된 이름이라 쓸 수 없어요')
@@ -25,4 +26,15 @@ it('picks the paths that have no input on the screen', () => {
     { path: 'project.slug', code: 'RESERVED' },
   ]
   expect(withoutField(issues).map((i) => i.path)).toEqual(['services', 'project.repo', 'services[0].runtime.stripPrefix', 'services[1].runtime.resources'])
+})
+
+it('takes the field issues of INVALID_SPEC and puts SLUG_TAKEN on the slug', () => {
+  const fields = [{ path: 'services[0].name', code: 'DUPLICATE' }]
+  expect(issuesOf(new ApiError(400, 'INVALID_SPEC', 'x', fields))).toEqual(fields)
+  expect(issuesOf(new ApiError(409, 'SLUG_TAKEN', 'x'))).toEqual([{ path: 'project.slug', code: 'SLUG_TAKEN' }])
+})
+
+it('leaves other errors to the failure notice', () => {
+  expect(issuesOf(new ApiError(503, 'DATABASE_UNAVAILABLE', 'x'))).toBeNull()
+  expect(issuesOf(new Error('boom'))).toBeNull()
 })

@@ -1,18 +1,21 @@
 import { isAuthRetryableFetchError } from '@supabase/supabase-js'
 import { supabase } from './supabase.ts'
 
+// 400 INVALID_SPEC이 칸마다 알려 주는 오류. `code`로 구분한다(message 문장이 아니다).
+export type FieldIssue = { path: string; code: string }
+
 // BE는 오류를 { error: { code, message } }로 준다(docs/design/api.md). 화면은 message가 아니라 code로 구분한다.
 export class ApiError extends Error {
   readonly status: number
   readonly code: string
   // 400 INVALID_SPEC만 칸마다의 오류를 싣는다. 다른 오류에는 없다.
-  readonly fields: { path: string; code: string }[]
+  readonly fields: FieldIssue[]
 
   constructor(
     status: number,
     code: string,
     message: string,
-    fields: { path: string; code: string }[] = [],
+    fields: FieldIssue[] = [],
   ) {
     super(message)
     this.name = 'ApiError'
@@ -33,7 +36,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 async function readError(response: Response): Promise<ApiError> {
   let code = `HTTP_${response.status}`
   let message = response.statusText
-  const fields: { path: string; code: string }[] = []
+  const fields: FieldIssue[] = []
   try {
     const body: unknown = await response.json()
     if (isRecord(body) && isRecord(body.error)) {

@@ -35,20 +35,18 @@ type TextProps = {
 
 function Text({ label, value, onChange, error, hint, disabled, placeholder, mono }: TextProps) {
   return (
-    <div className="flex flex-col gap-1">
-      <Field
-        label={label}
-        value={value}
-        onChange={(event) => {
-          onChange(event.target.value)
-        }}
-        error={error}
-        disabled={disabled}
-        placeholder={placeholder}
-        className={mono ? 'font-mono' : undefined}
-      />
-      {hint && <p className="text-xs text-muted">{hint}</p>}
-    </div>
+    <Field
+      label={label}
+      value={value}
+      onChange={(event) => {
+        onChange(event.target.value)
+      }}
+      error={error}
+      hint={hint}
+      disabled={disabled}
+      placeholder={placeholder}
+      className={mono ? 'font-mono' : undefined}
+    />
   )
 }
 
@@ -182,17 +180,16 @@ function ServiceFields({ service: s, index, names, dockerfiles, issues, disabled
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
         <Text label="이름" value={s.name} onChange={(name) => { set({ name }) }} error={err('name')} disabled={disabled} hint={`소문자로 시작, 최대 ${NAME_MAX}자. 클러스터 안의 이름이 돼요.`} />
-        <SelectField label="역할" value={s.role} options={ROLE_OPTIONS} onChange={(event) => { onChange(withRole(s, event.target.value)) }} error={err('role')} disabled={disabled} />
+        <SelectField label="역할" value={s.role} options={ROLE_OPTIONS} onChange={(role) => { onChange(withRole(s, role)) }} error={err('role')} disabled={disabled} />
         <Text label="폴더" value={s.dir} onChange={(dir) => { set({ dir }) }} error={err('dir')} disabled={disabled} mono hint="레포 안의 위치. 루트는 ." />
 
-        <SelectField label="Dockerfile" value={s.dockerfile} options={dockerfileOptions} onChange={(event) => { set({ dockerfile: event.target.value }) }} error={err('build.dockerfile')} disabled={disabled} />
+        <SelectField label="Dockerfile" value={s.dockerfile} options={dockerfileOptions} onChange={(dockerfile) => { set({ dockerfile }) }} error={err('build.dockerfile')} disabled={disabled} />
         <Text label="빌드 위치" value={s.context} onChange={(context) => { set({ context }) }} error={err('build.context')} disabled={disabled} mono hint="빌드를 시작할 레포 안의 폴더" />
         {hasDockerfile ? (
           <p className="text-sm text-muted sm:col-span-2">Dockerfile로 빌드하므로 프레임워크 · 설치 · 빌드 · 시작 칸은 쓰지 않아요.</p>
         ) : (
           <>
-            <SelectField label="프레임워크" value={s.framework} options={FRAMEWORK_OPTIONS} onChange={(event) => { set({ framework: event.target.value }) }} error={err('build.framework')} disabled={disabled} />
-            {hintText(s.hints.framework) && <p className="self-end text-xs text-muted">{hintText(s.hints.framework)}</p>}
+            <SelectField label="프레임워크" value={s.framework} options={FRAMEWORK_OPTIONS} onChange={(framework) => { set({ framework }) }} error={err('build.framework')} hint={hintText(s.hints.framework)} disabled={disabled} />
             <Text label="Node 버전" value={s.nodeVersion} onChange={(nodeVersion) => { set({ nodeVersion }) }} error={err('build.nodeVersion')} disabled={disabled} mono placeholder="22" hint={s.nodeVersionRaw ? `package.json의 engines.node: ${s.nodeVersionRaw}. 22 · 22.1 · 22.1.0 모양으로 적어 주세요.` : '22 · 22.1 · 22.1.0 모양으로 적어 주세요.'} />
             <Text label="설치 명령" value={s.install} onChange={(install) => { set({ install }) }} error={err('build.install')} disabled={disabled} mono hint={hintText(s.hints.install)} />
             <Text label="빌드 명령" value={s.build} onChange={(build) => { set({ build }) }} error={err('build.build')} disabled={disabled} mono hint={hintText(s.hints.build)} />
@@ -208,14 +205,14 @@ function ServiceFields({ service: s, index, names, dockerfiles, issues, disabled
           label="실행 방식"
           value={s.kind}
           options={KIND_OPTIONS}
-          onChange={(event) => {
-            set({ kind: event.target.value === 'static' ? 'static' : 'server' })
+          onChange={(kind) => {
+            set({ kind: kind === 'static' ? 'static' : 'server' })
           }}
           error={err('runtime.kind')}
           disabled={disabled}
         />
         <Text label="포트" value={isStatic ? String(STATIC_PORT) : s.port} onChange={(port) => { set({ port }) }} error={err('runtime.port')} disabled={disabled || isStatic} mono hint={isStatic ? `정적 사이트는 ${STATIC_PORT} 고정` : hintText(s.hints.port)} />
-        <SelectField label="상태 확인 방식" value={s.healthType} options={HEALTH_OPTIONS} onChange={(event) => { set({ healthType: event.target.value === 'tcp' ? 'tcp' : 'http' }) }} error={err('runtime.health.type')} disabled={disabled} />
+        <SelectField label="상태 확인 방식" value={s.healthType} options={HEALTH_OPTIONS} onChange={(type) => { set({ healthType: type === 'tcp' ? 'tcp' : 'http' }) }} error={err('runtime.health.type')} disabled={disabled} />
         {s.healthType === 'http' && <Text label="상태 확인 경로" value={s.healthPath} onChange={(healthPath) => { set({ healthPath }) }} error={err('runtime.health.path')} disabled={disabled} mono />}
         <Text label="시작 대기 시간(초)" value={s.timeout} onChange={(timeout) => { set({ timeout }) }} error={err('runtime.health.startupTimeoutSeconds')} disabled={disabled} mono hint={`${TIMEOUT_MIN}~${TIMEOUT_MAX}초`} />
         <Text label="공개 경로" value={s.ingressPath} onChange={(ingressPath) => { set({ ingressPath }) }} error={err('runtime.ingressPath')} disabled={disabled} mono placeholder="/" hint="비우면 밖에서 접근할 수 없는 내부 전용이에요. 서비스끼리 겹칠 수 없어요." />
@@ -232,7 +229,7 @@ function ServiceFields({ service: s, index, names, dockerfiles, issues, disabled
               {(row, i, setRow) => (
                 <>
                   <RowInput label={`연결 환경변수 이름 ${i + 1}`} value={row.env} mono error={issues.get(`${at}.runtime.links[${i}].env`)} onChange={(env) => { setRow({ ...row, env }) }} />
-                  <SelectField label={`연결할 서비스 ${i + 1}`} value={row.service} options={linkOptions} error={issues.get(`${at}.runtime.links[${i}].service`)} onChange={(event) => { setRow({ ...row, service: event.target.value }) }} />
+                  <SelectField label={`연결할 서비스 ${i + 1}`} value={row.service} options={linkOptions} error={issues.get(`${at}.runtime.links[${i}].service`)} onChange={(service) => { setRow({ ...row, service }) }} />
                 </>
               )}
             </Rows>
@@ -303,9 +300,7 @@ function SpecFormFields({ form, projects, dockerfiles, issues, disabled, onChang
               label="추가할 폴더"
               value={addDir}
               options={[pick('', '직접 입력'), ...unused.map((p) => pick(p.dir, p.dir))]}
-              onChange={(event) => {
-                setAddDir(event.target.value)
-              }}
+              onChange={setAddDir}
               disabled={disabled}
             />
           )}

@@ -20,13 +20,16 @@ function DeployNewPage() {
   const [failure, setFailure] = useState<Failure | null>(null)
   const [checking, setChecking] = useState(false)
   // 통과한 레포와 접수 때 확정한 commit(빈 레포는 null). 입력을 고치면 결과와 오류를 지워서 이전 주소의 것이 새 주소처럼 보이지 않게 한다.
-  const [checked, setChecked] = useState<{ repo: string; repoUrl: string; commit: string | null } | null>(null)
-  // Dockerfile 확인이 끝나면 찾은 경로. 배포 설정 화면이 이 목록으로 폼을 채운다.
-  const [found, setFound] = useState<{ repoUrl: string; dockerfiles: string[] } | null>(null)
+  // dockerfiles는 Dockerfile 확인이 끝난 뒤에 채워진다. 배포 설정 화면이 이 목록으로 폼을 채운다.
+  const [checked, setChecked] = useState<{
+    repo: string
+    repoUrl: string
+    commit: string | null
+    dockerfiles?: string[]
+  } | null>(null)
 
   async function check(trimmed: string) {
     setChecked(null)
-    setFound(null)
     setFailure(null)
     setUrlError(undefined)
     if (trimmed === '') {
@@ -71,7 +74,6 @@ function DeployNewPage() {
               onChange={(event) => {
                 setRepoUrl(event.target.value)
                 setChecked(null)
-                setFound(null)
                 setFailure(null)
                 setUrlError(undefined)
               }}
@@ -114,20 +116,20 @@ function DeployNewPage() {
             key={checked.repoUrl}
             repoUrl={checked.repoUrl}
             onDone={(dockerfiles) => {
-              setFound({ repoUrl: checked.repoUrl, dockerfiles })
+              setChecked((current) => (current?.repoUrl === checked.repoUrl ? { ...current, dockerfiles } : current))
             }}
           />
         </Card>
       )}
 
-      {checked && found?.repoUrl === checked.repoUrl && (
+      {checked?.dockerfiles && (
         <Card>
           <DeployConfirm
             key={`${checked.repoUrl}@${checked.commit ?? ''}`}
             repoUrl={checked.repoUrl}
             repo={checked.repo}
             commit={checked.commit}
-            dockerfiles={found.dockerfiles}
+            dockerfiles={checked.dockerfiles}
             onRecheck={() => {
               void check(checked.repoUrl)
             }}

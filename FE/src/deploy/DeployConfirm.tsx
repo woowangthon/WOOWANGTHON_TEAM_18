@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import type { ReactNode } from 'react'
 import { Alert } from '../components/ui/Alert.tsx'
 import { Button } from '../components/ui/Button.tsx'
 import { ApiError, apiFetch } from '../lib/api.ts'
@@ -6,7 +7,7 @@ import RepoFailureAlert from '../pages/RepoFailureAlert.tsx'
 import { failureOf, isRetryable } from '../pages/repo-failure.ts'
 import type { Failure } from '../pages/repo-failure.ts'
 import DeploySaved from './DeploySaved.tsx'
-import { issueMap, issueText, withoutField } from './issues.ts'
+import { issueMap, issuesOf, issueText, withoutField } from './issues.ts'
 import { MAX_SERVICES } from './limits.ts'
 import SpecFormFields from './SpecFormFields.tsx'
 import { formFromDraft, localIssues, toSpec } from './spec-form.ts'
@@ -76,8 +77,8 @@ function DeployConfirm({ repoUrl, repo, commit, dockerfiles, onRecheck }: Props)
     try {
       setSaved(await apiFetch<SavedDeploy>('/api/deploys', { repoUrl, commit: sha, spec: toSpec(current) }))
     } catch (error) {
-      if (error instanceof ApiError && error.code === 'INVALID_SPEC') setServerIssues(error.fields)
-      else if (error instanceof ApiError && error.code === 'SLUG_TAKEN') setServerIssues([{ path: 'project.slug', code: 'SLUG_TAKEN' }])
+      const issues = issuesOf(error)
+      if (issues) setServerIssues(issues)
       else setSaveFailure(failureOfDeploy(error))
     } finally {
       setSaving(false)
@@ -86,53 +87,40 @@ function DeployConfirm({ repoUrl, repo, commit, dockerfiles, onRecheck }: Props)
 
   if (saved) return <DeploySaved saved={saved} />
 
+  if (commit === null) {
+    return (
+      <Section>
+        <Alert variant="warn" title="이 레포에는 아직 commit이 없어요">
+          배포할 코드가 없어서 설정을 확정할 수 없어요. 코드를 올린 뒤 레포를 다시 확인해 주세요.
+        </Alert>
+        <div>
+          <Button disabled>배포 설정 확정</Button>
+        </div>
+      </Section>
+    )
+  }
+
   return (
-    <section aria-labelledby="spec-heading" className="flex flex-col gap-4">
-      <h2 id="spec-heading" className="text-lg">
-        배포 설정
-      </h2>
-
-      {commit === null && (
-        <>
-          <Alert variant="warn" title="이 레포에는 아직 commit이 없어요">
-            배포할 코드가 없어서 설정을 확정할 수 없어요. 코드를 올린 뒤 레포를 다시 확인해 주세요.
-          </Alert>
-          <div>
-            <Button disabled>배포 설정 확정</Button>
-          </div>
-        </>
-      )}
-
-      {commit !== null && load.status === 'loading' && (
+    <Section>
+      {load.status === 'loading' && (
         <p role="status" className="text-sm text-muted">
           배포 설정 초안을 만드는 중…
         </p>
       )}
 
-      {commit !== null && load.status === 'failed' && (
-        <div className="flex flex-col items-start gap-3">
-          <FailureNotice failure={load.failure} title="배포 설정 초안을 만들지 못했어요" />
-          {load.failure === 'commit-gone' ? (
-            <Button variant="outline" onClick={onRecheck}>
-              레포 다시 확인하기
-            </Button>
-          ) : (
-            isRetryable(load.failure) && (
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setLoad({ status: 'loading' })
-                  setAttempt((n) => n + 1)
-                }}
-              >
-                다시 시도하기
-              </Button>
-            )
-          )}
-        </div>
+      {load.status === 'failed' && (
+        <FailureBlock
+          failure={load.failure}
+          title="배포 설정 초안을 만들지 못했어요"
+          onRecheck={onRecheck}
+          onRetry={() => {
+            setLoad({ status: 'loading' })
+            setAttempt((n) => n + 1)
+          }}
+        />
       )}
 
-      {commit !== null && load.status === 'done' && form && (
+      {load.status === 'done' && form && (
         <Editor
           draft={load.draft}
           form={form}
@@ -147,6 +135,17 @@ function DeployConfirm({ repoUrl, repo, commit, dockerfiles, onRecheck }: Props)
           }}
         />
       )}
+    </Section>
+  )
+}
+
+function Section({ children }: { children: ReactNode }) {
+  return (
+    <section aria-labelledby="spec-heading" className="flex flex-col gap-4">
+      <h2 id="spec-heading" className="text-lg">
+        배포 설정
+      </h2>
+      {children}
     </section>
   )
 }
@@ -166,6 +165,27 @@ function FailureNotice({ failure, title }: { failure: Failure | 'commit-gone'; t
     )
   }
   return <RepoFailureAlert failure={failure} title={failure === 'unavailable' || failure === 'unknown' ? title : undefined} />
+}
+
+// 오류 안내와 그 뒤의 행동. commit이 사라졌으면 확인부터 다시, 다시 시도하면 될 수 있는 오류에는 onRetry가 있을 때만 다시 시도 버튼을 둔다.
+function FailureBlock({ failure, title, onRecheck, onRetry }: { failure: Failure | 'commit-gone'; title: string; onRecheck: () => void; onRetry?: () => void }) {
+  return (
+    <div className="flex flex-col items-start gap-3">
+      <FailureNotice failure={failure} title={title} />
+      {failure === 'commit-gone' ? (
+        <Button variant="outline" onClick={onRecheck}>
+          레포 다시 확인하기
+        </Button>
+      ) : (
+        onRetry &&
+        isRetryable(failure) && (
+          <Button variant="outline" onClick={onRetry}>
+            다시 시도하기
+          </Button>
+        )
+      )}
+    </div>
+  )
 }
 
 type EditorProps = {
@@ -213,15 +233,7 @@ function Editor({ draft, form, dockerfiles, issues, saving, saveFailure, onEdit,
           )}
         </Alert>
       )}
-      {saveFailure === 'commit-gone' && (
-        <div className="flex flex-col items-start gap-3">
-          <FailureNotice failure="commit-gone" title="" />
-          <Button variant="outline" onClick={onRecheck}>
-            레포 다시 확인하기
-          </Button>
-        </div>
-      )}
-      {saveFailure && saveFailure !== 'commit-gone' && <FailureNotice failure={saveFailure} title="저장하지 못했어요" />}
+      {saveFailure && <FailureBlock failure={saveFailure} title="저장하지 못했어요" onRecheck={onRecheck} />}
 
       <div>
         <Button onClick={onConfirm} disabled={saving} aria-busy={saving}>

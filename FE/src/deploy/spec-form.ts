@@ -18,7 +18,8 @@ export type EnvRow = { name: string; value: string }
 export type LinkRow = { env: string; service: string }
 // 초안이 알려 준 출처와 "골라 주세요" 표시. 칸 이름은 deploy-spec의 항목 이름이다.
 export type Hint = { source: string | null; review: boolean; candidates?: string[] }
-export type HintKey = 'framework' | 'install' | 'build' | 'start' | 'outputDir' | 'port'
+const HINT_KEYS = ['framework', 'install', 'build', 'start', 'outputDir', 'port'] as const
+export type HintKey = (typeof HINT_KEYS)[number]
 
 export type ServiceForm = {
   id: number
@@ -48,6 +49,8 @@ export type ServiceForm = {
 }
 
 export type SpecForm = { slug: string; repo: string; services: ServiceForm[] }
+
+const isRole = (value: string): value is (typeof ROLES)[number] => (ROLES as readonly string[]).includes(value)
 
 let nextId = 1
 
@@ -139,15 +142,8 @@ export function serviceFromProject(project: DraftProject, dockerfiles: string[])
     kind,
     // 정적이면 화면과 spec이 8080으로 고정하므로 입력값에는 초안의 값을 그대로 둔다(서버로 바꿨을 때 되살아난다).
     port: String(project.port.value ?? ''),
-    ingressPath: role ? DEFAULT_INGRESS[role as (typeof ROLES)[number]] : '',
-    hints: {
-      framework: hintOf(project, 'framework'),
-      install: hintOf(project, 'install'),
-      build: hintOf(project, 'build'),
-      start: hintOf(project, 'start'),
-      outputDir: hintOf(project, 'outputDir'),
-      port: hintOf(project, 'port'),
-    },
+    ingressPath: isRole(role) ? DEFAULT_INGRESS[role] : '',
+    hints: Object.fromEntries(HINT_KEYS.map((key) => [key, hintOf(project, key)])),
   }
 }
 
@@ -162,7 +158,6 @@ export function formFromDraft(draft: DeploySpecDraft, repo: string, dockerfiles:
 
 // 역할을 바꾸면 손대지 않은 이름 · 공개 경로를 새 역할의 기본값으로 따라 바꾼다.
 export function withRole(service: ServiceForm, role: string): ServiceForm {
-  const isRole = (value: string): value is (typeof ROLES)[number] => (ROLES as readonly string[]).includes(value)
   const oldIngress = isRole(service.role) ? DEFAULT_INGRESS[service.role] : ''
   return {
     ...service,

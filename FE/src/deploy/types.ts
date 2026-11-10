@@ -57,5 +57,4 @@ export type Spec = { project: { slug: string; repo: string }; services: ServiceS
 
 export type SavedDeploy = { id: string; repo: string; commit: string; spec: Spec; createdAt: string }
 
-// 서버가 칸마다 알려 주는 오류. `code`로 구분한다(message 문장이 아니다).
-export type Issue = { path: string; code: string }
+export type { FieldIssue as Issue } from '../lib/api.ts'

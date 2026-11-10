@@ -1,3 +1,4 @@
+import { ApiError } from '../lib/api.ts'
 import type { Issue } from './types.ts'
 
 // 서버 오류 코드를 입력칸 아래에 보일 문장으로 바꾼다. 문장이 아니라 코드로 구분한다.
@@ -28,3 +29,11 @@ export function issueMap(issues: Issue[]): Map<string, string> {
 // 화면에 입력칸이 없는 경로(고정값 · 서비스 개수 · 확인한 레포). 칸 옆에 보일 수 없어 요약에 따로 적는다.
 const NO_FIELD = /^(services|project\.repo|services\[\d+\]\.runtime\.(resources|stripPrefix))$/
 export const withoutField = (issues: Issue[]) => issues.filter((i) => NO_FIELD.test(i.path))
+
+// 저장 오류 중 입력칸에 보일 수 있는 것: INVALID_SPEC의 칸마다 오류와, slug를 이미 쓰는 SLUG_TAKEN. 그 밖의 오류는 null이다.
+export function issuesOf(error: unknown): Issue[] | null {
+  if (!(error instanceof ApiError)) return null
+  if (error.code === 'INVALID_SPEC') return error.fields
+  if (error.code === 'SLUG_TAKEN') return [{ path: 'project.slug', code: 'SLUG_TAKEN' }]
+  return null
+}
