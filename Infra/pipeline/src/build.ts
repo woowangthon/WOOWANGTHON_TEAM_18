@@ -29,6 +29,8 @@ export const POLL_MS = 10_000
 // CodeBuild 프로젝트 제한 15분(timeoutInMinutes) + 대기열 · 시작 몫. 그보다 오래 IN_PROGRESS면 API 쪽 문제로 본다.
 export const MAX_WAIT_MS = 20 * 60_000
 export const LOG_LINES = 200
+// BatchGetBuilds가 연속으로 이만큼 실패하면 기다리기를 그만둔다. 한 번의 시간 초과 · throttle로 AWS에서 잘 도는 빌드를 실패로 만들지 않는다.
+export const MAX_POLL_ERRORS = 3
 
 const TERMINAL_PHASE = ['FAILED', 'FAULT', 'TIMED_OUT', 'STOPPED', 'CLIENT_ERROR']
 
@@ -122,6 +124,7 @@ export async function runBuilds(input: DeployInput, config: BuildConfig, aws: Aw
 
   const pending = new Map(Object.entries(builds).map(([name, id]) => [id, name]))
   const started = clock.now()
+  let pollErrors = 0
   while (pending.size > 0) {
     if (clock.now() - started > MAX_WAIT_MS) {
       for (const name of pending.values()) failures.push({ service: name, kind: 'platform', code: 'BUILD_WAIT_TIMEOUT', message: `build did not finish in ${MAX_WAIT_MS / 60_000} minutes` })
@@ -132,9 +135,11 @@ export async function runBuilds(input: DeployInput, config: BuildConfig, aws: Aw
     try {
       answer = (await aws(['codebuild', 'batch-get-builds', '--ids', ...pending.keys()])) as typeof answer
     } catch (err) {
+      if (++pollErrors < MAX_POLL_ERRORS) continue
       for (const name of pending.values()) failures.push(platformFailure(name, err))
       break
     }
+    pollErrors = 0
     for (const id of answer.buildsNotFound ?? []) {
       const name = pending.get(id)
       if (name === undefined) continue

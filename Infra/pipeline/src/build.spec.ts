@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { AwsError } from './aws.js'
-import { appDir, type BuildConfig, imageTag, runBuilds, startBuildRequest } from './build.js'
+import { appDir, type BuildConfig, imageTag, MAX_POLL_ERRORS, runBuilds, startBuildRequest } from './build.js'
 import type { Service } from './deploy-input.js'
 import { COMMIT, deployInput, digest, HASH_BE, HASH_FE, IMAGE_REPO } from './fixtures.js'
 
@@ -277,14 +277,26 @@ describe('runBuilds', () => {
     expect((await runBuilds(deployInput(), config, aws, fakeClock())).ok).toBe(true)
   })
 
-  it('stops polling on a BatchGetBuilds error and reports every pending build', async () => {
+  it('stops polling after three BatchGetBuilds errors in a row and reports every pending build', async () => {
     const { aws, calls } = fakeAws({ 'codebuild start-build': [started], 'codebuild batch-get-builds': [new AwsError('ThrottlingException', 'slow down')] })
     const report = await runBuilds(deployInput(), config, aws, fakeClock())
     expect(report.failures).toEqual([
       { service: 'fe', kind: 'platform', code: 'ThrottlingException', message: 'slow down' },
       { service: 'be', kind: 'platform', code: 'ThrottlingException', message: 'slow down' },
     ])
-    expect(calls.filter((c) => c[1] === 'batch-get-builds')).toHaveLength(1)
+    expect(calls.filter((c) => c[1] === 'batch-get-builds')).toHaveLength(MAX_POLL_ERRORS)
+  })
+
+  it('keeps waiting through BatchGetBuilds errors that are not three in a row', async () => {
+    const timeout = new AwsError('CLI_TIMEOUT', 'aws codebuild batch-get-builds did not answer in 60s')
+    const { aws, calls } = fakeAws({
+      'codebuild start-build': [started],
+      'codebuild batch-get-builds': [timeout, timeout, { builds: [inProgress(FE_ID), inProgress(BE_ID)] }, timeout, timeout, { builds: [succeeded(FE_ID, 'd'), succeeded(BE_ID, 'e')] }],
+    })
+    const report = await runBuilds(deployInput(), config, aws, fakeClock())
+    expect(report).toMatchObject({ ok: true, failures: [] })
+    expect(report.input.deploy_condition.services.fe.image).toBe(digest('d'))
+    expect(calls.filter((c) => c[1] === 'batch-get-builds')).toHaveLength(6)
   })
 
   it('gives up after 20 minutes of IN_PROGRESS', async () => {
