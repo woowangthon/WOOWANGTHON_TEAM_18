@@ -28,3 +28,4 @@ Tests also run `Infra/build/build.sh` with bash against fake `git` · `iptables`
 ## Pitfalls
 
 - **Changing a default Dockerfile needs a version bump.** Update `versions.json` (sha256, version) and `DEFAULT_DOCKERFILE_VERSIONS` in BE together, or the build cache keeps serving images built from the old file. `src/dockerfiles.spec.ts` fails until all three agree.
+- **The sha256 is of the file as git stores it (LF line endings).** A hash computed on a Windows CRLF copy never matches; the root `.gitattributes` keeps `Infra/build/**` checked out as LF so a local hash is the same as CI's.

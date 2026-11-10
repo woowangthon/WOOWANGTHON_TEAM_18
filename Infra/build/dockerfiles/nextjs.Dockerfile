@@ -33,6 +33,7 @@ RUN node /usr/local/lib/with-build-env.mjs sh -c "$BUILD_CMD"
 FROM node:${NODE_VERSION}-bookworm-slim
 ENV NODE_ENV=production COREPACK_ENABLE_DOWNLOAD_PROMPT=0 NEXT_TELEMETRY_DISABLED=1 COREPACK_HOME=/opt/corepack
 RUN (command -v corepack >/dev/null || npm install -g corepack) && corepack enable
+COPY --from=build --chown=node:node /app /app
 COPY --from=build --chown=node:node /opt/corepack /opt/corepack
 ARG APP_DIR=.
 ARG START_CMD
