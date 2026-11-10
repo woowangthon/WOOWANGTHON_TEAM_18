@@ -209,8 +209,7 @@ function ServiceFields({ service: s, index, names, dockerfiles, issues, disabled
           value={s.kind}
           options={KIND_OPTIONS}
           onChange={(event) => {
-            const kind = event.target.value === 'static' ? 'static' : 'server'
-            set({ kind, port: kind === 'static' ? String(STATIC_PORT) : s.port })
+            set({ kind: event.target.value === 'static' ? 'static' : 'server' })
           }}
           error={err('runtime.kind')}
           disabled={disabled}

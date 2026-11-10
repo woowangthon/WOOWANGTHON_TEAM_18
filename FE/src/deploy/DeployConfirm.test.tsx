@@ -92,6 +92,13 @@ it('fixes the port of a static site and hides the server-only lists', async () =
   expect(service(1).queryByRole('group', { name: '비밀값 이름' })).toBeNull()
   fireEvent.change(service(1).getByRole('combobox', { name: '실행 방식' }), { target: { value: 'server' } })
   expect(service(1).getByRole('group', { name: '비밀값 이름' })).toBeTruthy()
+  // 서버로 되돌리면 정적일 때의 8080이 아니라 사용자가 적은 포트가 남는다.
+  expect(service(1).getByRole<HTMLInputElement>('textbox', { name: '포트' }).value).toBe('')
+  fireEvent.change(service(1).getByRole('textbox', { name: '포트' }), { target: { value: '3000' } })
+  fireEvent.change(service(1).getByRole('combobox', { name: '실행 방식' }), { target: { value: 'static' } })
+  expect(service(1).getByRole<HTMLInputElement>('textbox', { name: '포트' }).value).toBe('8080')
+  fireEvent.change(service(1).getByRole('combobox', { name: '실행 방식' }), { target: { value: 'server' } })
+  expect(service(1).getByRole<HTMLInputElement>('textbox', { name: '포트' }).value).toBe('3000')
 })
 
 it('blocks confirm and shows the reason when the repo has no commit, without asking for a draft', () => {

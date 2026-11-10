@@ -63,11 +63,15 @@ export function slugFromRepo(repo: string): string {
   return slug
 }
 
-// engines.node 원문(`>=22`, `^22.22.0 || ^24`)에서 처음 나오는 숫자 버전을 뽑는다. 서버는 `22` · `22.1` · `22.1.0`만 받는다.
+// engines.node 원문(`>=22`, `^22.22.0 || ^24`)에서 처음 나오는 "이 버전 이상 · 호환" 조건의 숫자 버전을 뽑는다. 서버는 `22` · `22.1` · `22.1.0`만 받는다.
+// `<23` · `>22`처럼 그 버전을 포함하지 않는 조건은 건너뛴다(그 숫자는 범위를 만족하지 않을 수 있다).
 // 범위를 하나로 줄이는 것은 추측이므로 화면에 원문을 함께 보여 사용자가 고치게 한다.
 export function nodeVersionOf(range: string | null): string {
-  const match = /\d{1,2}(?:\.\d{1,3}){0,2}/.exec(range ?? '')
-  return match ? match[0] : ''
+  for (const token of (range ?? '').split(/\s+|\|\|/)) {
+    const match = /^(?:>=|\^|~|=|v)?(\d{1,2}(?:\.\d{1,3}){0,2})(?:\.[xX*])?$/.exec(token)
+    if (match?.[1]) return match[1]
+  }
+  return ''
 }
 
 const dirnameOf = (path: string) => (path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '.')
@@ -133,7 +137,8 @@ export function serviceFromProject(project: DraftProject, dockerfiles: string[])
     start: project.start.value ?? '',
     outputDir: project.outputDir.value ?? '',
     kind,
-    port: kind === 'static' ? String(STATIC_PORT) : String(project.port.value ?? ''),
+    // 정적이면 화면과 spec이 8080으로 고정하므로 입력값에는 초안의 값을 그대로 둔다(서버로 바꿨을 때 되살아난다).
+    port: String(project.port.value ?? ''),
     ingressPath: role ? DEFAULT_INGRESS[role as (typeof ROLES)[number]] : '',
     hints: {
       framework: hintOf(project, 'framework'),
