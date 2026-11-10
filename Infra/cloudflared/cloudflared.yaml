@@ -1,0 +1,160 @@
+# Tunnel client (cloudflared) on the leader: visitors reach <name>.stairnoworks.com through Cloudflare,
+# and this client, which dialled out first (TCP/UDP 7844), hands the request to Traefik on the workers.
+# No port is opened toward the school network.
+# Design and reasons: docs/design/cluster.md §9.
+#
+# Locally managed tunnel "wanggane": the routing rules live here, not in the Cloudflare dashboard.
+# The tunnel credentials file is the only secret. It lives in the Secret tunnel-credentials only and is
+# never in the repo; it was piped from the machine that created the tunnel, then deleted there:
+#   ssh k3s-leader 'sudo k3s kubectl -n cloudflared create secret generic tunnel-credentials \
+#     --from-file=credentials.json=/dev/stdin' < ~/.cloudflared/<tunnel id>.json
+# DNS: *.stairnoworks.com is a proxied CNAME to <tunnel id>.cfargotunnel.com
+# (`cloudflared tunnel route dns wanggane '*.stairnoworks.com'`).
+#
+# Apply (from the operator's machine), the namespace before the Secret:
+#   ssh k3s-leader 'sudo k3s kubectl apply -f -' < Infra/cloudflared/cloudflared.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cloudflared
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloudflared
+  namespace: cloudflared
+data:
+  config.yaml: |
+    tunnel: 31924cbe-2165-493b-bca0-b069c46a4a06
+    credentials-file: /etc/cloudflared/creds/credentials.json
+    metrics: 0.0.0.0:2000
+    no-autoupdate: true
+    ingress:
+      # Every student address goes to Traefik, which picks the project by the Host header.
+      # Names without an Ingress get Traefik's 404.
+      - hostname: "*.stairnoworks.com"
+        service: http://traefik.kube-system.svc.cluster.local:80
+      - service: http_status:404
+---
+# In: nothing (the client only dials out; the kubelet's probes still pass). The metrics port is opened
+# for Prometheus in build stage 11.
+# Out: cluster DNS, Traefik's Pods, and Cloudflare (7844 tunnel, 443 API) on public addresses only.
+# The Pod's traffic is forwarded, so the host firewall's outgoing rules do not apply (cluster.md §3);
+# this policy is what keeps an exposed client away from the k3s API, kubelets, the image cache and
+# the node, school and tailnet ranges. The excepted ranges match the student template.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: tunnel-only
+  namespace: cloudflared
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress", "Egress"]
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - port: 53
+      protocol: UDP
+    - port: 53
+      protocol: TCP
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: traefik
+    ports:
+    - port: 8000
+      protocol: TCP
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+        except: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "169.254.0.0/16"]
+    ports:
+    - port: 7844
+      protocol: TCP
+    - port: 7844
+      protocol: UDP
+    - port: 443
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared
+  namespace: cloudflared
+spec:
+  replicas: 1
+  revisionHistoryLimit: 2
+  selector:
+    matchLabels:
+      app: cloudflared
+  template:
+    metadata:
+      labels:
+        app: cloudflared
+    spec:
+      # On the leader for now: losing the leader also cuts visitors. Moving to both workers is deferred.
+      nodeSelector:
+        kubernetes.io/hostname: k3s-leader
+      tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: cloudflared
+        image: cloudflare/cloudflared:2026.10.7
+        args: ["tunnel", "--config", "/etc/cloudflared/config/config.yaml", "run"]
+        ports:
+        - name: metrics
+          containerPort: 2000
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            memory: 256Mi
+        # /ready is 200 once at least one connection to Cloudflare is up.
+        # No liveness probe on purpose: cloudflared reconnects by itself when the internet path is back
+        # (9 s in the stage 10 test), while probe restarts during a long outage pile up the kubelet's
+        # restart back-off (up to 5 min) and delay the reconnect. A crashed process is restarted anyway.
+        readinessProbe:
+          httpGet: {path: /ready, port: 2000}
+          periodSeconds: 10
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]
+        volumeMounts:
+        - name: config
+          mountPath: /etc/cloudflared/config
+          readOnly: true
+        - name: creds
+          mountPath: /etc/cloudflared/creds
+          readOnly: true
+      volumes:
+      - name: config
+        configMap:
+          name: cloudflared
+      - name: creds
+        secret:
+          secretName: tunnel-credentials
+          defaultMode: 0440
