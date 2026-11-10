@@ -185,10 +185,10 @@
 | `dockerfile` | 문자열 \| `null` | 학생 Dockerfile 경로. `null`이면 아래 빌드 값으로 빌드한다 |
 | `framework` | `vite-react` \| `nextjs` \| `nest` \| `null` | 플랫폼 기본 Dockerfile 종류 |
 | `nodeVersion` | 문자열 \| `null` | 베이스 이미지 `node:<버전>` |
-| `install` | 문자열 \| `null` | 의존성 설치 명령 |
+| `install` | 문자열 \| `null` | 의존성 설치 명령. 기본 Dockerfile은 설치 · 빌드 명령을 서비스 폴더 `dir`에서 돌린다(`dir`은 `context` 안이어야 한다) |
 | `build` | 문자열 \| `null` | 빌드 명령 |
 | `start` | 문자열 \| `null` | 서버 시작 명령 |
-| `outputDir` | 문자열 \| `null` | 정적 빌드 결과 폴더 |
+| `outputDir` | 문자열 \| `null` | 정적 빌드 결과 폴더(`dir` 기준) |
 | `buildEnv` | 객체 (문자열 → 문자열) | 빌드할 때 번들에 들어가는 env (`VITE_*` 등) |
 
 **`runtime`** (W5에서 manifest로 옮긴다)

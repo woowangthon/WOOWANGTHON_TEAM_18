@@ -49,6 +49,7 @@ Checkable rules: [`docs/conventions.md`](docs/conventions.md).
 | Commands, versions and pitfalls of `FE/` | [`FE/CLAUDE.md`](FE/CLAUDE.md) |
 | Commands, versions and pitfalls of `BE/` | [`BE/CLAUDE.md`](BE/CLAUDE.md) |
 | Commands, versions and pitfalls of `AI/` | [`AI/CLAUDE.md`](AI/CLAUDE.md) |
+| Commands and layout of the deploy pipeline code (`Infra/pipeline/`, `Infra/build/`) | [`Infra/pipeline/CLAUDE.md`](Infra/pipeline/CLAUDE.md) |
 | What is AI / mock / external / unverified | [`docs/ai-scope.md`](docs/ai-scope.md) |
 | Presentation and demo video | [`docs/pitch.md`](docs/pitch.md) |
 | Task notes | [`tasks/`](tasks/README.md) |
@@ -58,7 +59,7 @@ Link to docs with plain paths, never `@path` — an `@` import loads the whole f
 
 ## Commands
 
-Run `pnpm verify` in the folder you changed (`FE/` or `BE/`) before every commit; in `AI/` run its verify line. Commands, versions and stack pitfalls are in [`FE/CLAUDE.md`](FE/CLAUDE.md), [`BE/CLAUDE.md`](BE/CLAUDE.md) and [`AI/CLAUDE.md`](AI/CLAUDE.md).
+Run `pnpm verify` in the folder you changed (`FE/`, `BE/` or `Infra/pipeline/`) before every commit; in `AI/` run its verify line. Commands, versions and stack pitfalls are in [`FE/CLAUDE.md`](FE/CLAUDE.md), [`BE/CLAUDE.md`](BE/CLAUDE.md), [`AI/CLAUDE.md`](AI/CLAUDE.md) and [`Infra/pipeline/CLAUDE.md`](Infra/pipeline/CLAUDE.md).
 
 The mutation-test command: TBD.
 

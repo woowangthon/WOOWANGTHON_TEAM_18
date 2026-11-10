@@ -1,0 +1,14 @@
+{
+  "vite-react": {
+    "version": "1",
+    "sha256": "f3cdc8864b9b82ad84f360ef4acc787503cc69f68ca1339acfe6a796a463b225"
+  },
+  "nextjs": {
+    "version": "3",
+    "sha256": "5f789bac1a04ba978894a4af7d9a77cd97a78987b1bf0ef18181a72bfb0cf04c"
+  },
+  "nest": {
+    "version": "2",
+    "sha256": "a019806afc9c7b4219b64686b444ff27f7c3d051e22ac098cc065c832a31b13e"
+  }
+}
