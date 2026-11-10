@@ -19,5 +19,12 @@ dist/
 coverage/
 *.tsbuildinfo
 
-# Other stack-specific entries (__pycache__/ …) are added with each stack
+# Other stack-specific entries are added with each stack
 
+
+# Python (AI/)
+.venv/
+__pycache__/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
