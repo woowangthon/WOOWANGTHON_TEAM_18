@@ -6,8 +6,8 @@
 from typing import Annotated, Any, Literal, Self
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
-from pydantic_core import PydanticCustomError
 from pydantic.alias_generators import to_camel
+from pydantic_core import PydanticCustomError
 
 CommitSha = Annotated[str, Field(pattern=r"^[0-9a-f]{40}$")]
 NonEmpty = Annotated[str, Field(min_length=1)]

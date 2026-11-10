@@ -129,7 +129,7 @@ def _render(code: int, message: str, causes: list[dict[str, str]]) -> dict[str, 
         "details": {"causes": causes},
         "code": code,
     }
-    k8s = {"pod": None, "events": [], "status": status}
+    k8s: dict[str, Any] = {"pod": None, "events": [], "status": status}
     return {"stage": "render", "errorMessage": message, "raw": {"codebuild": None, "k8s": k8s}}
 
 
@@ -156,7 +156,8 @@ SIGNALS: dict[str, dict[str, Any]] = {
     ),
     "R2": _render(
         422,
-        'Deployment.apps "be-b" is invalid: spec.template.spec.containers[0].ports[0].containerPort',
+        'Deployment.apps "be-b" is invalid: '
+        "spec.template.spec.containers[0].ports[0].containerPort",
         [
             {
                 "reason": "FieldValueInvalid",

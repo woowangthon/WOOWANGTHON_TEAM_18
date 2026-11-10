@@ -86,16 +86,14 @@ def test_ticket_accepts_null_service_and_previous_and_200_lines() -> None:
     assert t.previous is not None and t.previous.summary == "DATABASE_URL 재입력 요청"
 
 
-@pytest.mark.parametrize(
-    "status", ["verified", "pr_opened", "needs_user", "gave_up", "stopped"]
-)
+@pytest.mark.parametrize("status", ["verified", "pr_opened", "needs_user", "gave_up", "stopped"])
 def test_previous_status_values(status: str) -> None:
     prev = {"ticketId": "t_0012", "status": status, "summary": ""}
     assert Ticket.model_validate(ticket(previous=prev)).previous is not None
 
 
-K8S = {"pod": None, "events": [], "status": None}
-STATUS = {"kind": "Status", "code": 422}
+K8S: dict[str, Any] = {"pod": None, "events": [], "status": None}
+STATUS: dict[str, Any] = {"kind": "Status", "code": 422}
 
 
 @pytest.mark.parametrize(
@@ -106,11 +104,21 @@ STATUS = {"kind": "Status", "code": 422}
         ("apply", {"codebuild": {}, "k8s": K8S}, [("raw.codebuild", "MUST_BE_NULL")]),
         ("prepare", {"codebuild": None, "k8s": None}, [("raw.k8s", "REQUIRED")]),
         ("render", {"codebuild": None, "k8s": K8S}, [("raw.k8s.status", "REQUIRED")]),
-        ("apply", {"codebuild": None, "k8s": {**K8S, "status": STATUS}}, [("raw.k8s.status", "MUST_BE_NULL")]),
-        ("prepare", {"codebuild": {}, "k8s": None}, [("raw.codebuild", "MUST_BE_NULL"), ("raw.k8s", "REQUIRED")]),
+        (
+            "apply",
+            {"codebuild": None, "k8s": {**K8S, "status": STATUS}},
+            [("raw.k8s.status", "MUST_BE_NULL")],
+        ),
+        (
+            "prepare",
+            {"codebuild": {}, "k8s": None},
+            [("raw.codebuild", "MUST_BE_NULL"), ("raw.k8s", "REQUIRED")],
+        ),
     ],
 )
-def test_raw_must_fit_the_stage(stage: str, raw: dict[str, Any], problems: list[tuple[str, str]]) -> None:
+def test_raw_must_fit_the_stage(
+    stage: str, raw: dict[str, Any], problems: list[tuple[str, str]]
+) -> None:
     with pytest.raises(ValidationError) as e:
         Ticket.model_validate(ticket(stage=stage, raw=raw))
     [err] = e.value.errors()
