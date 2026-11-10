@@ -1,7 +1,7 @@
 # Student project space template, applied as the test space proj-demo.
 # Design and reasons: docs/design/cluster.md §6.
-# The platform server creates one of these per project with the name proj-<id> (only the name changes;
-# the admission policy planned for build 09 will accept only these values). The server may only create these objects
+# The platform server creates one of these per project (five objects) with the name proj-<id> (only the name changes;
+# the admission policies in Infra/platform/policies.yaml accept only these values). The server may only create these objects
 # (cluster.md §8), so the space's default ServiceAccount is left as Kubernetes makes it; the API token is
 # turned off on each Pod instead. App resources (Deployment, Service, Ingress) come from the leader's
 # deploy executor, see app-example.yaml.
@@ -102,3 +102,20 @@ spec:
         - 192.168.0.0/16
         - 100.64.0.0/10
         - 169.254.0.0/16
+---
+# Lets the platform server read this space's Pods, logs and Deployments, and nothing outside proj- spaces:
+# admission policies only see writes, so reads are granted per space instead of cluster-wide.
+# The role proj-reader is in Infra/platform/account.yaml.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: platform-server-read
+  namespace: proj-demo
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: proj-reader
+subjects:
+- kind: ServiceAccount
+  name: platform-server
+  namespace: platform
