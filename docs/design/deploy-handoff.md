@@ -149,7 +149,7 @@
 
 | 필드 | 타입 | 뜻 |
 |---|---|---|
-| `buildInputHash` | 문자열 (`sha256:` + 64자 hex) | `commitSha` + 그 서비스의 `spec.build` + 플랫폼 기본 Dockerfile 버전의 해시 |
+| `buildInputHash` | 문자열 (`sha256:` + 64자 hex) | `commitSha` 시점의 `build.context` 폴더 git tree SHA + `build.dockerfile` 파일 blob SHA(있을 때) + 그 서비스의 `spec.build` + 플랫폼 기본 Dockerfile 버전의 해시. 커밋이 바뀌어도 그 서비스의 빌드 컨텍스트 · Dockerfile · 빌드 값이 그대로면 해시가 같다. `context`가 `"."`이면 레포 어디가 바뀌어도 해시가 바뀐다 |
 | `build` | `run` \| `reuse` | `build_cache`에 같은 해시의 이미지가 있으면 `reuse`, 없으면 `run` |
 | `image` | 문자열 \| `null` | 이미지 digest 주소. `reuse`면 W4 시작 때, `run`이면 빌드가 끝난 뒤 채운다 |
 
