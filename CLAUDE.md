@@ -12,7 +12,7 @@
 - **Who**: Team 18 왕가네식구들 (`@woowangthon/18`), 2026 AI 우왕톤 — theme *"AI는 동료가 될 수 있을까?"*
 - **Stack**: FE React + TypeScript on S3 + CloudFront, BE Nest.js and AI server FastAPI on EC2, Supabase (DB, Auth), AWS CodeBuild for builds, GHCR as the image registry, GoCD deploying to a k3s cluster on school PCs over Tailscale; Kafka is deferred and the external LLM vendor and model are undecided — see [ADR-001](docs/adr/001-stack-and-deployment.md). Architecture: [`docs/system-definition.md`](docs/system-definition.md). Module designs and the FE/BE/AI contract: [`docs/design/`](docs/design/README.md).
 - **Repo**: [`woowangthon/WOOWANGTHON_TEAM_18`](https://github.com/woowangthon/WOOWANGTHON_TEAM_18) (`upstream`, judged) — one monorepo. Code under `FE/` (Vite + React), `BE/` (Nest.js), `AI/` (FastAPI), `Infra/` (cluster), docs under `docs/`, task notes under `tasks/`.
-- **Notion devlog DB**: TBD — the URL the [`devlog`](.claude/skills/devlog/SKILL.md) skill writes to.
+- **Notion devlog DB**: TBD — the URL the [`devlog`](.claude/skills/devlog/SKILL.md) skill writes to. The skill is optional; fill this in before running it.
 
 ## 1. Hard constraints (hackathon rules — never trade these for speed)
 
