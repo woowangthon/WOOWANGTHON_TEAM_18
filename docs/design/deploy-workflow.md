@@ -1,7 +1,7 @@
 # 배포 워크플로우 — 설계
 
-- **상태**: 초안 (팀 논의 전. 합의되면 시스템 정의서 · ADR · ai-scope에 반영한다)
-- **관련**: [시스템 정의서](../system-definition.md) §3 · §4.1 · [ADR-001](../adr/001-stack-and-deployment.md) (빌드 = CodeBuild) · [ADR-002](../adr/002-bot-account-for-fix-prs.md) (봇 계정 수정 PR) · [ADR-003](../adr/003-registry-ghcr.md) (GHCR) · [ADR-004](../adr/004-server-cluster-link-tailscale.md) (Tailscale) · [ADR-005](../adr/005-k3s-cluster-on-school-pcs.md) (k3s)
+- **상태**: 초안 (GoCD 파이프라인 · 플랫폼 서버의 앞 단계는 ADR-009 · 010으로 확정. 슬롯 A · B 방식은 합의 전이며, 합의되면 시스템 정의서 · ADR · ai-scope에 반영한다)
+- **관련**: [시스템 정의서](../system-definition.md) §3 · §4.1 · [ADR-001](../adr/001-stack-and-deployment.md) (빌드 = CodeBuild) · [ADR-002](../adr/002-bot-account-for-fix-prs.md) (봇 계정 수정 PR) · [ADR-003](../adr/003-registry-ghcr.md) (GHCR) · [ADR-004](../adr/004-server-cluster-link-tailscale.md) (Tailscale) · [ADR-005](../adr/005-k3s-cluster-on-school-pcs.md) (k3s) · [ADR-009](../adr/009-deploy-runs-on-leader-gocd-agent.md) (GoCD 리더 실행기) · [ADR-010](../adr/010-repo-analysis-and-security-scan-in-platform-server.md) (레포 분석 · 보안 검사) · [배포 입력](deploy-handoff.md)
 
 ![배포 워크플로우](../architecture/deploy-workflow.drawio.svg)
 
@@ -70,7 +70,7 @@ W0 접수 · 사전 검사 → W1 분석 → W2 배포 설정 → W3 비밀값 �
 
 ### 3. manifest는 언제 만드나
 
-- **차트**(`Infra/charts/student-app`, 만들 예정: Deployment · Service · Ingress · NetworkPolicy의 틀)는 개발 기간에 **한 번** 만든다.
+- **차트**(`Infra/charts/student-app`, 만들 예정: Deployment · Service · ConfigMap · Ingress의 틀)는 개발 기간에 **한 번** 만든다. NetworkPolicy · ResourceQuota · LimitRange는 차트에 넣지 않는다. 플랫폼 서버가 네임스페이스를 만들 때 넣고, 실행기는 건드리지 못한다([클러스터 설계](cluster.md) §8).
 - **실제 manifest**는 **배포할 때마다 Render 스테이지에서** 만든다. spec + 이미지 digest + 대상 슬롯 → `values.yaml` → `helm template` → `kubectl apply --dry-run=server`로 검사 → DB의 대상 슬롯 줄에 저장.
 - W2에서 미리 만들지 않는 이유: 이미지 digest는 Build 뒤에, 최종 spec은 AI 에이전트가 고친 뒤에 정해진다.
 - 사람도 AI 에이전트도 manifest를 직접 쓰지 않는다. 그래서 결과가 항상 같은 틀에서 나온다.
