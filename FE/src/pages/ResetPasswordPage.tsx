@@ -2,12 +2,13 @@ import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router'
 import AuthCard from '../auth/AuthCard.tsx'
-import { confirmError, emailError, passwordError } from '../auth/form-rules.ts'
-import { classifyMailError, mailFailureCopy } from '../auth/mail-error.ts'
+import { confirmError, emailError, passwordError, WEAK_PASSWORD_ERROR } from '../auth/form-rules.ts'
+import { mailFailureCopy, mailResult } from '../auth/mail-error.ts'
 import type { MailFailure } from '../auth/mail-error.ts'
 import PasswordRules from '../auth/PasswordRules.tsx'
+import { resetRedirectTo } from '../auth/redirects.ts'
+import ResendControls from '../auth/ResendControls.tsx'
 import { useAuth } from '../auth/useAuth.ts'
-import { useCooldown } from '../auth/useCooldown.ts'
 import PasswordField from '../components/PasswordField.tsx'
 import { Alert } from '../components/ui/Alert.tsx'
 import { Button } from '../components/ui/Button.tsx'
@@ -17,18 +18,17 @@ import { supabase } from '../lib/supabase.ts'
 // request: 주소 입력(R1), sent: 메일 안내(R2), checking: 메일 링크로 들어와 확인 중,
 // new-password: 새 비밀번호(R3), expired: 링크를 쓸 수 없음(R4), done: 완료(R5)
 type Mode = 'request' | 'sent' | 'checking' | 'new-password' | 'expired' | 'done'
-type Resend = 'idle' | 'sending' | 'sent' | MailFailure
 type PasswordErrors = { password?: string; confirm?: string }
 
-const RESEND_COOLDOWN_SECONDS = 60
-
 // 메일의 링크로 들어왔을 때 주소에 무엇이 담겨 오는지로 시작 화면을 정한다.
-// 링크가 통하면 비밀번호 재설정용 토큰이 해시에 있고(type=recovery), 안 통하면 오류가 쿼리나 해시에 있다.
+// 링크로 들어오면 비밀번호 재설정용 토큰이 해시에 있고(type=recovery), 안 통하면 오류가 쿼리나 해시에 있다.
+// 토큰 없이 type=recovery만 붙은 주소는 메일 링크가 아니므로 일반 요청 화면으로 둔다.
 function startMode(search: string, hash: string): Mode {
-  const params = [new URLSearchParams(search), new URLSearchParams(hash.replace(/^#/, ''))]
-  const has = (name: string) => params.some((p) => p.has(name))
+  const query = new URLSearchParams(search)
+  const fragment = new URLSearchParams(hash.replace(/^#/, ''))
+  const has = (name: string) => query.has(name) || fragment.has(name)
   if (has('error') || has('error_code') || has('error_description')) return 'expired'
-  if (params.some((p) => p.get('type') === 'recovery')) return 'checking'
+  if (fragment.get('type') === 'recovery' && fragment.has('access_token')) return 'checking'
   return 'request'
 }
 
@@ -42,7 +42,9 @@ function isSessionGone(error: { code?: string; status?: number; name?: string })
   )
 }
 
-const resetRedirectTo = () => `${window.location.origin}/reset-password`
+// 없는 주소여도 Supabase는 성공처럼 답하고, 화면도 같은 안내를 보인다(계정 유무를 알려 주지 않으려고).
+const sendResetMail = (to: string) =>
+  mailResult(() => supabase.auth.resetPasswordForEmail(to, { redirectTo: resetRedirectTo() }))
 
 function BackToLogin() {
   return (
@@ -66,8 +68,6 @@ function ResetPasswordPage() {
   const [submitting, setSubmitting] = useState(false)
   const [notice, setNotice] = useState<MailFailure | null>(null)
   const [sentTo, setSentTo] = useState('')
-  const [resend, setResend] = useState<Resend>('idle')
-  const cooldown = useCooldown()
 
   // 새 비밀번호(R3)
   const [accountEmail, setAccountEmail] = useState('')
@@ -102,18 +102,6 @@ function ResetPasswordPage() {
     }
   }, [mode])
 
-  // 메일을 보내는 호출. 없는 주소여도 Supabase는 성공처럼 답하고, 화면도 같은 안내를 보인다(계정 유무를 알려 주지 않으려고).
-  async function sendMail(to: string): Promise<MailFailure | 'ok'> {
-    try {
-      const { error } = await supabase.auth.resetPasswordForEmail(to, {
-        redirectTo: resetRedirectTo(),
-      })
-      return error ? classifyMailError(error) : 'ok'
-    } catch {
-      return 'failed'
-    }
-  }
-
   async function handleRequest(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const trimmed = email.trim()
@@ -123,24 +111,14 @@ function ResetPasswordPage() {
     if (problem) return
 
     setSubmitting(true)
-    const result = await sendMail(trimmed)
+    const result = await sendResetMail(trimmed)
     setSubmitting(false)
     if (result === 'ok') {
       setSentTo(trimmed)
-      setResend('idle')
-      cooldown.start(RESEND_COOLDOWN_SECONDS)
       setMode('sent')
     } else {
       setNotice(result)
     }
-  }
-
-  async function handleResend() {
-    setResend('sending')
-    const result = await sendMail(sentTo)
-    setResend(result === 'ok' ? 'sent' : result)
-    // 보냈든 한도에 걸렸든 바로 다시 누르게 두지 않는다.
-    if (result === 'ok' || result === 'rate') cooldown.start(RESEND_COOLDOWN_SECONDS)
   }
 
   async function handleNewPassword(event: FormEvent<HTMLFormElement>) {
@@ -177,7 +155,7 @@ function ResetPasswordPage() {
     else if (failure.code === 'same_password') {
       setErrors({ password: '이전과 다른 비밀번호를 써 주세요' })
     } else if (failure.code === 'weak_password') {
-      setErrors({ password: '더 안전한 비밀번호를 써 주세요. 더 길게 하거나 문자를 섞어 보세요' })
+      setErrors({ password: WEAK_PASSWORD_ERROR })
     } else setSaveFailed(true)
   }
 
@@ -281,8 +259,6 @@ function ResetPasswordPage() {
   }
 
   if (mode === 'sent') {
-    const resendFailure =
-      resend === 'idle' || resend === 'sending' || resend === 'sent' ? null : resend
     return (
       <AuthCard>
         <div className="flex flex-col gap-2">
@@ -296,37 +272,14 @@ function ResetPasswordPage() {
           스팸함을 확인하거나, 이메일 주소가 맞는지 다시 확인해 보세요.
         </Alert>
 
-        <div className="flex flex-col gap-2">
-          <Button
-            variant="outline"
-            onClick={() => {
-              void handleResend()
-            }}
-            disabled={resend === 'sending' || cooldown.remaining > 0}
-            className="w-full"
-          >
-            {cooldown.remaining > 0 ? `메일 다시 보내기 (${cooldown.remaining}초 뒤)` : '메일 다시 보내기'}
-          </Button>
-          {resend === 'sent' && (
-            <p role="status" className="text-sm">
-              메일을 다시 보냈어요.
-            </p>
-          )}
-          {resendFailure && (
-            <p role="status" className="text-sm">
-              {mailFailureCopy[resendFailure].title}. {mailFailureCopy[resendFailure].body}
-            </p>
-          )}
-          <Button
-            variant="outline"
-            onClick={() => {
-              setMode('request')
-            }}
-            className="w-full"
-          >
-            이메일 주소 바꾸기
-          </Button>
-        </div>
+        <ResendControls
+          label="메일 다시 보내기"
+          sentText="메일을 다시 보냈어요."
+          send={() => sendResetMail(sentTo)}
+          onChangeAddress={() => {
+            setMode('request')
+          }}
+        />
         <p className="text-sm text-muted">링크는 한 시간 동안 유효해요. 같은 주소로 여러 번 보내면 한도에 걸릴 수 있어요.</p>
         <BackToLogin />
       </AuthCard>

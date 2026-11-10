@@ -137,7 +137,7 @@ it.each([
     '이 주소로는 메일을 보낼 수 없어요',
     '제공된 테스트 계정으로 로그인해 주세요.',
   ],
-  [{ status: 500 }, '서버에 연결하지 못했어요', '잠시 후 다시 시도해 주세요.'],
+  [{ status: 500 }, '메일을 보내지 못했어요', '잠시 후 다시 시도해 주세요. 계속 안 되면 팀에 알려 주세요.'],
 ])('R1: a send error %j shows "%s" and stays on the form', async (error, title, body) => {
   auth.resetPasswordForEmail.mockResolvedValue(fail(error))
   renderPage()
@@ -153,7 +153,7 @@ it('R1: a thrown send is the generic connection failure, and a team-outside addr
   renderPage()
   fireEvent.change(emailInput(), { target: { value: 'student@example.com' } })
   fireEvent.click(sendButton())
-  expect(await screen.findByText('서버에 연결하지 못했어요')).toBeTruthy()
+  expect(await screen.findByText('메일을 보내지 못했어요')).toBeTruthy()
 
   auth.resetPasswordForEmail.mockResolvedValueOnce(
     fail({ status: 400, code: 'email_address_not_authorized' }),
@@ -237,6 +237,12 @@ it('R4: a link that Supabase could not use (token still in the address) is expir
   auth.getSession.mockResolvedValue(sessionOf())
   renderPage(RECOVERY_URL)
   expect(await screen.findByRole('heading', { name: '링크가 만료됐거나 이미 사용했어요' })).toBeTruthy()
+})
+
+it('R1: an address that only says type=recovery, without a token, is just the request form', () => {
+  renderPage('/reset-password#type=recovery')
+  expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('비밀번호 재설정')
+  expect(auth.getSession).not.toHaveBeenCalled()
 })
 
 it('R4: a recovery link with no session is expired', async () => {

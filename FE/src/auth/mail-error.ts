@@ -11,8 +11,8 @@ export const mailFailureCopy: Record<MailFailure, { title: string; body: string 
     body: '제공된 테스트 계정으로 로그인해 주세요.',
   },
   failed: {
-    title: '서버에 연결하지 못했어요',
-    body: '잠시 후 다시 시도해 주세요.',
+    title: '메일을 보내지 못했어요',
+    body: '잠시 후 다시 시도해 주세요. 계속 안 되면 팀에 알려 주세요.',
   },
 }
 
@@ -26,4 +26,24 @@ export function classifyMailError(error: { code?: string; status?: number }): Ma
   }
   if (error.code === 'email_address_not_authorized') return 'not-authorized'
   return 'failed'
+}
+
+type MailError = { code?: string; status?: number }
+
+// Supabase 호출은 오류를 값으로 주기도 하고 던지기도 한다. 둘 다 오류 값으로 모은다(던진 오류는 모르는 오류라 'failed'가 된다).
+export async function callMail(
+  call: () => Promise<{ error: MailError | null }>,
+): Promise<MailError | null> {
+  try {
+    return (await call()).error
+  } catch {
+    return {}
+  }
+}
+
+export async function mailResult(
+  call: () => Promise<{ error: MailError | null }>,
+): Promise<MailFailure | 'ok'> {
+  const error = await callMail(call)
+  return error ? classifyMailError(error) : 'ok'
 }

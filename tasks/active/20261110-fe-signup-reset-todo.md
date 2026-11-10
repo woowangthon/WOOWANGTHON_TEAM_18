@@ -17,13 +17,13 @@ Two screens on one branch, one commit per issue. They share the password rules, 
 - [x] Shared pieces: `FE/src/auth/{form-rules,mail-error,useCooldown,PasswordRules,AuthCard}`, `FE/src/components/PasswordField.tsx`; `LoginPage` moved onto them
 - [x] #52 signup page + tests, `docs/ai-scope.md` — files: `FE/src/pages/SignupPage.tsx`
 - [x] #55 reset page + tests, `docs/ai-scope.md` — files: `FE/src/pages/ResetPasswordPage.tsx`
-- [ ] Check both screens in Chromium with faked responses (light/dark, 1440/390), including a recovery link landing
-- [ ] `/code-review` and `/simplify` on the range (run with the worktree path), fixes applied
+- [x] Check both screens in Chromium with faked responses (light/dark, 1440/390), including a recovery link landing
+- [x] `/code-review` and `/simplify` on the range (run with the worktree path), fixes applied (see lessons)
 - [ ] Real mail round trip by the user (needs #49): signup mail, verification link back to `/profile`, reset mail, new password
 
 ## Done when
 
-- [ ] `cd FE && pnpm verify` passes on every commit
-- [ ] Each state is seen in a browser; no console errors, no horizontal scroll
+- [x] `cd FE && pnpm verify` passes on every commit
+- [x] Each state is seen in a browser (Chromium, faked Supabase responses); no console errors, no horizontal scroll
 - [ ] Real signup and reset mails are confirmed by the user (needs #49)
 - [ ] tests added; mutation testing not run — no mutation tool chosen yet (conventions §6, issue #67), noted in the PR body

@@ -4,6 +4,7 @@ import { Link, useLocation, useNavigate } from 'react-router'
 import AuthCard from '../auth/AuthCard.tsx'
 import { emailError } from '../auth/form-rules.ts'
 import { readLoginState } from '../auth/login-state.ts'
+import { verifyRedirectTo } from '../auth/redirects.ts'
 import PasswordField from '../components/PasswordField.tsx'
 import { Alert } from '../components/ui/Alert.tsx'
 import { Button } from '../components/ui/Button.tsx'
@@ -95,6 +96,7 @@ function LoginPage() {
       const { error } = await supabase.auth.resend({
         type: 'signup',
         email: unverifiedEmail,
+        options: { emailRedirectTo: verifyRedirectTo() },
       })
       if (!error) setResend('sent')
       else setResend(error.status === 429 ? 'rate' : 'failed')

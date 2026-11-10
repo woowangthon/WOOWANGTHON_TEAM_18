@@ -1,13 +1,17 @@
-export const EMAIL_FORMAT = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+const EMAIL_FORMAT = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+export const EMAIL_FORMAT_ERROR = '올바른 이메일 형식이 아니에요. 예: name@example.com'
+export const WEAK_PASSWORD_ERROR =
+  '더 안전한 비밀번호를 써 주세요. 더 길게 하거나 문자를 섞어 보세요'
 
 // 이메일 칸의 오류 문구. 맞으면 undefined.
 export function emailError(email: string): string | undefined {
   if (email === '') return '이메일을 입력해 주세요'
-  if (!EMAIL_FORMAT.test(email)) return '올바른 이메일 형식이 아니에요. 예: name@example.com'
+  if (!EMAIL_FORMAT.test(email)) return EMAIL_FORMAT_ERROR
   return undefined
 }
 
-export type PasswordRule = { label: string; met: boolean; error: string }
+type PasswordRule = { label: string; met: boolean; error: string }
 
 // 가입 · 재설정이 같은 규칙을 쓴다. 서버(Supabase)가 더 엄격하면 weak_password로 따로 알린다.
 export function passwordRules(password: string, email: string): PasswordRule[] {

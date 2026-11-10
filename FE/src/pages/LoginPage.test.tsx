@@ -113,7 +113,11 @@ it('offers to resend the verification mail when the email is not confirmed', asy
 
   fireEvent.click(screen.getByRole('button', { name: '인증 메일 다시 보내기' }))
   expect(await screen.findByText('인증 메일을 다시 보냈어요.')).toBeTruthy()
-  expect(auth.resend).toHaveBeenCalledWith({ type: 'signup', email: 'new@example.com' })
+  expect(auth.resend).toHaveBeenCalledWith({
+    type: 'signup',
+    email: 'new@example.com',
+    options: { emailRedirectTo: `${window.location.origin}/profile` },
+  })
 })
 
 it('resends to the address that was found unverified, even if the field is edited afterwards', async () => {
@@ -128,7 +132,11 @@ it('resends to the address that was found unverified, even if the field is edite
   fireEvent.change(emailInput(), { target: { value: 'typo@example.com' } })
   fireEvent.click(resendButton)
   await screen.findByText('인증 메일을 다시 보냈어요.')
-  expect(auth.resend).toHaveBeenCalledWith({ type: 'signup', email: 'new@example.com' })
+  expect(auth.resend).toHaveBeenCalledWith({
+    type: 'signup',
+    email: 'new@example.com',
+    options: { emailRedirectTo: `${window.location.origin}/profile` },
+  })
 })
 
 it('asks the user to wait when resending hits the mail rate limit', async () => {

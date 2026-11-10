@@ -173,7 +173,7 @@ it.each([
     '이 주소로는 메일을 보낼 수 없어요',
     '제공된 테스트 계정으로 로그인해 주세요.',
   ],
-  [{ status: 500, code: 'unexpected_failure' }, '서버에 연결하지 못했어요', '잠시 후 다시 시도해 주세요.'],
+  [{ status: 500, code: 'unexpected_failure' }, '메일을 보내지 못했어요', '잠시 후 다시 시도해 주세요. 계속 안 되면 팀에 알려 주세요.'],
 ])('a signUp error %j shows "%s" and stays on the form', async (error, title, body) => {
   auth.signUp.mockResolvedValue(fail(error))
   renderPage()
@@ -188,7 +188,7 @@ it('a thrown signUp is the generic connection failure', async () => {
   auth.signUp.mockRejectedValue(new Error('offline'))
   renderPage()
   fillAndSubmit()
-  expect(await screen.findByText('서버에 연결하지 못했어요')).toBeTruthy()
+  expect(await screen.findByText('메일을 보내지 못했어요')).toBeTruthy()
 })
 
 it('a team-outside address links back to login', async () => {
@@ -254,9 +254,25 @@ it('keeps the resend button locked for 60 seconds, then sends to the signup addr
   expect((resendButton() as HTMLButtonElement).disabled).toBe(true)
 })
 
+it('unlocks the resend button by the clock even when a hidden tab ran its timer late', async () => {
+  vi.useFakeTimers()
+  auth.signUp.mockResolvedValue(ok)
+  renderPage()
+  fillAndSubmit()
+  await act(async () => {
+    await Promise.resolve()
+  })
+  expect((resendButton() as HTMLButtonElement).disabled).toBe(true)
+
+  // 가려진 탭에서 타이머가 한 번밖에 돌지 못했지만 시계로는 1분이 지났다.
+  vi.setSystemTime(Date.now() + 61_000)
+  tick(1)
+  expect((resendButton() as HTMLButtonElement).disabled).toBe(false)
+})
+
 it.each([
   [fail({ status: 429, code: 'over_email_send_rate_limit' }), '메일 발송이 몰렸어요. 잠시 후 다시 시도해 주세요.', true],
-  [fail({ status: 500 }), '서버에 연결하지 못했어요. 잠시 후 다시 시도해 주세요.', false],
+  [fail({ status: 500 }), '메일을 보내지 못했어요. 잠시 후 다시 시도해 주세요. 계속 안 되면 팀에 알려 주세요.', false],
 ])('a resend error shows its message (locked again: %s)', async (result, message, locked) => {
   vi.useFakeTimers()
   auth.signUp.mockResolvedValue(ok)
@@ -289,7 +305,7 @@ it('a thrown resend is the generic connection failure', async () => {
   await act(async () => {
     await Promise.resolve()
   })
-  expect(screen.getByText('서버에 연결하지 못했어요. 잠시 후 다시 시도해 주세요.')).toBeTruthy()
+  expect(screen.getByText('메일을 보내지 못했어요. 잠시 후 다시 시도해 주세요. 계속 안 되면 팀에 알려 주세요.')).toBeTruthy()
 })
 
 it('can go back to change the email address, keeping what was typed', async () => {
