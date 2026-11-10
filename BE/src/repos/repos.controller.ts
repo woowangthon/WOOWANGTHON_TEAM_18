@@ -20,7 +20,7 @@ export class ReposController {
 
   @Post('deploy-spec')
   @HttpCode(200)
-  deploySpec(@AccessToken() accessToken: string, @Body() body: { repoUrl?: unknown } | undefined) {
-    return this.repos.deploySpec(accessToken, body?.repoUrl)
+  deploySpec(@AccessToken() accessToken: string, @Body() body: { repoUrl?: unknown; commit?: unknown } | undefined) {
+    return this.repos.deploySpec(accessToken, body?.repoUrl, body?.commit)
   }
 }
