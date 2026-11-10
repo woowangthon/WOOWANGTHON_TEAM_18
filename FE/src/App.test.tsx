@@ -9,6 +9,7 @@ const auth = vi.hoisted(() => ({
   onAuthStateChange: vi.fn(),
   signInWithPassword: vi.fn(),
   signOut: vi.fn(),
+  getUserIdentities: vi.fn(),
 }))
 vi.mock('./lib/supabase.ts', () => ({ supabase: { auth } }))
 
@@ -18,6 +19,7 @@ let emit: (event: string, session: unknown) => void
 beforeEach(() => {
   auth.signInWithPassword.mockReset()
   auth.signOut.mockReset().mockResolvedValue({ error: null })
+  auth.getUserIdentities.mockReset().mockResolvedValue({ data: { identities: [] }, error: null })
   auth.onAuthStateChange.mockReset().mockImplementation((listener: Listener) => {
     emit = (event, next) => {
       act(() => {
