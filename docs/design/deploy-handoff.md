@@ -153,6 +153,13 @@
 | `build` | `run` \| `reuse` | `build_cache`에 같은 해시의 이미지가 있으면 `reuse`, 없으면 `run` |
 | `image` | 문자열 \| `null` | 이미지 digest 주소. `reuse`면 W4 시작 때, `run`이면 빌드가 끝난 뒤 채운다 |
 
+**계산 방법** (구현: `BE/src/deploys/deploy-condition.ts` · `deploy-condition.service.ts`, 규칙 코드이고 AI가 아니다)
+
+- tree SHA · blob SHA는 GitHub `git/trees/{commitSha}?recursive=1`의 항목(`type: tree` · `blob`)의 `sha`다. `context`가 `"."`이면 루트 tree SHA를 `git/commits/{commitSha}`의 `tree.sha`에서 읽는다(`git/trees/{commitSha}`의 최상위 `sha`는 루트 tree가 아니라 요청한 commit SHA다. 2026-11-10 실제 응답). 경로가 없거나 종류가 다르면(폴더 자리에 파일) `BUILD_SOURCE_NOT_FOUND`로 멈춘다.
+- 해시 재료는 `{ build, contextTree, defaultDockerfile, dockerfileBlob }` 객체를 키 정렬한 JSON으로 만든 문자열의 sha256이다. `build`는 그 서비스의 `spec.build` 그대로, `defaultDockerfile`은 `build.framework`가 있을 때 `<framework>@<버전>`(버전은 코드의 `DEFAULT_DOCKERFILE_VERSIONS`. 기본 Dockerfile을 바꾸면 올린다), 없으면 `null`이다.
+- `build_cache`는 (프로젝트 `slug`, 서비스 `name`, `buildInputHash`) → `image`다. 그 줄이 있으면 `reuse`다.
+- DB 테이블은 `supabase/migrations/20261110120000_create_deploy_slots.sql`: `projects`(`live_slot`), `deploy_state`(프로젝트 + 슬롯), `build_cache`. 슬롯 값은 리소스 이름 · Pod 라벨과 같은 소문자 `a` · `b`다.
+
 이미지는 모든 프로젝트 · 서비스가 공개 패키지 하나 `ghcr.io/<봇 계정>/student-apps`를 쓴다. 태그는 `<slug>-<name>-<hex 앞 12자>`(`buildInputHash`에서 `sha256:`을 뗀 hex의 앞 12자. 태그에는 `:`을 쓸 수 없다)이고, manifest에는 태그가 아니라 digest(`@sha256:...`)를 넣는다. GHCR은 새 패키지를 비공개로 만들므로([ADR-003](../adr/003-registry-ghcr.md)), 프로젝트 · 서비스마다 패키지를 만들면 노드가 토큰 없이 받을 수 없다.
 
 **`spec.project`**

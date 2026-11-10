@@ -223,6 +223,45 @@ export class ReposService {
     }
   }
 
+  /**
+   * 빌드 입력 해시의 재료: 확인을 마친 commit에서 폴더들의 git tree SHA와 파일들의 git blob SHA. 경로는 레포 루트 기준이고 `.`은 루트 폴더다.
+   * 없는 경로(또는 목록이 잘려 찾지 못한 경로)는 그 경로를 담아 422 BUILD_SOURCE_NOT_FOUND다. 설계는 docs/design/deploy-handoff.md.
+   */
+  async sourceShas(ref: RepoRef, commit: string, paths: { trees: string[]; blobs: string[] }): Promise<Map<string, string>> {
+    const tree = await this.fetchTree(ref, commit)
+    const shas = new Map<string, string>()
+    const find = (path: string, type: 'tree' | 'blob') => {
+      const sha = tree.tree.find((e) => e.path === path && e.type === type)?.sha
+      if (typeof sha !== 'string') {
+        throw new UnprocessableEntityException({
+          code: 'BUILD_SOURCE_NOT_FOUND',
+          message: tree.truncated ? `${path} was not in the truncated file list of ${commit}` : `${path} is not a ${type === 'tree' ? 'folder' : 'file'} in ${commit}`,
+          path,
+        })
+      }
+      shas.set(path, sha)
+    }
+    for (const path of paths.trees) if (path !== '.') find(path, 'tree')
+    for (const path of paths.blobs) find(path, 'blob')
+    // git/trees/{commit}의 최상위 sha는 루트 tree가 아니라 요청한 commit SHA를 그대로 돌려준다(2026-11-10 실제 응답). 루트 tree는 commit 객체에서 읽는다.
+    if (paths.trees.includes('.')) shas.set('.', await this.fetchRootTree(ref, commit))
+    return shas
+  }
+
+  private async fetchRootTree({ owner, repo }: RepoRef, commit: string): Promise<string> {
+    const { status, ok, body } = await this.request(
+      `https://api.github.com/repos/${owner}/${repo}/git/commits/${commit}`,
+      GITHUB_HEADERS,
+      githubUnavailable,
+    )
+    const sha = (body as { tree?: { sha?: unknown } } | undefined)?.tree?.sha
+    if (!ok || typeof sha !== 'string' || !/^[0-9a-f]{40}$/.test(sha)) {
+      this.logger.error(`GitHub GET /repos/${owner}/${repo}/git/commits answered ${status}`)
+      throw githubUnavailable()
+    }
+    return sha
+  }
+
   // 외부 호출 하나. 5초 제한을 걸고, 오류 응답이어도 본문을 끝까지 읽어 연결이 풀로 돌아가게 한다.
   // 닿지 못하면(네트워크 · 시간 초과) 로그를 남기고 unavailable()을 던진다. 본문이 JSON이 아니면 body는 undefined이고, 원문은 text다.
   private async request(url: string, headers: Record<string, string>, unavailable: () => HttpException) {
@@ -256,6 +295,7 @@ interface GithubTreeEntry {
   path: string
   type: string
   size?: number
+  sha?: string
 }
 
 interface GithubTree {
