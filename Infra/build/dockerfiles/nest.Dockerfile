@@ -5,9 +5,11 @@
 # 버전을 올리지 않으면 바뀌기 전 Dockerfile로 만든 이미지를 빌드 캐시가 그대로 다시 쓴다.
 ARG NODE_VERSION=22
 FROM node:${NODE_VERSION}-bookworm-slim AS build
-ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0 COREPACK_HOME=/opt/corepack
+#install한 pnpm /opt/corepack에 저장
 # pnpm · yarn 명령이 그대로 돌게 corepack을 켠다(package.json의 packageManager 버전을 쓴다). Node 25부터는 corepack이 들어 있지 않아 받는다.
-RUN (command -v corepack >/dev/null || npm install -g corepack) && corepack enable
+RUN (command -v corepack >/dev/null || npm install -g corepack) && corepack enable && mkdir -p /opt/corepack
+##폴더없음 방지
 # buildEnv(BUILD_ENV_B64: K=V를 NUL로 이어 base64로 싼 것)를 env로 얹어 명령을 돌린다. 키가 정해져 있지 않아 ARG로 선언할 수 없다.
 COPY <<'EOF' /usr/local/lib/with-build-env.mjs
 import { spawnSync } from 'node:child_process'
@@ -31,9 +33,10 @@ RUN sh -c "$INSTALL_CMD"
 RUN node /usr/local/lib/with-build-env.mjs sh -c "$BUILD_CMD"
 
 FROM node:${NODE_VERSION}-bookworm-slim
-ENV NODE_ENV=production COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+ENV NODE_ENV=production COREPACK_ENABLE_DOWNLOAD_PROMPT=0 COREPACK_HOME=/opt/corepack
 RUN (command -v corepack >/dev/null || npm install -g corepack) && corepack enable
 COPY --from=build --chown=node:node /app /app
+COPY --from=build --chown=node:node /opt/corepack /opt/corepack
 ARG APP_DIR=.
 ARG START_CMD
 ENV START_CMD=${START_CMD}
