@@ -10,7 +10,7 @@
 
 - **What**: TBD — one sentence on the product. Full requirements: [`docs/SRS.md`](docs/SRS.md).
 - **Who**: Team 18 왕가네식구들 (`@woowangthon/18`), 2026 AI 우왕톤 — theme *"AI는 동료가 될 수 있을까?"*
-- **Stack**: React + TypeScript (FE), Nest.js (BE), FastAPI (AI server), AWS, Supabase (DB, Auth), Kafka on EC2 — see [ADR-001](docs/adr/001-stack-and-deployment.md). Architecture: [`docs/system-definition.md`](docs/system-definition.md). Module designs and the FE/BE/AI contract: [`docs/design/`](docs/design/README.md).
+- **Stack**: FE React + TypeScript on S3 + CloudFront, BE Nest.js and AI server FastAPI on EC2, Supabase (DB, Auth), AWS CodeBuild for builds, GHCR as the image registry, GoCD deploying to a k3s cluster on school PCs over Tailscale; Kafka is deferred and the external LLM vendor and model are undecided — see [ADR-001](docs/adr/001-stack-and-deployment.md). Architecture: [`docs/system-definition.md`](docs/system-definition.md). Module designs and the FE/BE/AI contract: [`docs/design/`](docs/design/README.md).
 - **Repo**: [`woowangthon/WOOWANGTHON_TEAM_18`](https://github.com/woowangthon/WOOWANGTHON_TEAM_18) (`upstream`, judged) — one monorepo. Code under `FE/` (Vite + React), `BE/` (Nest.js), `AI/` (FastAPI), `Infra/` (cluster), docs under `docs/`, task notes under `tasks/`.
 - **Notion devlog DB**: TBD — the URL the [`devlog`](.claude/skills/devlog/SKILL.md) skill writes to.
 
@@ -35,7 +35,7 @@ The four [Karpathy guidelines](https://github.com/multica-ai/andrej-karpathy-ski
 
 Checkable rules: [`docs/conventions.md`](docs/conventions.md).
 
-## 3. Doc routing (TBD)
+## 3. Doc routing
 
 | When you need | Read |
 | --- | --- |
@@ -46,6 +46,8 @@ Checkable rules: [`docs/conventions.md`](docs/conventions.md).
 | Module design, FE/BE/AI API contract | [`docs/design/`](docs/design/README.md) |
 | Why a technical choice was made | [`docs/adr/`](docs/adr/README.md) |
 | Code rules, markers, commits | [`docs/conventions.md`](docs/conventions.md) |
+| Commands, versions and pitfalls of `FE/` | [`FE/CLAUDE.md`](FE/CLAUDE.md) |
+| Commands, versions and pitfalls of `BE/` | [`BE/CLAUDE.md`](BE/CLAUDE.md) |
 | What is AI / mock / external / unverified | [`docs/ai-scope.md`](docs/ai-scope.md) |
 | Presentation and demo video | [`docs/pitch.md`](docs/pitch.md) |
 | Task notes | [`tasks/`](tasks/README.md) |
@@ -55,37 +57,13 @@ Link to docs with plain paths, never `@path` — an `@` import loads the whole f
 
 ## Commands
 
-FE (run in `FE/`, Node 22 (22.22+) or 24, [pnpm](https://pnpm.io) — the version is pinned in `FE/package.json` `packageManager`; `corepack enable` picks it up, but Node 25+ no longer bundles corepack, so run `npm i -g corepack` first there):
-
-| Task | Command |
-| --- | --- |
-| Install (CI-exact) | `pnpm install --frozen-lockfile` |
-| Dev server | `pnpm dev` |
-| Lint ([ESLint](https://eslint.org) — type-aware and a11y rules) | `pnpm lint` |
-| Typecheck | `pnpm typecheck` |
-| Test ([Vitest](https://vitest.dev)) | `pnpm test` |
-| Build | `pnpm build` |
-| Verify (lint → test → build, stops at the first failure; `build` runs `tsc -b`, so typecheck is included; run before every commit) | `pnpm verify` |
-| Container image (run from the repo root; local dev only, production is S3 + CloudFront) | `docker build -t fe FE` |
-
-BE (run in `BE/`, Node 22 (22.22.3+), 24 (24.15+) or 26+ — not 23 or 25; the range is `BE/package.json` `engines`; pnpm as for FE). Settings come from `BE/.env` (copy `BE/.env.example`); a bad value stops the server at boot:
-
-| Task | Command |
-| --- | --- |
-| Install (CI-exact) | `pnpm install --frozen-lockfile` |
-| Dev server (watch, port 3000, routes under `/api`) | `pnpm dev` |
-| Lint ([ESLint](https://eslint.org) — type-aware) | `pnpm lint` |
-| Typecheck | `pnpm typecheck` |
-| Test ([Vitest](https://vitest.dev) — unit `src/**/*.spec.ts` and e2e `test/*.e2e.spec.ts`) | `pnpm test` |
-| Build / run the build | `pnpm build` / `pnpm start` |
-| Verify (lint → test → build, stops at the first failure; `build` runs `tsc --noEmit` over the tests too, so typecheck is included; run before every commit) | `pnpm verify` |
-| Container image (run from the repo root; local dev only, production is EC2) | `docker build -t be BE` |
+Run `pnpm verify` in the folder you changed (`FE/` or `BE/`) before every commit. Commands, versions and stack pitfalls are in [`FE/CLAUDE.md`](FE/CLAUDE.md) and [`BE/CLAUDE.md`](BE/CLAUDE.md).
 
 AI and the mutation-test command: TBD — added with each stack.
 
 ## Pitfalls
 
-- **When the user asks to log out, call `useAuth().signOut()`, not `supabase.auth.signOut()`.** The provider's manual-logout flag is what keeps the next protected page from showing the "session expired" screen (`apiFetch` calls the Supabase one on purpose after a 401, because there the expired screen is wanted).
-- **Supabase's built-in mail server is tiny.** It sends only to team members, 2 mails per hour. Test signup and password reset with faked responses, and create demo or judge accounts in the dashboard (Add user + Auto Confirm User) instead of signing them up ([auth.md](docs/design/auth.md#가입과-비밀번호-재설정)).
+- **`pkill -f <word>` kills the agent's own shell.** The word is in the shell's own command line, so the shell dies (exit 144). Stop a process by port or pid, or use a `[n]est`-style pattern.
+- **Edit draw.io diagrams through the model embedded in the SVG.** Pull the `content` attribute out as a `.drawio`, change cells by id and re-export with `draw.io -x -f svg -e`; the CLI export rewrites the whole file, and a web save renames cell ids and can rename tabs. Scripted edits find cells by their whole text and assert how many matched.
 
-Add more lessons everyone should know as they come up ([CONTRIBUTING.md §1 step 8](CONTRIBUTING.md#1-how-we-work-sdd--task-workflow)).
+Add more lessons everyone should know as they come up ([CONTRIBUTING.md §1 step 8](CONTRIBUTING.md#1-how-we-work-sdd--task-workflow)); stack-specific ones go to [`FE/CLAUDE.md`](FE/CLAUDE.md) or [`BE/CLAUDE.md`](BE/CLAUDE.md).

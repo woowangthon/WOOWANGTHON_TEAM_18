@@ -90,4 +90,16 @@ Fill in once the stack is decided (AI, and the mutation tool for all):
 - Mutation tool, and its scope (changed files only, to keep it fast). Until one is chosen, say "mutation testing not run: no tool chosen" in the PR body.
 - What counts as an acceptable surviving mutant.
 
+Test hygiene (from the BE tasks):
+
+- A constant imported by the test cannot be tested with itself: `toHaveLength(MAX_ISSUES)` passes when `MAX_ISSUES` becomes 21. Assert the number in the contract (20) as a literal.
+- `toEqual` does not prove "returned as is"; use `toBe` when that is the promise.
+- Give a fake a fully valid row, so each guard (row shape, row count) is tested by itself; build fixtures in the shape the real service sends (folder entries without a trailing `/`).
+- Before deleting a test a reviewer calls redundant, run the mutants: the "duplicate" may be the only thing guarding a check.
+
+Mutants:
+
+- A surviving mutant that behaves the same as the original is dead code: delete the code (or the option) instead of adding a test. Keep the test that proves the attack fails.
+- Until a mutation tool is chosen (#67), hand-made mutants are allowed: the runner restores the file in a `finally`, never runs two jobs on the same source file, does not run while the tests are being edited, and says which tests can see each source file (unit and e2e), so a missing command is not read as a test gap.
+
 Test doubles and `MOCK(<id>)` markers (§1): a fake that lives only in test files (a stubbed `fetch`, keys generated in a test) never runs in the app and is not marked. A canned value in `src/` that the running app can return is a mock and needs the marker and an `ai-scope.md` row.
