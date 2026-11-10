@@ -1,6 +1,6 @@
 # 배포 워크플로우 — 설계
 
-- **상태**: 초안 (GoCD 파이프라인 · 플랫폼 서버의 앞 단계는 ADR-009 · 010으로 확정. 슬롯 A · B 방식은 합의 전이며, 합의되면 시스템 정의서 · ADR · ai-scope에 반영한다)
+- **상태**: 합의됨 (2026-11-10. GoCD 파이프라인 · 플랫폼 서버의 앞 단계는 ADR-009 · 010, 슬롯 A · B는 ADR-011, AI 에이전트의 경계는 ADR-012로 확정. 시스템 정의서 · ai-scope에 반영함)
 - **관련**: [시스템 정의서](../system-definition.md) §3 · §4.1 · [ADR-001](../adr/001-stack-and-deployment.md) (빌드 = CodeBuild) · [ADR-002](../adr/002-bot-account-for-fix-prs.md) (봇 계정 수정 PR) · [ADR-003](../adr/003-registry-ghcr.md) (GHCR) · [ADR-004](../adr/004-server-cluster-link-tailscale.md) (Tailscale) · [ADR-005](../adr/005-k3s-cluster-on-school-pcs.md) (k3s) · [ADR-009](../adr/009-deploy-runs-on-leader-gocd-agent.md) (GoCD 리더 실행기) · [ADR-010](../adr/010-repo-analysis-and-security-scan-in-platform-server.md) (레포 분석 · 보안 검사) · [배포 입력](deploy-handoff.md)
 
 ![배포 워크플로우](../architecture/deploy-workflow.drawio.svg)
