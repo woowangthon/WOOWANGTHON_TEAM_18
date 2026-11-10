@@ -188,9 +188,9 @@
 |---|---|---|
 | `kind` | `server` \| `static` | 서버 프로세스인지, 정적 파일인지 |
 | `port` | 정수 | 컨테이너가 듣는 포트 |
-| `health.type` | `http` \| `tcp` | 헬스체크 방식 |
+| `health.type` | `http` \| `tcp` | 헬스체크 방식. W5가 manifest의 `startupProbe` · `readinessProbe`로 옮긴다 (`http` → `httpGet`, `tcp` → `tcpSocket`). Pod Ready는 이 헬스체크를 통과했다는 뜻이 된다 |
 | `health.path` | 문자열 \| `null` | 헬스체크 경로. 컨테이너가 받는 경로 기준(`stripPrefix` 뒤). `tcp`면 `null` |
-| `health.startupTimeoutSeconds` | 정수 | 이 시간 안에 헬스체크를 처음 통과해야 한다 |
+| `health.startupTimeoutSeconds` | 정수 (5~300) | 이 시간 안에 헬스체크를 처음 통과해야 한다. `startupProbe`의 `periodSeconds: 5`, `failureThreshold: ceil(값 / 5)`가 된다 |
 | `env` | 객체 (문자열 → 문자열) | 비밀이 아닌 실행 시점 env |
 | `secretKeys` | 문자열 배열 | 비밀 env의 key 이름 |
 | `links` | `{ env, service }` 배열 | 다른 서비스 주소를 env `env`로 넣는다. 주소는 W5가 만든다 |
@@ -215,6 +215,7 @@ W4는 배포 입력을 받으면 아래 규칙으로 검사한다. 하나라도 
 | `links[].service` | `spec.services`에 있는 `name` |
 | `ingressPath` | 서비스끼리 겹치지 않음 |
 | `health.type: http` | `health.path` 필수 |
+| `health.startupTimeoutSeconds` | 5 이상 300 이하 |
 | `resources` 합계 | 모든 서비스의 요청 합 × 2 ≤ 프로젝트 요청 상한(CPU 4 · 메모리 16Gi), 상한 합 × 2 ≤ 프로젝트 상한(CPU 8 · 메모리 32Gi). × 2는 확인 중 두 슬롯이 같이 뜨기 때문이다. 숫자는 [클러스터 설계](cluster.md) §6의 ResourceQuota 값을 따른다 |
 | `deploy_condition.services` (W3에서 받을 때) | 검사하지 않음 (W4가 덮어쓴다) |
 | `deploy_condition.services` (W4가 채운 뒤) | 키 집합이 `spec.services[].name`과 같음. `build: reuse`면 `image` 필수, `build: run`이면 빌드 전 `image`는 `null` |

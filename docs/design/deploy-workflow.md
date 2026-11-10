@@ -63,7 +63,7 @@ W0 접수 · 사전 검사 → W1 분석 → W2 배포 설정 → W3 비밀값 �
 | **W3 비밀값 받기** | 플랫폼 서버 | 빠진 필수 env 값을 사용자에게 바로 요청. 받은 값은 **플랫폼 서버가 Tailscale로 k3s API에 접속해 Secret으로 만든다.** GoCD를 거치지 않으므로 실행 기록에 남지 않는다. DB에는 key 이름과 상태만 저장 | 응답이 없으면 "사용자 조치 필요"로 마감 |
 | **W4 빌드** | AWS 실행기 → CodeBuild | 배포 입력으로 서비스별 CodeBuild를 병렬 호출한다. 학생 Dockerfile(`build.dockerfile`) 또는 배포 입력 값(Dockerfile이 없을 때, 빌드 값 사용)으로 빌드 → 이미지 검사 → GHCR에 push. 빌드 입력 해시가 같으면 건너뜀 | 빌드 실패 → **문제 티켓** |
 | **W5 배포** | 리더 실행기 | Prepare: 배포 입력을 받고 필수 Secret key 확인, live 슬롯 보호 검사, 대상 슬롯 비우기(4절). Render: 대상 슬롯 manifest 생성(3절). Apply: AI → BE → FE 순서로 대상 슬롯에 적용 | 배포 실패 → live 슬롯은 그대로 → **문제 티켓** |
-| **W6 동작 확인** | 리더 실행기 | 대상 슬롯의 Pod Ready와 Service Endpoints를 확인(BE → AI 같은 내부 연결 포함)한다. test Ingress의 대상을 대상 슬롯으로 적용하고, Traefik에 Host `<slug>.test.internal`로 화면(`/`) · JS·CSS · BE 헬스체크 경로(`/api/...`)를 요청해 모두 성공해야 통과다 | 실패 → open Ingress를 바꾸지 않음 (live 슬롯은 그대로) → **문제 티켓** |
+| **W6 동작 확인** | 리더 실행기 | 대상 슬롯의 Pod Ready(readinessProbe 통과)와 Service Endpoints를 확인(BE → AI 같은 내부 연결 포함)한다. test Ingress의 대상을 대상 슬롯으로 적용하고, Traefik에 Host `<slug>.test.internal`로 화면(`/`) · JS·CSS · BE 헬스체크 경로(`/api/...`)를 요청해 모두 성공해야 통과다 | 실패 → open Ingress를 바꾸지 않음 (live 슬롯은 그대로) → **문제 티켓** |
 | **전환** | 리더 실행기 | open Ingress의 대상을 대상 슬롯의 Service로 바꿔 적용. 첫 배포면 open Ingress를 만든다 | - |
 | **W7 완료 · 보고** | 플랫폼 서버 | DB의 `live_slot`을 대상 슬롯으로 바꾸고 이전 live 슬롯의 Deployment를 0개로 줄임, 사용자에게 주소 · 상태 · 경고 표시, 프로젝트 메모리에 기록, 운영 감시 시작 | - |
 | (운영 중) | 플랫폼 서버 | 재시작 반복 · 메모리 초과를 감시 | 재시작 1회 → **장애 대응 job**의 문제 티켓 |
@@ -122,6 +122,23 @@ W0 접수 · 사전 검사 → W1 분석 → W2 배포 설정 → W3 비밀값 �
 - `<slug>.test.internal`은 공개 도메인이 아니므로 Cloudflare Tunnel이 넘기지 않는다. 밖에서는 닿지 않는다.
 - 리더 실행기는 클러스터 안에서 Traefik Service로 요청한다. Traefik → 학생 Pod 경로는 네임스페이스 정책이 이미 허용한다.
 - 전환 뒤 공개 주소 확인과 자동 되돌리기는 하지 않는다 (MVP).
+
+**헬스체크**
+
+- Render는 서비스마다 spec의 `runtime.health`를 `startupProbe`와 `readinessProbe`로 넣는다. readinessProbe가 없으면 쿠버네티스는 컨테이너 프로세스가 뜨는 순간 Ready로 보므로, 포트를 열지 않았거나 곧 죽을 앱도 Ready가 된다.
+  - `startupProbe`: `periodSeconds: 5`, `failureThreshold: ceil(startupTimeoutSeconds / 5)`
+  - `readinessProbe`: `periodSeconds: 5`, `failureThreshold: 3`
+  - `http` → `httpGet`(경로 `health.path`, 포트 `port`), `tcp` → `tcpSocket`(포트 `port`)
+- `ingressPath`가 `null`인 서비스(보통 AI)는 Traefik으로 요청할 수 없어 Pod Ready가 유일한 확인이다.
+
+**제한 시간 (초기값)**
+
+| 대상 | 제한 | 넘으면 |
+|---|---|---|
+| CodeBuild 빌드 하나 | 15분 (CodeBuild 프로젝트 `timeoutInMinutes`) | 빌드 실패 → 문제 티켓 |
+| Apply 뒤 Pod Ready 대기 | 서비스마다 `startupTimeoutSeconds` + 120초(이미지 pull 몫), 최대 7분 (`kubectl rollout status --timeout`) | 배포 실패 → 문제 티켓. Pod 상태 이유(`ImagePullBackOff`, ResourceQuota 초과 `FailedCreate`, `CrashLoopBackOff`, `Pending`)와 이벤트를 티켓에 넣는다 |
+| W6 Traefik 요청 하나 | 10초, 5초 간격 3번까지 | 확인 실패 → 문제 티켓 |
+| 파이프라인 전체 | 30분 (GoCD job 제한 시간) | 파이프라인 실패 → 문제 티켓 |
 
 **흐름**
 
