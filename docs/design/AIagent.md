@@ -54,7 +54,7 @@ AI 서버 (에이전트) → 플랫폼 서버 MCP 게이트웨이 → GoCD 서�
                                               → 봇 계정 GitHub (fork 커밋, PR)
 ```
 
-- 에이전트(AI 서버)에는 클러스터 · GoCD · 봇 계정 자격 증명이 없다. 도구는 모두 게이트웨이가 실행한다([ADR-012](../adr/012-agent-acts-through-platform-gateway.md)).
+- 에이전트(AI 서버)에는 클러스터 · GoCD · 봇 계정 자격 증명이 없다. 도구는 모두 게이트웨이가 실행한다([ADR-012](../adr/012-agent-acts-through-platform-gateway.md)). 예외는 AI 서버 자신의 장기 메모리를 읽는 `read_memory` 하나다(클러스터 · GitHub에 닿지 않는다).
 - 게이트웨이는 GoCD 파이프라인을 환경 변수 옵션으로 실행한다: 대상 슬롯, 시작 스테이지, `DRY_RUN_ONLY`, `SKIP_SWITCH=true`, 소스 커밋(봇 fork). 환경 변수에 비밀값은 넣지 않는다.
 - 게이트웨이는 모든 실행 도구에서 `specPatch` 경로 검사와 live 슬롯 보호 검사를 한다.
 - 티켓 접수 · 종료 알림 API, 게이트웨이 접속 · 토큰(티켓마다 하나), 도구마다의 인자 · 결과 모양과 거절 코드는 [API 계약](api.md) "AI 에이전트"에 있다.
@@ -92,7 +92,7 @@ buildspec · 서비스 역할(IAM) · 환경 변수 override는 받지 않는다
 | `read_pod_logs` | 대상 슬롯 Pod 로그 | 로그 줄. `previous: true`면 직전 컨테이너 |
 | `read_build_logs` | CodeBuild 로그의 지정 구간 | 로그 줄 |
 | `read_repo` | 티켓의 `commitSha` 시점 파일 · 폴더 목록 | 파일 내용 |
-| `read_memory` | 장기 메모리 case 검색 | case · playbook |
+| `read_memory` | 장기 메모리 case 검색. **AI 서버 안의 도구다(게이트웨이를 거치지 않음)**. case와 통계를 AI 서버가 갖기 때문이다(§8) | case · playbook |
 
 **대상 슬롯 운영**
 
@@ -159,7 +159,7 @@ buildspec · 서비스 역할(IAM) · 환경 변수 override는 받지 않는다
   "errorMessage": "deployment \"be-b\" exceeded its progress deadline",
   "raw": {
     "codebuild": null,
-    "k8s": { "pod": {}, "events": [] }
+    "k8s": { "pod": {}, "events": [], "status": null }
   },
   "logs": { "from": "2026-11-10T13:02:00Z", "to": "2026-11-10T13:12:00Z", "lines": [] },
   "previous": { "ticketId": "t_0012", "status": "needs_user", "summary": "DATABASE_URL 재입력 요청" }
@@ -171,11 +171,14 @@ buildspec · 서비스 역할(IAM) · 환경 변수 override는 받지 않는다
 | `stage` | `build` · `prepare` · `render` · `apply` |
 | `service` | `spec.services[].name`. 서비스와 무관하면 `null` |
 | `targetSlot` | `a` · `b` |
-| `raw.codebuild` | `BatchGetBuilds`의 `builds[0]` 원본. Build가 아니면 `null` |
-| `raw.k8s.pod` | 실패한 Pod 하나의 원본. `metadata.managedFields`와 적용 기록 annotation은 뺀다 |
-| `raw.k8s.events` | `involvedObject`가 대상 슬롯 리소스인 이벤트 원본 |
+| `raw` | stage에 따라 두 모양만 받는다. `build`: `{ "codebuild": <원본>, "k8s": null }`. 그 밖: `{ "codebuild": null, "k8s": { "pod", "events", "status" } }` |
+| `raw.codebuild` | `BatchGetBuilds`의 `builds[0]` 원본. `build`가 아니면 `null` |
+| `raw.k8s.pod` | 실패한 Pod 하나의 원본. 없으면 `null`. `metadata.managedFields`와 적용 기록 annotation은 뺀다 |
+| `raw.k8s.events` | `involvedObject`가 대상 슬롯 리소스인 이벤트 원본 (없으면 `[]`) |
+| `raw.k8s.status` | `render`일 때 `kubectl apply --dry-run=server`가 돌려준 k3s Status 원본(필수), 그 밖에는 `null` |
+| `errorMessage` | 사람이 읽는 오류 한 줄. `render`면 Status의 `message`를 그대로 넣는다 |
 | `logs` | 오류 시각 10분 전부터, 최대 200줄. 재시작한 Pod는 직전 컨테이너 로그 |
-| `previous` | 직전 티켓. 없으면 `null` |
+| `previous` | 직전 티켓. 없으면 `null`. `status`는 `verified` · `pr_opened` · `needs_user` · `gave_up`(그 티켓의 해결 결과) 또는 `stopped`(결과 없이 끝남) |
 
 모든 칸은 보내기 전에 외부 전송 필터로 비밀값처럼 보이는 문자열을 가린다.
 
@@ -299,11 +302,10 @@ buildspec · 서비스 역할(IAM) · 환경 변수 override는 받지 않는다
   "stage": "apply",
   "category": "spec",
   "title": "헬스체크 실패 (포트 · 경로 · 시작 시간)",
-  "match": {
-    "path": "raw.k8s.events[*].reason",
-    "equals": "Unhealthy",
-    "messageRegex": "(Readiness|Startup) probe failed"
-  },
+  "match": { "all": [
+    { "path": "raw.k8s.events[*].reason", "equals": "Unhealthy" },
+    { "path": "raw.k8s.events[*].message", "regex": "(Readiness|Startup|Liveness) probe failed" }
+  ] },
   "playbook": [
     { "tool": "read_pod_logs", "args": { "lines": 100 } },
     { "tool": "run_render", "when": "로그의 listen 포트가 runtime.port와 다름", "args": { "specPatch": [{ "op": "replace", "path": "/spec/services/{i}/runtime/port", "value": "{listenPort}" }] } },
@@ -315,6 +317,11 @@ buildspec · 서비스 역할(IAM) · 환경 변수 override는 받지 않는다
 ```
 
 - `match`는 티켓 원본의 JSON 경로로 쓴다. 중간 스키마가 없어서 원본 필드 이름만 따라가면 된다.
+  - 조건 하나는 `{ "path", 시험 하나 }`이고 시험은 `equals` · `notEquals` · `regex` 중 하나다. 경로가 가리키는 값 하나라도 맞으면 참이다(`[*]`는 배열 전체, `[0]`은 한 칸, 없는 칸은 거짓). `regex`는 문자열 값에만 댄다.
+  - 조건은 `{ "all": [...] }` · `{ "any": [...] }`로 묶는다. `all` 안의 조건은 서로 다른 원소에서 맞아도 된다(같은 이벤트인지 보지 않는다).
+  - 코드 분류는 티켓의 `stage`와 같은 case만 파일 순서대로 대조해 처음 맞는 것을 고른다. 그래서 좁은 case를 넓은 case 앞에 둔다(`A3` OOMKilled는 `A2` CrashLoopBackOff 앞).
+  - 초기 case 데이터는 [`AI/ai_server/agent/cases.json`](../../AI/ai_server/agent/cases.json)이다. `playbook`의 `when`과 `{i}` 같은 자리 표시는 에이전트에게 주는 설명이고 코드가 판정하지 않는다.
+  - `stats`(`hits` · `solved`)는 AI 서버 메모리에만 있어 재시작하면 0부터다.
 - planning으로 해결한 새 case는 바로 넣지 않는다. 사람이 확인한 뒤 넣는다.
 
 **초기 case** (개인 · 소규모 팀의 Node 웹 프로젝트 기준 추정. 실패 주입 시험으로 고친다)
@@ -352,5 +359,6 @@ PydanticAI에서 두 모델을 OpenAI 호환 provider로 붙이고, 추론 모�
 
 - 학생 DB 자체의 문제(테이블 없음, migration 안 함)는 에이전트가 학생 DB에 닿지 못해 고칠 수 없다. `needs_user`로 넘긴다.
 - 초기 case 목록과 신호는 추정이다. 실패 주입 시험 전이다.
+- `render` case(`R1` ~ `R3`)는 `raw.k8s.status`(코드 · `message` · `details.causes`)로 대조한다. `prepare` case(`P1` ~ `P3`)는 Status가 없어 `errorMessage` 문장으로 대조하므로, 플랫폼 서버가 쓰는 실제 문장으로 정규식을 맞춰야 한다.
 - CodeBuild API의 오류 이름 · phase 값은 AWS 문서와 대조하지 않았다.
 - 로컬 8B 모델의 분류 · 도구 호출 품질은 검증하지 않았다.

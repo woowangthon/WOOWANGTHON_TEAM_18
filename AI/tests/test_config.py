@@ -10,7 +10,7 @@ TOKEN = "s3cret-" + "x" * 25  # 32자
 @pytest.fixture(autouse=True)
 def base_env(monkeypatch: pytest.MonkeyPatch) -> None:
     # 개발자의 실제 env가 섞이지 않게 비우고, 필수값만 채운다. 각 테스트는 보려는 값만 덮어쓴다.
-    for name in ("HOST", "PORT", "AGENT_API_TOKEN", "GATEWAY_URL"):
+    for name in ("HOST", "PORT", "AGENT_API_TOKEN", "GATEWAY_URL", "AGENT_MAX_RUNS"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("AGENT_API_TOKEN", TOKEN)
     monkeypatch.setenv("GATEWAY_URL", "http://platform:4000/mcp")
@@ -22,6 +22,15 @@ def test_defaults_and_required_values() -> None:
     assert s.port == 8000
     assert s.agent_api_token.get_secret_value() == TOKEN
     assert str(s.gateway_url) == "http://platform:4000/mcp"
+    assert s.agent_max_runs == 2
+
+
+def test_agent_max_runs(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AGENT_MAX_RUNS", "1")
+    assert load_settings(env_file=None).agent_max_runs == 1
+    monkeypatch.setenv("AGENT_MAX_RUNS", "0")
+    with pytest.raises(ConfigError, match="AGENT_MAX_RUNS"):
+        load_settings(env_file=None)
 
 
 def test_empty_values_fall_back_to_defaults(monkeypatch: pytest.MonkeyPatch) -> None:

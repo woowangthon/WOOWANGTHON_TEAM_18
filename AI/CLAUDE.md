@@ -23,3 +23,6 @@ AI server (run in `AI/`, Python 3.12 — pinned in `AI/.python-version` and `req
 - **Never let pydantic's `ValidationError` text reach a log for settings.** Its message repeats the input value, which prints `AGENT_API_TOKEN`. `load_settings` rebuilds the message from `loc` and `msg` only; keep it that way when adding a secret setting.
 - **Tests build settings with `_env_file=None`.** Otherwise a developer's `AI/.env` leaks into the test run.
 - **Starlette's `TestClient` wants `httpx2`, not `httpx`.** With `httpx` every run prints a deprecation warning.
+- **`to_camel` turns `k8s` into `k8S`.** Wire models get camelCase aliases from the generator; a name with a digit needs an explicit `Field(alias=...)`. Parsing still passed (by name), only the dump was wrong — assert dumped keys in tests.
+- **Run hand-made mutants with `PYTHONDONTWRITEBYTECODE=1`.** A mutant the same size as the original, restored within the same second, leaves a `.pyc` that Python keeps using, so later runs test the mutant. Clear `__pycache__` before and after.
+- **Use `with TestClient(app) as c` when a test needs background tasks.** Without the block each request runs on a fresh event loop and a task started by one request dies before the next one.

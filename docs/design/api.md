@@ -361,17 +361,21 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
 
 ```json
 {
-  "ticket": { "ticketId": "t_0013", "commitSha": "…", "stage": "apply", "service": "be", "targetSlot": "b", "deployInput": {}, "errorMessage": "…", "raw": { "codebuild": null, "k8s": { "pod": {}, "events": [] } }, "logs": { "from": "…", "to": "…", "lines": [] }, "previous": null },
+  "ticket": { "ticketId": "t_0013", "commitSha": "…", "stage": "apply", "service": "be", "targetSlot": "b", "deployInput": {}, "errorMessage": "…", "raw": { "codebuild": null, "k8s": { "pod": {}, "events": [], "status": null } }, "logs": { "from": "…", "to": "…", "lines": [] }, "previous": null },
   "gateway": { "token": "gw_…", "expiresAt": "2026-11-10T13:27:00Z" }
 }
 ```
 
 - `ticket`: [AI 에이전트 설계](AIagent.md) §5의 티켓 그대로. 플랫폼이 실패 알림을 받은 순간의 스냅샷이고, 외부 전송 필터를 거친 값이다.
+- `ticket.raw`: stage에 따라 두 모양만 받는다. `build`면 `{ "codebuild": <BatchGetBuilds builds[0] 원본>, "k8s": null }`, 그 밖의 stage면 `{ "codebuild": null, "k8s": { "pod": <Pod 원본> | null, "events": [<Event 원본>], "status": <k3s Status 원본> | null } }`. `status`는 `render`일 때 dry-run이 돌려준 Status(필수)이고 그 밖에는 `null`이다. `render`면 `errorMessage`에 Status의 `message`를 그대로 넣는다.
+- `ticket.previous.status`: `verified` · `pr_opened` · `needs_user` · `gave_up`(그 티켓의 해결 결과) · `stopped`(결과 없이 끝남) 중 하나.
 - `gateway.token`: 이 티켓에만 쓰는 게이트웨이 토큰.
 
 응답 `202`: `{ "ticketId": "t_0013" }`. 에이전트 실행은 응답 뒤에 시작한다(플랫폼은 끝날 때까지 기다리지 않는다). 같은 `ticketId`를 다시 보내면 새로 시작하지 않고 같은 `202`를 준다(재전송용).
 
-오류: `401 AUTH_REQUIRED`(토큰 없음 · 틀림), `400 INVALID_TICKET`(모양이 §5와 다름. `fields`는 `POST /api/deploys`의 `INVALID_SPEC`과 같은 모양), `503 AGENT_BUSY`(동시에 돌 수 있는 에이전트 수를 넘음. 플랫폼은 잠시 뒤 다시 보낸다).
+오류: `401 AUTH_REQUIRED`(토큰 없음 · 틀림), `400 BAD_REQUEST`(본문이 JSON 객체가 아님), `400 INVALID_TICKET`(모양이 §5와 다름), `503 AGENT_BUSY`(동시에 도는 에이전트 수가 AI 서버 env `AGENT_MAX_RUNS`(기본 2)에 닿음. 플랫폼은 잠시 뒤 다시 보낸다. 이미 받은 `ticketId`의 재전송은 바빠도 `202`).
+
+`INVALID_TICKET`의 `fields`는 `POST /api/deploys`의 `INVALID_SPEC`과 같은 모양(칸마다 `code` 하나, 최대 20칸)이고, `path`는 **요청 본문 기준**이다: `ticket.stage`, `ticket.raw.k8s.events[0]`, `gateway.expiresAt`. stage와 `raw`가 맞지 않으면 고칠 칸을 `REQUIRED` · `MUST_BE_NULL`로 알려 준다(예: stage `build`인데 `raw.k8s`가 있으면 `ticket.raw.k8s` `MUST_BE_NULL`).
 
 ### `POST /agent/tickets/{ticketId}/close` — 종료 알림 (AI 서버)
 
@@ -379,12 +383,12 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
 
 응답 `204`. 실행 중이면 멈추고, `success`면 그 티켓에 쓴 case의 `stats.solved`를 올린다. 모르는 `ticketId`도 `204`다(이미 끝난 티켓의 재전송).
 
-오류: `401 AUTH_REQUIRED`, `400 INVALID_CLOSE`.
+오류: `401 AUTH_REQUIRED`, `400 BAD_REQUEST`(본문이 JSON 객체가 아님), `400 INVALID_CLOSE`(모양이 §7과 다름. `fields`는 위와 같은 모양이고 `path`는 본문 기준. 본문 `ticketId`가 URL의 `ticketId`와 다르면 `fields: [{ "path": "ticketId", "code": "MISMATCH" }]`).
 
 ### MCP 게이트웨이 — 도구 (플랫폼 서버)
 
 - 전송: MCP Streamable HTTP, 플랫폼 서버의 내부 포트(`GATEWAY_PORT`, 공개 포트와 다르다) `POST /mcp`.
-- 도구 목록 · 하는 일 · 티켓당 횟수는 [AI 에이전트 설계](AIagent.md) §3이다. 여기는 인자와 결과의 모양만 고정한다.
+- 도구 목록 · 하는 일 · 티켓당 횟수는 [AI 에이전트 설계](AIagent.md) §3이다. 여기는 인자와 결과의 모양만 고정한다. `read_memory`는 AI 서버 안의 도구라 게이트웨이에 없다(case와 통계를 AI 서버가 갖는다).
 - 결과는 MCP 도구 결과의 `structuredContent`에 아래 JSON으로 담는다. 실행이 실패해도(빌드 실패, Ready 안 됨) 도구 호출은 성공이고 `ok: false`다. 게이트웨이가 거절한 호출만 `isError: true`이고 `structuredContent`는 `{ "code", "message" }`다.
 - `run_*` · `wait_target_ready`는 파이프라인이 끝날 때까지 기다렸다가 답한다(최대 30분). AI 서버의 MCP 클라이언트는 호출 제한 시간을 35분으로 둔다.
 - `specPatch`는 JSON Patch(RFC 6902) 배열이고 경로 규칙은 §6과 같다. 그 실행에만 적용한다.
@@ -408,7 +412,6 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
 | `read_pod_logs` | `service`, `lines?` (1~200, 기본 100), `previous?` (기본 `false`) | `{ lines: string[] }` |
 | `read_build_logs` | `service`, `fromLine?` (기본 마지막 200줄), `lines?` (1~200) | `{ fromLine, lines: string[] }` |
 | `read_repo` | `path` (레포 안 상대 경로, `.`은 루트), `source?` (없으면 티켓의 `commitSha`) | 폴더: `{ type: "dir", entries: [{ name, type: "file" \| "dir", size }] }`, 파일: `{ type: "file", content, truncated }` (200KB 넘으면 자름) |
-| `read_memory` | `stage?`, `caseId?` | `{ cases: [<case, §8 모양>] }` |
 
 **대상 슬롯 운영**
 
