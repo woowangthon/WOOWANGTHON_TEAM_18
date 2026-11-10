@@ -93,6 +93,7 @@ def test_duplicate_case_ids_are_rejected(tmp_path: Path) -> None:
 def _build(*lines: str) -> dict[str, Any]:
     return {
         "stage": "build",
+        "raw": {"codebuild": {"buildStatus": "FAILED"}, "k8s": None},
         "logs": {
             "from": "2026-11-10T13:02:00Z",
             "to": "2026-11-10T13:12:00Z",
@@ -105,13 +106,31 @@ def _pod(**container: Any) -> dict[str, Any]:
     return {
         "raw": {
             "codebuild": None,
-            "k8s": {"pod": {"status": {"containerStatuses": [container]}}, "events": []},
+            "k8s": {
+                "pod": {"status": {"containerStatuses": [container]}},
+                "events": [],
+                "status": None,
+            },
         }
     }
 
 
 def _events(*events: dict[str, str]) -> dict[str, Any]:
-    return {"raw": {"codebuild": None, "k8s": {"pod": {}, "events": list(events)}}}
+    return {"raw": {"codebuild": None, "k8s": {"pod": {}, "events": list(events), "status": None}}}
+
+
+def _render(code: int, message: str, causes: list[dict[str, str]]) -> dict[str, Any]:
+    """dry-run이 돌려준 k3s Status. 플랫폼은 Status message를 errorMessage에도 넣는다."""
+    status = {
+        "kind": "Status",
+        "status": "Failure",
+        "message": message,
+        "reason": "Invalid" if code == 422 else "Forbidden",
+        "details": {"causes": causes},
+        "code": code,
+    }
+    k8s = {"pod": None, "events": [], "status": status}
+    return {"stage": "render", "errorMessage": message, "raw": {"codebuild": None, "k8s": k8s}}
 
 
 # 각 case의 신호(§8 표)를 담은 티켓
@@ -124,18 +143,33 @@ SIGNALS: dict[str, dict[str, Any]] = {
     "P1": {"stage": "prepare", "errorMessage": "secret key DATABASE_URL missing"},
     "P2": {"stage": "prepare", "errorMessage": "resources total exceeds project quota"},
     "P3": {"stage": "prepare", "errorMessage": "ingressPath /api conflicts with service fe"},
-    "R1": {
-        "stage": "render",
-        "errorMessage": 'Deployment.apps "Web_App" is invalid: metadata.name: Invalid value: "Web_App": a DNS-1035 label must consist of lower case',  # noqa: E501 — 실제 오류 문장 그대로
-    },
-    "R2": {
-        "stage": "render",
-        "errorMessage": 'Deployment.apps "be-b" is invalid: spec.template.spec.containers[0].ports[0].containerPort: Invalid value: 70000',  # noqa: E501 — 실제 오류 문장 그대로
-    },
-    "R3": {
-        "stage": "render",
-        "errorMessage": 'pods "be-b" is forbidden: exceeded quota: proj-quota, requested: limits.memory=2Gi',  # noqa: E501 — 실제 오류 문장 그대로
-    },
+    "R1": _render(
+        422,
+        'Deployment.apps "Web_App" is invalid: metadata.name: Invalid value: "Web_App"',
+        [
+            {
+                "reason": "FieldValueInvalid",
+                "field": "metadata.name",
+                "message": 'Invalid value: "Web_App": a DNS-1035 label must consist of lower case',
+            }
+        ],
+    ),
+    "R2": _render(
+        422,
+        'Deployment.apps "be-b" is invalid: spec.template.spec.containers[0].ports[0].containerPort',
+        [
+            {
+                "reason": "FieldValueInvalid",
+                "field": "spec.template.spec.containers[0].ports[0].containerPort",
+                "message": "Invalid value: 70000: must be between 1 and 65535, inclusive",
+            }
+        ],
+    ),
+    "R3": _render(
+        403,
+        'pods "be-b" is forbidden: exceeded quota: proj-quota, requested: limits.memory=2Gi',
+        [],
+    ),
     "A1": _events(
         {
             "reason": "Unhealthy",
@@ -170,6 +204,20 @@ def test_classification_only_looks_at_cases_of_the_ticket_stage() -> None:
     memory = CaseMemory(load_cases())
     # B4의 신호지만 apply 단계 티켓이다.
     t = ticket(stage="apply", logs=_build("Cannot find module 'x'")["logs"])
+    assert memory.classify(Ticket.model_validate(t)) is None
+
+
+def test_render_cases_read_the_status_not_the_error_message() -> None:
+    memory = CaseMemory(load_cases())
+    # 문장은 R3과 같지만 Status 원본이 다르면(422, causes 없음) R3이 아니다.
+    t = ticket(**_render(422, "exceeded quota", []))
+    assert memory.classify(Ticket.model_validate(t)) is None
+
+
+def test_render_status_codes_matter() -> None:
+    memory = CaseMemory(load_cases())
+    r1 = SIGNALS["R1"]
+    t = ticket(**_render(403, r1["errorMessage"], r1["raw"]["k8s"]["status"]["details"]["causes"]))
     assert memory.classify(Ticket.model_validate(t)) is None
 
 

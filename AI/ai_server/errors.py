@@ -37,7 +37,14 @@ def field_path(loc: tuple[int | str, ...]) -> str:
 def invalid_fields(e: ValidationError) -> list[dict[str, str]]:
     """칸마다 코드 하나, 최대 20칸 (api.md `INVALID_SPEC`과 같은 모양)."""
     # pydantic은 칸마다 오류 하나를 낸다(`X | None` 칸도 하나로 접는다).
-    return [
-        {"path": field_path(err["loc"]), "code": _FIELD_CODES.get(err["type"], "INVALID_TYPE")}
-        for err in e.errors()[:MAX_FIELDS]
-    ]
+    fields: list[dict[str, str]] = []
+    for err in e.errors():
+        if err["type"] == "raw_shape":
+            # 칸 사이 규칙(티켓의 stage와 raw)은 모델 위치에서 나므로, 고칠 칸 경로를 붙인다.
+            base = field_path(err["loc"])
+            for path, code in err["ctx"]["fields"]:
+                fields.append({"path": f"{base}.{path}" if base else path, "code": code})
+        else:
+            code = _FIELD_CODES.get(err["type"], "INVALID_TYPE")
+            fields.append({"path": field_path(err["loc"]), "code": code})
+    return fields[:MAX_FIELDS]

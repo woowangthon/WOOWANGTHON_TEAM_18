@@ -6,6 +6,7 @@
 from typing import Annotated, Any, Literal, Self
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
+from pydantic_core import PydanticCustomError
 from pydantic.alias_generators import to_camel
 
 CommitSha = Annotated[str, Field(pattern=r"^[0-9a-f]{40}$")]
@@ -27,6 +28,8 @@ class Wire(BaseModel):
 class K8sRaw(Wire):
     pod: JsonObject | None
     events: list[JsonObject]
+    # stage render일 때 `kubectl apply --dry-run=server`의 Status 원본, 그 밖에는 null.
+    status: JsonObject | None
 
 
 class TicketRaw(Wire):
@@ -44,7 +47,8 @@ class TicketLogs(Wire):
 
 class PreviousTicket(Wire):
     ticket_id: NonEmpty
-    status: NonEmpty
+    # 해결 결과의 status, 또는 결과 없이 끝났으면 stopped.
+    status: Literal["verified", "pr_opened", "needs_user", "gave_up", "stopped"]
     summary: str
 
 
@@ -59,6 +63,34 @@ class Ticket(Wire):
     raw: TicketRaw
     logs: TicketLogs
     previous: PreviousTicket | None
+
+    @model_validator(mode="after")
+    def _raw_matches_stage(self) -> Self:
+        # build는 CodeBuild 원본만, 그 밖의 stage는 k3s 원본만 담는다. status는 render일 때만 있다.
+        problems: list[tuple[str, str]] = []
+        if self.stage == "build":
+            if self.raw.codebuild is None:
+                problems.append(("codebuild", "REQUIRED"))
+            if self.raw.k8s is not None:
+                problems.append(("k8s", "MUST_BE_NULL"))
+        else:
+            if self.raw.codebuild is not None:
+                problems.append(("codebuild", "MUST_BE_NULL"))
+            if self.raw.k8s is None:
+                problems.append(("k8s", "REQUIRED"))
+            elif self.stage == "render" and self.raw.k8s.status is None:
+                problems.append(("k8s.status", "REQUIRED"))
+            elif self.stage != "render" and self.raw.k8s.status is not None:
+                problems.append(("k8s.status", "MUST_BE_NULL"))
+        if problems:
+            # 칸 경로를 ctx로 넘겨 INVALID_TICKET fields가 칸마다 알려 주게 한다(errors.py).
+            fields = [("raw." + path, code) for path, code in problems]
+            raise PydanticCustomError(
+                "raw_shape",
+                "raw does not fit stage {stage}",
+                {"stage": self.stage, "fields": fields},
+            )
+        return self
 
 
 class GatewayGrant(Wire):

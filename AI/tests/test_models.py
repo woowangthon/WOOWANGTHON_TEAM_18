@@ -12,16 +12,17 @@ def test_ticket_sample_parses_and_dumps_back_in_camel_case() -> None:
     assert (t.ticket_id, t.stage, t.target_slot) == ("t_0013", "apply", "b")
     dumped = t.model_dump(mode="json", by_alias=True)
     assert dumped["logs"]["from"] == "2026-11-10T13:02:00Z"
-    assert dumped["raw"]["k8s"] == {"pod": {}, "events": []}
+    assert dumped["raw"]["k8s"] == {"pod": {}, "events": [], "status": None}
 
 
 def test_ticket_raw_is_kept_as_is() -> None:
     pod = {"status": {"containerStatuses": [{"state": {"waiting": {"reason": "X"}}}]}}
     t = Ticket.model_validate(
-        ticket(raw={"codebuild": {"any": [1]}, "k8s": {"pod": pod, "events": [{"a": 1}]}})
+        ticket(raw={"codebuild": None, "k8s": {"pod": pod, "events": [{"a": 1}], "status": None}})
     )
-    assert t.raw.codebuild == {"any": [1]}
     assert t.raw.k8s is not None and t.raw.k8s.pod == pod
+    b = Ticket.model_validate(ticket(stage="build", raw={"codebuild": {"any": [1]}, "k8s": None}))
+    assert b.raw.codebuild == {"any": [1]} and b.raw.k8s is None
 
 
 @pytest.mark.parametrize(
@@ -68,6 +69,8 @@ def test_every_ticket_key_is_required(key: str) -> None:
             }
         },
         {"previous": {"ticketId": "t_1", "status": "needs_user"}},
+        {"previous": {"ticketId": "t_1", "status": "running", "summary": ""}},
+        {"raw": {"codebuild": None, "k8s": {"pod": {}, "events": []}}},
     ],
 )
 def test_ticket_rejects(overrides: dict[str, Any]) -> None:
@@ -81,6 +84,51 @@ def test_ticket_accepts_null_service_and_previous_and_200_lines() -> None:
     t = Ticket.model_validate(ticket(service=None, logs=logs, previous=prev))
     assert t.service is None
     assert t.previous is not None and t.previous.summary == "DATABASE_URL 재입력 요청"
+
+
+@pytest.mark.parametrize(
+    "status", ["verified", "pr_opened", "needs_user", "gave_up", "stopped"]
+)
+def test_previous_status_values(status: str) -> None:
+    prev = {"ticketId": "t_0012", "status": status, "summary": ""}
+    assert Ticket.model_validate(ticket(previous=prev)).previous is not None
+
+
+K8S = {"pod": None, "events": [], "status": None}
+STATUS = {"kind": "Status", "code": 422}
+
+
+@pytest.mark.parametrize(
+    ("stage", "raw", "problems"),
+    [
+        ("build", {"codebuild": None, "k8s": None}, [("raw.codebuild", "REQUIRED")]),
+        ("build", {"codebuild": {}, "k8s": K8S}, [("raw.k8s", "MUST_BE_NULL")]),
+        ("apply", {"codebuild": {}, "k8s": K8S}, [("raw.codebuild", "MUST_BE_NULL")]),
+        ("prepare", {"codebuild": None, "k8s": None}, [("raw.k8s", "REQUIRED")]),
+        ("render", {"codebuild": None, "k8s": K8S}, [("raw.k8s.status", "REQUIRED")]),
+        ("apply", {"codebuild": None, "k8s": {**K8S, "status": STATUS}}, [("raw.k8s.status", "MUST_BE_NULL")]),
+        ("prepare", {"codebuild": {}, "k8s": None}, [("raw.codebuild", "MUST_BE_NULL"), ("raw.k8s", "REQUIRED")]),
+    ],
+)
+def test_raw_must_fit_the_stage(stage: str, raw: dict[str, Any], problems: list[tuple[str, str]]) -> None:
+    with pytest.raises(ValidationError) as e:
+        Ticket.model_validate(ticket(stage=stage, raw=raw))
+    [err] = e.value.errors()
+    assert err["type"] == "raw_shape"
+    assert err["ctx"]["fields"] == problems
+
+
+@pytest.mark.parametrize(
+    ("stage", "raw"),
+    [
+        ("build", {"codebuild": {}, "k8s": None}),
+        ("prepare", {"codebuild": None, "k8s": K8S}),
+        ("render", {"codebuild": None, "k8s": {**K8S, "status": STATUS}}),
+        ("apply", {"codebuild": None, "k8s": K8S}),
+    ],
+)
+def test_raw_shapes_that_fit(stage: str, raw: dict[str, Any]) -> None:
+    assert Ticket.model_validate(ticket(stage=stage, raw=raw)).stage == stage
 
 
 def test_ticket_request_needs_gateway_token() -> None:

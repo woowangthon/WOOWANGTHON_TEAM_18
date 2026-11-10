@@ -95,7 +95,10 @@
   {
     "caseId": "R3", "stage": "render", "category": "spec",
     "title": "쿼터 초과",
-    "match": { "path": "errorMessage", "regex": "exceeded quota" },
+    "match": { "all": [
+      { "path": "raw.k8s.status.code", "equals": 403 },
+      { "path": "raw.k8s.status.message", "regex": "exceeded quota" }
+    ] },
     "playbook": [
       { "tool": "run_render", "when": "resources를 쿼터 안으로 줄여서", "args": { "specPatch": [{ "op": "replace", "path": "/spec/services/{i}/runtime/resources", "value": "{resources}" }] } },
       { "tool": "run_deploy", "args": { "specPatch": "앞 단계와 같음" } },
@@ -105,7 +108,10 @@
   {
     "caseId": "R1", "stage": "render", "category": "spec",
     "title": "이름 규칙 위반",
-    "match": { "path": "errorMessage", "regex": "DNS-1035|DNS-1123|a lowercase RFC 1123" },
+    "match": { "all": [
+      { "path": "raw.k8s.status.code", "equals": 422 },
+      { "path": "raw.k8s.status.details.causes[*].message", "regex": "DNS-1035|DNS-1123|RFC 1123" }
+    ] },
     "playbook": [
       { "tool": "run_render", "when": "첫 배포 전이면 규칙에 맞는 name으로 (첫 배포 뒤면 needs_user)", "args": { "specPatch": [{ "op": "replace", "path": "/spec/services/{i}/name", "value": "{name}" }] } },
       { "tool": "run_deploy", "args": { "specPatch": "앞 단계와 같음" } },
@@ -116,8 +122,8 @@
     "caseId": "R2", "stage": "render", "category": "spec",
     "title": "포트 · probe 값 오류",
     "match": { "all": [
-      { "path": "errorMessage", "regex": "(?i)invalid" },
-      { "path": "errorMessage", "regex": "containerPort|Port|probe" }
+      { "path": "raw.k8s.status.code", "equals": 422 },
+      { "path": "raw.k8s.status.details.causes[*].field", "regex": "containerPort|ports\\[|[Pp]robe" }
     ] },
     "playbook": [
       { "tool": "read_repo", "args": { "path": "." } },

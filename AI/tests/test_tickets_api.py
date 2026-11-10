@@ -231,6 +231,17 @@ def test_invalid_ticket_reports_at_most_20_fields(client: TestClient) -> None:
     assert fields[0] == {"path": "ticket.logs.lines[0]", "code": "INVALID_TYPE"}
 
 
+def test_raw_that_does_not_fit_the_stage_names_the_fields(client: TestClient) -> None:
+    res = post_ticket(client, stage="build")  # 표본의 raw는 apply 모양이다
+    err = res.json()["error"]
+    assert (res.status_code, err["code"]) == (400, "INVALID_TICKET")
+    assert err["fields"] == [
+        {"path": "ticket.raw.codebuild", "code": "REQUIRED"},
+        {"path": "ticket.raw.k8s", "code": "MUST_BE_NULL"},
+    ]
+    assert err["message"] == "ticket has invalid fields (first: ticket.raw.codebuild)"
+
+
 def test_too_many_log_lines_is_out_of_range(client: TestClient) -> None:
     body = ticket_request()
     body["ticket"]["logs"]["lines"] = ["x"] * 201
@@ -240,7 +251,7 @@ def test_too_many_log_lines_is_out_of_range(client: TestClient) -> None:
 
 def test_null_where_an_object_is_required_is_reported_once(client: TestClient) -> None:
     body = ticket_request()
-    body["ticket"]["raw"]["k8s"] = {"pod": None, "events": None}
+    body["ticket"]["raw"]["k8s"] = {"pod": None, "events": None, "status": None}
     fields = post_ticket(client, body).json()["error"]["fields"]
     assert fields == [{"path": "ticket.raw.k8s.events", "code": "INVALID_TYPE"}]
 

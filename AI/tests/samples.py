@@ -15,7 +15,7 @@ def ticket(**overrides: Any) -> dict[str, Any]:
         "targetSlot": "b",
         "deployInput": {"commitSha": SHA, "deploy_condition": {}, "spec": {}},
         "errorMessage": 'deployment "be-b" exceeded its progress deadline',
-        "raw": {"codebuild": None, "k8s": {"pod": {}, "events": []}},
+        "raw": {"codebuild": None, "k8s": {"pod": {}, "events": [], "status": None}},
         "logs": {"from": "2026-11-10T13:02:00Z", "to": "2026-11-10T13:12:00Z", "lines": []},
         "previous": None,
     }
