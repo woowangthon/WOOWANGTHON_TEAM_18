@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     # 플랫폼 서버 MCP 게이트웨이 주소. 요청 본문으로 받지 않고 여기로만 고정한다
     # (받은 주소로 토큰을 보내지 않게, api.md "AI 에이전트").
     gateway_url: AnyHttpUrl
+    # 동시에 도는 에이전트 수. 넘으면 503 AGENT_BUSY(플랫폼이 잠시 뒤 다시 보낸다).
+    agent_max_runs: int = Field(default=2, ge=1)
 
 
 class ConfigError(Exception):
