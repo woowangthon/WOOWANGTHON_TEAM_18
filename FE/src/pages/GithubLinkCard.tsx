@@ -88,7 +88,11 @@ function GithubLinkCard() {
       // 성공하면 브라우저가 GitHub로 떠난다. 승인 뒤 이 화면으로 돌아온다.
       const { error } = await supabase.auth.linkIdentity({
         provider: 'github',
-        options: { redirectTo: `${window.location.origin}/profile` },
+        options: {
+          redirectTo: `${window.location.origin}/profile`,
+          // GitHub는 브라우저에 로그인된 계정으로 바로 승인해 버린다. 계정이 여러 개인 학생이 고르게 한다.
+          queryParams: { prompt: 'select_account' },
+        },
       })
       if (error) {
         setLinkCallFailure(failureOfLinkCall(error))

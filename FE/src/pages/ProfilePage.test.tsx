@@ -69,7 +69,7 @@ it('G4: still says linked when the identity has no user name', async () => {
   expect(screen.getByText(/GitHub 계정이 연결됐어요/)).toBeTruthy()
 })
 
-it('G2: the button calls linkIdentity for GitHub and returns to /profile', async () => {
+it('G2: the button calls linkIdentity for GitHub, asks GitHub to show the account picker and returns to /profile', async () => {
   auth.getUserIdentities.mockResolvedValue(emailOnly)
   auth.linkIdentity.mockReturnValue(new Promise(() => undefined))
   renderPage()
@@ -77,7 +77,10 @@ it('G2: the button calls linkIdentity for GitHub and returns to /profile', async
   fireEvent.click(linkButton())
   expect(auth.linkIdentity).toHaveBeenCalledWith({
     provider: 'github',
-    options: { redirectTo: `${window.location.origin}/profile` },
+    options: {
+      redirectTo: `${window.location.origin}/profile`,
+      queryParams: { prompt: 'select_account' },
+    },
   })
   const busy = await screen.findByRole('button', { name: 'GitHub로 이동하는 중…' })
   expect((busy as HTMLButtonElement).disabled).toBe(true)
