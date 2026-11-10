@@ -1,0 +1,18 @@
+# 모든 학생 빌드가 같이 쓰는 buildspec. 파이프라인(Infra/pipeline/src/build.ts)이 StartBuild의 buildspecOverride로 이 내용을 그대로 넘긴다.
+# 학생 레포의 buildspec은 쓰지 않는다. 빌드 명령을 학생이 바꾸면 push 토큰을 빼 갈 수 있다(docs/design/deploy-workflow.md §8).
+# 값은 모두 StartBuild의 environmentVariablesOverride(공개 값)로 온다. 목록은 build.sh 머리말.
+version: 0.2
+
+env:
+  # BatchGetBuilds의 exportedEnvironmentVariables로 파이프라인이 읽는다.
+  exported-variables:
+    - IMAGE_DIGEST
+
+phases:
+  build:
+    on-failure: ABORT
+    commands:
+      # 기본 Dockerfile과 빌드 스크립트는 플랫폼 레포의 정해진 commit에서 받는다(공개 레포라 자격 증명이 없다).
+      - git init -q /platform && git -C /platform fetch -q --depth 1 "https://github.com/${PLATFORM_REPO}.git" "${PLATFORM_COMMIT}" && git -C /platform checkout -q FETCH_HEAD
+      - bash /platform/Infra/build/build.sh
+      - export IMAGE_DIGEST="$(cat /tmp/image-digest)"

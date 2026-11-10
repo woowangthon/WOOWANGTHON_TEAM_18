@@ -143,6 +143,14 @@ W6은 배포 입력에 있는 서비스와 설정된 경로만 검사한다. 정
   - `http` → `httpGet`(경로 `health.path`, 포트 `port`), `tcp` → `tcpSocket`(포트 `port`)
 - `ingressPath`가 `null`인 서비스(보통 AI)는 Traefik으로 요청할 수 없어 Pod Ready가 유일한 확인이다.
 
+**빌드 (W4) 구현** (`Infra/pipeline/src/build.ts`, `Infra/build/`)
+
+- `run`인 서비스마다 CodeBuild `StartBuild`를 동시에 부르고(`reuse`는 부르지 않는다), 10초마다 `BatchGetBuilds`로 끝날 때까지 본다. 하나가 실패해도 나머지를 끝까지 기다려 모두 알린다.
+- 소스는 CodeBuild가 받지 않는다(`NO_SOURCE`). 모든 빌드가 같이 쓰는 `Infra/build/buildspec.yml`을 `buildspecOverride`로 넘기고, 그 buildspec이 학생 레포(commit)와 플랫폼 레포(정해진 commit, 기본 Dockerfile · `build.sh`)를 공개 git으로 받는다. 학생 레포의 buildspec은 쓰지 않는다.
+- `build.sh`: 메타데이터 주소(`169.254.0.0/16`) 차단 → `docker build`(학생 Dockerfile, 또는 `framework`의 기본 Dockerfile + 빌드 값) → **이미지 검사**(크기 2GiB 이하, root로 실행하면 경고만) → Secrets Manager에서 토큰을 꺼내 `docker login`(표준 입력) → push → `IMAGE_DIGEST`를 내보낸다. 토큰은 학생 코드(`docker build`)가 끝난 뒤에만 꺼낸다.
+- 기본 Dockerfile은 설치 · 빌드 명령을 서비스 폴더 `dir`(컨텍스트 기준)에서 돌리고, `outputDir`도 `dir` 기준으로 읽는다. `buildEnv`는 빌드 명령의 env로만 들어가고 실행 이미지에는 남지 않는다. 정적 서비스는 nginx(root가 아닌 사용자, 8080, 없는 경로는 `index.html`), 서버는 node 사용자로 `start`를 실행한다.
+- 결과(`BuildReport`)는 이미지를 채운 배포 입력과 실패 목록이다. 실패는 `platform`(CodeBuild API 오류, 20분 넘게 끝나지 않음, digest 없음: AI 에이전트를 부르지 않는다)과 `build`(`builds[0]` 원본, 실패 phase, 로그 마지막 200줄)로 나눈다. `build.sh`가 플랫폼 쪽 실패(소스 받기 · GHCR 로그인 · push)에 남기는 `PLATFORM_ERROR <코드>` 줄로 로그에서도 가른다.
+
 **제한 시간 (초기값)**
 
 | 대상 | 제한 | 넘으면 |
