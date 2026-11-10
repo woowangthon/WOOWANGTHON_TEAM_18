@@ -17,7 +17,7 @@ function DeployNewPage() {
   const [urlError, setUrlError] = useState<string | undefined>()
   const [failure, setFailure] = useState<Failure | null>(null)
   const [checking, setChecking] = useState(false)
-  // 통과한 레포. 입력을 고치면 지워서 이전 결과가 새 주소처럼 보이지 않게 한다.
+  // 통과한 레포. 입력을 고치면 결과와 오류를 지워서 이전 주소의 것이 새 주소처럼 보이지 않게 한다.
   const [checked, setChecked] = useState<{ repo: string; repoUrl: string } | null>(null)
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -62,6 +62,8 @@ function DeployNewPage() {
               onChange={(event) => {
                 setRepoUrl(event.target.value)
                 setChecked(null)
+                setFailure(null)
+                setUrlError(undefined)
               }}
               error={urlError}
               disabled={checking}

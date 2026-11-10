@@ -94,6 +94,22 @@ it('puts a malformed address error on the field', async () => {
   expect(urlInput().getAttribute('aria-invalid')).toBe('true')
 })
 
+it('clears the field error and the failure alert when the address is edited', async () => {
+  rejectWith(400, 'INVALID_REPO_URL')
+  renderPage()
+  submit('github.com/x')
+  await screen.findByText('올바른 GitHub 레포 주소가 아니에요. 예: https://github.com/소유자/레포')
+  fireEvent.change(urlInput(), { target: { value: 'github.com/xy' } })
+  expect(screen.queryByText(/올바른 GitHub 레포 주소가 아니에요/)).toBeNull()
+  expect(urlInput().getAttribute('aria-invalid')).not.toBe('true')
+
+  rejectWith(404, 'REPO_NOT_FOUND')
+  submit('https://github.com/student/missing')
+  await screen.findByText('레포를 찾을 수 없어요')
+  fireEvent.change(urlInput(), { target: { value: 'https://github.com/student/other' } })
+  expect(screen.queryByText('레포를 찾을 수 없어요')).toBeNull()
+})
+
 it('GITHUB_NOT_LINKED points to the profile page', async () => {
   rejectWith(403, 'GITHUB_NOT_LINKED')
   renderPage()
