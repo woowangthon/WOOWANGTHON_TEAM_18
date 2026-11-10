@@ -1,4 +1,4 @@
-// Tailnet access rules (build 09). Design: docs/design/cluster.md §8.
+// Tailnet access rules (build 09), in the admin console since 2026-11-10. Design: docs/design/cluster.md §8.
 // Pasted by the tailnet owner into the admin console (Access controls). Replace every <..._IP> with the
 // device's Tailscale address there only; the addresses are not kept in this repo.
 // This replaces the whole policy of the tailnet. Anything not accepted below is denied, so the school

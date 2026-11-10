@@ -52,7 +52,7 @@ Priorities: the demo path first. Deferred (후순위): moving cloudflared from t
 - [x] ~~08′ Student volume and DB failover~~ — dropped 2026-11-07: students bring their own DB (deploy workflow v15), so no platform MySQL or Longhorn; 08 opens student Pod egress to the internet instead
 - [ ] 09 Server link (issue #84)
   - [x] first part (2026-11-10): server ServiceAccount `platform/platform-server` + RBAC (namespace create/delete, cap · defaults · isolation create only, Secret create/update only), five ValidatingAdmissionPolicies (proj- only, namespace labels, Secret type and name, template values compared against the `student-template` namespace, student Pods and Deployments without an API token and with NET_RAW dropped); `Infra/platform/` with `check.sh` passing, also with the real token over the leader's Tailscale address from the operator's machine
-  - [ ] Tailscale tag and ACL — draft in `Infra/tailscale/acl.hujson`; the tailnet owner pastes it into the admin console
+  - [x] Tailscale tag and ACL (2026-11-10) — `Infra/tailscale/acl.hujson` saved in the admin console by the tailnet owner (it replaced the default allow-all policy); operator SSH and the leader API still work, node-to-node over the tailnet is closed
   - [ ] EC2 joins the tailnet with a one-time tagged key and reaches the leader API (needs the EC2; #81 second step)
   - [x] reads (2026-11-10): kept to proj- spaces by a fifth template object, the RoleBinding `platform-server-read` to the role `proj-reader` (Pods, logs, Deployments), which the server creates with the space; nodes cluster-wide; policy `wanggane-space-readers`
   - [ ] second part: action rights for the server (restart, stop/resume) with a policy that limits the change to scale and the restart annotation
