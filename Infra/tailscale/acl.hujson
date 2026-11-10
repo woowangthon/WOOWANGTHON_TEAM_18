@@ -1,0 +1,55 @@
+// Tailnet access rules (build 09). Design: docs/design/cluster.md §8.
+// Pasted by the tailnet owner into the admin console (Access controls). Replace every <..._IP> with the
+// device's Tailscale address there only; the addresses are not kept in this repo.
+// Anything not accepted below is denied, so the school PCs cannot open connections to the operator's
+// devices or to the platform server.
+// The "tests" block is checked when the policy is saved: a policy that would cut the operator's SSH
+// is refused instead of applied.
+{
+	"tagOwners": {
+		// The EC2 joins with a one-time auth key that carries this tag.
+		"tag:platform-server": ["autogroup:admin"],
+	},
+	"hosts": {
+		"k3s-leader": "<LEADER_TAILSCALE_IP>",
+		"k3s-w1": "<W1_TAILSCALE_IP>",
+		"k3s-w2": "<W2_TAILSCALE_IP>",
+		"operator-desktop": "<OPERATOR_DESKTOP_TAILSCALE_IP>",
+		"operator-laptop": "<OPERATOR_LAPTOP_TAILSCALE_IP>",
+	},
+	"acls": [
+		// Operator devices: SSH to the three nodes, and the leader API for check scripts
+		// (Infra/platform/check.sh calls it with the server account's token).
+		{
+			"action": "accept",
+			"src": ["operator-desktop", "operator-laptop"],
+			"dst": ["k3s-leader:22,6443", "k3s-w1:22", "k3s-w2:22"],
+		},
+		// Platform server: the leader's Kubernetes API only.
+		{
+			"action": "accept",
+			"src": ["tag:platform-server"],
+			"dst": ["k3s-leader:6443"],
+		},
+		// Build 09': the leader's deploy executor -> the GoCD server port on the EC2 goes here.
+	],
+	"tests": [
+		{
+			"src": "operator-desktop",
+			"accept": ["k3s-leader:22", "k3s-w1:22", "k3s-w2:22", "k3s-leader:6443"],
+		},
+		{
+			"src": "operator-laptop",
+			"accept": ["k3s-leader:22", "k3s-w1:22", "k3s-w2:22"],
+		},
+		{
+			"src": "tag:platform-server",
+			"accept": ["k3s-leader:6443"],
+			"deny": ["k3s-leader:22", "k3s-w1:22", "k3s-w2:6443", "operator-desktop:22"],
+		},
+		{
+			"src": "k3s-w1",
+			"deny": ["operator-desktop:22", "operator-laptop:22", "k3s-leader:22"],
+		},
+	],
+}
