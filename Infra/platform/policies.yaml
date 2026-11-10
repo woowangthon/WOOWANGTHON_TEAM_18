@@ -8,6 +8,10 @@
 # (and again whenever space.yaml changes):
 #   sed 's/proj-demo/student-template/g' Infra/student/space.yaml | ssh k3s-leader 'sudo k3s kubectl apply -f -'
 #   ssh k3s-leader 'sudo k3s kubectl apply -f -' < Infra/platform/policies.yaml
+# Order matters: these policies are the only thing that keeps the account's cluster-wide rights
+# (account.yaml) inside proj- spaces. Apply this file before account.yaml, and when removing, delete
+# account.yaml first. Do not set the wanggane-platform-server or wanggane-space-* bindings to Warn
+# while the account exists.
 # The server account cannot touch student-template (not a proj- name). If the reference object is missing,
 # the request is denied.
 apiVersion: admissionregistration.k8s.io/v1
@@ -96,7 +100,7 @@ spec:
     expression: request.userInfo.username == 'system:serviceaccount:platform:platform-server'
   validations:
   - expression: object.metadata.name == params.metadata.name && dyn(object.spec) == dyn(params.spec)
-    message: the ResourceQuota must have the name and values of Infra/student/space.yaml
+    message: "the ResourceQuota must have the name and values of Infra/student/space.yaml, written the same way (16Gi, not 17179869184)"
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding
@@ -130,7 +134,7 @@ spec:
     expression: request.userInfo.username == 'system:serviceaccount:platform:platform-server'
   validations:
   - expression: object.metadata.name == params.metadata.name && dyn(object.spec) == dyn(params.spec)
-    message: the LimitRange must have the name and values of Infra/student/space.yaml
+    message: "the LimitRange must have the name and values of Infra/student/space.yaml, written the same way (4Gi, not 4294967296)"
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding
@@ -212,6 +216,12 @@ spec:
   validations:
   - expression: has(variables.podSpec.automountServiceAccountToken) && variables.podSpec.automountServiceAccountToken == false
     message: "student Pods must set automountServiceAccountToken: false"
+  # The same token can be mounted by hand through a projected volume.
+  - expression: >-
+      !has(variables.podSpec.volumes) || variables.podSpec.volumes.all(v,
+        !has(v.projected) || !has(v.projected.sources)
+        || v.projected.sources.all(s, !has(s.serviceAccountToken)))
+    message: "student Pods must not mount a serviceAccountToken volume"
   # baseline keeps NET_RAW, which lets a Pod spoof ARP on its worker.
   - expression: >-
       variables.containers.all(c,

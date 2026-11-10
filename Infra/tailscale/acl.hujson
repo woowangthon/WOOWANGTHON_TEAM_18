@@ -1,8 +1,11 @@
 // Tailnet access rules (build 09). Design: docs/design/cluster.md §8.
 // Pasted by the tailnet owner into the admin console (Access controls). Replace every <..._IP> with the
 // device's Tailscale address there only; the addresses are not kept in this repo.
-// Anything not accepted below is denied, so the school PCs cannot open connections to the operator's
-// devices or to the platform server.
+// This replaces the whole policy of the tailnet. Anything not accepted below is denied, so the school
+// PCs cannot open connections to the operator's devices or to the platform server. The tailnet is the
+// operator's personal one: before saving, add every other device that must keep talking (phone, other
+// PCs) to "hosts" and to the first rule, and carry over any "ssh" or "nodeAttrs" block the current
+// policy has.
 // The "tests" block is checked when the policy is saved: a policy that would cut the operator's SSH
 // is refused instead of applied.
 {
@@ -18,6 +21,12 @@
 		"operator-laptop": "<OPERATOR_LAPTOP_TAILSCALE_IP>",
 	},
 	"acls": [
+		// The operator's own devices keep reaching each other.
+		{
+			"action": "accept",
+			"src": ["operator-desktop", "operator-laptop"],
+			"dst": ["operator-desktop:*", "operator-laptop:*"],
+		},
 		// Operator devices: SSH to the three nodes, and the leader API for check scripts
 		// (Infra/platform/check.sh calls it with the server account's token).
 		{

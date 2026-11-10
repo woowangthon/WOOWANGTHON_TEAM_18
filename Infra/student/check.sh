@@ -121,7 +121,8 @@ run netpol-control ok "leader API (Service)"         https://10.43.0.1
 run netpol-control ok "image cache"                  http://192.168.77.11:5000/v2/
 run netpol-control ok "kubelet on w1"                https://192.168.77.12:10250
 run netpol-control ok "school LAN DNS server"        telnet://10.115.159.15:53
-run netpol-control ok "leader over the tailnet"      "telnet://$TS:22"
+# No control probe for the leader's Tailscale address: the tailnet access rules (Infra/tailscale/acl.hujson)
+# do not let one node reach another over the tailnet, so it is closed there with or without the NetworkPolicy.
 
 echo "== Traefik -> student Service (Ingress with a test host)"
 k apply -f - >/dev/null <<EOF

@@ -1,7 +1,8 @@
 # Platform server account (build 09, first part). Design and reasons: docs/design/cluster.md §8.
 # The platform server (Nest, on the EC2) calls the leader's API over Tailscale with this account's token.
 # RBAC cannot filter by namespace name, so these rights are cluster-wide here and policies.yaml narrows
-# them to proj- spaces and to the template values. Apply this file together with policies.yaml.
+# them to proj- spaces and to the template values. Without those policies this account can write Secrets
+# and delete namespaces anywhere: apply policies.yaml first, and delete this file first when removing.
 # Apply (from the operator's machine):
 #   ssh k3s-leader 'sudo k3s kubectl apply -f -' < Infra/platform/account.yaml
 apiVersion: v1
@@ -21,8 +22,8 @@ automountServiceAccountToken: false
 ---
 # Long-lived token, filled in by Kubernetes. No expiring credential to renew during the contest;
 # deleting this Secret revokes the token (return, cluster.md §13). Read it only when it goes into the
-# EC2's secret settings:
-#   ssh k3s-leader 'sudo k3s kubectl -n platform get secret platform-server-token -o jsonpath={.data.token}' | base64 -d
+# EC2's secret settings, and pipe it straight into that store or the clipboard, not onto the terminal:
+#   ssh k3s-leader 'sudo k3s kubectl -n platform get secret platform-server-token -o jsonpath={.data.token}' | base64 --decode | <secret store or clipboard command>
 apiVersion: v1
 kind: Secret
 metadata:

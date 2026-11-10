@@ -6,6 +6,8 @@
 # Part 1 acts as the account through impersonation, part 2 checks the student Pod rule as the operator,
 # part 3 calls the leader's Tailscale address with the real token (kept in a shell variable, never printed).
 # Creates proj-srvcheck and proj-srvcheck2 and deletes them at the end, also when it stops early.
+# Requests that must be refused and aim at real objects (vllm, student-template, kube-system, platform)
+# are sent as server dry runs: admission still decides, but nothing changes if a policy is off.
 set -u
 cd "$(dirname "$0")"
 k() { ssh k3s-leader "sudo -n k3s kubectl $*"; }
@@ -29,7 +31,11 @@ deny() { # deny <rbac|policy|exists|builtin> <label> <command...>   stdin = mani
 }
 space() { sed "s/proj-demo/$1/g" ../student/space.yaml; }
 doc() { # doc <Kind> <namespace> [file]: one document of the template, renamed
-  sed "s/proj-demo/$2/g" "${3:-../student/space.yaml}" | awk -v RS='\n---\n' -v k="kind: $1" 'index($0, k)'
+  sed "s/proj-demo/$2/g" "${3:-../student/space.yaml}" | awk -v k="kind: $1" '
+    function flush() { if (hit) printf "%s", buf; buf = ""; hit = 0 }
+    /^---$/ { flush(); next }
+    { buf = buf $0 "\n"; if (index($0, k) == 1) hit = 1 }
+    END { flush() }'
 }
 ns() { # ns <name> [label=value ...]
   local name=$1; shift
@@ -39,13 +45,14 @@ ns() { # ns <name> [label=value ...]
 secret() { # secret <namespace> <name> <type> <value>
   printf 'apiVersion: v1\nkind: Secret\nmetadata: {name: %s, namespace: %s}\ntype: %s\nstringData: {DATABASE_URL: "%s"}\n' "$2" "$1" "$3" "$4"
 }
-pod() { # pod <automount true|false> <drop capability>
+pod() { # pod <automount true|false> <drop capability> [extra pod spec line]
   cat <<EOF
 apiVersion: v1
 kind: Pod
 metadata: {name: policy-check, namespace: proj-demo}
 spec:
   automountServiceAccountToken: $1
+  ${3:-terminationGracePeriodSeconds: 1}
   containers:
   - name: c
     image: busybox:1.37
@@ -70,10 +77,10 @@ deny policy "namespace without the proj- prefix" ks create -f - < <(ns other-spa
 deny policy "space without labels" ks create -f - < <(printf 'apiVersion: v1\nkind: Namespace\nmetadata: {name: proj-srvcheck3}\n')
 deny policy "space with enforce=privileged" ks create -f - < <(ns proj-srvcheck3 pod-security.kubernetes.io/enforce=privileged pod-security.kubernetes.io/warn=restricted)
 deny policy "space with an extra label" ks create -f - < <(ns proj-srvcheck3 $BASE wanggane/pool=student)
-deny builtin "delete kube-system" ks delete namespace kube-system --wait=false
-deny policy "delete vllm" ks delete namespace vllm --wait=false
-deny policy "delete student-template" ks delete namespace student-template --wait=false
-deny rbac "relabel a space" ks label namespace proj-srvcheck pod-security.kubernetes.io/enforce=privileged --overwrite
+deny builtin "delete kube-system" ks delete namespace kube-system --dry-run=server
+deny policy "delete vllm" ks delete namespace vllm --dry-run=server
+deny policy "delete student-template" ks delete namespace student-template --dry-run=server
+deny rbac "relabel a space" ks patch namespace proj-srvcheck --type=merge -p "'{\"metadata\":{\"labels\":{\"pod-security.kubernetes.io/enforce\":\"privileged\"}}}'"
 deny rbac "list namespaces" ks get namespaces
 
 echo "== server account: cap, defaults, isolation (in the empty second space)"
@@ -92,9 +99,9 @@ deny rbac "patch a Secret" ks -n proj-srvcheck patch secret be-secrets --type=me
 deny rbac "delete a Secret" ks -n proj-srvcheck delete secret be-secrets
 deny policy "Secret with another name" ks create -f - < <(secret proj-srvcheck be-config Opaque x)
 deny policy "service-account-token Secret" ks create -f - < <(printf 'apiVersion: v1\nkind: Secret\nmetadata: {name: sa-secrets, namespace: proj-srvcheck, annotations: {kubernetes.io/service-account.name: default}}\ntype: kubernetes.io/service-account-token\n')
-deny policy "Secret outside proj- (vllm)" ks create -f - < <(secret vllm be-secrets Opaque x)
-deny policy "Secret outside proj- (platform)" ks create -f - < <(secret platform be-secrets Opaque x)
-deny policy "replace the vLLM key" ks replace -f - < <(secret vllm vllm-api-key Opaque x | sed 's/DATABASE_URL/api-key/')
+deny policy "Secret outside proj- (vllm)" ks create --dry-run=server -f - < <(secret vllm be-secrets Opaque x)
+deny policy "Secret outside proj- (platform)" ks create --dry-run=server -f - < <(secret platform be-secrets Opaque x)
+deny policy "replace the vLLM key" ks replace --dry-run=server -f - < <(secret vllm vllm-api-key Opaque x | sed 's/DATABASE_URL/api-key/')
 
 echo "== server account: everything else"
 deny rbac "create a Pod in a space" ks create -f - < <(pod false NET_RAW | sed 's/proj-demo/proj-srvcheck/')
@@ -107,6 +114,7 @@ allow "Pod with no token and NET_RAW dropped" k create --dry-run=server -f - < <
 allow "Pod with no token and ALL dropped" k create --dry-run=server -f - < <(pod false ALL)
 deny policy "Pod with the API token" k create --dry-run=server -f - < <(pod true NET_RAW)
 deny policy "Pod keeping NET_RAW" k create --dry-run=server -f - < <(pod false CHOWN)
+deny policy "Pod with a projected API token volume" k create --dry-run=server -f - < <(pod false NET_RAW 'volumes: [{name: t, projected: {sources: [{serviceAccountToken: {path: token}}]}}]')
 deny policy "Deployment with the API token" k create --dry-run=server -f - < <(doc Deployment proj-demo ../student/app-example.yaml | sed 's/name: web$/name: web-check/; s/automountServiceAccountToken: false/automountServiceAccountToken: true/')
 running=$(k -n proj-demo get deployment web -o "jsonpath='{.status.readyReplicas}'")
 if [ "$running" = 1 ]; then echo "PASS proj-demo web still running"; else echo "FAIL proj-demo web ready replicas: '$running'"; fail=1; fi
@@ -114,11 +122,12 @@ if [ "$running" = 1 ]; then echo "PASS proj-demo web still running"; else echo "
 echo "== real token over the tailnet"
 TS=$(ssh k3s-leader 'tailscale ip -4')
 CA=$(mktemp); trap 'rm -f "$CA"; cleanup' EXIT
-k -n platform get secret platform-server-token -o "jsonpath='{.data.ca\.crt}'" | base64 -d > "$CA"
-TOKEN=$(k -n platform get secret platform-server-token -o "jsonpath='{.data.token}'" | base64 -d)
+k -n platform get secret platform-server-token -o "jsonpath='{.data.ca\.crt}'" | base64 --decode > "$CA"
+TOKEN=$(k -n platform get secret platform-server-token -o "jsonpath='{.data.token}'" | base64 --decode)
 api() { # api <token> <method> <path> [json body] -> HTTP status
   # --ssl-no-revoke: Windows curl (Schannel) asks for a revocation list, which a cluster CA does not have.
-  curl -s --ssl-no-revoke -o /dev/null -m 10 -w '%{http_code}' --cacert "$CA" -H "Authorization: Bearer $1" -H 'Content-Type: application/json' -X "$2" ${4:+-d "$4"} "https://$TS:6443$3"
+  # The token goes to curl on stdin (-K -), not as an argument, so it does not show in the process list.
+  printf 'header = "Authorization: Bearer %s"\n' "$1" | curl -s --ssl-no-revoke -K - -o /dev/null -m 10 -w '%{http_code}' --cacert "$CA" -H 'Content-Type: application/json' -X "$2" ${4:+-d "$4"} "https://$TS:6443$3"
 }
 status() { # status <want> <label> <got>
   if [ "$3" = "$1" ]; then echo "PASS $2 ($3)"; else echo "FAIL $2 (want $1, got $3)"; fail=1; fi
