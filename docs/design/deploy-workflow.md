@@ -63,7 +63,7 @@ W0 접수 · 사전 검사 → W1 분석 → W2 배포 설정 → W3 비밀값 �
 | **W3 비밀값 받기** | 플랫폼 서버 | 빠진 필수 env 값을 사용자에게 바로 요청. 받은 값은 **플랫폼 서버가 Tailscale로 k3s API에 접속해 Secret으로 만든다.** GoCD를 거치지 않으므로 실행 기록에 남지 않는다. DB에는 key 이름과 상태만 저장 | 응답이 없으면 "사용자 조치 필요"로 마감 |
 | **W4 빌드** | AWS 실행기 → CodeBuild | 배포 입력으로 서비스별 CodeBuild를 병렬 호출한다. 학생 Dockerfile(`build.dockerfile`) 또는 배포 입력 값(Dockerfile이 없을 때, 빌드 값 사용)으로 빌드 → 이미지 검사 → GHCR에 push. 빌드 입력 해시가 같으면 건너뜀 | 빌드 실패 → **문제 티켓** |
 | **W5 배포** | 리더 실행기 | Prepare: 배포 입력을 받고 필수 Secret key 확인, live 슬롯 보호 검사, 대상 슬롯 비우기(4절). Render: 대상 슬롯 manifest 생성(3절). Apply: AI → BE → FE 순서로 대상 슬롯에 적용 | 배포 실패 → live 슬롯은 그대로 → **문제 티켓** |
-| **W6 동작 확인** | 리더 실행기 | 대상 슬롯의 Pod Ready(readinessProbe 통과)와 Service Endpoints를 확인(BE → AI 같은 내부 연결 포함)한다. test Ingress의 대상을 대상 슬롯으로 적용하고, Traefik에 Host `<slug>.test.internal`로 화면(`/`) · JS·CSS · BE 헬스체크 경로(`/api/...`)를 요청해 모두 성공해야 통과다 | 실패 → open Ingress를 바꾸지 않음 (live 슬롯은 그대로) → **문제 티켓** |
+| **W6 동작 확인** | 리더 실행기 | 대상 슬롯의 Pod Ready(readinessProbe 통과)와 Service Endpoints를 확인(BE → AI 같은 내부 연결 포함)한다. 공개 서비스(`ingressPath`가 있는 서비스)가 있으면 test Ingress의 대상을 대상 슬롯으로 적용하고, Traefik에 Host `<slug>.test.internal`로 **그 서비스에 있는 경로만** 요청한다(4절 "동작 확인과 전환"). 검사한 항목이 모두 성공해야 통과다 | 실패 → open Ingress를 바꾸지 않음 (live 슬롯은 그대로) → **문제 티켓** |
 | **전환** | 리더 실행기 | open Ingress의 대상을 대상 슬롯의 Service로 바꿔 적용. 첫 배포면 open Ingress를 만든다 | - |
 | **W7 완료 · 보고** | 플랫폼 서버 | DB의 `live_slot`을 대상 슬롯으로 바꾸고 이전 live 슬롯의 Deployment를 0개로 줄임, 사용자에게 주소 · 상태 · 경고 표시, 프로젝트 메모리에 기록, 운영 감시 시작 | - |
 | (운영 중) | 플랫폼 서버 | 재시작 반복 · 메모리 초과를 감시 | 재시작 1회 → **장애 대응 job**의 문제 티켓 |
@@ -117,6 +117,18 @@ W0 접수 · 사전 검사 → W1 분석 → W2 배포 설정 → W3 비밀값 �
 - open Ingress는 live 슬롯의 Service 이름(`fe-a`, `be-a` 등)을 가리킨다. 전환은 이 이름을 바꿔 다시 적용하는 것이다. FE · BE가 한 번에 바뀐다.
 
 **동작 확인과 전환**
+
+W6은 배포 입력에 있는 서비스와 설정된 경로만 검사한다. 정적 웹만 있는 프로젝트, 서버만 있는 프로젝트, 공개 서비스가 없는 프로젝트도 해당 항목만 검사해 통과할 수 있다.
+
+| 서비스 | 검사 |
+|---|---|
+| 모든 서비스 | 대상 슬롯 Pod Ready(readinessProbe 통과)와 Service Endpoints |
+| `ingressPath`가 있고 `kind: static` | `GET <ingressPath>` → 200. 응답 HTML의 `<script src>` · `<link rel="stylesheet" href>` 중 같은 호스트의 파일을 최대 10개 `GET` → 모두 200 |
+| `ingressPath`가 있고 `kind: server`, `health.type: http` | 헬스체크 경로를 Traefik으로 `GET` → 200. 요청 경로는 `stripPrefix: false`면 `health.path`, `true`면 `ingressPath` + `health.path`. `stripPrefix: false`인데 `health.path`가 `ingressPath` 아래가 아니면 Traefik으로 닿지 않으므로 Pod Ready만 본다 |
+| `ingressPath`가 있고 `health.type: tcp` | Pod Ready만 (HTTP 경로가 없다) |
+| `ingressPath`가 `null` (내부 전용) | Pod Ready만 |
+
+- 공개 서비스가 하나도 없으면 test · open Ingress를 만들지 않는다. W6은 Pod Ready만 보고, 전환은 DB `live_slot`만 바꾼다.
 
 - W6은 test Ingress를 거쳐 Traefik으로 대상 슬롯에 요청한다. open Ingress와 경로 규칙(`ingressPath`, `stripPrefix`)이 같으므로, 통과하면 open Ingress의 대상만 바꿔도 같은 결과가 나온다.
 - `<slug>.test.internal`은 공개 도메인이 아니므로 Cloudflare Tunnel이 넘기지 않는다. 밖에서는 닿지 않는다.
