@@ -27,7 +27,7 @@ Not decided by us, so not invented: the `resources` shape (only `null` is accept
 - [x] Migration SQL + RLS (read own rows only; no write policy) — files: `supabase/migrations/`
 - [x] Save/read service and controller; e2e with a fake Supabase REST — files: `BE/src/deploys/`, `BE/test/deploys.e2e.spec.ts`
 - [x] Hand-made mutants for the new code (123: 108 killed at first, 13 more killed after added tests, 2 survivors explained in lessons); survivors get a test or a reason
-- [ ] `pnpm verify`, `/code-review medium`, `/simplify`
+- [x] `pnpm verify` (with raised test timeouts), `/code-review medium`, `/simplify`
 - [ ] Owner applies the migration, sets `SUPABASE_SECRET_KEY`, and runs the real save/read once (until then the REST calls are unverified against real Supabase)
 
 ## Done when
