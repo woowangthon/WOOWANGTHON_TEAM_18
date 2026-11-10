@@ -14,7 +14,7 @@ create table public.deploys (
   created_at timestamptz not null default now()
 );
 
-create index deploys_user_id_created_at_idx on public.deploys (user_id, created_at desc);
+create index deploys_user_id_idx on public.deploys (user_id);
 create index deploys_slug_idx on public.deploys (slug);
 
 -- 쓰기는 서버의 secret key(service role, RLS를 건너뛴다)만 한다. 그래서 쓰기 정책을 만들지 않는다.

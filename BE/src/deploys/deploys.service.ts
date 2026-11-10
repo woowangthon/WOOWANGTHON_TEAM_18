@@ -2,8 +2,12 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import type { AuthUser } from '../auth/auth.decorators.js'
 import { isCommitSha } from '../repos/repo-url.js'
 import { invalidCommit, ReposService } from '../repos/repos.service.js'
-import { validateSpec } from './deploy-input.js'
+import { type Issue, type Spec, validateSpec } from './deploy-input.js'
 import { type DeployRow, DeploysStore } from './deploys.store.js'
+
+const invalidSpec = (message: string, fields: Issue[]) => new BadRequestException({ code: 'INVALID_SPEC', message, fields })
+// 대소문자는 GitHub가 구분하지 않는다.
+const sameRepo = (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -12,7 +16,7 @@ export interface Deploy {
   id: string
   repo: string
   commit: string
-  spec: DeployRow['spec']
+  spec: Spec
   createdAt: string
 }
 
@@ -41,29 +45,21 @@ export class DeploysService {
     if (!isCommitSha(commit)) throw invalidCommit()
     const checked = validateSpec(input)
     if (!checked.ok) {
-      throw new BadRequestException({
-        code: 'INVALID_SPEC',
-        message: `spec has invalid fields (first: ${checked.issues[0].path})`,
-        fields: checked.issues,
-      })
+      throw invalidSpec(`spec has invalid fields (first: ${checked.issues[0].path})`, checked.issues)
     }
     const { spec } = checked
 
     const { repo } = await this.repos.verifyOwnership(accessToken, repoUrl)
     await this.repos.assertCommit(ref, commit)
-    // 대소문자는 GitHub가 구분하지 않는다. 저장하는 값은 GitHub가 돌려준 표기다.
-    if (spec.project.repo.toLowerCase() !== repo.full_name.toLowerCase()) {
-      throw new BadRequestException({
-        code: 'INVALID_SPEC',
-        message: 'spec.project.repo is not the repository that was checked',
-        fields: [{ path: 'project.repo', code: 'MISMATCH' }],
-      })
+    // 저장하는 값은 GitHub가 돌려준 표기다.
+    if (!sameRepo(spec.project.repo, repo.full_name)) {
+      throw invalidSpec('spec.project.repo is not the repository that was checked', [{ path: 'project.repo', code: 'MISMATCH' }])
     }
 
     // 네임스페이스 proj-<slug>와 공개 주소가 slug로 정해지므로 같은 사용자의 같은 레포만 다시 쓸 수 있다.
     // 읽고 나서 쓰기라 동시에 처음 쓰는 두 요청은 둘 다 통과할 수 있다(docs/design/auth.md 알려진 한계).
     const owner = await this.store.findSlugOwner(spec.project.slug)
-    if (owner && (owner.user_id !== user.id || owner.repo.toLowerCase() !== repo.full_name.toLowerCase())) {
+    if (owner && (owner.user_id !== user.id || !sameRepo(owner.repo, repo.full_name))) {
       throw new ConflictException({ code: 'SLUG_TAKEN', message: 'This slug is used by another project' })
     }
 

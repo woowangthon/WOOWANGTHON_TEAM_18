@@ -1,5 +1,6 @@
 import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
+import { isRecord } from '../common/is-record.js'
 import type { Env } from '../config/env.js'
 import type { Spec } from './deploy-input.js'
 
@@ -19,9 +20,8 @@ export interface DeployRow {
   created_at: string
 }
 
-export type NewDeploy = Pick<DeployRow, 'user_id' | 'slug' | 'repo' | 'commit_sha' | 'spec'>
+type NewDeploy = Pick<DeployRow, 'user_id' | 'slug' | 'repo' | 'commit_sha' | 'spec'>
 
-const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 const isRow = (v: unknown): v is DeployRow =>
   isRecord(v) &&
   ['id', 'user_id', 'slug', 'repo', 'commit_sha', 'created_at'].every((k) => typeof v[k] === 'string') &&

@@ -1,3 +1,5 @@
+import { isRecord } from '../common/is-record.js'
+
 // 배포 입력의 spec 검증. 규칙 코드이고 AI가 아니다. 칸 · 규칙 · 오류 코드는 docs/design/api.md의 "배포 입력 저장".
 // 모르는 키는 거부하고, 어긋난 칸은 칸마다 { path, code }로 알린다(문장이 아니라 코드로 가를 수 있게).
 
@@ -27,7 +29,7 @@ export interface Spec {
   services: Service[]
 }
 
-export interface Service {
+interface Service {
   name: string
   role: 'fe' | 'be' | 'ai'
   dir: string
@@ -81,7 +83,6 @@ const HEALTH_TYPES = ['http', 'tcp']
 const isEnvName = (s: string) => ENV_NAME.test(s) && s !== '__proto__'
 
 type Obj = Record<string, unknown>
-const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v)
 
 /** 레포 안 상대 경로: `.` 하나이거나 `FE/dist`처럼 안전한 글자의 조각들(`/`로 시작 · `..` · `\` · 빈 조각 불가, 조각은 `-`로 시작할 수 없다: 명령 옵션으로 읽히지 않게). */
 export function isRelativePath(v: string): boolean {
@@ -104,7 +105,7 @@ export function validateSpec(input: unknown): { ok: true; spec: Spec } | { ok: f
 
   // 객체이고 모든 키가 정확히 keys와 같은지 본다. 없는 키는 REQUIRED, 모르는 키는 UNKNOWN_KEY.
   const shape = (v: unknown, path: string, keys: string[]): Obj | undefined => {
-    if (!isObj(v)) return void add(path || 'spec', 'INVALID_TYPE')
+    if (!isRecord(v)) return void add(path || 'spec', 'INVALID_TYPE')
     for (const k of Object.keys(v)) if (!keys.includes(k)) add(at(path, k), 'UNKNOWN_KEY')
     for (const k of keys) if (!Object.hasOwn(v, k)) add(at(path, k), 'REQUIRED')
     return v
@@ -125,7 +126,7 @@ export function validateSpec(input: unknown): { ok: true; spec: Spec } | { ok: f
   const relPath = (v: unknown, path: string) => text(v, path, isRelativePath)
   const envName = (v: unknown, path: string) => text(v, path, isEnvName)
   const stringMap = (v: unknown, path: string): Obj | undefined => {
-    if (!isObj(v)) return void add(path, 'INVALID_TYPE')
+    if (!isRecord(v)) return void add(path, 'INVALID_TYPE')
     const entries = Object.entries(v)
     if (entries.length > MAX_MAP_ENTRIES) add(path, 'OUT_OF_RANGE')
     for (const [k, value] of entries) {
@@ -152,7 +153,7 @@ export function validateSpec(input: unknown): { ok: true; spec: Spec } | { ok: f
     const services = list(root.services, 'services', MAX_SERVICES)
     if (services?.length === 0) add('services', 'OUT_OF_RANGE')
     // links의 service가 가리킬 수 있는 이름. 문자열이 아닌 name은 칸 검사에서 이미 걸린다.
-    const names = new Set(services?.map((s) => (isObj(s) && typeof s.name === 'string' ? s.name : '')))
+    const names = new Set(services?.map((s) => (isRecord(s) && typeof s.name === 'string' ? s.name : '')))
     const taken = new Set<string>()
     services?.forEach((raw, i) => {
       const path = `services[${i}]`
@@ -237,11 +238,14 @@ export function validateSpec(input: unknown): { ok: true; spec: Spec } | { ok: f
     if (build.outputDir !== null) relPath(build.outputDir, `${path}.outputDir`)
     const buildEnv = stringMap(build.buildEnv, `${path}.buildEnv`)
 
-    // 빠진 키(undefined)는 shape가 REQUIRED로 알렸다. 아래는 키가 있는 칸만 본다.
-    const present = (k: string) => Object.hasOwn(build, k)
-    const mustBeNull = (k: string) => present(k) && build[k] !== null && add(`${path}.${k}`, 'MUST_BE_NULL')
-    const required = (k: string) => present(k) && build[k] === null && add(`${path}.${k}`, 'REQUIRED')
-    if (present('dockerfile')) {
+    // 빠진 키(undefined)는 shape가 이미 REQUIRED로 알렸고, 한 칸에 코드는 하나라 아래에서 겹쳐 알리지 않는다.
+    const mustBeNull = (k: string) => {
+      if (build[k] !== null) add(`${path}.${k}`, 'MUST_BE_NULL')
+    }
+    const required = (k: string) => {
+      if (build[k] === null) add(`${path}.${k}`, 'REQUIRED')
+    }
+    if (Object.hasOwn(build, 'dockerfile')) {
       if (build.dockerfile !== null) {
         for (const k of ['framework', 'nodeVersion', 'install', 'build', 'start', 'outputDir']) mustBeNull(k)
       } else {
