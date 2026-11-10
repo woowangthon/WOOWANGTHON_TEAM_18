@@ -55,7 +55,7 @@ FE·BE·AI가 서로를 기다리지 않도록 **요청·응답 모양을 먼저
 
 FE 흐름은 ① `POST /api/repos/check`로 내 레포인지 확인 → 통과하면 ② 이 API로 Dockerfile을 확인한다. 이 API를 직접 부르는 요청도 막아야 하므로 서버가 `repos/check`와 같은 소유 확인을 **먼저 다시 한다**(순서와 오류는 [`auth.md`](auth.md#github-연동과-레포-소유-확인)). 남의 레포는 Dockerfile 조회까지 가지 않는다.
 
-레포의 **기본 브랜치 최신 상태**(GitHub의 `HEAD`)에서 파일 이름이 정확히 `Dockerfile`인 경로를 전부 찾는다(하위 폴더 포함. `Dockerfile.prod` · `*.Dockerfile`은 MVP 제외). 빌드할 커밋을 확정하는 일([#41](https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/41))이 끝나면 그 커밋을 기준으로 바꾼다. 없을 때 어떻게 할지(반려 · 봇 PR · 플랫폼 템플릿)는 아직 정하지 않았으므로([#74](https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/74)) 이 API는 "없음"이라는 사실만 알려 준다.
+레포의 **기본 브랜치 최신 상태**(GitHub의 `HEAD`)에서 파일 이름이 정확히 `Dockerfile`인 경로를 전부 찾는다(하위 폴더 포함. `Dockerfile.prod` · `*.Dockerfile`은 MVP 제외). 빌드할 커밋을 확정하는 일([#41](https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/41))이 끝나면 그 커밋을 기준으로 바꾼다. 없을 때 어떻게 할지(반려 · 봇 PR · 플랫폼 템플릿)는 아직 정하지 않았으므로([#25](https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/25)) 이 API는 "없음"이라는 사실만 알려 준다.
 
 요청: `POST /api/repos/check`와 같다.
 
@@ -137,7 +137,7 @@ FE 흐름은 ① `repos/check` → ② `repos/dockerfiles`와 이 API. 이 API�
 - `truncated`: GitHub가 너무 큰 레포의 파일 목록을 잘랐거나, 폴더가 10개를 넘어 일부를 읽지 않았으면 `true`. 이때는 목록이 전부가 아니고, 각 폴더의 `lockfile: null` · `dockerfile: false`도 "없다"고 단정할 수 없다(잘려 나간 파일일 수 있다).
 - 항목은 `{ value, source }`이고 `source`는 값을 어디서 얻었는지(`package.json` · `lockfile` · `default`)다. 값이 없으면 `null`이다. `build` · `start`는 `script`를 더하고, `nodeVersion` · `lockfile`(문자열 또는 `null`)과 `dockerfile`(불리언)은 `{ value, source }`가 아닌 값 그대로다.
 - **`needsReview`**: 자동으로 정하지 못해 사용자가 골라야 하는 항목 이름이다(값은 `null`). 후보가 여럿이라 못 정한 항목은 `candidates`(문자열 배열)를 더해 후보를 알린다(예: `{ "value": null, "source": null, "candidates": ["npm", "pnpm"] }`). 값이 `null`인데 `needsReview`에 없으면 "해당 없음"이다(정적 사이트의 `start` · `port`, Next.js의 `outputDir`).
-- `dockerfile`: 그 폴더에 `Dockerfile`이 있는지(`repos/dockerfiles`와 같은 파일 목록). 없을 때 어떻게 할지는 정해지지 않았다([#74](https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/74)). 이 API는 사실만 알려 준다.
+- `dockerfile`: 그 폴더에 `Dockerfile`이 있는지(`repos/dockerfiles`와 같은 파일 목록). 없을 때 어떻게 할지는 정해지지 않았다([#25](https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/25)). 이 API는 사실만 알려 준다.
 - `nodeVersion`: `package.json`의 `engines.node` 문자열 그대로. 없으면 `null`.
 
 **감지 규칙** (지원 1순위 Vite + React · Next.js · TypeScript. 나머지는 판단 필요):
