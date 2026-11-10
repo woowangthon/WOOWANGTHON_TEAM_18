@@ -1,6 +1,6 @@
 # ADR-009: 배포는 리더의 GoCD 실행기가 하고, GoCD 서버는 플랫폼 서버와 같은 EC2에 둔다
 
-- **상태**: 유효
+- **상태**: 유효 (일부 대체: 되돌리기 → [011](011-deploy-slots-a-b.md))
 - **날짜**: 26-11-09
 - **결정자**: 팀 회의 (2026-11-09)
 - **관련**: [시스템 정의서 §3](../system-definition.md#3-시스템-개요)(배포 파이프라인 · 사설망 행), [클러스터 설계](../design/cluster.md) §8, [ADR-004](004-server-cluster-link-tailscale.md), [ADR-001](001-stack-and-deployment.md)
