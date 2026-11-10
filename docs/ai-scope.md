@@ -87,6 +87,7 @@
 | 무료 코드 실행 환경 남용 사례 (Heroku 무료 플랜 폐지) | [TechCrunch 2022-08-25](https://techcrunch.com/2022/08/25/heroku-announces-plans-to-eliminate-free-plans-blaming-fraud-and-abuse) | 공개 기사 | 승인 게이트의 필요성 근거 |
 | 나눔스퀘어 네오 (글꼴) | [네이버 한글한글아름답게 글꼴 안내](https://hangeul.naver.com/font), 웹폰트 CSS `hangeul.pstatic.net/hangeul_static/css/nanum-square-neo.css` | 안내 페이지 기준: 무료, 글꼴 자체를 판매하는 경우를 뺀 상업적 사용 가능, 출처 표기 권장. 라이선스 전문(OFL)은 직접 열어 보지 않았다 | 본문 · 제목 (FE, CDN으로 불러오며 저장소에 파일을 넣지 않음) |
 | 나눔고딕코딩 (글꼴) | [Google Fonts](https://fonts.google.com/specimen/Nanum+Gothic+Coding) (소스: `google/fonts` 저장소 `ofl/nanumgothiccoding/OFL.txt`가 존재함을 확인) | SIL OFL 1.1. 전문 내용은 직접 읽지 않았다 | 로그 · 코드 블록 (FE, CDN) |
+| 학과 대상 설문 (구글폼, 2026-10-28~31, 응답 37명) | 원본은 팀이 보관하는 구글폼 응답 CSV (레포에 올리지 않음) | 문항 5개, 응답자를 알아볼 정보 없이 응답 시각만 남는다 | [`SRS.md`](SRS.md) §1.1 비용 부담 · 배포 뒤 운영 종료 근거 |
 | | | | |
 
 [`SRS.md`](SRS.md) §1.1 문제 근거의 출처도 여기에 함께 올린다.
