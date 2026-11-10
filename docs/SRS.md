@@ -187,7 +187,8 @@ FE가 BE를, BE가 AI를 기다리지 않도록 **요청·응답 모양을 먼�
 | 사용자 | 인증 서비스가 관리 (ID · 이메일 · GitHub 연동) | 로그인 계정. 관리자 여부는 사용자가 고칠 수 없는 서버 쪽 값으로 정한다 ([`design/auth.md`](design/auth.md)) |
 | `deploys` | `id` · `user_id` · `slug` · `repo` · `commit_sha` · `spec`(배포 설정) · `created_at` | 확정한 배포 입력. 행 하나가 배포 입력 하나이고 저장한 뒤에는 바꾸지 않는다. 쓰기는 플랫폼 서버만 하고, 학생은 자기 행만 읽는다 (`supabase/migrations`) |
 | 문제 티켓 | 예정 | UC-14의 문제 티켓과 해결 결과. 모양은 [`design/AIagent.md`](design/AIagent.md) 5 · 6절 |
-| 배포 상태 | 예정 | UC-08의 진행 상태와 서비스별 live 슬롯. 저장할 것은 [`design/deploy-workflow.md`](design/deploy-workflow.md) 8절 |
+| `projects` · `deploy_state` · `build_cache` | `projects`: `slug` · `live_slot`(`a` / `b`). `deploy_state`: `slug` · `slot` · `deploy_id` · `input` · `manifest`. `build_cache`: `slug` · `service` · `build_input_hash` · `image` | 프로젝트의 live 슬롯, 슬롯별 배포 입력과 manifest, 같은 빌드 입력의 이미지 재사용 (`supabase/migrations`, [`design/deploy-handoff.md`](design/deploy-handoff.md)) |
+| 배포 진행 상태 | 예정 | UC-08의 단계별 진행 상태. 필드는 정해지지 않았다 |
 
 ### 2.6 배포
 
@@ -195,7 +196,7 @@ FE가 BE를, BE가 AI를 기다리지 않도록 **요청·응답 모양을 먼�
 | --- | --- | --- | --- |
 | FE | [시스템 정의서 §3](system-definition.md#3-시스템-개요)의 User Page · Admin Page 행 | `https://app.stairnoworks.com` (예정. 배포처가 생긴 날 레코드를 붙인다, [ADR-013](adr/013-visitor-entry-cloudflare-tunnel.md)) | `VITE_SUPABASE_URL` · `VITE_SUPABASE_PUBLISHABLE_KEY` |
 | BE | [시스템 정의서 §3](system-definition.md#3-시스템-개요)의 플랫폼 서버 행 | 클라우드 서버(EC2)의 주소를 그대로 쓴다. 필요하면 `api.stairnoworks.com`을 붙인다 ([§7](#7-열린-질문)) | `PORT` · `CORS_ORIGINS` · `SUPABASE_URL` · `SUPABASE_PUBLISHABLE_KEY` · `SUPABASE_SECRET_KEY` |
-| AI | 미정 | 미정 | 미정 |
+| AI | [시스템 정의서 §3](system-definition.md#3-시스템-개요)의 AI 서버 행 | 플랫폼 서버만 부른다 | `HOST` · `PORT` · `AGENT_API_TOKEN` · `GATEWAY_URL` |
 
 비밀값은 배포처 환경 변수에만 둔다. 여기에는 **변수 이름만** 적는다 (`.env.example`과 맞춘다). FE와 BE는 출처가 달라서, BE의 `CORS_ORIGINS`에 FE 주소를 넣는다.
 
