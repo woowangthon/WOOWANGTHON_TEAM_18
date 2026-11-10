@@ -135,7 +135,7 @@ export function checkQuota(input: DeployInput): QuotaIssue[] {
     const values = [...Object.values(r.requests), ...Object.values(r.limits)]
     if (values.some((v) => !(quantity(v) > 0))) issues.push({ field: `services.${name}.resources`, used: NaN, limit: NaN })
   }
-  if (issues.length > 0) return issues
+  // 읽지 못한 수량은 합계를 NaN으로 만들고 NaN 비교는 늘 거짓이라, 아래 합계 검사에서 겹쳐 알리지 않는다.
   for (const kind of ['requests', 'limits'] as const) {
     for (const res of ['cpu', 'memory', 'ephemeral-storage'] as const) {
       const used = 2 * all.reduce((sum, { r }) => sum + quantity(r[kind][res]), 0)
