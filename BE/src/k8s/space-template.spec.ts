@@ -36,38 +36,11 @@ function fileLeaves(text: string): string[] {
 describe('spaceObjects', () => {
   const objects = spaceObjects('my-app')
 
-  it('lists the five objects of the template in creation order, the namespace first and the read binding last', () => {
-    expect(objects.map((o) => (o.body as { kind: string }).kind)).toEqual([
-      'Namespace',
-      'LimitRange',
-      'ResourceQuota',
-      'NetworkPolicy',
-      'RoleBinding',
-    ])
-  })
-
-  it('posts each object where the API expects it', () => {
-    expect(objects.map((o) => o.path)).toEqual([
-      '/api/v1/namespaces',
-      '/api/v1/namespaces/proj-my-app/limitranges',
-      '/api/v1/namespaces/proj-my-app/resourcequotas',
-      '/apis/networking.k8s.io/v1/namespaces/proj-my-app/networkpolicies',
-      '/apis/rbac.authorization.k8s.io/v1/namespaces/proj-my-app/rolebindings',
-    ])
-  })
-
   it('names the space proj-<slug> and puts every other object in it', () => {
     const metas = objects.map((o) => (o.body as { metadata: { name: string; namespace?: string } }).metadata)
     expect(metas[0]).toMatchObject({ name: 'proj-my-app' })
     expect(metas.slice(1).map((m) => m.namespace)).toEqual(Array<string>(4).fill('proj-my-app'))
     expect(metas.slice(1).map((m) => m.name)).toEqual(['container-defaults', 'project-cap', 'project-isolation', 'platform-server-read'])
-  })
-
-  it('carries exactly the two Pod Security labels and nothing else', () => {
-    expect(objects[0].body).toMatchObject({
-      metadata: { labels: { 'pod-security.kubernetes.io/enforce': 'baseline', 'pod-security.kubernetes.io/warn': 'restricted' } },
-    })
-    expect(Object.keys((objects[0].body as { metadata: { labels: object } }).metadata.labels)).toHaveLength(2)
   })
 
   // 양식은 Infra/student/space.yaml이 정본이다(검사 규칙이 같은 값만 통과시킨다). 값이 하나라도 다르거나 빠지거나 늘면 만들 때 422가 난다.

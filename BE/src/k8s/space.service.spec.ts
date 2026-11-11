@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import http from 'node:http'
 import https from 'node:https'
 import type { AddressInfo } from 'node:net'
-import { tmpdir } from 'node:os'
+import { networkInterfaces, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Logger } from '@nestjs/common'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
@@ -59,9 +59,9 @@ class FakeK8s {
 }
 
 const TOKEN = 'k8s-secret-token'
-const configOf = (over: Partial<Record<'K8S_API_URL' | 'K8S_TOKEN' | 'K8S_CA', string | undefined>>) =>
-  new ConfigService<Env, true>({ K8S_API_URL: undefined, K8S_TOKEN: TOKEN, K8S_CA: 'unused', ...over })
-const serviceOf = (url: string | undefined, ca = 'unused') => new SpaceService(new K8sClient(configOf({ K8S_API_URL: url, K8S_CA: ca })))
+const configOf = (over: Partial<Record<'K8S_API_URL' | 'K8S_TOKEN' | 'K8S_CA_CERT', string | undefined>>) =>
+  new ConfigService<Env, true>({ K8S_API_URL: undefined, K8S_TOKEN: TOKEN, K8S_CA_CERT: 'unused', ...over })
+const serviceOf = (url: string | undefined, ca = 'unused') => new SpaceService(new K8sClient(configOf({ K8S_API_URL: url, K8S_CA_CERT: ca })))
 
 const already = { status: 409, body: { kind: 'Status', reason: 'AlreadyExists', message: 'secret-looking detail' } }
 const unavailable = { response: { code: 'CLUSTER_UNAVAILABLE' }, status: 503 }
@@ -76,6 +76,7 @@ describe('SpaceService.ensureSpace (plain http, loopback)', () => {
     service = serviceOf(url)
   })
   afterEach(() => {
+    vi.restoreAllMocks()
     fake.seen = []
     fake.answers.clear()
   })
@@ -127,6 +128,20 @@ describe('SpaceService.ensureSpace (plain http, loopback)', () => {
     expect(fake.paths).toEqual(five.slice(0, 2))
   })
 
+  // 리더의 Tailscale 주소가 IPv6(fd7a:...)일 수 있다. 대괄호가 남으면 이름 풀이로 넘어가 연결이 모두 실패한다.
+  it.skipIf(!networkInterfaces().lo?.some((a) => a.address === '::1'))('reaches an IPv6 address written with brackets', async () => {
+    const v6 = http.createServer()
+    const fakeV6 = new FakeK8s(v6)
+    await new Promise<void>((r) => v6.listen(0, '::1', r))
+    try {
+      const { port } = v6.address() as AddressInfo
+      await serviceOf(`http://[::1]:${port}`).ensureSpace('my-app')
+      expect(fakeV6.seen).toHaveLength(5)
+    } finally {
+      await fakeV6.close()
+    }
+  })
+
   it('answers 503 when the connection is dropped', async () => {
     fake.answers.set(five[0], 'hangup')
     await expect(service.ensureSpace('my-app')).rejects.toBeInstanceOf(ServiceUnavailableException)
@@ -148,14 +163,10 @@ describe('SpaceService.ensureSpace (plain http, loopback)', () => {
 
   it('logs the status and reason, never the token or the answer text', async () => {
     const logged = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
-    try {
-      fake.answers.set(five[0], { status: 403, body: { reason: 'Forbidden', message: 'secret-looking detail' } })
-      await service.ensureSpace('my-app').catch(() => undefined)
-      expect(logged).toHaveBeenCalledWith('POST /api/v1/namespaces answered 403 Forbidden')
-      expect(JSON.stringify(logged.mock.calls)).not.toMatch(new RegExp(`${TOKEN}|secret-looking`))
-    } finally {
-      logged.mockRestore()
-    }
+    fake.answers.set(five[0], { status: 403, body: { reason: 'Forbidden', message: 'secret-looking detail' } })
+    await service.ensureSpace('my-app').catch(() => undefined)
+    expect(logged).toHaveBeenCalledWith('POST /api/v1/namespaces answered 403 Forbidden')
+    expect(JSON.stringify(logged.mock.calls)).not.toMatch(new RegExp(`${TOKEN}|secret-looking`))
   })
 
   // 닿지 않는 주소(Tailscale이 끊겨 패킷이 버려질 때)는 거절이 아니라 무응답이다. 제한 시간이 없으면 요청이 끝나지 않는다.
@@ -184,15 +195,13 @@ describe('SpaceService.ensureSpace (plain http, loopback)', () => {
 })
 
 describe('SpaceService.ensureSpace (not configured)', () => {
+  afterEach(() => vi.restoreAllMocks())
+
   it('answers 503 CLUSTER_UNAVAILABLE without any network call', async () => {
-    const service = new SpaceService(new K8sClient(new ConfigService<Env, true>({ K8S_API_URL: undefined, K8S_TOKEN: undefined, K8S_CA: undefined })))
+    const service = new SpaceService(new K8sClient(new ConfigService<Env, true>({ K8S_API_URL: undefined, K8S_TOKEN: undefined, K8S_CA_CERT: undefined })))
     const logged = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
-    try {
-      await expect(service.ensureSpace('my-app')).rejects.toMatchObject(unavailable)
-      expect(logged).toHaveBeenCalledWith(expect.stringContaining('not configured'))
-    } finally {
-      logged.mockRestore()
-    }
+    await expect(service.ensureSpace('my-app')).rejects.toMatchObject(unavailable)
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining('not configured'))
   })
 })
 
@@ -209,9 +218,9 @@ describe('SpaceService.ensureSpace (https with a private CA)', () => {
   beforeAll(async () => {
     dir = mkdtempSync(join(tmpdir(), 'k8s-test-'))
     for (const name of ['ca', 'other']) {
-      openssl('req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', `${name}.key`, '-out', `${name}.pem`, '-days', '2', '-subj', `/CN=${name}`)
+      openssl('req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes', '-keyout', `${name}.key`, '-out', `${name}.pem`, '-days', '2', '-subj', `/CN=${name}`)
     }
-    openssl('req', '-newkey', 'rsa:2048', '-nodes', '-keyout', 'srv.key', '-out', 'srv.csr', '-subj', '/CN=leader')
+    openssl('req', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes', '-keyout', 'srv.key', '-out', 'srv.csr', '-subj', '/CN=leader')
     writeFileSync(join(dir, 'ext'), 'subjectAltName=IP:127.0.0.1')
     openssl('x509', '-req', '-in', 'srv.csr', '-CA', 'ca.pem', '-CAkey', 'ca.key', '-CAcreateserial', '-out', 'srv.pem', '-days', '2', '-extfile', 'ext')
     caPem = readFileSync(join(dir, 'ca.pem'), 'utf8')

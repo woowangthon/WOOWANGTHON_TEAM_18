@@ -30,15 +30,15 @@ export class K8sClient {
   constructor(config: ConfigService<Env, true>) {
     const url = config.get('K8S_API_URL', { infer: true })
     const token = config.get('K8S_TOKEN', { infer: true })
-    const ca = config.get('K8S_CA', { infer: true })
+    const ca = config.get('K8S_CA_CERT', { infer: true })
     // validateEnv가 셋이 함께 있거나 함께 없게 한다.
     this.conn = url && token && ca ? { url: new URL(url), token, ca } : undefined
   }
 
-  /** `path`에 객체를 만든다. 이미 있으면(409 AlreadyExists) 'exists', 만들었으면 'created'. */
-  async create(path: string, body: object): Promise<'created' | 'exists'> {
+  /** `path`에 객체를 만든다. 이미 있으면(409 AlreadyExists)도 성공이다. */
+  async create(path: string, body: object): Promise<void> {
     if (!this.conn) {
-      this.logger.error('Cluster access is not configured (K8S_API_URL, K8S_TOKEN, K8S_CA)')
+      this.logger.error('Cluster access is not configured (K8S_API_URL, K8S_TOKEN, K8S_CA_CERT)')
       throw clusterUnavailable()
     }
     let answer: Answer
@@ -48,8 +48,7 @@ export class K8sClient {
       this.logger.error(`POST ${path} failed: ${err instanceof Error ? err.message : 'unknown error'}`)
       throw clusterUnavailable()
     }
-    if (answer.status === 201) return 'created'
-    if (answer.status === 409 && answer.reason === 'AlreadyExists') return 'exists'
+    if (answer.status === 201 || (answer.status === 409 && answer.reason === 'AlreadyExists')) return
     // 응답의 message는 객체 값을 담을 수 있어 싣지 않는다. 상태와 reason이면 어느 경우인지 알 수 있다.
     this.logger.error(`POST ${path} answered ${answer.status}${answer.reason ? ` ${answer.reason}` : ''}`)
     throw clusterUnavailable()
@@ -76,9 +75,10 @@ export class K8sClient {
         // 오류 응답이어도 본문을 끝까지 읽어 연결을 정리한다.
         res.on('end', () => resolve({ status: res.statusCode ?? 0, reason: reasonOf(Buffer.concat(chunks).toString('utf8')) }))
       }
-      const req = secure
-        ? https.request({ ...options, host: url.hostname, port: url.port, ca }, onResponse)
-        : http.request({ ...options, host: url.hostname, port: url.port }, onResponse)
+      // URL.hostname은 IPv6 주소에 대괄호를 남긴다(`[fd7a::1]`). 연결 쪽은 대괄호 없는 주소를 받는다.
+      const host = url.hostname.replace(/^\[|\]$/g, '')
+      // http는 로컬 시험 전용이다(env가 loopback만 허용). ca는 https에서만 쓰인다.
+      const req = (secure ? https : http).request({ ...options, host, port: url.port, ca }, onResponse)
       req.on('error', reject)
       req.end(payload)
     })

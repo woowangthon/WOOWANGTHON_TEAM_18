@@ -12,8 +12,8 @@ export interface Env {
   K8S_API_URL: string | undefined
   /** 서버 계정(platform-server)의 토큰. 비밀이라 로그 · 응답에 남기지 않고 K8S_API_URL로만 보낸다. */
   K8S_TOKEN: string | undefined
-  /** 리더 API 인증서를 서명한 CA(PEM). */
-  K8S_CA: string | undefined
+  /** 리더 API 인증서를 서명한 CA. 설정에는 PEM의 base64(한 줄)로 적고, 여기에는 풀어 읽은 PEM이 들어 있다. */
+  K8S_CA_CERT: string | undefined
 }
 
 // 값이 틀리면 부팅을 멈춘다. 틀린 설정으로 뜬 서버가 조용히 다르게 동작하지 않게 한다.
@@ -77,23 +77,24 @@ function parseSecretKey(value: string | undefined): string {
 
 // 셋이 모두 비면 클러스터 기능만 끈 채로 뜬다(인프라가 값을 주기 전에도 BE가 떠야 한다). 일부만 채우면 틀린 설정이라 멈춘다.
 // 틀린 값이 오류 메시지(로그)에 남지 않도록 토큰 · CA는 값을 메시지에 싣지 않는다.
-function parseCluster(raw: Record<string, string | undefined>): Pick<Env, 'K8S_API_URL' | 'K8S_TOKEN' | 'K8S_CA'> {
-  const names = ['K8S_API_URL', 'K8S_TOKEN', 'K8S_CA'] as const
-  const missing = names.filter((n) => raw[n] === undefined || raw[n] === '')
-  if (missing.length === names.length) return { K8S_API_URL: undefined, K8S_TOKEN: undefined, K8S_CA: undefined }
-  if (missing.length > 0) {
+function parseCluster(raw: Record<string, string | undefined>): Pick<Env, 'K8S_API_URL' | 'K8S_TOKEN' | 'K8S_CA_CERT'> {
+  const { K8S_API_URL: url, K8S_TOKEN: token, K8S_CA_CERT: encoded } = raw
+  if (!url && !token && !encoded) return { K8S_API_URL: undefined, K8S_TOKEN: undefined, K8S_CA_CERT: undefined }
+  const missing = Object.entries({ K8S_API_URL: url, K8S_TOKEN: token, K8S_CA_CERT: encoded })
+    .filter(([, v]) => !v)
+    .map(([name]) => name)
+  if (!url || !token || !encoded) {
     throw new Error(`${missing.join(', ')} must be set together with the other K8S_* values (or leave all of them empty)`)
   }
   // 토큰이 이 주소로 나간다. 평문 HTTP면 중간에서 읽힌다.
-  const url = checkSecureOrigin(raw.K8S_API_URL!, 'K8S_API_URL')
-  const token = raw.K8S_TOKEN!
+  checkSecureOrigin(url, 'K8S_API_URL')
   if (!/^\S+$/.test(token)) throw new Error('K8S_TOKEN must not contain whitespace')
-  // 한 줄로 적을 때 줄바꿈을 \n으로 쓴다.
-  const ca = raw.K8S_CA!.replaceAll('\\n', '\n')
-  if (!/-----BEGIN CERTIFICATE-----[\s\S]+-----END CERTIFICATE-----/.test(ca)) {
-    throw new Error('K8S_CA must be a PEM certificate (-----BEGIN CERTIFICATE-----)')
+  // 배포처가 env 파일에 변수당 한 줄만 허용해서 PEM(여러 줄)을 base64 한 줄로 받는다.
+  const ca = Buffer.from(encoded, 'base64').toString('utf8')
+  if (!/^-----BEGIN CERTIFICATE-----\s*[A-Za-z0-9+/=][A-Za-z0-9+/=\s]*-----END CERTIFICATE-----\s*$/.test(ca)) {
+    throw new Error('K8S_CA_CERT must be the base64 of a PEM certificate, on one line (base64 -w0 ca.crt)')
   }
-  return { K8S_API_URL: url, K8S_TOKEN: token, K8S_CA: ca }
+  return { K8S_API_URL: url, K8S_TOKEN: token, K8S_CA_CERT: ca }
 }
 
 // origin이어야 하고, HTTP는 로컬 시험(loopback)만 허용한다.
