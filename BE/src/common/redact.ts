@@ -3,7 +3,12 @@ import { isRecord } from './is-record.js'
 export const REDACTED = '[REDACTED]'
 
 // 이름이 이런 칸의 값은 통째로 가린다(Pod의 env `{ name, value }`, 객체 키, `KEY=value` 줄 모두).
-const SENSITIVE_NAME = /(secret|token|passw(or)?d|pwd|api[_-]?key|credential|authorization|private[_-]?key|database_url|dsn)/i
+const SENSITIVE_WORDS = 'secret|token|passw(?:or)?d|pwd|api[_-]?key|credential|authorization|private[_-]?key|database_url|dsn'
+const SENSITIVE_NAME = new RegExp(`(${SENSITIVE_WORDS})`, 'i')
+const NAMED_VALUE = new RegExp(
+  `((?:^|[\\s"'{,;])[A-Za-z0-9_.-]*(?:${SENSITIVE_WORDS})[A-Za-z0-9_.-]*["']?\\s*[=:]\\s*)("[^"]*"|'[^']*'|[^\\s,;}&]+)`,
+  'gi',
+)
 
 // 값 자체가 비밀처럼 생긴 문자열. 순서와 무관하게 모두 적용한다.
 const PATTERNS: RegExp[] = [
@@ -24,10 +29,7 @@ export function redactString(text: string): string {
   // `scheme://user:password@host`
   out = out.replace(/(\b[a-z][a-z0-9+.-]*:\/\/[^\s:/@]*:)[^\s@/]+@/gi, `$1${REDACTED}@`)
   // `NAME=value` · `NAME: value` · `"name": "value"`에서 이름이 민감한 경우
-  out = out.replace(
-    /((?:^|[\s"'{,;])[A-Za-z0-9_.-]*(?:secret|token|passw(?:or)?d|pwd|api[_-]?key|credential|authorization|private[_-]?key|database_url|dsn)[A-Za-z0-9_.-]*["']?\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s,;}&]+)/gi,
-    `$1${REDACTED}`,
-  )
+  out = out.replace(NAMED_VALUE, `$1${REDACTED}`)
   for (const p of PATTERNS) out = out.replace(p, REDACTED)
   return out
 }

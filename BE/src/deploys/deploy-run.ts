@@ -7,6 +7,7 @@ import type { Issue, IssueCode } from './deploy-input.js'
 
 export const STAGES = ['build', 'prepare', 'render', 'apply', 'verify', 'switch'] as const
 export type Stage = (typeof STAGES)[number]
+export const isStage = (v: unknown): v is Stage => (STAGES as readonly unknown[]).includes(v)
 
 export type RunStatus = 'running' | 'fixing' | 'needs_user' | 'succeeded' | 'failed'
 export type DeployStatus = RunStatus | 'not_started'
@@ -92,13 +93,13 @@ export function buildSteps(status: DeployStatus, stage: Stage | null): { key: St
 
 export const publicUrl = (slug: string) => `https://${slug}.stairnoworks.com`
 
-/** 파이프라인 알림의 본문. 모양은 docs/design/api.md "파이프라인 ↔ 플랫폼 서버". */
 /** 문제 티켓에 담을 증거. AI 서버의 모델(AI/ai_server/agent/models.py)이 받는 모양으로 이미 맞춰 둔다. */
 export interface TicketEvidence {
   raw: { codebuild: Record<string, unknown> | null; k8s: { pod: Record<string, unknown> | null; events: Record<string, unknown>[]; status: Record<string, unknown> | null } | null }
   logs: { from: string; to: string; lines: string[] } | null
 }
 
+/** 파이프라인 알림의 본문. 모양은 docs/design/api.md "파이프라인 ↔ 플랫폼 서버". */
 export type Notice =
   | { deployId: string; stage: Stage; result: 'passed'; images: Record<string, string> | null }
   | {
@@ -118,7 +119,7 @@ export function validateNotice(body: unknown): { ok: true; notice: Notice } | { 
   if (!isRecord(body)) return { ok: false, issues: [{ path: '', code: 'INVALID_TYPE' }] }
   const { deployId, stage, result } = body
   if (typeof deployId !== 'string' || !UUID.test(deployId)) add('deployId', deployId === undefined ? 'REQUIRED' : 'INVALID_VALUE')
-  if (!(STAGES as readonly unknown[]).includes(stage)) add('stage', stage === undefined ? 'REQUIRED' : 'INVALID_VALUE')
+  if (!isStage(stage)) add('stage', stage === undefined ? 'REQUIRED' : 'INVALID_VALUE')
   if (result !== 'passed' && result !== 'failed') add('result', result === undefined ? 'REQUIRED' : 'INVALID_VALUE')
   if (issues.length > 0) return { ok: false, issues }
   const base = { deployId: (deployId as string).toLowerCase(), stage: stage as Stage }

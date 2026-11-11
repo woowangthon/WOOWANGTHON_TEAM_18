@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common'
 import type { AuthUser } from '../auth/auth.decorators.js'
-import { UUID } from '../common/uuid.js'
+import { parseUuid } from '../common/uuid.js'
 import { redact, redactString } from '../common/redact.js'
 import { AgentClient } from './agent.client.js'
 import type { ServiceConditions } from './deploy-condition.js'
@@ -75,7 +75,8 @@ export class DeployRunsService {
 
   /** 내 배포 하나. 없는 id · 남의 id · UUID가 아닌 id는 모두 404다. */
   private async owned(user: AuthUser, id: string): Promise<DeployRow> {
-    const row = UUID.test(id) ? await this.store.findOwned(id.toLowerCase(), user.id) : undefined
+    const uuid = parseUuid(id)
+    const row = uuid ? await this.store.findOwned(uuid, user.id) : undefined
     if (!row) throw notFound()
     return row
   }
@@ -136,7 +137,8 @@ export class DeployRunsService {
 
   async status(user: AuthUser, id: string): Promise<DeployStatusView> {
     // 소유 확인과 실행 기록 읽기는 서로 기다리지 않는다. 남의 배포면 읽은 기록은 버리고 404다.
-    const [deploy, run] = await Promise.all([this.owned(user, id), UUID.test(id) ? this.store.findRun(id.toLowerCase()) : undefined])
+    const uuid = parseUuid(id)
+    const [deploy, run] = await Promise.all([this.owned(user, id), uuid ? this.store.findRun(uuid) : undefined])
     return view(deploy, run)
   }
 
@@ -154,7 +156,8 @@ export class DeployRunsService {
 
   /** 파이프라인이 배포 입력을 읽어 간다(기계용 토큰 라우트). */
   async pipelineInput(id: string) {
-    const run = UUID.test(id) ? await this.store.findRun(id.toLowerCase()) : undefined
+    const uuid = parseUuid(id)
+    const run = uuid ? await this.store.findRun(uuid) : undefined
     if (!run) throw notFound()
     return { deployId: run.deploy_id, slot: run.target_slot, input: run.input }
   }

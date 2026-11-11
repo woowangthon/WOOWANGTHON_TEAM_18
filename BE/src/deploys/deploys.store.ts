@@ -177,7 +177,7 @@ export class DeploysStore {
    * `where`의 값은 우리 코드의 상수다.
    */
   async updateRun(deployId: string, where: { status?: RunStatus; stage?: Stage }, patch: RunPatch): Promise<boolean> {
-    const query: Record<string, string> = { deploy_id: `eq.${deployId}` }
+    const query: Record<string, string> = { deploy_id: `eq.${deployId}`, select: 'deploy_id' }
     if (where.status) query.status = `eq.${where.status}`
     if (where.stage) query.stage = `eq.${where.stage}`
     const rows = await this.call('deploy_runs', 'PATCH', query, { ...patch, updated_at: new Date().toISOString() })

@@ -14,10 +14,10 @@ describe('DeploysStore.updateRun', () => {
     const fetchMock = vi.fn<typeof fetch>(() => Promise.resolve(Response.json([])))
     vi.stubGlobal('fetch', fetchMock)
     expect(await store().updateRun(ID, { status: 'running', stage: 'apply' }, { stage: 'verify' })).toBe(false)
-    expect(queryOf(fetchMock.mock.calls[0])).toEqual({ deploy_id: `eq.${ID}`, status: 'eq.running', stage: 'eq.apply' })
+    expect(queryOf(fetchMock.mock.calls[0])).toEqual({ deploy_id: `eq.${ID}`, select: 'deploy_id', status: 'eq.running', stage: 'eq.apply' })
 
     fetchMock.mockResolvedValueOnce(Response.json([{}]))
     expect(await store().updateRun(ID, {}, { stage: 'verify' })).toBe(true)
-    expect(queryOf(fetchMock.mock.calls[1])).toEqual({ deploy_id: `eq.${ID}` })
+    expect(queryOf(fetchMock.mock.calls[1])).toEqual({ deploy_id: `eq.${ID}`, select: 'deploy_id' })
   })
 })
