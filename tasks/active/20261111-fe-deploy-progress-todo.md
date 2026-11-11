@@ -6,7 +6,7 @@
 
 ## Plan
 
-Issue #99 is built against the BE contract in `docs/design/api.md` "배포 시작 · 진행 상태" (BE commit 03685bb on `feat/deploy-start-44`, not merged into `main` yet; the endpoints are not implemented yet either).
+Issue #99 is built against the BE contract in `docs/design/api.md` "배포 시작 · 진행 상태" (on `main` since #107; the readiness check behind `start` is `DeployReadinessService`, #82 / #120).
 
 - `DeployStages` only draws. It takes one state per stage (`pending` / `queued` / `active` / `done` / `skipped` / `fixing` / `action` / `failed`) and writes a word on each, so colour is never the only signal.
 - `progress.ts` holds the contract types and `stageStatesOf`, which maps the server's `steps` and `status` onto those states. The server keeps the working step `active` and says "fixing" / "needs user" in `status`, so the overlay is laid on that step here. A step key or value the server did not name stays "pending" (a stage is never dropped from the list).
@@ -20,7 +20,7 @@ Decisions without a ruling in the issue or the contract:
 - A public address is linked only when it starts with `https://`.
 - Routes `/deploys` and `/deploys/:id`, menu text `내 배포`.
 
-Answered by the BE (woowangthon-team-18-6c, 2026-11-11), to be written into api.md in its next commit: `NOT_READY` carries `error.fields` as `{ path: "secrets.<service>.<KEY>", code: "REQUIRED" }` (the screen shows `<service> · <KEY>`) (there is no `missing`; that part comes from #82's readiness check, and until it lands start answers `503 NOT_IMPLEMENTED`); a warning is `{ code, message, service | null }` with a message that is safe to show; `{}` with JSON content type is accepted as the start body. The server does not produce `needs_user` or "배포 대기" yet; the screen already draws them.
+Answered by the BE (woowangthon-team-18-6c, 2026-11-11) and now written in api.md on `main`: `NOT_READY` carries `error.fields` as `{ path: "secrets.<service>.<KEY>", code: "REQUIRED" }` (the screen shows `<service> · <KEY>`; there is no `missing`); a warning is `{ code, message, service | null }` with a message that is safe to show; `{}` with JSON content type is accepted as the start body. The server does not produce `needs_user` or "배포 대기" yet; the screen already draws them.
 
 Known limits, left on purpose: the status read and the list read each hand-write the same load / retry state (two callers; a shared hook is not worth it yet); a retryable error is retried every 3 s with no back-off and no pause while the tab is hidden; each poll replaces the state even when `updatedAt` is unchanged (8 rows).
 
@@ -34,10 +34,10 @@ Known limits, left on purpose: the status read and the list read each hand-write
 - [x] Failure: the server's message with stage and service; "not the student's fault" for platform codes
 - [x] Find an in-progress deploy again after a reload — files: `pages/DeploysPage.tsx`, `pages/DeployProgressPage.tsx`, `App.tsx`, `layout/AppLayout.tsx`, `deploy/DeploySaved.tsx`
 - [x] Security scan warnings (UC-10) shown without blocking; the missing items of `NOT_READY` listed by name
-- [ ] Once `NOT_IMPLEMENTED` is gone: check that start with a real `{}` works end to end
+- [ ] Check against the real BE (start is on `main` now, with the readiness check wired): `start` with a real `{}` works end to end, and `409 NOT_READY` lists the missing `secrets.<service>.<KEY>` names. Still open: not run
 - [ ] Mutation testing (#67 not introduced; hand mutants on the polling, start and mapping logic were run)
-- [ ] Browser check against the real BE (the endpoints do not exist yet) and screenshots (light and dark, 1440px and 390px) — attached by the user
+- [ ] Browser check against the real BE (not run) and screenshots (light and dark, 1440px and 390px) — attached by the user
 
 ## Done when
 
-A student can start a deploy, watch the stages change, and get the public address or the failure reason, and can come back to it after a reload. The code is there; what is missing is a run against the real endpoints.
+A student can start a deploy, watch the stages change, and get the public address or the failure reason, and can come back to it after a reload. The code is there; what is missing is a run against the real BE (the endpoints are on `main`, but this screen has not been run against them).
