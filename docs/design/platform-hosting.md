@@ -31,7 +31,7 @@
 | 인증서 | ACM **us-east-1**에서 `app.stairnoworks.com` 발급(DNS 검증 레코드를 Cloudflare에 추가) |
 | DNS | Cloudflare에 `app` CNAME → CloudFront 도메인. **DNS만**(회색 구름). 프록시를 켜면 인증서가 두 겹이 된다 |
 | 빌드 값 | `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, `VITE_API_BASE_URL=https://api.stairnoworks.com`. 번들에 그대로 박히므로 공개 값만 넣는다 |
-| 올리기 | [`Infra/aws/deploy-fe.sh`](../../Infra/aws/deploy-fe.sh): 빌드 → `assets/`는 1년 캐시, `index.html`은 캐시 없음 → `index.html` 무효화 |
+| 올리기 | [`Infra/aws/deploy-fe.sh`](../../Infra/aws/deploy-fe.sh). 해시가 붙은 `assets/`는 오래 캐시하고 지우지 않으며, `index.html`은 캐시하지 않는다 |
 
 `VITE_API_BASE_URL`은 FE가 BE를 부를 때 앞에 붙이는 주소다. FE 코드에서 이 값을 읽게 하는 변경은 FE 쪽 별도 PR이다. 그 전에는 FE가 `/api`를 상대 경로로 불러 BE에 닿지 않는다.
 
@@ -43,9 +43,9 @@
 | 실행 | `BE/Dockerfile` 이미지를 컨테이너 `wcp-be`로, 재부팅 뒤에도 다시 뜨게(`--restart unless-stopped`). 호스트 80 → 컨테이너 3000 |
 | HTTPS | Cloudflare에 `api` A 레코드 → Elastic IP, **프록시 켬**(주황 구름). 방문자 ↔ Cloudflare는 HTTPS, Cloudflare ↔ EC2는 HTTP 80. 이 호스트만 SSL 모드를 Flexible로 두는 Configuration Rule을 건다 |
 | 보안 그룹 | 80은 [Cloudflare IP 대역](https://www.cloudflare.com/ips/)만. SSH는 운영자 IP만(또는 Tailscale). GoCD 포트는 인터넷에 열지 않는다(리더 실행기는 Tailscale로 붙는다, [클러스터 §8](cluster.md#8-플랫폼-서버와-배포-실행기의-권한-서버-계정-1차-구현됨-2026-11-10-나머지-예정)) |
-| 설정값 | SSM Parameter Store `/wcp/be/<변수 이름>`(SecureString). 이름은 [`BE/.env.example`](../../BE/.env.example)과 같다. `CORS_ORIGINS=https://app.stairnoworks.com`. 값은 한 줄이어야 한다(PEM은 base64) |
+| 설정값 | SSM Parameter Store `/wcp/be/<변수 이름>`(SecureString). 이름은 [`BE/.env.example`](../../BE/.env.example)과 같다. `CORS_ORIGINS=https://app.stairnoworks.com`. 값은 한 줄이어야 한다(여러 줄 값은 스크립트가 거절한다. PEM은 base64로) |
 | 권한 | 인스턴스 역할에 `/wcp/be` 경로의 `ssm:GetParametersByPath`와 `kms:Decrypt`만 |
-| 올리기 | EC2에서 [`Infra/aws/deploy-be.sh`](../../Infra/aws/deploy-be.sh) `[git-ref]`: 이미지 빌드 → SSM에서 설정 파일(본인만 읽기) 생성 → 컨테이너 교체 → `/api/health` 확인. 실패하면 컨테이너 로그 마지막 30줄을 보여 주고 이전 이미지로 되돌린다(설정 파일은 새것 그대로라, 설정값이 원인이면 되돌린 것도 뜨지 않는다) |
+| 올리기 | EC2에서 [`Infra/aws/deploy-be.sh`](../../Infra/aws/deploy-be.sh) `[git-ref]`. 새 컨테이너가 `/api/health`에 답하지 않으면 이전 컨테이너(이미지 · 설정 그대로)를 다시 띄운다 |
 
 ### 함께 바꿀 바깥 설정
 

@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# 빌드 컨텍스트는 BE/ (`docker build -t be BE`). 운영 배포는 EC2라 이 이미지는 로컬 컨테이너 개발용이다.
+# 빌드 컨텍스트는 BE/ (`docker build -t be BE`). 운영(EC2)도 이 이미지를 쓴다(Infra/aws/deploy-be.sh).
 
 FROM node:22-bookworm-slim AS build
 # pnpm 버전은 package.json의 packageManager에서 읽는다.
