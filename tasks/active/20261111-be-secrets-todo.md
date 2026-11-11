@@ -8,7 +8,7 @@
 
 W3: the server takes the values of `runtime.secretKeys` from the user and hands them to `SecretWriter.write(slug, service, values)`, which writes the Secret `<service>-secrets` in `proj-<slug>` over the connection of #81. The writer is an interface (`BE/src/deploys/secret-writer.ts`); `ClusterSecretWriter` (`BE/src/deploys/cluster-secret-writer.ts`) binds it to `SpaceService.ensureSpace` then `ClusterSecrets.write` (#118, merged). With no cluster settings the write answers `503 CLUSTER_UNAVAILABLE`. The server account can create and replace a Secret but not read or patch it, so **a send replaces a service's whole Secret**: the sent key set must equal the service's `secretKeys`, services may be sent separately, no per-key partial send. That is decided in the contract (`docs/design/api.md` "비밀값") and sent to FE (#83) before the code.
 
-State: Supabase `deploy_secrets` (slug × service: key names, `writing` / `in`, sha256 of the key/value pairs). Never the values. `writing` is recorded before the cluster call and `in` after it, so no failure leaves `in`. `ready` and `secretHash` are computed on read from those rows; the same GET serves the "build ready" read of #82. `PUT` / `GET /api/deploys/:id/secrets`, owner only.
+State: Supabase `deploy_secrets` (slug × service: key names, `writing` / `in`, HMAC-SHA256 of the key/value pairs under the server-only `SECRET_HASH_KEY`). Never the values. `writing` is recorded before the cluster call and `in` after it, so no failure leaves `in`. `ready` and `secretHash` are computed on read from those rows; the same GET serves the "build ready" read of #82. `PUT` / `GET /api/deploys/:id/secrets`, owner only.
 
 #82 (same branch family, stacked): `DeployReadinessService.prepareIfReady(deployId)` (calls `DeployConditionService.prepare` with the hash only when ready, else 409 `NOT_READY` with `fields`), agreed with the #44 worker. The user-facing "build ready" read is the GET above, no new endpoint.
 
@@ -26,5 +26,5 @@ State: Supabase `deploy_secrets` (slug × service: key names, `writing` / `in`, 
 ## Done when
 
 - [x] `pnpm verify` exit code 0 seen
-- [ ] PR body says "실제 클러스터 미확인" and that the migration was not applied to the real Supabase
+- [x] PR body says "실제 클러스터 미확인". The migration `20261111020000_create_deploy_secrets.sql` was applied to the real Supabase on 2026-11-11 by the peer session (checked via PostgREST: the server key gets 200, the public key gets permission denied)
 - [ ] tests added; mutation survivors resolved or explained

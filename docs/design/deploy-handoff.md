@@ -133,7 +133,7 @@
 | 필드 | 타입 | 채우는 단계 | 뜻 |
 |---|---|---|---|
 | `commitSha` | 문자열 (40자 hex) | W0 | 빌드할 커밋. 브랜치 이름이나 `HEAD`를 쓰지 않는다 |
-| `deploy_condition.secretHash` | 문자열 \| `null` | W3 | W3이 Secret에 넣은 값들의 sha256. 비밀 env가 없으면 `null`. 값이 바뀌면 W5가 Pod를 다시 띄운다 |
+| `deploy_condition.secretHash` | 문자열 \| `null` | W3 | W3이 Secret에 넣은 값들의 해시(서버 전용 키 `SECRET_HASH_KEY`로 만든 HMAC-SHA256, `sha256:` 이름표). 비밀 env가 없으면 `null`. 값이 바뀌면 W5가 Pod를 다시 띄운다 |
 | `deploy_condition.services` | `null` \| 객체 | W4 | W3까지는 항상 `null`. W4가 아래 모양으로 채운다 |
 
 **`deploy_condition.services`** (W4가 채운다)

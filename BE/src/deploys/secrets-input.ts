@@ -1,5 +1,5 @@
+import { createHmac } from 'node:crypto'
 import { isRecord } from '../common/is-record.js'
-import { taggedSha256 } from './deploy-condition.js'
 import { type Issue, isEnvName, MAX_ISSUES, SERVICE_NAME, type Spec } from './deploy-input.js'
 import type { SecretRow } from './deploys.store.js'
 
@@ -63,14 +63,22 @@ export function validateSecrets(input: unknown, spec: Spec): { ok: true; values:
   return issues.length === 0 ? { ok: true, values } : { ok: false, issues }
 }
 
+/**
+ * 비밀값의 해시는 서버 전용 키(`SECRET_HASH_KEY`)로 만든 HMAC-SHA256이다. 키 없는 sha256이면 DB 행이나 파드 주석의 `secretHash`를 읽은 쪽이
+ * 짧은 값을 사전 대입으로 맞춰 볼 수 있다. 서비스 해시와 합친 해시는 입력 모양이 같아 서로 겹칠 수 있어 앞에 용도를 붙여 가른다.
+ * 앞의 `sha256:`은 DB의 형식 검사(`^sha256:[0-9a-f]{64}$`)가 그대로 맞게 두는 이름표다.
+ */
+const keyedDigest = (key: string, purpose: 'service' | 'combined', json: string): string =>
+  `sha256:${createHmac('sha256', key).update(`${purpose}\n${json}`, 'utf8').digest('hex')}`
+
 /** 서비스의 key · 값 쌍의 해시. key 순으로 정렬해 같은 값이면 항상 같다. JSON 배열이라 경계가 모호하지 않다. */
-export function serviceDigest(values: Record<string, string>): string {
-  return taggedSha256(JSON.stringify(Object.keys(values).sort().map((key) => [key, values[key]])))
+export function serviceDigest(values: Record<string, string>, hashKey: string): string {
+  return keyedDigest(hashKey, 'service', JSON.stringify(Object.keys(values).sort().map((key) => [key, values[key]])))
 }
 
 /** 서비스별 해시를 이름 순으로 합친 W4용 `secretHash`. */
-export function combineDigests(parts: { name: string; digest: string }[]): string {
-  return taggedSha256(JSON.stringify(parts.map((p) => [p.name, p.digest]).sort((a, b) => (a[0] < b[0] ? -1 : 1))))
+export function combineDigests(parts: { name: string; digest: string }[], hashKey: string): string {
+  return keyedDigest(hashKey, 'combined', JSON.stringify(parts.map((p) => [p.name, p.digest]).sort((a, b) => (a[0] < b[0] ? -1 : 1))))
 }
 
 export interface SecretStatus {
@@ -83,7 +91,7 @@ export interface SecretStatus {
  * 저장한 상태(`rows`)로 본 비밀값 상태. 서비스는 지금 `secretKeys`와 같은 key 집합으로 쓰기가 끝났을 때만 `in`이다(`writing`이거나
  * key가 다르면 `missing`). `secretKeys`가 없는 서비스는 나오지 않는다. 준비됨은 나온 서비스가 모두 `in`일 때다.
  */
-export function secretStatus(spec: Spec, rows: SecretRow[]): SecretStatus {
+export function secretStatus(spec: Spec, rows: SecretRow[], hashKey: string): SecretStatus {
   const services: SecretStatus['services'] = []
   const digests: { name: string; digest: string }[] = []
   for (const { name, runtime } of spec.services) {
@@ -96,7 +104,7 @@ export function secretStatus(spec: Spec, rows: SecretRow[]): SecretStatus {
     services.push({ name, status, keys: wanted.map((key) => ({ key, status })) })
   }
   const ready = services.every((s) => s.status === 'in')
-  return { ready, secretHash: ready && digests.length > 0 ? combineDigests(digests) : null, services }
+  return { ready, secretHash: ready && digests.length > 0 ? combineDigests(digests, hashKey) : null, services }
 }
 
 const sameKeys = (a: string[], b: string[]) => a.length === b.length && a.every((k) => b.includes(k))
