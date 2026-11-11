@@ -147,11 +147,14 @@ describe('SpaceService.ensureSpace (plain http, loopback)', () => {
     await expect(service.ensureSpace('my-app')).rejects.toBeInstanceOf(ServiceUnavailableException)
   })
 
-  it('answers 503 when nothing listens at the address', async () => {
+  it('answers 503 when nothing listens at the address, and logs the error code but not the address', async () => {
     const closed = new FakeK8s(http.createServer())
     const closedUrl = await closed.listen()
     await closed.close()
+    const logged = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
     await expect(serviceOf(closedUrl).ensureSpace('my-app')).rejects.toMatchObject(unavailable)
+    expect(logged).toHaveBeenCalledWith('POST /api/v1/namespaces failed: ECONNREFUSED')
+    expect(JSON.stringify(logged.mock.calls)).not.toContain('127.0.0.1')
   })
 
   it('keeps the token and the answer text out of the error', async () => {

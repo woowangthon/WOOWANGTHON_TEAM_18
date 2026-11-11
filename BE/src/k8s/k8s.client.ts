@@ -45,7 +45,8 @@ export class K8sClient {
     try {
       answer = await this.post(this.conn, path, JSON.stringify(body))
     } catch (err) {
-      this.logger.error(`POST ${path} failed: ${err instanceof Error ? err.message : 'unknown error'}`)
+      // 오류 메시지에는 리더의 주소와 포트가 들어 있어 코드(ECONNREFUSED · TimeoutError 등)만 남긴다.
+      this.logger.error(`POST ${path} failed: ${errorCode(err)}`)
       throw clusterUnavailable()
     }
     if (answer.status === 201 || (answer.status === 409 && answer.reason === 'AlreadyExists')) return
@@ -83,6 +84,12 @@ export class K8sClient {
       req.end(payload)
     })
   }
+}
+
+function errorCode(err: unknown): string {
+  if (!(err instanceof Error)) return 'unknown error'
+  const { code } = err as Error & { code?: unknown }
+  return typeof code === 'string' ? code : err.name
 }
 
 function reasonOf(text: string): string | undefined {
