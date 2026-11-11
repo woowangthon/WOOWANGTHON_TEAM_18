@@ -30,7 +30,12 @@ function AdminPage() {
         </Button>
       </div>
       <NodesSection read={nodes} />
-      <ProjectsSection read={projects} />
+      <ProjectsSection
+        read={projects}
+        onForbidden={() => {
+          setForbidden(true)
+        }}
+      />
     </>
   )
 }

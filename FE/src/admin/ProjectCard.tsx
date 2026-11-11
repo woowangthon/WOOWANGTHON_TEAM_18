@@ -8,6 +8,7 @@ import { ClusterProblem } from './ClusterProblem.tsx'
 import { timeText } from './format.ts'
 import Row from './Row.tsx'
 import type { AdminProject, StopResponse } from './types.ts'
+import { isForbidden } from './useAdminRead.ts'
 
 // 공간의 서비스가 하나도 없거나(공간 없음) 모두 0개로 내려갔으면(중지됨) 끌 것이 없다. 중지 뒤에는 lastStop이 아니라 replicas를 본다.
 // 공간을 읽지 못했으면(clusterError) 서비스가 없는 것이 아니라 모르는 것이다.
@@ -35,7 +36,9 @@ type StopState =
   | { step: 'failed'; error: unknown }
 
 // running: 끌 것이 있다(버튼을 보인다). 중지한 뒤 다시 읽으면 프로젝트가 중지됨이 되지만, 방금 한 일의 결과는 그대로 보여야 하므로 이 패널은 계속 그린다.
-function StopPanel({ slug, running, onStopped }: { slug: string; running: boolean; onStopped: () => void }) {
+type StopHandlers = { onStopped: () => void; onForbidden: () => void }
+
+function StopPanel({ slug, running, onStopped, onForbidden }: { slug: string; running: boolean } & StopHandlers) {
   const [stop, setStop] = useState<StopState>({ step: 'idle' })
   // 다시 배포되어 실행 중으로 돌아오면 지난 중지의 결과는 거둔다(낡은 "중지했어요"가 "실행 중" 아래 남지 않게).
   const [wasRunning, setWasRunning] = useState(running)
@@ -51,6 +54,11 @@ function StopPanel({ slug, running, onStopped }: { slug: string; running: boolea
       const result = await apiFetch<StopResponse>(`/api/admin/projects/${slug}/stop`, {})
       setStop({ step: 'done', result })
     } catch (error) {
+      // 운영자가 아니라는 답(403)은 이 카드의 일이 아니라 화면 전체의 일이다. 다시 읽기가 다른 이유로 실패해도 권한 안내로 바뀌게 바로 올린다.
+      if (isForbidden(error)) {
+        onForbidden()
+        return
+      }
       setStop({ step: 'failed', error })
     }
     // 성공이든 실패든 서버가 아는 상태를 다시 읽는다(일부만 내려갔을 수 있다).
@@ -134,8 +142,8 @@ function StopProblem({ error }: { error: unknown }) {
   }
   if (error instanceof ApiError && error.code === 'DATABASE_UNAVAILABLE') {
     return (
-      <Alert variant="warn" title="중지 기록을 남기지 못했어요">
-        이미 내려간 서비스는 그대로예요. 같은 중지를 다시 해도 안전해요.
+      <Alert variant="warn" title="저장소에 닿지 못했어요">
+        서비스를 내리기 전에 실패했는지, 내린 뒤 기록하다 실패했는지는 알 수 없어요. 새로 읽은 목록에서 상태를 확인하세요. 같은 중지를 다시 해도 안전해요.
       </Alert>
     )
   }
@@ -143,7 +151,7 @@ function StopProblem({ error }: { error: unknown }) {
 }
 
 // 프로젝트 하나. 서비스(Deployment)와 Pod의 상태를 보이고, 확인을 거쳐 강제 중지할 수 있다(FR-084 · FR-094).
-function ProjectCard({ project, onStopped }: { project: AdminProject; onStopped: () => void }) {
+function ProjectCard({ project, onStopped, onForbidden }: { project: AdminProject } & StopHandlers) {
   const state = stateOf(project)
   return (
     <li className="flex flex-col gap-3 rounded-md border border-line p-3">
@@ -170,7 +178,7 @@ function ProjectCard({ project, onStopped }: { project: AdminProject; onStopped:
         </Row>
         {project.lastStop && (
           <Row label="마지막 중지">
-            {timeText(project.lastStop.at)} · {project.lastStop.by}
+            {timeText(project.lastStop.at)} · <span className="break-all">{project.lastStop.by}</span>
           </Row>
         )}
       </dl>
@@ -201,7 +209,7 @@ function ProjectCard({ project, onStopped }: { project: AdminProject; onStopped:
           ))}
         </ul>
       )}
-      <StopPanel slug={project.slug} running={state === 'running'} onStopped={onStopped} />
+      <StopPanel slug={project.slug} running={state === 'running'} onStopped={onStopped} onForbidden={onForbidden} />
     </li>
   )
 }

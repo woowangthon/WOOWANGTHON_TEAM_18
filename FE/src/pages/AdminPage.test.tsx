@@ -2,7 +2,6 @@ import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { AdminNode, AdminProject, NodesResponse, ProjectsResponse } from '../admin/types.ts'
-import { REFRESH_MS } from '../admin/useAdminRead.ts'
 import { ApiError } from '../lib/api.ts'
 import AdminPage from './AdminPage.tsx'
 
@@ -214,18 +213,21 @@ it('says there are no saved deploys instead of an empty list', async () => {
   expect(screen.getByText('저장된 배포가 없어요.')).toBeTruthy()
 })
 
-it('reads again every refresh interval, on demand, and stops when the user leaves', async () => {
+it('reads again every 10 seconds, on demand, and stops when the user leaves', async () => {
   const { unmount } = await show()
   expect(reads(NODES)).toBe(1)
   expect(reads(PROJECTS)).toBe(1)
-  await advance(REFRESH_MS)
+  await advance(9_999)
+  expect(reads(NODES)).toBe(1)
+  expect(reads(PROJECTS)).toBe(1)
+  await advance(1)
   expect(reads(NODES)).toBe(2)
   expect(reads(PROJECTS)).toBe(2)
   await press('지금 새로 읽기')
   expect(reads(NODES)).toBe(3)
   expect(reads(PROJECTS)).toBe(3)
   unmount()
-  await advance(REFRESH_MS * 3)
+  await advance(10_000 * 3)
   expect(reads(NODES)).toBe(3)
   expect(reads(PROJECTS)).toBe(3)
 })
@@ -239,7 +241,7 @@ it.each([
 ])('names the problem (%s) and keeps the last nodes on screen', async (error, title) => {
   await show()
   replies[NODES] = error
-  await advance(REFRESH_MS)
+  await advance(10_000)
   expect(screen.getByText(title, { selector: 'p' })).toBeTruthy()
   expect(screen.getByText(/아래는 마지막으로 읽은 값이에요/)).toBeTruthy()
   expect(screen.getByText('leader', { selector: 'span' })).toBeTruthy()
@@ -259,7 +261,7 @@ it('shows the forbidden notice and stops reading when the server says the user i
   expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('권한이 없어요')
   expect(screen.queryByText('노드 현황')).toBeNull()
   const before = reads(NODES)
-  await advance(REFRESH_MS * 3)
+  await advance(10_000 * 3)
   expect(reads(NODES)).toBe(before)
 })
 
@@ -267,7 +269,7 @@ it('stops reading both when one of them is refused as not an operator', async ()
   serve({ [NODES]: new ApiError(403, 'ADMIN_REQUIRED', 'x') })
   await show()
   const before = reads(PROJECTS)
-  await advance(REFRESH_MS * 3)
+  await advance(10_000 * 3)
   expect(reads(PROJECTS)).toBe(before)
 })
 
@@ -279,7 +281,7 @@ it('clears the result of an earlier stop when the project is running again after
   await press('my-app 중지하기')
   expect(within(card('my-app')).getByText('중지했어요')).toBeTruthy()
   replies[PROJECTS] = projectsOf([running])
-  await advance(REFRESH_MS)
+  await advance(10_000)
   expect(within(card('my-app')).getByText('실행 중')).toBeTruthy()
   expect(within(card('my-app')).queryByText('중지했어요')).toBeNull()
   expect(screen.getByRole('button', { name: 'my-app 강제 중지' })).toBeTruthy()
@@ -359,7 +361,7 @@ it.each([
   [new ApiError(404, 'PROJECT_NOT_FOUND', 'x'), '프로젝트를 찾을 수 없어요'],
   [new ApiError(503, 'CLUSTER_FORBIDDEN', 'x'), '아직 강제 중지를 쓸 수 없어요'],
   [new ApiError(503, 'CLUSTER_UNREACHABLE', 'x'), '리더 무응답'],
-  [new ApiError(503, 'DATABASE_UNAVAILABLE', 'x'), '중지 기록을 남기지 못했어요'],
+  [new ApiError(503, 'DATABASE_UNAVAILABLE', 'x'), '저장소에 닿지 못했어요'],
   [new ApiError(500, 'INTERNAL', 'x'), '중지하지 못했어요'],
 ])('explains a failed stop (%s) and reads the projects again', async (error, title) => {
   serve({ [stopPath('my-app')]: error })
@@ -396,16 +398,23 @@ it.each([
   expect(reads(stopPath('my-app'))).toBe(1)
 })
 
-it('shows the forbidden notice when the stop is refused as not an operator, because the read after it is refused too', async () => {
+it('shows the forbidden notice when the stop is refused as not an operator, even if the read after it fails for another reason', async () => {
   let projectReads = 0
   api.apiFetch.mockImplementation((path: string) => {
     if (path === stopPath('my-app')) return Promise.reject(new ApiError(403, 'ADMIN_REQUIRED', 'x'))
-    if (path === PROJECTS) return ++projectReads === 1 ? Promise.resolve(projectsOf()) : Promise.reject(new ApiError(403, 'ADMIN_REQUIRED', 'x'))
+    if (path === PROJECTS) return ++projectReads === 1 ? Promise.resolve(projectsOf()) : Promise.reject(new ApiError(0, 'NETWORK_ERROR', 'x'))
     return Promise.resolve(replies[path])
   })
   await show()
   await press('my-app 강제 중지')
   await press('my-app 중지하기')
+  expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('권한이 없어요')
   expect(screen.queryByRole('button', { name: 'my-app 강제 중지' })).toBeNull()
   expect(screen.queryByText('중지하지 못했어요')).toBeNull()
+})
+
+it('lets a long stopper email wrap instead of widening the card', async () => {
+  serve({ [PROJECTS]: projectsOf([{ ...stopped, lastStop: { at: '2026-11-11T01:00:00.000Z', by: 'a-very-long-operator-address@some-long-domain.example.com' } }]) })
+  await show()
+  expect(screen.getByText('a-very-long-operator-address@some-long-domain.example.com').className).toContain('break-all')
 })
