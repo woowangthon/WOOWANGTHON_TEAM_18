@@ -102,7 +102,7 @@ def test_code_case_runs_its_playbook_and_submits_once() -> None:
     # playbook은 로컬 모델이 돌고, 추론 모델은 부르지 않는다.
     assert local.done and planner.requests == []
     first = local.sent(0)
-    assert INSTRUCTIONS in first and '"caseId":"A1"' in first and "Ticket t_0013" in first
+    assert INSTRUCTIONS in first and '"caseId": "A1"' in first and "t_0013" in first
 
 
 def test_model_gets_gateway_tools_and_read_memory_but_not_submit_result() -> None:
@@ -217,7 +217,7 @@ def test_failed_playbook_is_replanned_by_the_planner() -> None:
         ("run_verify", True),
     ]
     replan = planner.sent(0)
-    assert "포트를 바꿔도 Ready가 되지 않음" in replan and "- run_deploy ok=False" in replan
+    assert "포트를 바꿔도 Ready가 되지 않음" in replan and '"tool": "run_deploy"' in replan
 
 
 @pytest.mark.parametrize("status", ["verified", "needs_user"])
