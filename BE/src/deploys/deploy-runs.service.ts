@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common'
 import type { AuthUser } from '../auth/auth.decorators.js'
+import { isRecord } from '../common/is-record.js'
 import { parseUuid } from '../common/uuid.js'
 import { redact, redactString } from '../common/redact.js'
 import { ClusterReader } from '../k8s/cluster-reader.js'
@@ -40,9 +41,34 @@ export interface DeployStatusView {
   stage: Stage | null
   steps: { key: StepKey; state: StepState }[]
   failure: Failure | null
+  agent: AgentView | null
   url: string | null
   warnings: string[]
   updatedAt: string
+}
+
+/** AI 에이전트의 해결 결과 중 학생에게 보일 칸(api.md "진행 상태 읽기"의 `agent`). */
+export interface AgentView {
+  status: string
+  summary: string
+  userRequest: { message: string; secretKeys: string[] } | null
+  prUrl: string | null
+  evidence: { ref: string | null; text: string | null }[]
+}
+
+const str = (v: unknown): string | null => (typeof v === 'string' ? v : null)
+
+/** 게이트웨이가 검사하고 저장한 값이다. 빠진 칸만 빈 값으로 읽는다. */
+function toAgent(stored: Record<string, unknown>): AgentView {
+  const u = isRecord(stored.userRequest) ? stored.userRequest : null
+  const pr = isRecord(stored.pr) ? stored.pr : null
+  return {
+    status: str(stored.status) ?? 'gave_up',
+    summary: str(stored.summary) ?? '',
+    userRequest: u ? { message: str(u.message) ?? '', secretKeys: Array.isArray(u.secretKeys) ? (u.secretKeys as unknown[]).filter((k): k is string => typeof k === 'string') : [] } : null,
+    prUrl: pr ? str(pr.url) : null,
+    evidence: Array.isArray(stored.evidence) ? (stored.evidence as unknown[]).filter(isRecord).map((e) => ({ ref: str(e.ref), text: str(e.text) })) : [],
+  }
 }
 
 const iso = (t: string) => new Date(t).toISOString()
@@ -57,6 +83,7 @@ function view(deploy: DeployRow, run: DeployRunRow | undefined): DeployStatusVie
     stage,
     steps: buildSteps(status, stage),
     failure: run?.failure ? toFailure(run.failure) : null,
+    agent: run?.agent_result ? toAgent(run.agent_result) : null,
     url: status === 'succeeded' ? publicUrl(deploy.slug) : null,
     // 보안 검사 경고(#45)는 아직 없다.
     warnings: [],
@@ -129,11 +156,15 @@ export class DeployRunsService {
       const active = await this.store.findActiveRun(row.slug)
       if (active && Date.now() - Date.parse(active.updated_at) < STALE_RUN_MS) throw err
       if (active) {
-        await this.store.updateRun(
+        const expired = await this.store.updateRun(
           active.deploy_id,
           { status: active.status },
           { status: 'failed', failure: { code: 'TIMED_OUT', stage: active.stage ?? 'build', service: null } },
         )
+        // 에이전트가 아직 그 티켓을 붙잡고 있을 수 있다. 멈추라고 알린다(받지 못해도 실행 기록은 이미 끝났다).
+        if (expired && active.status === 'fixing' && active.ticket_id) {
+          await this.agent.close(active.ticket_id, commitOf(active), 'stopped')
+        }
       }
       await this.store.insertRun(row)
     }
@@ -270,7 +301,7 @@ export class DeployRunsService {
     // 외부(AI 서버 · 외부 추론 API)로 나가는 값은 모두 비밀값 필터를 거친다(FR-102).
     const ticket = redact({
       ticketId,
-      commitSha: (run.input as { commitSha: string }).commitSha,
+      commitSha: commitOf(run),
       stage: notice.stage,
       service: failure.service,
       targetSlot: run.target_slot,
@@ -289,6 +320,8 @@ const alreadyStarted = () => new ConflictException({ code: 'ALREADY_STARTED', me
 const inProgress = () => new ConflictException({ code: 'DEPLOY_IN_PROGRESS', message: 'Another deploy of this project is in progress' })
 const badNotice = (message: string, fields: { path: string; code: string }[]) =>
   new BadRequestException({ code: 'BAD_REQUEST', message, fields })
+
+const commitOf = (run: DeployRunRow) => (run.input as { commitSha: string }).commitSha
 
 // 시작 때 만든 입력이라 모양은 믿는다(저장하기 전에 validateServiceConditions를 거친다).
 const conditionsOf = (run: DeployRunRow) => (run.input.deploy_condition as { services: ServiceConditions }).services

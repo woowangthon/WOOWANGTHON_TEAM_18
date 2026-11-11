@@ -104,13 +104,27 @@ export class ClusterReader {
     })
   }
 
-  /** Pod 로그의 끝부분. `tailLines`는 기본 200, 최대 2000이고 응답은 256 KiB에서 잘린다. */
-  async logs(slug: string, pod: string, { container, tailLines = DEFAULT_TAIL }: { container?: string; tailLines?: number } = {}): Promise<string> {
+  /**
+   * AI 에이전트 게이트웨이의 관찰 도구용: 원본 객체를 그대로 준다(api.md "MCP 게이트웨이"). `metadata.managedFields`와 적용 기록 주석만 뺀다.
+   * 비밀값처럼 보이는 문자열은 부른 쪽이 밖으로 보내기 전에 가린다. `labelSelector`는 `app=be,slot=a`처럼 우리 코드가 만든 값이다.
+   */
+  async rawObjects(slug: string, kind: 'pods' | 'events' | 'deployments', labelSelector?: string): Promise<Record<string, unknown>[]> {
+    const base = kind === 'deployments' ? `/apis/apps/v1/namespaces/${space(slug)}/deployments` : `/api/v1/namespaces/${space(slug)}/${kind}`
+    const items = await this.list(labelSelector ? `${base}?labelSelector=${encodeURIComponent(labelSelector)}` : base)
+    return items.map(withoutBookkeeping)
+  }
+
+  /** Pod 로그의 끝부분. `tailLines`는 기본 200, 최대 2000이고 응답은 256 KiB에서 잘린다. `previous`면 직전 컨테이너의 로그다. */
+  async logs(
+    slug: string,
+    pod: string,
+    { container, tailLines = DEFAULT_TAIL, previous = false }: { container?: string; tailLines?: number; previous?: boolean } = {},
+  ): Promise<string> {
     // 요청 경로와 쿼리에 들어가는 값이다.
     if (!POD_NAME.test(pod)) throw new Error(`Not a valid pod name: ${JSON.stringify(pod)}`)
     if (container !== undefined && !CONTAINER_NAME.test(container)) throw new Error(`Not a valid container name: ${JSON.stringify(container)}`)
     if (!Number.isInteger(tailLines) || tailLines < 1) throw new Error(`Not a valid tailLines: ${JSON.stringify(tailLines)}`)
-    const query = `tailLines=${Math.min(tailLines, MAX_TAIL)}&limitBytes=${MAX_LOG_BYTES}${container ? `&container=${container}` : ''}`
+    const query = `tailLines=${Math.min(tailLines, MAX_TAIL)}&limitBytes=${MAX_LOG_BYTES}${container ? `&container=${container}` : ''}${previous ? '&previous=true' : ''}`
     return this.k8s.request('GET', `/api/v1/namespaces/${space(slug)}/pods/${pod}/log?${query}`)
   }
 
@@ -136,6 +150,21 @@ export function space(slug: string): string {
 
 // 응답의 빠진 칸은 빈 값으로 읽는다(쿠버네티스는 0 · 빈 목록을 생략한다).
 const record = (v: unknown): Record<string, unknown> => (isRecord(v) ? v : {})
+
+const LAST_APPLIED = 'kubectl.kubernetes.io/last-applied-configuration'
+
+/** 원본에서 `metadata.managedFields`와 적용 기록 주석을 뺀 사본. 나머지는 그대로다. */
+function withoutBookkeeping(object: Record<string, unknown>): Record<string, unknown> {
+  if (!isRecord(object.metadata)) return object
+  const metadata = { ...object.metadata }
+  delete metadata.managedFields
+  if (isRecord(metadata.annotations)) {
+    const annotations = { ...metadata.annotations }
+    delete annotations[LAST_APPLIED]
+    metadata.annotations = annotations
+  }
+  return { ...object, metadata }
+}
 const records = (v: unknown): Record<string, unknown>[] => (Array.isArray(v) ? v.filter(isRecord) : [])
 const text = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined)
 const count = (v: unknown): number => (typeof v === 'number' ? v : 0)

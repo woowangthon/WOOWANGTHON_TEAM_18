@@ -16,7 +16,7 @@ export type DeployStatus = RunStatus | 'not_started'
 export const nextStage = (stage: Stage): Stage | null => STAGES[STAGES.indexOf(stage) + 1] ?? null
 
 /** 플랫폼이 스스로 정하는 실패 코드. 파이프라인이 보낼 수 없다(보내면 AI를 건너뛰게 된다). */
-const INTERNAL_CODES = ['BUILD_FAILED', 'DEPLOY_FAILED', 'VERIFY_FAILED', 'SWITCH_FAILED', 'AGENT_UNAVAILABLE', 'TIMED_OUT'] as const
+const INTERNAL_CODES = ['BUILD_FAILED', 'DEPLOY_FAILED', 'VERIFY_FAILED', 'SWITCH_FAILED', 'AGENT_UNAVAILABLE', 'AGENT_GAVE_UP', 'TIMED_OUT'] as const
 type InternalCode = (typeof INTERNAL_CODES)[number]
 
 /** AI를 부르지 않고 "실패"로 마감하는 플랫폼 문제(deploy-workflow.md §6-3). 코드 집합은 열려 있어, 파이프라인이 새 코드를 추가해도 BE를 고치지 않는다(모양만 본다). */
@@ -33,6 +33,7 @@ const INTERNAL_MESSAGES: Record<InternalCode, string> = {
   VERIFY_FAILED: '서비스가 떴지만 동작 확인을 통과하지 못했습니다. 공개 주소는 바뀌지 않았습니다.',
   SWITCH_FAILED: '공개 주소를 새 서비스로 바꾸는 중에 문제가 생겼습니다.',
   AGENT_UNAVAILABLE: '문제를 자동으로 해결하는 서비스에 연결하지 못했습니다. 운영자에게 알려 주세요.',
+  AGENT_GAVE_UP: 'AI 에이전트가 이 실패를 해결하지 못했습니다. 배포 설정과 로그를 확인한 뒤 다시 배포해 주세요.',
   TIMED_OUT: '배포가 제한 시간 안에 끝나지 않아 중단했습니다. 다시 시도해 주세요.',
 }
 

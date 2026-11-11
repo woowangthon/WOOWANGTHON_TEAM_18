@@ -38,8 +38,7 @@ data:
         service: http://traefik.kube-system.svc.cluster.local:80
       - service: http_status:404
 ---
-# In: nothing (the client only dials out; the kubelet's probes still pass). The metrics port is opened
-# for Prometheus in build stage 11.
+# In: only Prometheus on the metrics port (the client only dials out; the kubelet's probes still pass).
 # Out: cluster DNS, Traefik's Pods, and Cloudflare (7844 tunnel, 443 API) on public addresses only.
 # The Pod's traffic is forwarded, so the host firewall's outgoing rules do not apply (cluster.md §3);
 # this policy is what keeps an exposed client away from the k3s API, kubelets, the image cache and
@@ -52,6 +51,17 @@ metadata:
 spec:
   podSelector: {}
   policyTypes: ["Ingress", "Egress"]
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: monitoring
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: prometheus
+    ports:
+    - port: 2000
+      protocol: TCP
   egress:
   - to:
     - namespaceSelector:
