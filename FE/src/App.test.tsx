@@ -77,6 +77,16 @@ it.each(protectedRoutes)('%s sends a signed-out visitor to the login page', (pat
   expect(h1()).toBe('로그인')
 })
 
+it('sends the root path to the dashboard when signed in', () => {
+  renderApp('/')
+  expect(h1()).toBe('대시보드')
+})
+
+it('sends the root path to the login page when signed out', () => {
+  renderApp('/', 'out')
+  expect(h1()).toBe('로그인')
+})
+
 it('draws nothing while the stored session is being read', () => {
   renderApp('/profile', 'restoring')
   expect(document.body.textContent).toBe('')

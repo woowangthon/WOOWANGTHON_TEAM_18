@@ -24,6 +24,8 @@ describe('parseDeployInput', () => {
     ['an uppercase commit', () => text((i) => (i.commitSha = 'A'.repeat(40))), 'commitSha is not a 40-char SHA'],
     ['a bad slug', () => text((i) => (spec(i).project = { slug: 'My App' })), 'spec.project.slug is invalid'],
     ['no project', () => text((i) => delete spec(i).project), 'spec.project.slug is invalid'],
+    ['a 41-char slug', () => text((i) => (spec(i).project = { slug: 'a'.repeat(41) })), 'spec.project.slug is invalid'],
+    ['a 31-char service name', () => text((i) => ((spec(i).services as Json[])[0].name = 'a'.repeat(31))), 'a service name is invalid'],
     ['no services', () => text((i) => (spec(i).services = [])), 'spec.services is empty'],
     ['services not filled (W3 sends null)', () => text((i) => ((i.deploy_condition as Json).services = null)), 'deploy_condition.services is not filled'],
     ['a bad service name', () => text((i) => ((spec(i).services as Json[])[0].name = '../x')), 'a service name is invalid'],
@@ -34,6 +36,14 @@ describe('parseDeployInput', () => {
     ['an unknown build', () => text((i) => (services(i).fe.build = 'skip')), 'deploy_condition.services.fe is neither a run nor a reuse with an image'],
   ])('refuses %s', (_, make, message) => {
     expect(() => parseDeployInput(make())).toThrow(`deploy input: ${message}`)
+  })
+
+  it('accepts a 40-char slug and a 30-char service name', () => {
+    const input = deployInput()
+    input.spec.project.slug = 'a'.repeat(40)
+    input.spec.services[2].name = 'a'.repeat(30)
+    input.deploy_condition.services['a'.repeat(30)] = input.deploy_condition.services.ai
+    expect(() => parseDeployInput(JSON.stringify(input))).not.toThrow()
   })
 
   it('accepts a run that already has an image (a retried build overwrites it)', () => {

@@ -205,7 +205,7 @@
 | `links` | `{ env, service }` 배열 | 다른 서비스 주소를 env `env`로 넣는다. 주소는 W5가 만든다 |
 | `ingressPath` | 문자열 \| `null` | 공개 경로. `null`이면 내부 전용 |
 | `stripPrefix` | 불리언 | `true`면 `ingressPath`를 떼고 컨테이너에 넘긴다 |
-| `resources` | `{ cpu, memory }` \| `null` | 컨테이너 자원. 요청과 상한에 같은 값을 쓴다 (예: `{ "cpu": "500m", "memory": "512Mi" }`). `null`이면 요청 CPU 250m · 메모리 256Mi, 상한 CPU 1 · 메모리 2Gi |
+| `resources` | `{ cpu, memory }` \| `null` | 컨테이너 자원. 요청과 상한에 같은 값을 쓴다 (예: `{ "cpu": "500m", "memory": "512Mi" }`). `null`이면 요청 CPU 250m · 메모리 256Mi, 상한 CPU 1 · 메모리 2Gi. 임시 저장소는 늘 요청 1Gi · 상한 4Gi다(Render가 넣는다) |
 
 ### 검증 규칙
 
@@ -225,7 +225,7 @@ W4는 배포 입력을 받으면 아래 규칙으로 검사한다. 하나라도 
 | `ingressPath` | 서비스끼리 같은 경로 금지. 한 경로가 다른 경로의 앞부분인 것(`/`와 `/api`, `/api`와 `/api/v1`)은 허용하고, 요청은 더 긴 경로가 가져간다(Ingress `pathType: Prefix`의 가장 긴 경로 우선). 앞부분 비교는 `/` 단위로 한다(`/api`는 `/apix`의 앞부분이 아니다) |
 | `health.type: http` | `health.path` 필수 |
 | `health.startupTimeoutSeconds` | 5 이상 300 이하 |
-| `resources` 합계 | 모든 서비스의 요청 합 × 2 ≤ 프로젝트 요청 상한(CPU 4 · 메모리 16Gi), 상한 합 × 2 ≤ 프로젝트 상한(CPU 8 · 메모리 32Gi). × 2는 확인 중 두 슬롯이 같이 뜨기 때문이다. 숫자는 [클러스터 설계](cluster.md) §6의 ResourceQuota 값을 따른다 |
+| `resources` 합계 | 모든 서비스의 요청 합 × 2 ≤ 프로젝트 요청 상한(CPU 4 · 메모리 16Gi · 임시 저장소 10Gi), 상한 합 × 2 ≤ 프로젝트 상한(CPU 8 · 메모리 32Gi · 임시 저장소 40Gi), 서비스 수 × 2 ≤ Pod 10개. × 2는 확인 중 두 슬롯이 같이 뜨기 때문이다. 임시 저장소를 LimitRange 기본 상한(8Gi)에 맡기면 서비스 3 × 슬롯 2 × 8Gi = 48Gi > 40Gi라 Render가 요청 1Gi · 상한 4Gi를 넣는다. 숫자는 [클러스터 설계](cluster.md) §6의 ResourceQuota 값을 따른다. 검사는 Prepare가 대상 슬롯을 비우기 전에 한다(`Infra/pipeline/src/render.ts` `checkQuota`). 실패는 k3s Status가 없는 prepare 단계 문제라 문제 티켓의 `stage`는 `prepare`다([AI 에이전트 설계](AIagent.md) case `P2`) |
 | `deploy_condition.services` (W3에서 받을 때) | 검사하지 않음 (W4가 덮어쓴다) |
 | `deploy_condition.services` (W4가 채운 뒤) | 키 집합이 `spec.services[].name`과 같음. `build: reuse`면 `image` 필수, `build: run`이면 빌드 전 `image`는 `null` |
 

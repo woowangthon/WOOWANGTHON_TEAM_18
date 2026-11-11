@@ -11,8 +11,10 @@ from pydantic_core import PydanticCustomError
 
 CommitSha = Annotated[str, Field(pattern=r"^[0-9a-f]{40}$")]
 NonEmpty = Annotated[str, Field(min_length=1)]
-Stage = Literal["build", "prepare", "render", "apply"]
+Stage = Literal["build", "prepare", "render", "apply", "verify"]
 ResultStatus = Literal["verified", "pr_opened", "needs_user", "gave_up"]
+ClassifyMethod = Literal["code", "llm"]
+ResultPath = Literal["playbook", "replan_after_playbook", "plan"]
 JsonObject = dict[str, Any]
 
 
@@ -121,9 +123,9 @@ SPEC_PATCH_PATH = r"^/spec/(services/[0-9]+/(build|runtime)/|services/[0-9]+/nam
 
 
 class Classification(Wire):
-    method: Literal["code", "llm"]
+    method: ClassifyMethod
     case_id: str | None
-    path: Literal["playbook", "replan_after_playbook", "plan"]
+    path: ResultPath
 
 
 class Action(Wire):
@@ -162,14 +164,13 @@ class Evidence(Wire):
     text: str | None = None
 
 
-class AgentResult(Wire):
-    """해결 결과. 에이전트의 output_type이라 모양이 틀리면 에이전트가 다시 만든다(§6)."""
+class Outcome(Wire):
+    """해결 결과 중 에이전트(LLM)가 정하는 부분.
 
-    ticket_id: NonEmpty
-    commit_sha: CommitSha
+    에이전트의 output_type이라 모양이 틀리면 에이전트가 다시 만든다.
+    """
+
     status: ResultStatus
-    classification: Classification
-    actions: list[Action]
     spec_patch: list[SpecPatchOp] | None = None
     build_overrides: BuildOverrides | None = None
     pr: PullRequest | None = None
@@ -186,3 +187,18 @@ class AgentResult(Wire):
             alias = to_camel(field)
             raise ValueError(f"status {self.status} requires {alias}")
         return self
+
+
+class AgentResult(Outcome):
+    """해결 결과(§6). 봉투(ticketId · commitSha · 분류 · 실제 도구 호출 기록)는 코드가 채운다."""
+
+    ticket_id: NonEmpty
+    commit_sha: CommitSha
+    classification: Classification
+    actions: list[Action]
+
+    def to_wire(self) -> JsonObject:
+        """`submit_result`로 보내는 JSON. 값이 없는 칸은 빼고, 필수인 `caseId`는 null로 둔다."""
+        wire = self.model_dump(mode="json", by_alias=True, exclude_none=True)
+        wire["classification"]["caseId"] = self.classification.case_id
+        return wire

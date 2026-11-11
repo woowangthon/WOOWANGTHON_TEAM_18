@@ -1,0 +1,93 @@
+{{- /* 대상 슬롯의 앱. 이름은 <서비스>-<슬롯>, 라벨 app · slot. 슬롯 비우기는 slot 라벨로 이 셋을 지운다. */ -}}
+{{- if eq .Values.part "slot" }}
+{{- range .Values.services }}
+{{- $svc := . }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .fullName }}
+  labels:
+    app: {{ .name }}
+    slot: {{ $.Values.slot }}
+data:
+  {{- if .env }}
+  {{- toYaml .env | nindent 2 }}
+  {{- else }} {}
+  {{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .fullName }}
+  labels:
+    app: {{ .name }}
+    slot: {{ $.Values.slot }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .name }}
+      slot: {{ $.Values.slot }}
+  template:
+    metadata:
+      labels:
+        app: {{ .name }}
+        slot: {{ $.Values.slot }}
+      {{- if $.Values.secretHash }}
+      annotations:
+        {{- /* 비밀값이 바뀌면 Pod를 다시 띄운다(Secret 하나를 두 슬롯이 같이 쓴다). */}}
+        wanggane/secret-hash: {{ $.Values.secretHash | quote }}
+      {{- end }}
+    spec:
+      {{- /* 워커에만 둔다. 학생 Pod에는 API 토큰을 넣지 않고 Service 환경 변수도 넣지 않는다(cluster.md §6, 검사 규칙 wanggane-student-pods). */}}
+      nodeSelector:
+        wanggane/pool: student
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      containers:
+        - name: {{ .name }}
+          image: {{ .image | quote }}
+          ports:
+            - containerPort: {{ .port }}
+          envFrom:
+            - configMapRef:
+                name: {{ .fullName }}
+          {{- if .secretKeys }}
+          env:
+            {{- range .secretKeys }}
+            - name: {{ . }}
+              valueFrom:
+                secretKeyRef:
+                  {{- /* W3이 넣는 서비스의 Secret. 두 슬롯이 같이 쓴다. */}}
+                  name: {{ $svc.name }}-secrets
+                  key: {{ . }}
+            {{- end }}
+          {{- end }}
+          securityContext:
+            {{- /* baseline은 NET_RAW를 남긴다. 같은 워커의 다른 Pod 통신을 ARP 스푸핑으로 가로챌 수 있다. */}}
+            capabilities:
+              drop: ["NET_RAW"]
+          resources:
+            {{- toYaml .resources | nindent 12 }}
+          startupProbe:
+            {{- toYaml .startupProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .readinessProbe | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .fullName }}
+  labels:
+    app: {{ .name }}
+    slot: {{ $.Values.slot }}
+spec:
+  selector:
+    app: {{ .name }}
+    slot: {{ $.Values.slot }}
+  ports:
+    - port: {{ .port }}
+      targetPort: {{ .port }}
+{{- end }}
+{{- end }}
