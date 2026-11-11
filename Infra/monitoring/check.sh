@@ -3,7 +3,7 @@
 # tailnet and node).
 #   bash Infra/monitoring/check.sh
 # Needs monitoring.yaml applied and settled (a minute after the first install). Changes nothing.
-# Part 1 asks Prometheus as the operator, part 2 acts as the platform server account through
+# It also calls the public Grafana address without a login. Part 1 asks Prometheus as the operator, part 2 acts as the platform server account through
 # impersonation, part 3 calls the leader's Tailscale address with the real token (never printed).
 set -u
 cd "$(dirname "$0")"
@@ -25,6 +25,7 @@ want() { # want <label> <expected> <PromQL>
   local got; got=$(value "$3")
   if [ "$got" = "$2" ]; then echo "PASS $1 ($got)"; else echo "FAIL $1: got '${got:-nothing}', want $2"; fail=1; fi
 }
+status() { if [ "$3" = "$1" ]; then echo "PASS $2 ($3)"; else echo "FAIL $2 (want $1, got $3)"; fail=1; fi; }
 allow() { # allow <label> <command...>
   local label=$1 out; shift
   if out=$("$@" 2>&1); then echo "PASS $label"; else echo "FAIL $label: $(echo "$out" | head -1)"; fail=1; fi
@@ -65,6 +66,17 @@ blocked() { # blocked <label> <url>
 blocked Prometheus http://monitoring-prometheus.monitoring.svc.cluster.local:9090/-/ready
 blocked Grafana http://monitoring-grafana.monitoring.svc.cluster.local/api/health
 
+echo "== public address (Grafana only)"
+# Grafana is reachable through the tunnel so the operator page can embed it; nothing opens without a login.
+G=https://grafana.stairnoworks.com
+code() { curl -s -o /dev/null -m 15 -w '%{http_code}' "$1"; }
+status 200 "the login page is served" "$(code $G/login)"
+status 302 "a dashboard address without a login goes to the login page" "$(code $G/d/none)"
+status 401 "the API without a login" "$(code $G/api/search)"
+status 401 "Prometheus through Grafana without a login" "$(code "$G/api/datasources/proxy/1/api/v1/query?query=up")"
+if curl -s -m 15 -D - -o /dev/null $G/login | grep -qi '^x-frame-options'; then echo "FAIL the login page forbids framing (allow_embedding is off)"; fail=1; else echo "PASS pages may be framed (no X-Frame-Options)"; fi
+status 404 "Prometheus has no public address" "$(code https://prometheus.stairnoworks.com/-/ready)"
+
 echo "== what is collected"
 want "node-exporter on the three nodes" 3 'count(up{job="node-exporter"} == 1)'
 want "kubelet on the three nodes" 3 'count(up{job="kubelet",metrics_path="/metrics"} == 1)'
@@ -96,7 +108,6 @@ TOKEN=$(k -n platform get secret platform-server-token -o "jsonpath='{.data.toke
 api() { # api <method> <path> -> HTTP status. The token goes to curl on stdin, not as an argument.
   printf 'header = "Authorization: Bearer %s"\n' "$TOKEN" | curl -s --ssl-no-revoke -K - -o /dev/null -m 10 -w '%{http_code}' --cacert "$CA" -X "$1" "https://$TS:6443$2"
 }
-status() { if [ "$3" = "$1" ]; then echo "PASS $2 ($3)"; else echo "FAIL $2 (want $1, got $3)"; fail=1; fi; }
 status 200 "query Prometheus" "$(api GET "$Q")"
 status 403 "query by POST (the right is GET only)" "$(api POST "$Q")"
 status 403 "Grafana through the proxy" "$(api GET /api/v1/namespaces/monitoring/services/monitoring-grafana:80/proxy/api/health)"
