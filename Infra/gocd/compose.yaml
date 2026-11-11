@@ -1,0 +1,75 @@
+# GoCD server and its executors, for the platform EC2 (Infra/aws/start-gocd.sh) and for a local check.
+# Design: docs/design/platform-hosting.md "GoCD 서버 · AWS 실행기", ADR-009.
+#   docker compose -f Infra/gocd/compose.yaml up -d gocd-server     (then Infra/gocd/setup.sh, then the agents)
+#   docker compose -f Infra/gocd/compose.yaml --profile agents up -d --build
+# Values come from the shell or `--env-file`; nothing secret is written here. The variables a profile needs are
+# empty by default so the server can start alone; Infra/aws/start-gocd.sh checks the AWS ones before it starts the agent.
+name: wcp-gocd
+
+services:
+  gocd-server:
+    image: gocd/gocd-server:v26.1.0
+    container_name: gocd-server
+    restart: unless-stopped
+    environment:
+      # docs/design/deploy-workflow.md §8: the EC2 is shared with the platform server and the AI server.
+      GOCD_SERVER_JVM_OPTS: -Xmx1g
+    ports:
+      # Loopback by default. On the EC2 GOCD_BIND is the Tailscale address, so only the tailnet reaches it (ADR-009, #128).
+      - "${GOCD_BIND:-127.0.0.1}:8153:8153"
+    volumes:
+      - gocd-data:/godata
+
+  # Runs the Build stage. The AWS key and the notify token are this container's own environment: they never go through GoCD
+  # or the repo, and the container cannot use the instance role (IMDSv2 hop limit 1; the metadata client is also switched off).
+  aws-agent:
+    profiles: [agents]
+    build:
+      context: .
+      dockerfile: aws-agent.Dockerfile
+    image: wcp-gocd-aws-agent:26.1.0
+    container_name: gocd-aws-agent
+    restart: unless-stopped
+    depends_on: [gocd-server]
+    # AGENT_AUTO_REGISTER_KEY, written by setup.sh.
+    env_file: ${GOCD_STATE:-${HOME}/.config/wcp/gocd}/agent.env
+    environment:
+      GO_SERVER_URL: http://gocd-server:8153/go
+      AGENT_AUTO_REGISTER_RESOURCES: aws
+      AGENT_AUTO_REGISTER_HOSTNAME: wcp-aws-agent
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_REGION: ap-northeast-2
+      PIPELINE_NOTIFY_TOKEN: ${PIPELINE_NOTIFY_TOKEN:-}
+      AWS_EC2_METADATA_DISABLED: "true"
+    # Local check only: reach a platform server running on the host (PLATFORM_API_URL=http://host.docker.internal:3000).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # LOCAL TEST ONLY: a stand-in for the leader executor. The real one is Infra/executor/agent.yaml on the leader; do not
+  # start this profile on the EC2. It mounts a token file and the cluster CA you provide and calls the leader's API.
+  leader-local:
+    profiles: [leader-local]
+    build:
+      context: .
+      dockerfile: local-leader-agent.Dockerfile
+    image: wcp-gocd-leader-local-agent:26.1.0
+    container_name: gocd-leader-local
+    depends_on: [gocd-server]
+    env_file: ${GOCD_STATE:-${HOME}/.config/wcp/gocd}/agent.env
+    environment:
+      GO_SERVER_URL: http://gocd-server:8153/go
+      AGENT_AUTO_REGISTER_RESOURCES: leader
+      AGENT_AUTO_REGISTER_HOSTNAME: wcp-leader-local-test
+      KUBE_API_URL: ${KUBE_API_URL:-}
+      KUBE_TOKEN_FILE: /kube/token
+      KUBE_CA_FILE: /kube/ca.crt
+      PIPELINE_NOTIFY_TOKEN: ${PIPELINE_NOTIFY_TOKEN:-}
+    volumes:
+      - ${LEADER_TOKEN_FILE:-/dev/null}:/kube/token:ro
+      - ${LEADER_CA_FILE:-/dev/null}:/kube/ca.crt:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  gocd-data:
