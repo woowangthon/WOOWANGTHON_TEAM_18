@@ -1,0 +1,215 @@
+import { randomBytes } from 'node:crypto'
+import { BadRequestException, Injectable, Logger, NotFoundException, type OnApplicationBootstrap } from '@nestjs/common'
+import { isRecord } from '../common/is-record.js'
+import type { Issue } from '../deploys/deploy-input.js'
+import type { Slot } from '../deploys/deploy-condition.js'
+import { DeploysStore } from '../deploys/deploys.store.js'
+import { PipelineClient, type TrialStages } from '../deploys/pipeline.client.js'
+
+// AI 에이전트의 시험 실행(api.md "파이프라인 ↔ 플랫폼 서버" 4번, ADR-014). 게이트웨이의 run_render · run_deploy · run_verify가
+// 시험 전용 파이프라인(student-trial)을 실행하고 결과를 기다린다. 실행 기록의 상태(notify 상태 기계)는 바꾸지 않는다.
+// simple: 시험 기록과 기다림은 BE 메모리에 둔다(EC2 한 대). 다시 뜨면 기다리던 호출은 끊기고, 시작할 때 남은 시험 인스턴스를 모두 취소한다.
+
+export type TrialTool = 'run_render' | 'run_deploy' | 'run_verify'
+
+/** 시험 하나의 대기 상한. 티켓 전체 상한까지 남은 시간이 더 짧으면 그쪽에서 끝난다. */
+export const TRIAL_WAIT_MS = 30 * 60_000
+
+const STAGES: Record<TrialTool, TrialStages> = { run_render: 'render', run_deploy: 'prepare,render,apply', run_verify: 'verify' }
+const RESULT_STAGES: Record<TrialTool, string[]> = { run_render: ['render'], run_deploy: ['prepare', 'render', 'apply'], run_verify: ['verify'] }
+const TRIAL_ID = /^tr_[0-9a-f]{12}$/
+const PLATFORM_CODE = /^[A-Za-z][A-Za-z0-9_]{2,63}$/
+
+export interface TrialFailure {
+  stage: string | null
+  code: string | null
+  message: string
+}
+
+/** 파이프라인이 보낸 결과(도구 결과 모양 + failure) 또는 시험이 결과 없이 끝난 이유. */
+export type TrialOutcome = { result: Record<string, unknown> } | { failure: TrialFailure }
+
+interface Trial {
+  id: string
+  deployId: string
+  ticketId: string
+  slug: string
+  slot: Slot
+  tool: TrialTool
+  input: Record<string, unknown>
+  /** 입력을 읽은 job이 알린 GoCD 인스턴스 번호. 없으면 아직 입력을 읽은 job이 없다. */
+  counter: number | null
+  /** waiting: 결과를 기다림. ended: 결과를 받았거나 취소됨. stuck: 취소를 확인하지 못함(같은 프로젝트의 다음 시험을 막는다). */
+  state: 'waiting' | 'ended' | 'stuck'
+  finish: (outcome: TrialOutcome) => void
+}
+
+const notFound = () => new NotFoundException({ code: 'TRIAL_NOT_FOUND', message: 'No such open trial' })
+const badResult = (message: string, fields: Issue[]) => new BadRequestException({ code: 'BAD_REQUEST', message, fields })
+
+@Injectable()
+export class GatewayTrials implements OnApplicationBootstrap {
+  private readonly logger = new Logger(GatewayTrials.name)
+  private readonly trials = new Map<string, Trial>()
+  /** 티켓마다 마지막으로 성공한 run_deploy의 입력(run_verify가 쓴다). */
+  private readonly lastDeploy = new Map<string, Record<string, unknown>>()
+
+  constructor(
+    private readonly pipeline: PipelineClient,
+    private readonly store: DeploysStore,
+  ) {}
+
+  /** BE가 시작할 때 남은 시험 인스턴스를 취소한다. 시작을 막지 않는다. */
+  onApplicationBootstrap(): void {
+    void this.pipeline.cancelAllTrials().then(
+      (n) => {
+        if (n > 0) this.logger.log(`cancelled ${n} leftover trial run(s)`)
+      },
+      (err: unknown) => this.logger.error(err),
+    )
+  }
+
+  /** 이 티켓에 결과를 기다리는 시험이 있는가. */
+  busy(ticketId: string): boolean {
+    return [...this.trials.values()].some((t) => t.ticketId === ticketId && t.state === 'waiting')
+  }
+
+  lastDeployInput(ticketId: string): Record<string, unknown> | undefined {
+    return this.lastDeploy.get(ticketId)
+  }
+
+  /** 시험을 실행하고 결과를 기다린다. 결과 없이 끝나면(실행 실패 · 이전 시험이 안 끝남 · 대기 초과) failure다. */
+  async run(
+    ticket: { deployId: string; ticketId: string; slug: string; targetSlot: Slot },
+    tool: TrialTool,
+    input: Record<string, unknown>,
+    waitMs: number,
+  ): Promise<TrialOutcome> {
+    if (!(await this.previousEnded(ticket.slug))) {
+      return { failure: { stage: null, code: 'TRIAL_STILL_RUNNING', message: 'an earlier trial of this project could not be confirmed stopped' } }
+    }
+    const id = `tr_${randomBytes(6).toString('hex')}`
+    let finish!: (o: TrialOutcome) => void
+    const done = new Promise<TrialOutcome>((resolve) => {
+      finish = resolve
+    })
+    const trial: Trial = { id, deployId: ticket.deployId, ticketId: ticket.ticketId, slug: ticket.slug, slot: ticket.targetSlot, tool, input, counter: null, state: 'waiting', finish }
+    this.trials.set(id, trial)
+    try {
+      await this.pipeline.runTrial(ticket.deployId, id, STAGES[tool])
+    } catch {
+      this.trials.delete(id)
+      return { failure: { stage: null, code: 'PIPELINE_UNAVAILABLE', message: 'could not start the trial pipeline' } }
+    }
+    let timer: NodeJS.Timeout | undefined
+    const timeout = new Promise<TrialOutcome>((resolve) => {
+      timer = setTimeout(() => resolve({ failure: { stage: null, code: 'TRIAL_TIMEOUT', message: `no trial result within ${Math.round(waitMs / 60_000)} minutes` } }), waitMs)
+    })
+    const outcome = await Promise.race([done, timeout])
+    clearTimeout(timer)
+    if (trial.state === 'waiting') await this.cancel(trial)
+    if ('result' in outcome && tool === 'run_deploy' && outcome.result.ok === true) this.lastDeploy.set(ticket.ticketId, input)
+    if (trial.state === 'ended') this.trials.delete(id)
+    return outcome
+  }
+
+  /** 티켓이 끝났다(결과 제출 · 종료). 기다리는 시험이 있으면 취소한다. */
+  async endTicket(ticketId: string): Promise<void> {
+    this.lastDeploy.delete(ticketId)
+    for (const t of [...this.trials.values()]) {
+      if (t.ticketId === ticketId && t.state === 'waiting') {
+        await this.cancel(t)
+        t.finish({ failure: { stage: null, code: 'TICKET_CLOSED', message: 'the ticket ended while the trial was running' } })
+      }
+    }
+  }
+
+  /** `GET /api/pipeline/trials/:trialId/input`. 열린 티켓에 속한, 아직 기다리는 시험만 읽을 수 있다. */
+  async input(trialId: string, counterParam: unknown) {
+    const trial = TRIAL_ID.test(trialId) ? this.trials.get(trialId) : undefined
+    if (!trial || trial.state !== 'waiting') throw notFound()
+    const run = await this.store.findRun(trial.deployId)
+    if (!run || run.status !== 'fixing' || run.ticket_id !== trial.ticketId) throw notFound()
+    if (counterParam !== undefined) {
+      const counter = typeof counterParam === 'string' && /^\d{1,9}$/.test(counterParam) ? Number(counterParam) : NaN
+      if (!Number.isInteger(counter) || counter < 1) throw badResult('counter must be a positive integer', [{ path: 'counter', code: 'INVALID_VALUE' }])
+      if (trial.counter !== null && trial.counter !== counter) throw badResult('another pipeline run already read this trial', [{ path: 'counter', code: 'CONFLICT' }])
+      trial.counter = counter
+    }
+    return { deployId: trial.deployId, slot: trial.slot, input: trial.input, buildOverrides: null }
+  }
+
+  /** `POST /api/pipeline/trials/:trialId/result`. 모르는 · 끝난 시험의 결과는 아무것도 바꾸지 않는다(재전송 · 늦은 결과에 안전). */
+  result(trialId: string, body: unknown): { ok: true; applied: boolean } {
+    const trial = TRIAL_ID.test(trialId) ? this.trials.get(trialId) : undefined
+    if (!trial || trial.state !== 'waiting') return { ok: true, applied: false }
+    const issues = checkTrialResult(trial.tool, body)
+    if (issues.length > 0) throw badResult('Trial result has invalid fields', issues)
+    trial.state = 'ended'
+    trial.finish({ result: (body as { result: Record<string, unknown> }).result })
+    return { ok: true, applied: true }
+  }
+
+  private async cancel(trial: Trial): Promise<void> {
+    // 입력을 읽은 job이 없으면 그 인스턴스는 나중에 입력을 읽어도 404라 슬롯을 건드리지 않는다.
+    trial.state = trial.counter === null || (await this.pipeline.cancelTrial(trial.counter)) ? 'ended' : 'stuck'
+    if (trial.state === 'stuck') this.logger.error(`could not cancel trial ${trial.id}`)
+  }
+
+  /** 같은 프로젝트의 이전 시험이 모두 끝났는가. 취소를 확인하지 못한 시험은 한 번 더 취소해 본다. */
+  private async previousEnded(slug: string): Promise<boolean> {
+    for (const t of [...this.trials.values()]) {
+      if (t.slug !== slug || t.state !== 'stuck') continue
+      await this.cancel(t)
+      if (t.state === 'stuck') return false
+      this.trials.delete(t.id)
+    }
+    return true
+  }
+}
+
+const isStrOrNull = (v: unknown) => v === null || typeof v === 'string'
+const isNumOrNull = (v: unknown) => v === null || typeof v === 'number'
+const listOf = (v: unknown, item: (x: unknown) => boolean) => Array.isArray(v) && v.every(item)
+
+/** 도구마다의 결과 칸(api.md "MCP 게이트웨이 — 도구" 실행 표)과 검사. */
+const SHAPES: Record<TrialTool, Record<string, (v: unknown) => boolean>> = {
+  run_render: { status: (v) => v === null || isRecord(v) },
+  run_deploy: {
+    services: (v) => listOf(v, (s) => isRecord(s) && typeof s.service === 'string' && typeof s.ready === 'boolean' && isStrOrNull(s.reason)),
+    pods: (v) => listOf(v, isRecord),
+    events: (v) => listOf(v, isRecord),
+  },
+  run_verify: {
+    ready: (v) => listOf(v, (s) => isRecord(s) && typeof s.service === 'string' && typeof s.ready === 'boolean'),
+    requests: (v) =>
+      listOf(v, (r) => isRecord(r) && typeof r.service === 'string' && typeof r.path === 'string' && isNumOrNull(r.status) && isNumOrNull(r.ms) && isStrOrNull(r.error)),
+  },
+}
+
+function checkFailure(v: unknown): boolean {
+  if (v === null) return true
+  return (
+    isRecord(v) &&
+    Object.keys(v).every((k) => ['stage', 'code', 'message'].includes(k)) &&
+    isStrOrNull(v.stage) &&
+    (v.code === null || (typeof v.code === 'string' && PLATFORM_CODE.test(v.code))) &&
+    typeof v.message === 'string'
+  )
+}
+
+/** 시험 결과 본문 `{ stage, result }`의 검사. 틀린 칸 목록(맞으면 빈 목록). */
+export function checkTrialResult(tool: TrialTool, body: unknown): Issue[] {
+  if (!isRecord(body)) return [{ path: 'body', code: 'INVALID_TYPE' }]
+  const issues: Issue[] = []
+  for (const k of Object.keys(body)) if (k !== 'stage' && k !== 'result') issues.push({ path: k, code: 'UNKNOWN_KEY' })
+  if (typeof body.stage !== 'string' || !RESULT_STAGES[tool].includes(body.stage)) issues.push({ path: 'stage', code: 'INVALID_VALUE' })
+  const r = body.result
+  if (!isRecord(r)) return [...issues, { path: 'result', code: 'INVALID_TYPE' }]
+  const shape = SHAPES[tool]
+  for (const k of Object.keys(r)) if (k !== 'ok' && k !== 'failure' && !(k in shape)) issues.push({ path: `result.${k}`, code: 'UNKNOWN_KEY' })
+  if (typeof r.ok !== 'boolean') issues.push({ path: 'result.ok', code: 'INVALID_TYPE' })
+  if (!checkFailure(r.failure)) issues.push({ path: 'result.failure', code: 'INVALID_VALUE' })
+  for (const [k, ok] of Object.entries(shape)) if (!ok(r[k])) issues.push({ path: `result.${k}`, code: Object.hasOwn(r, k) ? 'INVALID_VALUE' : 'REQUIRED' })
+  return issues.slice(0, 20)
+}

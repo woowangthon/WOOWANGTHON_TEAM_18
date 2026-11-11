@@ -202,7 +202,15 @@ export class DeploysStore {
     return rows[0]
   }
 
-  /** 사용자의 배포를 최신순으로. */
+  /** 프로젝트에서 마지막으로 성공한 실행(live 슬롯에 떠 있는 배포 입력). 없으면 undefined. */
+  async findLastSucceededRun(slug: string): Promise<DeployRunRow | undefined> {
+    const rows = await this.call('deploy_runs', 'GET', { select: '*', slug: `eq.${slug}`, status: 'eq.succeeded', order: 'created_at.desc', limit: '1' })
+    if (rows.length === 0) return undefined
+    if (!isRunRow(rows[0])) throw this.unreadable('deploy_runs', 'GET')
+    return rows[0]
+  }
+
+  /** 사용자의 배포를 최신순으로.
   async listOwned(userId: string, limit: number): Promise<DeployRow[]> {
     const rows = await this.call('deploys', 'GET', { select: '*', user_id: `eq.${userId}`, order: 'created_at.desc', limit: String(limit) })
     if (!rows.every(isRow)) throw this.unreadable('deploys', 'GET')

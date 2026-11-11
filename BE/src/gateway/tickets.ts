@@ -15,6 +15,8 @@ export interface GatewayTicket {
   /** spec.services[].name — 도구의 `service` 인자는 이 안에서만 받는다. */
   services: string[]
   failure: StoredFailure | null
+  /** 토큰 만료(ms). 처음 받은 값은 티켓 시작 + 15분이다(budget이 티켓 시작을 여기서 센다). */
+  expiresAt: number
 }
 
 export const tokenHash = (token: string) => createHash('sha256').update(token).digest('hex')
@@ -28,7 +30,8 @@ export class GatewayTickets {
     if (!/^gw_[A-Za-z0-9_-]{16,}$/.test(token)) return null
     const run = await this.store.findRunByGatewayToken(tokenHash(token))
     if (!run || run.status !== 'fixing' || !run.ticket_id || !run.gateway_expires_at) return null
-    if (Date.parse(run.gateway_expires_at) <= Date.now()) return null
+    const expiresAt = Date.parse(run.gateway_expires_at)
+    if (expiresAt <= Date.now()) return null
     const deploy = await this.store.findById(run.deploy_id)
     if (!deploy) return null
     const input = run.input as { commitSha: string; spec?: { services?: { name?: unknown }[] } }
@@ -41,6 +44,7 @@ export class GatewayTickets {
       targetSlot: run.target_slot,
       services: (input.spec?.services ?? []).map((s) => s.name).filter((n): n is string => typeof n === 'string'),
       failure: run.failure,
+      expiresAt,
     }
   }
 }

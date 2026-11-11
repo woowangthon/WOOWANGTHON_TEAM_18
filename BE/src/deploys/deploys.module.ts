@@ -36,6 +36,6 @@ import { SecretsService } from './secrets.service.js'
     { provide: SecretWriter, useClass: ClusterSecretWriter },
   ],
   // 게이트웨이(src/gateway)가 실행 기록 · AI 서버 연결을 같이 쓴다.
-  exports: [DeployConditionService, DeploysStore, AgentClient],
+  exports: [DeployConditionService, DeploysStore, AgentClient, PipelineClient, PipelineTokenGuard],
 })
 export class DeploysModule {}
