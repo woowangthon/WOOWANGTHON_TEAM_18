@@ -75,8 +75,10 @@ def test_path_condition(cond: dict[str, Any], holds: bool) -> None:
 def test_initial_cases_are_the_ones_in_the_design() -> None:
     ids = sorted(c.case_id for c in load_cases())
     assert ids == sorted(
-        ["B1", "B2", "B3", "B4", "B5", "P1", "P2", "P3", "R1", "R2", "R3", "A1", "A2", "A3", "A4"]
-        + ["V1", "V2"]
+        [
+            *["B1", "B2", "B3", "B4", "B5", "P1", "P2", "P3", "R1", "R2", "R3"],
+            *["A1", "A2", "A3", "A4", "V1", "V2"],
+        ]
     )
     letter = {"build": "B", "prepare": "P", "render": "R", "apply": "A", "verify": "V"}
     for c in load_cases():
@@ -137,7 +139,7 @@ def _render(code: int, message: str, causes: list[dict[str, str]]) -> dict[str, 
 
 def _verify(message: str) -> dict[str, Any]:
     """W6 실패 티켓(§5): 통과하지 못한 검사 하나는 errorMessage에, Pod · 이벤트는 raw.k8s에."""
-    k8s = {"pod": {"status": {"phase": "Running"}}, "events": [], "status": None}
+    k8s: dict[str, Any] = {"pod": {"status": {"phase": "Running"}}, "events": [], "status": None}
     return {"stage": "verify", "errorMessage": message, "raw": {"codebuild": None, "k8s": k8s}}
 
 
