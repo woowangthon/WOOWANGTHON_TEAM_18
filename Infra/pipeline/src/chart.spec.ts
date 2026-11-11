@@ -18,13 +18,16 @@ const input = () => {
   return i
 }
 
+// helm 버전마다 문서 구분자(`---`) 앞 빈 줄과 끝 줄바꿈이 다르다(CI의 helm은 버전을 고정하지 않는다). 그 둘만 맞추고 문서 안은 그대로 비교한다.
+const normalize = (yaml: string) => `${yaml.replace(/\n(?:[ \t]*\n)+(?=---$)/gm, '\n').trimEnd()}\n`
+
 const docs = (yaml: string) => yaml.split(/^---$/m).filter((d) => /\bkind:/.test(d))
 const kinds = (yaml: string) => docs(yaml).map((d) => `${/^kind: (\S+)/m.exec(d)![1]}/${/^ {2}name: (\S+)/m.exec(d)![1]}`)
 
 describe.skipIf(!hasHelm && !process.env.CI)('student-app chart', () => {
   it('renders the target slot apps and the test Ingresses', async () => {
     const yaml = await helmTemplate(renderValues(input(), 'b', 'slot', 'stairnoworks.com'), 'proj-my-app')
-    await expect(yaml).toMatchFileSnapshot('__snapshots__/chart-slot-b.yaml')
+    await expect(normalize(yaml)).toMatchFileSnapshot('__snapshots__/chart-slot-b.yaml')
     expect(kinds(yaml).sort()).toEqual(
       ['ConfigMap/ai-b', 'ConfigMap/be-b', 'ConfigMap/fe-b', 'Deployment/ai-b', 'Deployment/be-b', 'Deployment/fe-b', 'Ingress/test-be', 'Ingress/test-fe', 'Middleware/be-strip', 'Service/ai-b', 'Service/be-b', 'Service/fe-b'],
     )
@@ -53,7 +56,7 @@ describe.skipIf(!hasHelm && !process.env.CI)('student-app chart', () => {
 
   it('renders only the open Ingresses for the open part', async () => {
     const yaml = await helmTemplate(renderValues(input(), 'b', 'open', 'stairnoworks.com'), 'proj-my-app')
-    await expect(yaml).toMatchFileSnapshot('__snapshots__/chart-open-b.yaml')
+    await expect(normalize(yaml)).toMatchFileSnapshot('__snapshots__/chart-open-b.yaml')
     expect(kinds(yaml)).toEqual(['Ingress/open-fe', 'Ingress/open-be', 'Middleware/be-strip'])
     expect(yaml.match(/host: "my-app.stairnoworks.com"/g)).toHaveLength(2)
     expect(yaml.match(/wanggane\/ingress: open/g)).toHaveLength(2)

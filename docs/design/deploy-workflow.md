@@ -73,7 +73,7 @@ W0 접수 · 사전 검사 → W1 분석 → W2 배포 설정 → W3 비밀값 �
 - **차트**(`Infra/charts/student-app`: Deployment · Service · ConfigMap · Ingress의 틀)는 개발 기간에 **한 번** 만든다. NetworkPolicy · ResourceQuota · LimitRange는 차트에 넣지 않는다. 플랫폼 서버가 네임스페이스를 만들 때 넣고, 실행기는 건드리지 못한다([클러스터 설계](cluster.md) §8).
 - **실제 manifest**는 **배포할 때마다 Render 스테이지에서** 만든다. spec + 이미지 digest + 대상 슬롯 → `values.yaml` → `helm template` → k3s API의 server-side apply dry-run으로 검사 → DB의 대상 슬롯 줄에 저장.
 - **Render 구현**(`Infra/pipeline/src/render.ts`, `src/cli/render.ts`): values(`renderValues`) → `helm template`을 두 번(`part: slot` = 대상 슬롯 앱 + test Ingress, `part: open` = Switch가 적용할 open Ingress. 공개 서비스가 없으면 open은 만들지 않는다) → 둘 다 객체마다 k3s API에 server-side apply dry-run(`PATCH ...?dryRun=All&fieldManager=student-app`). 결과는 `slot.yaml` · `open.yaml` · `render-report.json`이다. 실패는 `helm`(차트 렌더 실패: 플랫폼 문제), `dry-run`(k3s가 거절했다. API가 준 Status JSON을 그대로 남긴다: 문제 티켓의 `raw.k8s.status`), `cluster`(API에 닿지 못함 · 시간 초과 10초: 플랫폼 문제)로 나눈다. Pod에는 `nodeSelector: wanggane/pool=student`, API 토큰 끔, Service 환경 변수 끔, `NET_RAW` 뺌, 복제본 1을 넣고, `secretHash`는 Pod 주석이라 비밀값이 바뀌면 Pod가 다시 뜬다. 비밀 env는 Secret `<서비스>-secrets`의 key로 하나씩 읽는다.
-- **Render · Apply는 kubectl이 아니라 k3s API를 직접 부른다**(`Infra/pipeline/src/kube.ts`, 실행기 토큰 · API 주소 · CA는 env의 파일 경로). kubectl은 실패하면 Status JSON이 아니라 "Error from server (...)" 문장만 내서, AI 에이전트에 넘길 k3s Status 원본이 남지 않기 때문이다. `helm template`은 그대로 부른다. 연결은 클러스터 CA로 인증서를 검증하고, 토큰은 로그 · 오류에 남기지 않는다.
+- **Render · Apply는 kubectl이 아니라 k3s API를 직접 부른다**(`Infra/pipeline/src/kube.ts`. env: API 주소 `KUBE_API_URL`(`https://<리더>:6443`), 실행기 토큰과 클러스터 CA는 파일 경로 `KUBE_TOKEN_FILE` · `KUBE_CA_FILE`). kubectl은 실패하면 Status JSON이 아니라 "Error from server (...)" 문장만 내서, AI 에이전트에 넘길 k3s Status 원본이 남지 않기 때문이다. `helm template`은 그대로 부른다. 연결은 클러스터 CA로 인증서를 검증하고, 토큰은 로그 · 오류에 남기지 않는다.
 - **stripPrefix**: `stripPrefix: true`인 서비스에는 Traefik Middleware `<서비스>-strip`(`stripPrefix.prefixes: [<ingressPath>]`)을 만들고 그 서비스의 Ingress에만 주석으로 건다. Traefik의 미들웨어는 Ingress 주석이라 그 Ingress의 모든 경로에 걸리므로, Ingress를 공개 서비스마다 나눈다. Middleware에도 slot 라벨이 없다(슬롯 비우기에 지워지면 live 주소가 깨진다).
 - W2에서 미리 만들지 않는 이유: 이미지 digest는 Build 뒤에, 최종 spec은 AI 에이전트가 고친 뒤에 정해진다.
 - 사람도 AI 에이전트도 manifest를 직접 쓰지 않는다. 그래서 결과가 항상 같은 틀에서 나온다.
@@ -188,6 +188,7 @@ W6은 배포 입력에 있는 서비스와 설정된 경로만 검사한다. 정
 - 대상 슬롯 배포나 W6이 실패하면 open Ingress를 바꾸지 않는다. live 슬롯은 그대로 서비스한다. 실패한 대상 슬롯은 다음 배포에서 비운다.
 - 진행 중에 새 커밋이 오면 진행 중인 파이프라인을 취소하고 새 커밋으로 다시 시작한다. 단 전환(Switch)이 시작된 뒤에는 취소하지 않는다. 플랫폼 서버는 그 파이프라인과 W7이 끝나 `live_slot`이 실제 open Ingress와 같아진 뒤 새 실행을 시작한다. 새 실행의 대상 슬롯은 그때의 `live_slot`으로 다시 정한다.
 - 전환 결과를 받지 못한 채 파이프라인이 끝나면(리더 재시작 등) 플랫폼 서버는 open Ingress의 backend 슬롯을 읽어 `live_slot`을 맞춘 뒤 다음 실행을 시작한다.
+- **전환이 중간에 끊겼을 때**: open Ingress가 서비스마다 하나라 Switch가 일부만 바꾸고 끊기면 backend 슬롯이 섞인다. 이때는 `live_slot`을 정할 수 없고 다음 Prepare의 live 슬롯 보호도 중단하므로, 다음 실행보다 먼저 **전환을 끝까지 다시 한다**: 그 실행의 `open.yaml`(대상 슬롯, W6을 통과한 것)을 다시 적용해 open Ingress를 모두 대상 슬롯으로 맞추고, 그 뒤 `live_slot`을 대상 슬롯으로 바꾼다. 대상 슬롯이 W6을 통과했으므로 되돌리기보다 끝내기가 맞다. Switch는 같은 `open.yaml`을 다시 적용해도 결과가 같다(server-side apply). 구현은 F05(Switch 재실행) · F07(끝난 실행의 상태 맞추기).
 
 ### 5. 이미지는 어떻게 클러스터까지 가나
 
