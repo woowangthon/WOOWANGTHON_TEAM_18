@@ -279,6 +279,16 @@ describe('POST /api/admin/projects/:slug/stop', () => {
     expect(db.admin_actions).toEqual([expect.objectContaining({ slug: 'my-app', action: 'stop', actor_id: ADMIN, actor_email: 'op@example.com' })])
   })
 
+  it('accepts the empty JSON body the FE sends', async () => {
+    seedProject()
+    clusterGets[nsPaths('my-app').deployments] = { items: [deployment('fe-a')] }
+    const res = await request(app.getHttpServer())
+      .post(stopPath)
+      .set({ Authorization: await adminAuth(), 'Content-Type': 'application/json' })
+      .send({})
+    expect(res.status).toBe(200)
+  })
+
   it('reports the ones that could not be scaled and still answers 200 when some were', async () => {
     seedProject()
     clusterGets[nsPaths('my-app').deployments] = { items: [deployment('fe-a'), deployment('be-a')] }
