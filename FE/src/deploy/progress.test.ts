@@ -61,11 +61,14 @@ it('keeps polling a status it does not know, and labels it with the raw value', 
   expect(statusVariant('queued')).toBe('neutral')
 })
 
-it('knows which failure codes are the platform fault', () => {
-  for (const code of ['CODEBUILD_API_ERROR', 'IMAGE_PULL_FAILED', 'LIVE_SLOT_PROTECTED', 'AGENT_UNAVAILABLE']) {
-    expect(isPlatformProblem(code)).toBe(true)
-  }
-  for (const code of ['BUILD_FAILED', 'DEPLOY_FAILED', 'VERIFY_FAILED', 'SWITCH_FAILED']) {
+it('counts a failure as the platform fault unless the code is one of the student-side codes', () => {
+  for (const code of ['BUILD_FAILED', 'DEPLOY_FAILED', 'VERIFY_FAILED']) {
     expect(isPlatformProblem(code)).toBe(false)
+  }
+  // 계약이 이름 붙인 학생 쪽이 아닌 코드, 열려 있는 플랫폼 코드, 목록에 없는 코드(AWS 코드 포함).
+  const others = ['SWITCH_FAILED', 'TIMED_OUT', 'AGENT_UNAVAILABLE', 'CODEBUILD_API_ERROR', 'IMAGE_PULL_FAILED', 'LIVE_SLOT_PROTECTED']
+  const open = ['BUILD_WAIT_TIMEOUT', 'NO_IMAGE_DIGEST', 'CHART_RENDER_FAILED', 'SPACE_MISSING', 'K8S_UNREACHABLE', 'AccountLimitExceededException']
+  for (const code of [...others, ...open]) {
+    expect(isPlatformProblem(code)).toBe(true)
   }
 })

@@ -57,9 +57,13 @@ export const statusLabel = (status: string) => {
   }
 }
 
-// 학생이 고칠 수 없는 플랫폼 쪽 문제. 이때는 학생 잘못이 아니라고 알린다.
-export const isPlatformProblem = (code: string) =>
-  ['CODEBUILD_API_ERROR', 'IMAGE_PULL_FAILED', 'LIVE_SLOT_PROTECTED', 'AGENT_UNAVAILABLE'].includes(code)
+// 학생이 고칠 수 있는 실패. 계약(docs/design/api.md)은 이 세 코드만 학생의 코드 · 설정에서 난 실패로 정하고,
+// 그 밖의 코드(SWITCH_FAILED · TIMED_OUT · AGENT_UNAVAILABLE · 열려 있는 플랫폼 코드)는 학생 잘못이 아니다.
+const STUDENT_FAILURES = ['BUILD_FAILED', 'DEPLOY_FAILED', 'VERIFY_FAILED']
+
+// 학생이 고칠 수 없는 플랫폼 쪽 문제. 이때는 학생 잘못이 아니라고 알린다. 플랫폼 코드는 열려 있어
+// 목록으로 알아볼 수 없으므로, 학생 쪽 코드가 아니면 모두 플랫폼 쪽으로 본다(모르는 코드도 그렇다).
+export const isPlatformProblem = (code: string) => !STUDENT_FAILURES.includes(code)
 
 // 서버의 steps를 단계별 화면 상태로 바꾼다. 서버는 문제 해결 중(fixing)과 사용자 조치(needs_user)를 status로 주고
 // 그때 하는 중인 단계는 active로 남기므로, 그 단계에 상태를 겹친다. 시작 전의 active(비밀값)는 사용자가 할 차례라는 뜻이다.

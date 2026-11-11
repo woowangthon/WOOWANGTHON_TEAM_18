@@ -350,6 +350,13 @@ it('says it is not the student fault when the platform is to blame', async () =>
   expect(screen.getByText(/학생 잘못이 아니에요/)).toBeTruthy()
 })
 
+it('does not say it is not the student fault for a failure the student can fix', async () => {
+  api.apiFetch.mockResolvedValue(progressOf('failed', 'build', { failure: failureWith('BUILD_FAILED', '빌드에 실패했어요') }))
+  await show()
+  expect(screen.getByText('빌드에 실패했어요')).toBeTruthy()
+  expect(screen.queryByText(/학생 잘못이 아니에요/)).toBeNull()
+})
+
 it('asks the user to act when the server says so', async () => {
   api.apiFetch.mockResolvedValue(progressOf('needs_user', 'deploy', { failure: failureWith('DEPLOY_FAILED', '환경변수를 확인해 주세요') }))
   await show()
