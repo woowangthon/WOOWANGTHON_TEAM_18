@@ -13,7 +13,11 @@ const auth = vi.hoisted(() => ({
 }))
 vi.mock('./lib/supabase.ts', () => ({ supabase: { auth } }))
 
-const session = { access_token: 'tok', user: { email: 'me@example.com', app_metadata: {} } }
+const sessionWith = (appMetadata: Record<string, unknown> = {}, userMetadata: Record<string, unknown> = {}) => ({
+  access_token: 'tok',
+  user: { email: 'me@example.com', app_metadata: appMetadata, user_metadata: userMetadata },
+})
+const session = sessionWith()
 let emit: (event: string, session: unknown) => void
 
 beforeEach(() => {
@@ -30,13 +34,13 @@ beforeEach(() => {
   })
 })
 
-const renderApp = (path: string, initial: 'in' | 'out' | 'restoring' = 'in') => {
+const renderApp = (path: string, initial: 'in' | 'out' | 'restoring' = 'in', signedInAs: unknown = session) => {
   render(
     <MemoryRouter initialEntries={[path]}>
       <App />
     </MemoryRouter>,
   )
-  if (initial !== 'restoring') emit('INITIAL_SESSION', initial === 'in' ? session : null)
+  if (initial !== 'restoring') emit('INITIAL_SESSION', initial === 'in' ? signedInAs : null)
 }
 const h1 = () => screen.getByRole('heading', { level: 1 }).textContent
 
@@ -153,4 +157,33 @@ it('shows the expired-session screen and returns to the same page after logging 
   await waitFor(() => {
     expect(h1()).toBe('새 배포 요청')
   })
+})
+
+// Admin Page(#101): 관리자는 토큰의 app_metadata.role이 admin일 때뿐이다. 판단은 서버가 하고, 화면은 편의로 막는다.
+it('opens the Admin Page for an admin and shows the menu link', () => {
+  renderApp('/admin', 'in', sessionWith({ role: 'admin' }))
+  expect(h1()).toBe('관리자')
+  expect(screen.getByRole('link', { name: '관리자' })).toBeTruthy()
+})
+
+it('blocks a non-admin from the Admin Page, offers a way back and shows no Admin Page content', () => {
+  renderApp('/admin')
+  expect(h1()).toBe('권한이 없어요')
+  expect(screen.getByRole('link', { name: '대시보드로 가기' }).getAttribute('href')).toBe('/dashboard')
+  expect(screen.queryByText('노드 현황')).toBeNull()
+})
+
+it('does not show the menu link to a non-admin, nor to a user whose only role is a user_metadata one the user can edit', () => {
+  renderApp('/dashboard', 'in', sessionWith({}, { role: 'admin' }))
+  expect(screen.queryByRole('link', { name: '관리자' })).toBeNull()
+})
+
+it('does not treat another role as admin', () => {
+  renderApp('/admin', 'in', sessionWith({ role: 'student' }))
+  expect(h1()).toBe('권한이 없어요')
+})
+
+it('sends a signed-out visitor to the login screen, not to the forbidden notice', () => {
+  renderApp('/admin', 'out')
+  expect(h1()).toBe('로그인')
 })

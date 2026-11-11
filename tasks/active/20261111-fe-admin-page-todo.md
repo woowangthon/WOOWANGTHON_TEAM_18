@@ -15,7 +15,8 @@ Issue #101 waits for the BE operator API contract (#100) in `docs/design/api.md`
 ## Todo
 
 - [x] Route guard, forbidden screen, menu link, page skeleton — files: `admin/RequireAdmin.tsx`, `admin/ForbiddenNotice.tsx`, `auth/isAdmin.ts`, `pages/AdminPage.tsx`, `App.tsx`, `layout/AppLayout.tsx`
-- [x] Tests: admin opens, non-admin blocked with no page content, link hidden, signed-out goes to login, `user_metadata` ignored
+- [x] Tests (in `App.test.tsx`, sharing its Supabase mock): admin opens, non-admin and another role blocked with no page content, link hidden, signed-out goes to login, `user_metadata` ignored
+- [ ] Decide how a server 403 reaches `ForbiddenNotice` in one place (a shared mapping in the API layer or a wrapper), and whether to refresh the session once first, before the first admin fetch is written; also whether `isAdmin` should move onto `useAuth()` when a third consumer appears
 - [ ] Node status table (Ready, role, CPU / memory / disk capacity · allocated · used; show "수집 전" exactly when the server says so) — blocked on the contract
 - [ ] Running services list (project, owner, state, node, restarts, public URL) — blocked on the contract
 - [ ] Force stop with a confirm dialog that repeats the project name — blocked on the contract

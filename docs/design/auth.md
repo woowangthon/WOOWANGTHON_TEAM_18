@@ -24,7 +24,7 @@
 
 ### 관리자
 
-`isAdmin`은 토큰의 `app_metadata.role === 'admin'`일 때만 참이다. `app_metadata`는 서버(관리자 키 · SQL)로만 바뀌고, `user_metadata`는 사용자가 `updateUser`로 직접 고칠 수 있어 권한 판단에 쓰지 않는다.
+`isAdmin`은 토큰의 `app_metadata.role === 'admin'`일 때만 참이다. `app_metadata`는 서버(관리자 키 · SQL)로만 바뀌고, `user_metadata`는 사용자가 `updateUser`로 직접 고칠 수 있어 권한 판단에 쓰지 않는다. FE도 화면을 보일지 정하려고 세션의 `app_metadata.role`로 같은 규칙을 읽지만(Admin Page 경로 보호와 메뉴 링크), 이것은 편의일 뿐이고 판단은 서버가 한다. 두 곳이 어긋나면(승격 · 강등 직후 토큰이 갱신되기 전) 서버의 `403`이 이긴다.
 
 관리자 지정 절차:
 
