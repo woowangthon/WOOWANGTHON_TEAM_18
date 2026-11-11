@@ -33,9 +33,9 @@ pipelines:
       PLATFORM_REPO: woowangthon/WOOWANGTHON_TEAM_18
       CODEBUILD_PROJECT: student-apps
       GHCR_TOKEN_SECRET_ID: wcp/codebuild/GHCR_TOKEN
-      # TODO(bot account): not created yet. Replace both with the bot's GitHub name (docs/design/platform-hosting.md).
-      GHCR_USER: REPLACE-BOT
-      IMAGE_REPO: ghcr.io/replace-bot/student-apps
+      # The bot's GitHub account (docs/design/platform-hosting.md).
+      GHCR_USER: wanggane-bot
+      IMAGE_REPO: ghcr.io/wanggane-bot/student-apps
     stages:
       - build:
           approval:

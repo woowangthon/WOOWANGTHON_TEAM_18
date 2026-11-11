@@ -86,7 +86,7 @@ EC2 ── gocd-server (GoCD 26.1.0, JVM -Xmx1g, 8153은 Tailscale 주소에만 
 | 위 프로젝트의 서비스 역할 | CloudWatch Logs 쓰기와 `secretsmanager:GetSecretValue`(비밀 `wcp/codebuild/GHCR_TOKEN` 하나만). 그 밖의 권한은 없다 |
 | Secrets Manager 비밀 `wcp/codebuild/GHCR_TOKEN` | 평문(JSON 아님). 값은 봇 GitHub 계정의 토큰(classic, `write:packages`). 파이프라인의 `GHCR_TOKEN_SECRET_ID`에 이 이름이 들어 있다 |
 | IAM 사용자 `wcp-gocd-aws-agent` (AWS 실행기 전용) | `codebuild:StartBuild` · `codebuild:BatchGetBuilds`는 프로젝트 `student-apps`에만, `logs:GetLogEvents`는 그 로그 그룹(`/aws/codebuild/student-apps:log-stream:*`)에만. 콘솔 로그인은 없고 액세스 키만 만들어 SSM `/wcp/gocd/AWS_ACCESS_KEY_ID` · `AWS_SECRET_ACCESS_KEY`에 넣는다 |
-| 봇 GitHub 계정과 패키지 | 학생 이미지는 `ghcr.io/<봇 계정>/student-apps` 하나다([배포 인계](deploy-handoff.md)). 첫 push 뒤 GHCR에서 이 패키지를 **Public**으로 바꾼다(새 패키지는 비공개라 워커가 토큰 없이 받지 못한다, [ADR-003](../adr/003-registry-ghcr.md)). 봇 계정 이름은 파이프라인 파일의 `GHCR_USER` · `IMAGE_REPO`에 넣는다(지금은 자리 표시 `REPLACE-BOT`) |
+| 봇 GitHub 계정과 패키지 | 학생 이미지는 `ghcr.io/<봇 계정>/student-apps` 하나다([배포 인계](deploy-handoff.md)). 첫 push 뒤 GHCR에서 이 패키지를 **Public**으로 바꾼다(새 패키지는 비공개라 워커가 토큰 없이 받지 못한다, [ADR-003](../adr/003-registry-ghcr.md)). 봇 계정은 `wanggane-bot`이고, 파이프라인 파일의 `GHCR_USER` · `IMAGE_REPO`에 들어 있다. |
 
 **왜 CodeBuild를 시작할 수 있는 키가 이 컨테이너에만 있나**: CodeBuild를 시작할 수 있으면 빌드 명령을 바꿔 GHCR 토큰을 꺼내 갈 수 있어서다([배포 워크플로우](deploy-workflow.md) §8). 그래서 키는 실행기 전용 IAM 사용자의 것이고, 인스턴스 역할에는 CodeBuild 권한이 없다.
 
