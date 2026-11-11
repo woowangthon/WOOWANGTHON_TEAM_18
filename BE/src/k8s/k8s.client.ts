@@ -65,7 +65,7 @@ export class K8sClient implements OnModuleDestroy {
 
   /** `path`에 객체를 만든다. 이미 있으면(409 AlreadyExists) 오류가 아니라 'exists'다. */
   async create(path: string, body: object): Promise<'created' | 'exists'> {
-    const answer = await this.send('POST', path, body, JSON_TYPE)
+    const answer = await this.send('POST', path, body)
     if (answer.status === 201) return 'created'
     if (answer.status === 409 && answer.reason === 'AlreadyExists') return 'exists'
     throw this.refused('POST', path, answer)
@@ -77,7 +77,7 @@ export class K8sClient implements OnModuleDestroy {
     return ClusterError.ofStatus(status, reason)
   }
 
-  private async send(method: Method, path: string, body: object | undefined, contentType: string): Promise<Answer> {
+  private async send(method: Method, path: string, body: object | undefined, contentType = JSON_TYPE): Promise<Answer> {
     if (!this.conn) {
       this.logger.error('Cluster access is not configured (K8S_API_URL, K8S_TOKEN, K8S_CA_CERT)')
       throw new ClusterError('unconfigured')
