@@ -15,3 +15,5 @@
 ## Lessons
 
 <fill when done>
+- 2026-11-11: #104 merged (main 053528c). Merged `upstream/main` into this branch (conflict only in `App.tsx`; kept both routes). Added the link from the progress screen to `/deploys/:id/secrets` on every `not_started` deploy, which also covers the state after `409 NOT_READY`, because the progress response does not say whether secrets are needed and a new request was not worth it. Hand mutants (link removed, link always shown, wrong href) were all killed. `/code-review low` raised one point on the existing `DeploySecrets.save` (setState after unmount); not changed, React ignores it and no second read can run while the form is open. `/simplify` (4 angles) found nothing to change except inlining one test constant; the repeated link text in `DeploySaved` and `DeployProgress` is left as two copies.
+- 2026-11-11: Not checked: a browser, a real BE round trip, mutation tool (#67).
