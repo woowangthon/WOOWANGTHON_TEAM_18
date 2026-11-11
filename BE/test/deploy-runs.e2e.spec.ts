@@ -3,6 +3,7 @@ import { ConflictException, type INestApplication, Logger } from '@nestjs/common
 import request from 'supertest'
 import type { App } from 'supertest/types.js'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { AgentClient } from '../src/deploys/agent.client.js'
 import { DeployPreparer } from '../src/deploys/deploy-preparer.js'
 import { errorBody, JWKS_URL, keySet, token } from './auth-helpers.js'
 import { startApp } from './start-app.js'
@@ -620,6 +621,13 @@ describe('POST /api/pipeline/notify', () => {
       expect(res.status).toBe(200)
       expect(run(id)).toMatchObject({ status: 'failed', failure: { code: 'AGENT_UNAVAILABLE', stage: 'apply' } })
       expect((await start(seedDeploy())).status).toBe(202)
+    })
+
+    it('ends as failed instead of staying "fixing" when building or sending the ticket throws', async () => {
+      vi.spyOn(AgentClient.prototype, 'sendTicket').mockRejectedValue(new Error('boom'))
+      const id = await reach('apply')
+      expect((await notify({ deployId: id, stage: 'apply', result: 'failed', failure: failure() })).status).toBe(200)
+      expect(run(id)).toMatchObject({ status: 'failed', failure: { code: 'AGENT_UNAVAILABLE' } })
     })
 
     it('ignores a failure for a run that already ended', async () => {

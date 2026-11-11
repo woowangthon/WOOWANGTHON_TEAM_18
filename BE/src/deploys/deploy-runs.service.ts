@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto'
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common'
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common'
 import type { AuthUser } from '../auth/auth.decorators.js'
 import { isRecord } from '../common/is-record.js'
 import { redact, redactString } from '../common/redact.js'
@@ -63,6 +63,8 @@ function view(deploy: DeployRow, run: DeployRunRow | undefined): DeployStatusVie
 
 @Injectable()
 export class DeployRunsService {
+  private readonly logger = new Logger(DeployRunsService.name)
+
   constructor(
     private readonly store: DeploysStore,
     private readonly preparer: DeployPreparer,
@@ -187,6 +189,28 @@ export class DeployRunsService {
     })
     if (!claimed) return false
 
+    // 여기부터 무엇이 던져도 "fixing"에 갇히지 않게 실패로 마감한다.
+    let sent = false
+    try {
+      sent = await this.sendTicket(run, notice, ticketId, gatewayToken, expiresAt)
+    } catch (err) {
+      this.logger.error(err)
+    }
+    if (!sent) {
+      await this.store.updateRun(run.deploy_id, { status: 'fixing' }, { status: 'failed', failure: { ...stored, code: 'AGENT_UNAVAILABLE' } })
+    }
+    return true
+  }
+
+  /** 외부로 나가는 값을 가려 문제 티켓을 만들어 AI 서버에 보낸다. 받았으면 true. */
+  private async sendTicket(
+    run: DeployRunRow,
+    notice: Extract<Notice, { result: 'failed' }>,
+    ticketId: string,
+    gatewayToken: string,
+    expiresAt: Date,
+  ): Promise<boolean> {
+    const { failure } = notice
     const now = new Date().toISOString()
     const raw = failure.raw
     const logs = isRecord(failure.logs) && Array.isArray(failure.logs.lines) ? failure.logs : { from: now, to: now, lines: [] }
@@ -207,11 +231,7 @@ export class DeployRunsService {
       previous: null,
     }) as Record<string, unknown>
 
-    const sent = await this.agent.sendTicket({ ticket, gateway: { token: gatewayToken, expiresAt: expiresAt.toISOString() } })
-    if (!sent) {
-      await this.store.updateRun(run.deploy_id, { status: 'fixing' }, { status: 'failed', failure: { ...stored, code: 'AGENT_UNAVAILABLE' } })
-    }
-    return true
+    return this.agent.sendTicket({ ticket, gateway: { token: gatewayToken, expiresAt: expiresAt.toISOString() } })
   }
 }
 
