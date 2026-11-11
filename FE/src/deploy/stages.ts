@@ -1,8 +1,8 @@
-// 배포 진행 단계(#99, UC-08, FR-060). 단계 이름과 순서는 SRS FR-060과 deploy-workflow.md 2절을 따른다.
+// 배포 진행 단계(#99, UC-08, FR-060). 이름과 순서는 SRS FR-060과 BE의 진행 상태 계약(`steps`의 key)을 따른다.
 export const STAGES = [
-  { key: 'received', label: '접수' },
+  { key: 'intake', label: '접수' },
   { key: 'analysis', label: '분석' },
-  { key: 'spec', label: '배포 설정' },
+  { key: 'config', label: '배포 설정' },
   { key: 'secrets', label: '비밀값' },
   { key: 'build', label: '빌드' },
   { key: 'deploy', label: '배포' },

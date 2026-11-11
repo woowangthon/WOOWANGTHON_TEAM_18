@@ -1,0 +1,285 @@
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import { MemoryRouter } from 'react-router'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { ApiError } from '../lib/api.ts'
+import DeployProgress from './DeployProgress.tsx'
+import type { DeployFailure, DeployStatus, Progress } from './progress.ts'
+
+// 실제 BE를 부르지 않는다. 테스트 전용 대역이라 MOCK 표식은 필요 없다(conventions §6).
+const api = vi.hoisted(() => ({ apiFetch: vi.fn() }))
+vi.mock('../lib/api.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/api.ts')>()),
+  apiFetch: api.apiFetch,
+}))
+
+const ID = '0b6f0c1e-4a52-4d8e-9a1b-3f7d2c5e8a90'
+const STATUS = `/api/deploys/${ID}/status`
+const START = `/api/deploys/${ID}/start`
+
+const KEYS = ['intake', 'analysis', 'config', 'secrets', 'build', 'deploy', 'verify', 'done']
+// active 단계 이름과 그 앞은 done, 뒤는 pending. failed면 그 단계를 failed로.
+const stepsAt = (at: string | null, failed = false) =>
+  KEYS.map((key, i) => ({
+    key,
+    state: at === null ? 'done' : i < KEYS.indexOf(at) ? 'done' : key === at ? (failed ? 'failed' : 'active') : 'pending',
+  }))
+const progressOf = (status: DeployStatus, at: string | null, extra: Partial<Progress> = {}): Progress => ({
+  deployId: ID,
+  status,
+  stage: null,
+  steps: stepsAt(at, status === 'failed'),
+  failure: null,
+  url: null,
+  warnings: [],
+  updatedAt: '2026-11-11T01:00:00.000Z',
+  ...extra,
+})
+const failureOf = (code: string, message = '빌드에 실패했어요'): DeployFailure => ({ code, stage: 'build', service: 'be', message })
+
+beforeEach(() => {
+  vi.useFakeTimers()
+  api.apiFetch.mockReset()
+})
+afterEach(() => {
+  vi.useRealTimers()
+})
+
+const advance = (ms: number) =>
+  act(async () => {
+    await vi.advanceTimersByTimeAsync(ms)
+  })
+const reads = () => api.apiFetch.mock.calls.filter((c) => c[0] === STATUS).length
+const show = async () => {
+  const view = render(
+    <MemoryRouter>
+      <DeployProgress deployId={ID} />
+    </MemoryRouter>,
+  )
+  await advance(0)
+  return view
+}
+// 단계 이름이 정확히 같은 줄의 글자. "배포"가 "배포 설정"에 걸리지 않게 이름 칸을 따로 본다.
+const stage = (name: string) =>
+  screen.getAllByRole('listitem').find((li) => li.firstElementChild?.textContent === name)?.textContent
+
+it('reads the status of this deploy and draws the stages from it', async () => {
+  api.apiFetch.mockResolvedValue(progressOf('running', 'deploy'))
+  await show()
+  expect(api.apiFetch).toHaveBeenCalledWith(STATUS)
+  expect(stage('빌드')).toBe('빌드끝남')
+  expect(stage('배포')).toBe('배포진행 중')
+  expect(stage('완료')).toBe('완료대기')
+})
+
+it('shows a loading note until the first answer arrives', () => {
+  api.apiFetch.mockReturnValue(new Promise(() => undefined))
+  render(
+    <MemoryRouter>
+      <DeployProgress deployId={ID} />
+    </MemoryRouter>,
+  )
+  expect(screen.getByText('진행 상태를 불러오는 중…')).toBeTruthy()
+})
+
+it('reads again every 3 seconds while running and shows the change', async () => {
+  api.apiFetch.mockResolvedValueOnce(progressOf('running', 'build')).mockResolvedValue(progressOf('running', 'deploy'))
+  await show()
+  expect(stage('빌드')).toBe('빌드진행 중')
+  await advance(2999)
+  expect(reads()).toBe(1)
+  await advance(1)
+  expect(reads()).toBe(2)
+  expect(stage('빌드')).toBe('빌드끝남')
+})
+
+it('keeps reading while a problem is being fixed', async () => {
+  api.apiFetch.mockResolvedValue(progressOf('fixing', 'deploy', { failure: failureOf('DEPLOY_FAILED', '문제를 살펴보는 중이에요') }))
+  await show()
+  await advance(3000)
+  expect(reads()).toBe(2)
+  expect(stage('배포')).toBe('배포문제 해결 중')
+  expect(screen.getByText('문제를 해결하는 중이에요')).toBeTruthy()
+  expect(screen.getByText('문제를 살펴보는 중이에요')).toBeTruthy()
+})
+
+it.each([
+  ['succeeded', null],
+  ['failed', 'build'],
+  ['needs_user', 'secrets'],
+  ['not_started', 'secrets'],
+] as const)('stops reading once the status is %s', async (status, at) => {
+  api.apiFetch.mockResolvedValue(progressOf(status, at, { url: 'https://x.stairnoworks.com', failure: failureOf('BUILD_FAILED') }))
+  await show()
+  await advance(30_000)
+  expect(reads()).toBe(1)
+})
+
+it('stops reading when the user leaves the screen', async () => {
+  api.apiFetch.mockResolvedValue(progressOf('running', 'build'))
+  const { unmount } = await show()
+  unmount()
+  await advance(30_000)
+  expect(reads()).toBe(1)
+})
+
+it('keeps the last state, says it is not the user fault and keeps trying when a read fails', async () => {
+  api.apiFetch
+    .mockResolvedValueOnce(progressOf('running', 'build'))
+    .mockRejectedValueOnce(new ApiError(503, 'DATABASE_UNAVAILABLE', 'x'))
+    .mockResolvedValue(progressOf('running', 'deploy'))
+  await show()
+  await advance(3000)
+  expect(screen.getByText('서버와 연결하지 못했어요')).toBeTruthy()
+  expect(stage('빌드')).toBe('빌드진행 중')
+  await advance(3000)
+  expect(screen.queryByText('서버와 연결하지 못했어요')).toBeNull()
+  expect(stage('배포')).toBe('배포진행 중')
+})
+
+it('says the deploy was not found on 404 and does not keep reading', async () => {
+  api.apiFetch.mockRejectedValue(new ApiError(404, 'DEPLOY_NOT_FOUND', 'x'))
+  await show()
+  expect(screen.getByText('배포를 찾을 수 없어요')).toBeTruthy()
+  expect(screen.getByRole('link', { name: '내 배포 목록으로 가기' }).getAttribute('href')).toBe('/deploys')
+  await advance(30_000)
+  expect(reads()).toBe(1)
+})
+
+it('starts the deploy from the button, then reads the status again and follows it', async () => {
+  api.apiFetch.mockImplementation((path: string) => {
+    if (path === START) return Promise.resolve({ deployId: ID, status: 'running', stage: 'build', targetSlot: 'a' })
+    return Promise.resolve(reads() <= 1 ? progressOf('not_started', 'secrets') : progressOf('running', 'build'))
+  })
+  await show()
+  expect(stage('비밀값')).toBe('비밀값사용자 조치 필요')
+  fireEvent.click(screen.getByRole('button', { name: '배포 시작' }))
+  await advance(0)
+  expect(api.apiFetch).toHaveBeenCalledWith(START, {})
+  expect(reads()).toBe(2)
+  expect(screen.queryByRole('button', { name: '배포 시작' })).toBeNull()
+  expect(stage('빌드')).toBe('빌드진행 중')
+  await advance(3000)
+  expect(reads()).toBe(3)
+})
+
+it('locks the start button while the request is out', async () => {
+  api.apiFetch.mockImplementation((path: string) =>
+    path === START ? new Promise(() => undefined) : Promise.resolve(progressOf('not_started', 'secrets')),
+  )
+  await show()
+  fireEvent.click(screen.getByRole('button', { name: '배포 시작' }))
+  await advance(0)
+  expect(screen.getByRole<HTMLButtonElement>('button', { name: '시작하는 중…' }).disabled).toBe(true)
+})
+
+it.each([
+  [new ApiError(409, 'NOT_READY', 'x'), '아직 시작할 수 없어요'],
+  [new ApiError(409, 'DEPLOY_IN_PROGRESS', 'x'), '같은 프로젝트의 배포가 진행 중이에요'],
+  [new ApiError(503, 'PIPELINE_UNAVAILABLE', 'x'), '지금은 배포를 시작할 수 없어요'],
+  [new ApiError(0, 'NETWORK_ERROR', 'x'), '지금은 배포를 시작할 수 없어요'],
+  [new ApiError(500, 'INTERNAL', 'x'), '배포를 시작하지 못했어요'],
+])('explains a failed start (%s) and lets the user try again', async (error, title) => {
+  api.apiFetch.mockImplementation((path: string) =>
+    path === START ? Promise.reject(error) : Promise.resolve(progressOf('not_started', 'secrets')),
+  )
+  await show()
+  fireEvent.click(screen.getByRole('button', { name: '배포 시작' }))
+  await advance(0)
+  expect(screen.getByText(title)).toBeTruthy()
+  expect(screen.getByRole<HTMLButtonElement>('button', { name: '배포 시작' }).disabled).toBe(false)
+  expect(reads()).toBe(2)
+})
+
+it('does not call an already started deploy an error, it just shows what the server now says', async () => {
+  api.apiFetch.mockImplementation((path: string) => {
+    if (path === START) return Promise.reject(new ApiError(409, 'ALREADY_STARTED', 'x'))
+    return Promise.resolve(reads() <= 1 ? progressOf('not_started', 'secrets') : progressOf('running', 'build'))
+  })
+  await show()
+  fireEvent.click(screen.getByRole('button', { name: '배포 시작' }))
+  await advance(0)
+  expect(screen.queryByRole('alert')).toBeNull()
+  expect(stage('빌드')).toBe('빌드진행 중')
+})
+
+it('shows no error for an already started deploy even when the next read still says not started', async () => {
+  api.apiFetch.mockImplementation((path: string) =>
+    path === START ? Promise.reject(new ApiError(409, 'ALREADY_STARTED', 'x')) : Promise.resolve(progressOf('not_started', 'secrets')),
+  )
+  await show()
+  fireEvent.click(screen.getByRole('button', { name: '배포 시작' }))
+  await advance(0)
+  expect(screen.queryByRole('alert')).toBeNull()
+  expect(reads()).toBe(2)
+})
+
+it('drops the old start failure as soon as the user tries again', async () => {
+  let starts = 0
+  api.apiFetch.mockImplementation((path: string) => {
+    if (path !== START) return Promise.resolve(progressOf('not_started', 'secrets'))
+    starts += 1
+    return starts === 1 ? Promise.reject(new ApiError(409, 'NOT_READY', 'x')) : new Promise(() => undefined)
+  })
+  await show()
+  fireEvent.click(screen.getByRole('button', { name: '배포 시작' }))
+  await advance(0)
+  expect(screen.getByText('아직 시작할 수 없어요')).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: '배포 시작' }))
+  await advance(0)
+  expect(screen.queryByText('아직 시작할 수 없어요')).toBeNull()
+})
+
+it('shows the failure the server gave, with the stage and service', async () => {
+  api.apiFetch.mockResolvedValue(progressOf('failed', 'build', { failure: failureOf('BUILD_FAILED', '빌드에 실패했어요') }))
+  await show()
+  const alert = within(screen.getByRole('alert'))
+  expect(alert.getByText('배포하지 못했어요')).toBeTruthy()
+  expect(alert.getByText('빌드에 실패했어요')).toBeTruthy()
+  expect(alert.getByText(/단계: 빌드 · 서비스: be/)).toBeTruthy()
+  expect(stage('빌드')).toBe('빌드실패')
+  expect(alert.queryByText(/학생 잘못이 아니에요/)).toBeNull()
+})
+
+it('says it is not the student fault when the platform is to blame', async () => {
+  api.apiFetch.mockResolvedValue(progressOf('failed', 'build', { failure: failureOf('CODEBUILD_API_ERROR', '빌드 서비스에 닿지 못했어요') }))
+  await show()
+  expect(screen.getByText(/학생 잘못이 아니에요/)).toBeTruthy()
+})
+
+it('asks the user to act when the server says so', async () => {
+  api.apiFetch.mockResolvedValue(progressOf('needs_user', 'deploy', { failure: failureOf('DEPLOY_FAILED', '환경변수를 확인해 주세요') }))
+  await show()
+  expect(screen.getByText('사용자 조치가 필요해요')).toBeTruthy()
+  expect(screen.getByText('환경변수를 확인해 주세요')).toBeTruthy()
+  expect(stage('배포')).toBe('배포사용자 조치 필요')
+})
+
+it('shows the public address as a link and copies it', async () => {
+  const writeText = vi.fn().mockResolvedValue(undefined)
+  Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+  api.apiFetch.mockResolvedValue(progressOf('succeeded', null, { url: 'https://my-app.stairnoworks.com' }))
+  await show()
+  const link = screen.getByRole('link', { name: 'https://my-app.stairnoworks.com' })
+  expect(link.getAttribute('href')).toBe('https://my-app.stairnoworks.com')
+  expect(link.getAttribute('rel')).toContain('noopener')
+  expect(screen.getAllByRole('listitem').every((li) => li.textContent.endsWith('끝남'))).toBe(true)
+  fireEvent.click(screen.getByRole('button', { name: '주소 복사' }))
+  await advance(0)
+  expect(writeText).toHaveBeenCalledWith('https://my-app.stairnoworks.com')
+  expect(screen.getByText('복사했어요')).toBeTruthy()
+})
+
+it('says so when copying is not possible', async () => {
+  Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true })
+  api.apiFetch.mockResolvedValue(progressOf('succeeded', null, { url: 'https://my-app.stairnoworks.com' }))
+  await show()
+  fireEvent.click(screen.getByRole('button', { name: '주소 복사' }))
+  await advance(0)
+  expect(screen.getByText(/복사하지 못했어요/)).toBeTruthy()
+})
+
+it('does not turn an address that is not https into a link', async () => {
+  api.apiFetch.mockResolvedValue(progressOf('succeeded', null, { url: 'javascript:alert(1)' }))
+  await show()
+  expect(screen.queryByRole('link', { name: /javascript/ })).toBeNull()
+})
