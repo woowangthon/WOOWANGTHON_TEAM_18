@@ -1,0 +1,208 @@
+import { ServiceUnavailableException } from '@nestjs/common'
+import { ConfigService } from '@nestjs/config'
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import http from 'node:http'
+import https from 'node:https'
+import type { AddressInfo } from 'node:net'
+import { networkInterfaces, tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { Logger } from '@nestjs/common'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import type { Env } from '../config/env.js'
+import { type Answer, FakeK8s } from '../../test/fake-k8s.js'
+import { K8sClient } from './k8s.client.js'
+import { SpaceService } from './space.service.js'
+
+const TOKEN = 'k8s-secret-token'
+const configOf = (over: Partial<Record<'K8S_API_URL' | 'K8S_TOKEN' | 'K8S_CA_CERT', string | undefined>>) =>
+  new ConfigService<Env, true>({ K8S_API_URL: undefined, K8S_TOKEN: TOKEN, K8S_CA_CERT: 'unused', ...over })
+const serviceOf = (url: string | undefined, ca = 'unused') => new SpaceService(new K8sClient(configOf({ K8S_API_URL: url, K8S_CA_CERT: ca })))
+
+const already = { status: 409, body: { kind: 'Status', reason: 'AlreadyExists', message: 'secret-looking detail' } }
+const unavailable = { response: { code: 'CLUSTER_UNAVAILABLE' }, status: 503 }
+
+describe('SpaceService.ensureSpace (plain http, loopback)', () => {
+  let fake: FakeK8s
+  let url: string
+  let service: SpaceService
+  beforeAll(async () => {
+    fake = new FakeK8s(http.createServer())
+    url = await fake.listen()
+    service = serviceOf(url)
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+    fake.seen = []
+    fake.answers.clear()
+  })
+  afterAll(() => fake.close())
+
+  const NS = 'proj-my-app'
+  const six = [
+    '/api/v1/namespaces',
+    `/api/v1/namespaces/${NS}/limitranges`,
+    `/api/v1/namespaces/${NS}/resourcequotas`,
+    `/apis/networking.k8s.io/v1/namespaces/${NS}/networkpolicies`,
+    `/apis/rbac.authorization.k8s.io/v1/namespaces/${NS}/rolebindings`,
+    `/apis/rbac.authorization.k8s.io/v1/namespaces/${NS}/rolebindings`,
+  ]
+
+  it('creates the six objects in order with the bearer token and a JSON body', async () => {
+    await service.ensureSpace('my-app')
+    expect(fake.paths).toEqual(six)
+    expect(fake.seen.every((s) => s.method === 'POST' && s.auth === `Bearer ${TOKEN}` && s.contentType === 'application/json')).toBe(true)
+    expect(fake.seen.map((s) => (s.body as { kind: string }).kind)).toEqual(['Namespace', 'LimitRange', 'ResourceQuota', 'NetworkPolicy', 'RoleBinding', 'RoleBinding'])
+    expect(fake.seen[0].body).toMatchObject({ metadata: { name: NS } })
+  })
+
+  it('counts 409 AlreadyExists as success, so calling again (or resuming) works', async () => {
+    for (const p of six) fake.answers.set(p, already)
+    await expect(service.ensureSpace('my-app')).resolves.toBeUndefined()
+    expect(fake.paths).toEqual(six)
+  })
+
+  it('resumes after a half-made space: the first two exist, the rest are created', async () => {
+    fake.answers.set(six[0], already)
+    fake.answers.set(six[1], already)
+    await service.ensureSpace('my-app')
+    expect(fake.paths).toEqual(six)
+  })
+
+  it.each([
+    ['401 (token refused)', { status: 401, body: { reason: 'Unauthorized' } }],
+    ['403 (no permission)', { status: 403, body: { reason: 'Forbidden' } }],
+    ['422 (admission rule)', { status: 422, body: { reason: 'Invalid', message: 'ValidatingAdmissionPolicy wanggane-space-quota denied' } }],
+    ['500', { status: 500 }],
+    ['409 that is not AlreadyExists', { status: 409, body: { reason: 'Conflict' } }],
+    ['409 with no reason', { status: 409 }],
+    ['an answer that is not JSON', { status: 502, body: 'bad gateway' }],
+    ['a 200 that is not 201', { status: 200 }],
+  ] as [string, Answer][])('answers 503 CLUSTER_UNAVAILABLE on %s and stops there', async (_, answer) => {
+    fake.answers.set(six[1], answer)
+    await expect(service.ensureSpace('my-app')).rejects.toMatchObject(unavailable)
+    // 공간(1)은 만들었고, 실패한 둘째에서 멈춘다.
+    expect(fake.paths).toEqual(six.slice(0, 2))
+  })
+
+  // 리더의 Tailscale 주소가 IPv6(fd7a:...)일 수 있다. 대괄호가 남으면 이름 풀이로 넘어가 연결이 모두 실패한다.
+  it.skipIf(!networkInterfaces().lo?.some((a) => a.address === '::1'))('reaches an IPv6 address written with brackets', async () => {
+    const v6 = http.createServer()
+    const fakeV6 = new FakeK8s(v6)
+    await new Promise<void>((r) => v6.listen(0, '::1', r))
+    try {
+      const { port } = v6.address() as AddressInfo
+      await serviceOf(`http://[::1]:${port}`).ensureSpace('my-app')
+      expect(fakeV6.seen).toHaveLength(six.length)
+    } finally {
+      await fakeV6.close()
+    }
+  })
+
+  it('answers 503 when the connection is dropped', async () => {
+    fake.answers.set(six[0], 'hangup')
+    await expect(service.ensureSpace('my-app')).rejects.toBeInstanceOf(ServiceUnavailableException)
+  })
+
+  it('answers 503 when nothing listens at the address, and logs the error code but not the address', async () => {
+    const closed = new FakeK8s(http.createServer())
+    const closedUrl = await closed.listen()
+    await closed.close()
+    const logged = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+    await expect(serviceOf(closedUrl).ensureSpace('my-app')).rejects.toMatchObject(unavailable)
+    expect(logged).toHaveBeenCalledWith('POST /api/v1/namespaces failed: ECONNREFUSED')
+    expect(JSON.stringify(logged.mock.calls)).not.toContain('127.0.0.1')
+  })
+
+  it('keeps the token and the answer text out of the error', async () => {
+    fake.answers.set(six[0], { status: 403, body: { reason: 'Forbidden', message: 'secret-looking detail' } })
+    const err = (await service.ensureSpace('my-app').catch((e: unknown) => e)) as ServiceUnavailableException
+    expect(JSON.stringify(err.getResponse())).not.toMatch(/secret|token/i)
+    expect(err.message).toBe('Could not reach the cluster')
+  })
+
+  it('logs the status and reason, never the token or the answer text', async () => {
+    const logged = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+    fake.answers.set(six[0], { status: 403, body: { reason: 'Forbidden', message: 'secret-looking detail' } })
+    await service.ensureSpace('my-app').catch(() => undefined)
+    expect(logged).toHaveBeenCalledWith('POST /api/v1/namespaces answered 403 Forbidden')
+    expect(JSON.stringify(logged.mock.calls)).not.toMatch(new RegExp(`${TOKEN}|secret-looking`))
+  })
+
+  // 닿지 않는 주소(Tailscale이 끊겨 패킷이 버려질 때)는 거절이 아니라 무응답이다. 제한 시간이 없으면 요청이 끝나지 않는다.
+  it('gives up on a leader that never answers (5 seconds) with 503', async () => {
+    const silent = http.createServer(() => undefined)
+    await new Promise<void>((r) => silent.listen(0, '127.0.0.1', r))
+    try {
+      const { port } = silent.address() as AddressInfo
+      await expect(serviceOf(`http://127.0.0.1:${port}`).ensureSpace('my-app')).rejects.toMatchObject(unavailable)
+    } finally {
+      silent.closeAllConnections()
+      await new Promise<void>((r) => silent.close(() => r()))
+    }
+  }, 15000)
+
+  it.each(['', 'My-App', '-a', 'a-', 'a/b', 'a b', '../x', 'a'.repeat(41)])('refuses the invalid slug %j before calling anything', async (slug) => {
+    await expect(service.ensureSpace(slug)).rejects.toThrow(/Not a valid slug/)
+    expect(fake.seen).toEqual([])
+  })
+
+  it('accepts the shortest and the longest slug', async () => {
+    await service.ensureSpace('a')
+    await service.ensureSpace('a'.repeat(40))
+    expect(fake.paths).toHaveLength(2 * six.length)
+  })
+})
+
+describe('SpaceService.ensureSpace (not configured)', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it('answers 503 CLUSTER_UNAVAILABLE without any network call', async () => {
+    const service = new SpaceService(new K8sClient(new ConfigService<Env, true>({ K8S_API_URL: undefined, K8S_TOKEN: undefined, K8S_CA_CERT: undefined })))
+    const logged = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+    await expect(service.ensureSpace('my-app')).rejects.toMatchObject(unavailable)
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining('not configured'))
+  })
+})
+
+// 리더 API처럼 자체 CA가 서명한 인증서로 답하는 https. 시험용 CA와 서버 인증서를 openssl로 만든다(키는 레포에 두지 않는다).
+describe('SpaceService.ensureSpace (https with a private CA)', () => {
+  let dir: string
+  let caPem: string
+  let otherCaPem: string
+  let fake: FakeK8s
+  let url: string
+
+  const openssl = (...args: string[]) => execFileSync('openssl', args, { cwd: dir, stdio: 'pipe' })
+
+  beforeAll(async () => {
+    dir = mkdtempSync(join(tmpdir(), 'k8s-test-'))
+    for (const name of ['ca', 'other']) {
+      openssl('req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes', '-keyout', `${name}.key`, '-out', `${name}.pem`, '-days', '2', '-subj', `/CN=${name}`)
+    }
+    openssl('req', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes', '-keyout', 'srv.key', '-out', 'srv.csr', '-subj', '/CN=leader')
+    writeFileSync(join(dir, 'ext'), 'subjectAltName=IP:127.0.0.1')
+    openssl('x509', '-req', '-in', 'srv.csr', '-CA', 'ca.pem', '-CAkey', 'ca.key', '-CAcreateserial', '-out', 'srv.pem', '-days', '2', '-extfile', 'ext')
+    caPem = readFileSync(join(dir, 'ca.pem'), 'utf8')
+    otherCaPem = readFileSync(join(dir, 'other.pem'), 'utf8')
+    fake = new FakeK8s(https.createServer({ key: readFileSync(join(dir, 'srv.key')), cert: readFileSync(join(dir, 'srv.pem')) }))
+    url = await fake.listen()
+  })
+  afterEach(() => {
+    fake.seen = []
+  })
+  afterAll(async () => {
+    await fake.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('trusts the configured CA', async () => {
+    await serviceOf(url, caPem).ensureSpace('my-app')
+    expect(fake.seen).toHaveLength(6)
+  })
+
+  it('refuses a server whose certificate the CA did not sign, before sending the token', async () => {
+    await expect(serviceOf(url, otherCaPem).ensureSpace('my-app')).rejects.toMatchObject(unavailable)
+    expect(fake.seen).toEqual([])
+  })
+})

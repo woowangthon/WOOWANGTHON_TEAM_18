@@ -1,10 +1,12 @@
 # Admission policies for the platform server account and for student Pods (build 09, first part).
 # Design and reasons: docs/design/cluster.md §8.
 #   wanggane-platform-server   the server account writes only in proj- spaces; namespace and Secret rules
-#   wanggane-space-*           cap, defaults, isolation and the read binding are created only with the template's
-#                              name and values
-#   wanggane-student-pods      Pods and Deployments in proj- spaces drop NET_RAW and carry no API token
-# The template values are not copied here: the four wanggane-space-* policies compare against the objects
+#   wanggane-space-*           cap, defaults, isolation and the two bindings (server read, executor deploy) are
+#                              created only with the template's name and values
+#   wanggane-student-pods      Pods and Deployments in proj- spaces drop NET_RAW, carry no API token and no
+#                              toleration, and do not name their node
+# The executor's own policies are in Infra/executor/policies.yaml.
+# The template values are not copied here: the five wanggane-space-* policies compare against the objects
 # in the namespace student-template, which is Infra/student/space.yaml under another name. Apply it first
 # (and again whenever space.yaml changes):
 #   sed 's/proj-demo/student-template/g' Infra/student/space.yaml | ssh k3s-leader 'sudo k3s kubectl apply -f -'
@@ -196,7 +198,9 @@ spec:
     namespace: student-template
     parameterNotFoundAction: Deny
 ---
-# RBAC already limits the role to proj-reader (bind on that name only). This fixes who is bound.
+# RBAC already limits the roles to proj-reader and proj-deployer (bind on those names only). This policy
+# and the next fix who is bound to which: a RoleBinding named deploy-executor is checked by
+# wanggane-space-deployers, every other name by this one.
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata:
@@ -218,6 +222,8 @@ spec:
   matchConditions:
   - name: platform-server-account
     expression: request.userInfo.username == 'system:serviceaccount:platform:platform-server'
+  - name: not-the-executor-binding
+    expression: object.metadata.name != 'deploy-executor'
   validations:
   - expression: >-
       object.metadata.name == params.metadata.name
@@ -234,6 +240,49 @@ spec:
   validationActions: ["Deny"]
   paramRef:
     name: platform-server-read
+    namespace: student-template
+    parameterNotFoundAction: Deny
+---
+# The binding that lets the leader deploy executor work in the space (role proj-deployer,
+# Infra/executor/account.yaml).
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: wanggane-space-deployers
+spec:
+  failurePolicy: Fail
+  paramKind:
+    apiVersion: rbac.authorization.k8s.io/v1
+    kind: RoleBinding
+  matchConstraints:
+    resourceRules:
+    - apiGroups: ["rbac.authorization.k8s.io"]
+      apiVersions: ["v1"]
+      operations: ["CREATE"]
+      resources: ["rolebindings"]
+    namespaceSelector:
+      matchExpressions:
+      - {key: kubernetes.io/metadata.name, operator: NotIn, values: ["student-template"]}
+  matchConditions:
+  - name: platform-server-account
+    expression: request.userInfo.username == 'system:serviceaccount:platform:platform-server'
+  - name: the-executor-binding
+    expression: object.metadata.name == 'deploy-executor'
+  validations:
+  - expression: >-
+      dyn(object.roleRef) == dyn(params.roleRef)
+      && dyn(object.subjects) == dyn(params.subjects)
+    message: the RoleBinding deploy-executor must have the role and subject of Infra/student/space.yaml
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: wanggane-space-deployers
+spec:
+  policyName: wanggane-space-deployers
+  validationActions: ["Deny"]
+  paramRef:
+    name: deploy-executor
     namespace: student-template
     parameterNotFoundAction: Deny
 ---
@@ -284,6 +333,19 @@ spec:
         && (!has(c.securityContext.capabilities.add)
             || !c.securityContext.capabilities.add.exists(a, a == 'NET_RAW' || a == 'ALL')))
     message: "every container in a student Pod must drop the NET_RAW capability"
+  # The leader taint is NoSchedule, so a toleration would let a student Pod onto the leader. Kubernetes
+  # itself adds the two NoExecute tolerations below to every Pod (how long it stays on a dead node).
+  - expression: >-
+      !has(variables.podSpec.tolerations) || variables.podSpec.tolerations.all(t,
+        has(t.key) && t.key in ['node.kubernetes.io/not-ready', 'node.kubernetes.io/unreachable']
+        && has(t.effect) && t.effect == 'NoExecute')
+    message: "student Pods must not carry tolerations"
+  # A preset nodeName skips the scheduler, and with it the taint. An existing Pod has the name the
+  # scheduler gave it, so Pod updates are not checked.
+  - expression: >-
+      (request.resource.resource == 'pods' && request.operation == 'UPDATE')
+      || !has(variables.podSpec.nodeName) || variables.podSpec.nodeName == ''
+    message: "student Pods must not set nodeName"
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding

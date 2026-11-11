@@ -4,5 +4,5 @@
     "rootDir": "./src"
   },
   "include": ["src"],
-  "exclude": ["**/*.spec.ts", "src/fixtures.ts"]
+  "exclude": ["**/*.spec.ts", "src/fixtures.ts", "src/kube-fake.ts", "src/__snapshots__"]
 }
