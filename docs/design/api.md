@@ -480,7 +480,7 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
 
 ### 파이프라인 ↔ 플랫폼 서버 (기계용)
 
-> **현식님 확인 필요**: 아래 세 가지는 파이프라인 쪽(Infra/pipeline, GoCD) 담당과 맞추지 않았다. 가장 단순한 쪽으로 정해 적었다.
+> GoCD(서버 설치, 파이프라인 정의, 아래 세 가지를 잇는 task)는 플랫폼 서버 담당이 만든다([배포 워크플로우](deploy-workflow.md#정할-것) 3번, 2026-11-11). 아래 세 가지도 그 담당이 정했다. 스테이지 판단 코드(`Infra/pipeline`)가 쓰는 결과 JSON을 아래 알림 모양으로 바꿔 보내는 task도 플랫폼 서버 담당이 만든다.
 
 사용자 로그인 토큰이 아니라 **기계용 비밀 토큰** `PIPELINE_NOTIFY_TOKEN`(`Authorization: Bearer`)으로 인증한다. 서버 env에 있고 파이프라인의 GoCD secure 변수에 같은 값을 넣는다. 설정이 없거나 틀리면 `401 AUTH_REQUIRED`다. 이 토큰 하나로 배포 완료를 위조할 수 있어 서버는 32자 이상만 받는다. 플랫폼 서버는 GoCD를 주기적으로 조회하지 않는다(§6-1).
 
@@ -522,7 +522,7 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
 
 - 모두 로그인 토큰이 필요하고, `isAdmin`(`app_metadata.role === 'admin'`, [`auth.md`](auth.md))일 때만 받는다. 아니면 `403 ADMIN_REQUIRED`다. 운영자 계정은 하나다.
 - 리더의 쿠버네티스 API에 닿지 못하면(시간 초과 · 인증서 검증 실패 · 설정 없음) `503 CLUSTER_UNREACHABLE`, 닿았는데 서버 계정에 그 일의 권한이 없으면(401 · 403) `503 CLUSTER_FORBIDDEN`이다. 화면은 앞의 것을 "리더 무응답"으로 보여 준다([`cluster.md`](cluster.md) §10). `503 DATABASE_UNAVAILABLE`도 있다.
-- **사용량 수치는 아직 수집하지 않는다.** 서버 계정에 Prometheus 프록시 읽기나 `metrics.k8s.io` 읽기 권한이 없다([`cluster.md`](cluster.md) §8 "남은 것"). 그래서 `usage`는 `null`이고 응답에 `usageStatus: "not_collected"`를 싣는다. 값을 지어내지 않는다. 권한이 오면 `usage`가 `{ "cpuMillicores", "memoryBytes" }`로 채워지고 `usageStatus`가 `"collected"`가 된다.
+- **사용량 수치는 아직 수집하지 않는다.** 서버 계정의 `metrics.k8s.io` 읽기 권한(노드 · `proj-` 공간 Pod의 CPU · 메모리)은 들어갔지만([`cluster.md`](cluster.md) §8, #130) 서버가 아직 그 API를 부르지 않는다. 그래서 `usage`는 `null`이고 응답에 `usageStatus: "not_collected"`를 싣는다. 값을 지어내지 않는다. 서버가 그 API를 부르면 `usage`가 `{ "cpuMillicores", "memoryBytes" }`로 채워지고 `usageStatus`가 `"collected"`가 된다.
 
 ### `GET /api/admin/nodes` — 노드 현황
 
@@ -588,7 +588,7 @@ DB에 배포가 있는 프로젝트(`slug`)마다 공간 `proj-<slug>`를 읽어
 
 응답 `200`: `{ "slug", "scaled": ["fe-a", "be-a"], "failed": [] }`. 하나라도 내렸으면 누가 언제 했는지 기록한다(`admin_actions`. 하나도 못 내렸으면 기록하지 않는다. 기록하지 못하면 `503 DATABASE_UNAVAILABLE`이고, 이미 내린 것은 그대로지만 같은 요청을 다시 보내도 안전하다). 일부만 실패해도 `200`이고 `failed`에 이름이 온다(다시 요청하면 이어서 내린다).
 
-오류: `404 PROJECT_NOT_FOUND`(DB에 없는 slug, slug 모양이 아닌 값 포함), `409 NOT_RUNNING`(공간이 없거나 Deployment가 없다), `403 ADMIN_REQUIRED`, `503 CLUSTER_UNREACHABLE`, `503 CLUSTER_FORBIDDEN`(Deployment scale 권한이 아직 없을 때. 인프라 담당이 [`cluster.md`](cluster.md) §8 "남은 것"의 조치용 권한을 주기 전까지 이 오류다. 서버의 scale 호출은 아직 붙이지 않아 지금은 항상 이 오류다), `503 DATABASE_UNAVAILABLE`.
+오류: `404 PROJECT_NOT_FOUND`(DB에 없는 slug, slug 모양이 아닌 값 포함), `409 NOT_RUNNING`(공간이 없거나 Deployment가 없다), `403 ADMIN_REQUIRED`, `503 CLUSTER_UNREACHABLE`, `503 CLUSTER_FORBIDDEN`(서버 계정이 scale을 거절당했을 때. 클러스터 쪽 권한은 2026-11-11에 들어갔지만([`cluster.md`](cluster.md) §8, scale 0 · 1과 재시작만) 서버의 scale 호출을 아직 붙이지 않아 지금은 항상 이 오류다), `503 DATABASE_UNAVAILABLE`.
 
 ## AI 에이전트 (플랫폼 서버 ↔ AI 서버)
 

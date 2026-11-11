@@ -114,22 +114,26 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 - 저장 클래스는 k3s 기본 `local-path` 하나다. 리더에 두는 것(이미지 캐시, Prometheus, Grafana)은 리더 로컬 디스크를 쓴다.
 - 워커가 꺼지면 학생 앱만 남은 워커에 다시 뜬다(§6 "노드가 꺼졌을 때"). 데이터는 학생 DB에 있어 따라갈 것이 없다.
 
-### 8. 플랫폼 서버와 배포 실행기의 권한 (서버 계정 1차 2026-11-10 · 실행기 계정 2026-11-11 구현됨, 나머지 예정)
+### 8. 플랫폼 서버와 배포 실행기의 권한 (서버 계정 1차 2026-11-10 · 실행기 계정 · 서버 조치 권한 2026-11-11 구현됨, 나머지 예정)
 
 배포는 리더의 배포 실행기(GoCD Agent)가 하고, 플랫폼 서버는 비밀값 · 조치 · 조회만 한다([ADR-009](../adr/009-deploy-runs-on-leader-gocd-agent.md)). 계정을 둘로 나누고 두 겹으로 막는다.
 
-**만든 것 (구축 09, [`Infra/platform/`](../../Infra/platform/))**: 플랫폼 서버가 공간을 만들고, 비밀값을 넣고, 자기가 만든 공간을 읽는 데 쓰는 것까지다.
+**만든 것 (구축 09, [`Infra/platform/`](../../Infra/platform/))**: 플랫폼 서버가 공간을 만들고, 비밀값을 넣고, 자기가 만든 공간을 읽고, 그 공간의 서비스를 끄고(Deployment를 0개로) 다시 켜고(1개로) 재시작하는 데 쓰는 것까지다. 끄기는 2026-11-11에 더했고(#124, 운영자 강제 중지 API #121이 쓴다), 재개 · 재시작은 같은 날 더했다(#129, 학생 운영 제어와 AI 도구 `scale_target` · `restart_target`이 쓴다).
 
 - 계정: 운영 공간 `platform`의 ServiceAccount `platform-server`. 토큰은 만료 없는 것 하나(Secret `platform-server-token`)이고, 그 Secret을 지우면 폐기된다.
 - 권한: 네임스페이스 만들기 · 삭제, ResourceQuota · LimitRange · NetworkPolicy 만들기, Secret 만들기 · 통째로 바꾸기(`create` · `update`), 권한 연결(RoleBinding) 만들기(자기 읽기용과 실행기 배포용 둘), 노드 읽기. Secret 읽기와 `patch`는 없다. patch의 응답은 Secret 전체라, 빈 patch 하나로 값을 읽을 수 있기 때문이다. 통째로 바꾸기(PUT)의 응답은 보낸 값뿐이다.
-- 읽기: 서버는 `proj-` 공간 안의 Pod · 로그 · Deployment만 읽는다. 검사 규칙은 쓰기만 걸러서 읽기는 이름으로 좁힐 수 없다. 그래서 읽기 권한을 클러스터 전체에 주지 않고, 읽기 역할 `proj-reader`를 따로 두고 서버가 공간을 만들 때 그 공간에 권한 연결 `platform-server-read`를 같이 만든다(양식의 다섯째 객체). 서버가 연결할 수 있는 역할은 `proj-reader` 하나뿐이다(RBAC `bind`). 연결이 없는 공간과 `kube-system` · `vllm` 등은 읽지 못한다. 노드는 공간에 속하지 않아 클러스터 범위로 읽는다(이름 · 주소 · Ready 상태).
-- 검사 규칙 일곱
+- 읽기 · 조치: 서버는 `proj-` 공간 안의 Pod · 로그 · Deployment · 이벤트 · Ingress만 읽는다. 이벤트는 배포 뒤 감시와 AI 도구 `get_target_status`가, Ingress는 live 슬롯 확인이 쓴다. 검사 규칙은 쓰기만 걸러서 읽기는 이름으로 좁힐 수 없다. 그래서 읽기 권한을 클러스터 전체에 주지 않고, 읽기 역할 `proj-reader`를 따로 두고 서버가 공간을 만들 때 그 공간에 권한 연결 `platform-server-read`를 같이 만든다(양식의 다섯째 객체). 서버가 연결할 수 있는 역할은 `proj-reader` 하나뿐이다(RBAC `bind`). 연결이 없는 공간과 `kube-system` · `vllm` 등은 읽지 못한다. 노드는 공간에 속하지 않아 클러스터 범위로 읽는다(이름 · 주소 · Ready 상태). 사용량(CPU · 메모리)은 k3s에 들어 있는 metrics-server(v0.9.0)의 `metrics.k8s.io`로 읽는다(#130): 노드 사용량은 클러스터 범위로, Pod 사용량은 같은 역할 `proj-reader`에 넣어 연결이 있는 공간에서만. 수치뿐이고 `watch`는 없다. 디스크 사용량은 이 API에 없어 구축 11(§10)의 일이다. 조치도 같은 역할 `proj-reader`에 넣어, 공간마다 이미 있는 연결이 그대로 가져간다(양식과 서버의 공간 만들기는 바뀌지 않는다). 끄기 · 재개는 Deployment 본체가 아니라 `deployments/scale`의 `get` · `patch`로 하고, 아래 검사 규칙이 0 · 1개만 통과시킨다(재개 전 용량 검사는 서버 몫). 재시작(`kubectl rollout restart`)은 Deployment `patch`가 필요한데, 아래 검사 규칙이 Pod 템플릿의 `restartedAt` 주석 말고는 아무것도 못 바꾸게 한다. Deployment 통째로 바꾸기(PUT)와 삭제는 없다.
+- 검사 규칙 아홉
   - `wanggane-platform-server`: 서버 계정의 쓰기 · 삭제는 `proj-`로 시작하는 공간에서만 통과한다. 네임스페이스는 만들기 · 삭제만 되고, 만들 때 라벨이 보안 등급 둘(`enforce=baseline`, `warn=restricted`)뿐이어야 한다. Secret은 타입이 `Opaque`이고 이름이 `<서비스>-secrets`일 때만 통과한다(서비스 계정 토큰 타입 Secret으로 공간 안에서 토큰을 찍어내지 못하게).
+  - `wanggane-platform-server-scale`: 서버 계정의 scale 요청은 레플리카 0이나 1일 때만 통과한다(중지 · 재개만, 늘리기 없음). Scale 객체는 0이면 `spec.replicas`를 비워 보내므로 빈 값도 0으로 본다.
+  - `wanggane-platform-server-restart`: 서버 계정의 Deployment 고치기는 Pod 템플릿의 `restartedAt` 주석만 바뀔 때 통과한다. Pod spec(이미지 · 명령 · 환경변수 · 볼륨), Pod 라벨 · 다른 주석, replicas · selector · strategy · 롤아웃 설정이 하나라도 바뀌면 거절한다. 이미지나 볼륨을 바꿀 수 있으면 털린 서버 계정이 공간 안에서 다른 코드를 돌리거나 Secret을 마운트할 수 있기 때문이다. 비교 대상은 apps/v1 DeploymentSpec의 필드 전부이고, 나중 버전이 새 필드를 더하면 그 필드는 비교하지 않는다.
   - `wanggane-space-quota` · `-limits` · `-isolation`: 서버 계정이 만드는 ResourceQuota · LimitRange · NetworkPolicy는 이름과 값이 §6 양식과 같을 때만 통과한다. 양식 값을 규칙에 베끼지 않고, 양식을 그대로 적용해 둔 기준 공간 `student-template`의 객체와 비교한다. 기준 객체가 없으면 그 종류를 만드는 요청이 계정 · 공간을 가리지 않고 모두 거절된다(기준을 계정보다 먼저 찾는다). 기준 공간만은 규칙에서 빼 두어 기준을 언제든 다시 넣을 수 있다. 이름까지 묶는 것은 NetworkPolicy가 여러 개면 허용이 합쳐져, 다른 이름으로 하나 더 만들면 차단이 풀리기 때문이다.
   - `wanggane-space-readers` · `-deployers`: 서버 계정이 만드는 권한 연결은 이름 · 역할 · 대상 계정이 양식의 둘(`platform-server-read`, `deploy-executor`) 중 하나와 같을 때만 통과한다. 같은 방식으로 기준 공간의 객체와 비교한다. 이름이 `deploy-executor`인 연결은 `-deployers`가, 그 밖의 이름은 `-readers`가 본다.
   - `wanggane-student-pods`: `proj-` 공간의 Pod와 Deployment는 모든 컨테이너에서 `NET_RAW`를 빼고 API 토큰 자동 마운트를 끈 것만 통과한다. 같은 토큰을 손으로 마운트하는 길(projected 볼륨의 `serviceAccountToken`)도 거절한다. toleration과 `nodeName`도 거절한다(2026-11-11): 리더 taint는 `NoSchedule`이라 toleration을 단 Pod와, 스케줄러를 거치지 않는 `nodeName` 지정 Pod는 막지 못하기 때문이다. 쿠버네티스가 모든 Pod에 스스로 넣는 toleration 둘(`not-ready` · `unreachable`, `NoExecute`)만 통과시킨다. 운영자를 포함한 모든 계정에 걸린다. Deployment도 보는 것은 배포 실행기가 적용할 때 바로 거절을 받게 하려는 것이다(Pod만 보면 거절이 ReplicaSet 이벤트로만 남는다).
 - 서버가 받는 응답: 권한이 없으면 `403`, 검사 규칙에 걸리면 `422`(메시지에 규칙 이름과 이유), 이미 있으면 `409`, 토큰이 틀리면 `401`.
-- 시험(2026-11-10, [`Infra/platform/check.sh`](../../Infra/platform/check.sh), 운영자 기기에서 실행): 서버 계정으로(impersonation) 양식 그대로 공간 하나를 만들고 Secret을 만들고 바꾼다. 거절되는 것: `proj-` 아닌 이름, 라벨이 없거나 다르거나 더 붙은 공간, `vllm` · `student-template` · `kube-system` 삭제, 값을 바꾼 상한 · 기본값 · 차단 규칙, 다른 이름의 차단 규칙, 상한 · 차단 규칙 지우기 · 고치기, Secret 읽기 · 목록 · patch · 삭제, 다른 이름이나 토큰 타입의 Secret, `proj-` 밖 Secret 쓰기, Pod · Deployment 만들기, 다른 이름이나 다른 계정의 권한 연결(실행기용 연결을 다른 계정 · 다른 역할 · 다른 이름으로 만드는 것 포함), `cluster-admin` 연결, 권한 연결 지우기, Middleware 만들기. 읽기: 자기가 만든 공간과 `proj-demo`의 Pod · 로그 · Deployment, 노드는 읽힌다. `kube-system` · `vllm`의 Pod와 로그, 모든 공간 한꺼번에 읽기, 권한 연결이 없는 공간, Secret · ConfigMap 읽기, Pod 안에서 명령 실행은 거절된다. 실제 객체를 겨누는 거절 시험은 server dry run으로 보낸다. 실제 토큰으로 리더의 Tailscale 주소를 불러 `201` · `409` · `422` · `403` · `401`도 확인했다. EC2에서 닿는지는 EC2가 사설망에 들어온 뒤 본다.
+- 시험(2026-11-10, [`Infra/platform/check.sh`](../../Infra/platform/check.sh), 운영자 기기에서 실행): 서버 계정으로(impersonation) 양식 그대로 공간 하나를 만들고 Secret을 만들고 바꾼다. 거절되는 것: `proj-` 아닌 이름, 라벨이 없거나 다르거나 더 붙은 공간, `vllm` · `student-template` · `kube-system` 삭제, 값을 바꾼 상한 · 기본값 · 차단 규칙, 다른 이름의 차단 규칙, 상한 · 차단 규칙 지우기 · 고치기, Secret 읽기 · 목록 · patch · 삭제, 다른 이름이나 토큰 타입의 Secret, `proj-` 밖 Secret 쓰기, Pod · Deployment 만들기, 다른 이름이나 다른 계정의 권한 연결(실행기용 연결을 다른 계정 · 다른 역할 · 다른 이름으로 만드는 것 포함), `cluster-admin` 연결, 권한 연결 지우기, Middleware 만들기. 읽기: 자기가 만든 공간과 `proj-demo`의 Pod · 로그 · Deployment · 이벤트 · Ingress, 노드는 읽힌다. `kube-system` · `vllm`의 Pod와 로그, 모든 공간 한꺼번에 읽기, 권한 연결이 없는 공간, Secret · ConfigMap 읽기, Pod 안에서 명령 실행은 거절된다. 실제 객체를 겨누는 거절 시험은 server dry run으로 보낸다. 실제 토큰으로 리더의 Tailscale 주소를 불러 `201` · `409` · `422` · `403` · `401`도 확인했다. EC2에서 닿는지는 EC2가 사설망에 들어온 뒤 본다.
+- 조치 시험(2026-11-11, 같은 스크립트): 운영자가 시험 공간에 예시 Deployment를 놓고 서버 계정으로 0개로 내리면 실제로 0이 되고, 한 번 더 내려도 되고, 1개로 다시 켜진다. `kubectl rollout restart`도 되고 Pod 템플릿에 `restartedAt`이 붙는다. 거절되는 것(검사 규칙): 2로 올리기, 이미지 바꾸기, Deployment 본체의 replicas 바꾸기, Pod 라벨 · 다른 주석 더하기, 롤아웃 멈추기. 거절되는 것(권한): Deployment 통째로 바꾸기(PUT) · 삭제, `vllm` · `kube-system` · 읽기 연결이 없는 공간의 scale · 재시작, `kube-system` 이벤트 · `vllm` Ingress 읽기. 실제 토큰으로는 `proj-demo`를 dry run으로 불러 scale 0 · 1은 `200`, 2는 `422`, 재시작은 `200`, `vllm`은 `403`이었다. `Infra/executor/check.sh` · `Infra/student/check.sh`도 같이 다시 돌려 모두 통과했다.
+- 사용량 읽기 시험(2026-11-11, 같은 스크립트, #130): 서버 계정으로 노드 세 대와 `proj-demo`의 Pod 사용량이 값까지 읽힌다(스크립트가 값이 든 항목 수를 센다. 빈 목록은 실패다). 자기가 만든 시험 공간은 도는 Pod가 없을 수 있어 요청이 받아들여지는 것만 본다. 거절되는 것(권한): `kube-system` · `vllm` · 읽기 연결이 없는 공간의 Pod 사용량, 모든 공간 한꺼번에 읽기. 실제 토큰으로는 노드 · `proj-demo`가 `200`, `vllm`이 `403`이었다. `Infra/executor/check.sh` · `Infra/student/check.sh`도 다시 돌려 모두 통과했다.
 
 **만든 것 (구축 09′, [`Infra/executor/`](../../Infra/executor/), 2026-11-11)**: 배포 실행기가 학생 공간에 배포하고 결과를 읽는 데 쓰는 계정이다. 실행기 Pod(GoCD Agent)는 아직 없다.
 
@@ -149,20 +153,21 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
   - 거절된다(권한): `kube-system` · `vllm`의 Deployment · Middleware 쓰기와 Pod · ConfigMap 읽기, 모든 공간 한꺼번에 읽기, 노드 읽기, Secret 읽기 · 만들기, 자기가 배포한 Pod의 로그 · Pod 안 명령 실행, Pod 직접 만들기, 네임스페이스 만들기 · 삭제, ResourceQuota 고치기, LimitRange · NetworkPolicy 지우기, NetworkPolicy · RoleBinding 만들기, 자기 권한 연결 지우기, IngressRoute 만들기.
   - 거절된다(검사 규칙): 기준 공간에 Deployment · Middleware 쓰기, `redirectScheme` · `forwardAuth` · 플러그인 · `stripPrefixRegex` Middleware, `stripPrefix`에 다른 것을 같이 넣은 Middleware, 빈 Middleware(운영자가 만들어도 거절), `externalIPs`를 적은 Service(운영자가 만들어도 거절) · `ExternalName` Service, 리더 taint나 모든 taint를 견디는 toleration을 단 Deployment · Pod, `nodeName`을 적은 Deployment · Pod, API 토큰을 켠 Deployment.
   - 같은 날 `Infra/platform/check.sh` · `Infra/student/check.sh`도 다시 돌려 모두 통과했고, `demo.stairnoworks.com`의 시험 앱에도 Middleware를 걸어 두었다(`/` 200, `/svc/readyz` 200).
+- 실행기 Pod 매니페스트([`Infra/executor/agent.yaml`](../../Infra/executor/agent.yaml), 2026-11-11, #131. **리더에 적용하지 않았다**: GoCD 서버가 생긴 날 적용한다): 공간 `deploy`의 Deployment 하나, 리더 고정. 이미지는 GoCD 서버와 같은 버전의 공식 실행기 이미지(`gocd/gocd-agent-debian-12:v26.1.0`)를 그대로 쓴다. 파이프라인이 부르는 `node`(24.15.0) · `helm`(3.22.1)은 init 컨테이너가 각 공식 이미지에서 꺼내 공유 볼륨에 둔다. 우리 이미지를 빌드하거나 보관하지 않으므로 리더에 레지스트리 쓰기 토큰이 없다. Build 스테이지는 AWS 실행기 몫이라([배포 워크플로우](deploy-workflow.md) §2) `aws`와 AWS 자격 증명은 넣지 않는다. 클러스터 접속은 쿠버네티스가 넣어 주는 기한 있는 토큰 파일을 `KUBE_API_URL` · `KUBE_TOKEN_FILE` · `KUBE_CA_FILE`로 넘긴다(`Infra/pipeline/src/kube.ts`). GoCD 서버 주소와 자동 등록 키는 리더의 Secret `gocd-agent`에서 읽고(§12), 그 Secret이 없으면 Pod가 뜨지 않는다. 실행기 이름표(resource)는 `leader`다. 나가는 길은 NetworkPolicy `executor-only`가 클러스터 DNS, 리더 API, Traefik Pod(Verify), 사설망 대역의 GoCD 포트 8153, 사설 대역을 뺀 인터넷 443(파이프라인의 git 받기)으로 묶는다. 시험(2026-11-11, [`Infra/executor/agent-check.sh`](../../Infra/executor/agent-check.sh), 운영자 기기에서 실행): 매니페스트의 Pod 틀 그대로(같은 노드 · 계정 · 보안 설정 · 도구 · env, 실행기 대신 시험 명령) 임시 Pod를 같은 NetworkPolicy 아래 띄웠다 지운다. 리더에 뜨고 root가 아니며, `node` v24.15.0 · `helm` v3.22.1 · `git`이 돌고, 실행기 계정 토큰으로 `proj-demo`의 Deployment가 읽히고(`200`), Traefik을 거친 요청과 바깥 HTTPS가 `200`이다. Secret · `kube-system` 읽기는 `403`이고, 이미지 캐시 · 로컬 모델 · 워커 kubelet · 바깥 평문 HTTP에는 닿지 않는다. 확인하지 못한 것: GoCD 실행기 프로세스가 이 설정으로 뜨는지와 서버 등록, Pod에서 사설망의 GoCD 포트로 나가는 길(둘 다 GoCD 서버가 있어야 한다). 파이프라인 판단 코드의 빌드 결과(`Infra/pipeline`의 `dist`)를 실행기에 두는 방법은 파이프라인 정의 쪽에서 정한다.
 
 **남은 것**
 
-- 플랫폼 서버의 조치(구축 09 2차): 조치용 Deployment 고치기(재시작 · 중지/재개)와, 그 고치기를 scale과 재시작 주석으로만 좁히는 검사 규칙. Prometheus 프록시 읽기는 구축 11.
+- Prometheus 프록시 읽기(구축 11, 데모 경로 뒤. §10).
 - 배포 실행기 Pod(GoCD Agent) · 자동 등록 키 · 리더 → EC2 GoCD 포트 규칙(구축 09′의 나머지, GoCD 서버가 생긴 뒤), 네임스페이스 라벨 지우기 막기(지금은 서버에 고치기 권한이 없어 필요 없다).
 
 **전체 설계**
 
 1. **권한(RBAC)**: ServiceAccount 둘.
-   - **플랫폼 서버**: 클러스터 범위 쓰기는 네임스페이스 만들기 · 삭제 둘뿐이다. 공간 안에서는 ResourceQuota · LimitRange · NetworkPolicy **만들기만**, Secret **만들기 · 고치기만**(`get` · `list` · `watch` 없음), 조치용 Deployment 고치기(재시작 · 중지/재개), 읽기(노드 · Pod 상태, 로그, Prometheus 프록시)를 준다. 서버가 자기 공간의 상한과 차단 규칙을 고치거나 지울 수 있으면, 서버 계정이 털렸을 때 그 제한부터 풀린다.
+   - **플랫폼 서버**: 클러스터 범위 쓰기는 네임스페이스 만들기 · 삭제 둘뿐이다. 공간 안에서는 ResourceQuota · LimitRange · NetworkPolicy **만들기만**, Secret **만들기 · 고치기만**(`get` · `list` · `watch` 없음), 조치용 Deployment 고치기(재시작 · 중지/재개), 읽기(노드 · Pod 상태, 로그, 사용량, Prometheus 프록시)를 준다. 서버가 자기 공간의 상한과 차단 규칙을 고치거나 지울 수 있으면, 서버 계정이 털렸을 때 그 제한부터 풀린다.
    - **배포 실행기**: 공간 안 Deployment · Service · Ingress · ConfigMap · Traefik Middleware(`stripPrefix`용, #72) 만들기 · 고치기 · 지우기와, 읽기(Ingress — Prepare의 live 슬롯 보호 검사가 open Ingress를 읽는다 — 와 동작 확인용 Pod · Endpoints · 이벤트 · 롤아웃 상태)만 준다. Secret은 읽지 않는다. 필요한 키가 들어갔는지는 플랫폼 서버가 남긴 키 이름으로 확인한다(값은 보지 않는다). 네임스페이스 · 상한 · 차단 규칙은 건드리지 못한다. 실행기 계정의 토큰은 리더 밖으로 나가지 않는다.
 2. **검사 규칙(ValidatingAdmissionPolicy)**: 두 계정 모두 공간 안 쓰기 · 삭제는 `proj-`로 시작하는 공간에서만 통과한다. 네임스페이스는 이름이 `proj-`로 시작하고 보안 등급 라벨이 붙었을 때만 만들어지고, **삭제도 이름이 `proj-`로 시작할 때만** 통과하며, 그 라벨은 지울 수 없다. Pod는 `NET_RAW`를 빼고 API 토큰 자동 마운트를 끈(`automountServiceAccountToken: false`) 것만 통과하고, toleration과 `nodeName`을 달 수 없다. Middleware는 `stripPrefix`만 든 것만 통과한다. 공간의 기본 ServiceAccount는 서버가 고칠 수 없어서(만들기만 가능) 토큰은 Pod마다 끈다. ResourceQuota · LimitRange · NetworkPolicy는 §6 양식과 같은 값일 때만 만들어진다. RBAC만으로는 네임스페이스 이름 조건을 걸 수 없어서 겹친다.
 
-사설망 접근 규칙(Tailscale ACL)은 서버 태그 → 리더 `:6443`, 리더 → EC2의 GoCD 서버 포트(실행기가 일감을 받는 길) 둘만, SSH는 운영자 기기만 허용한다. 규칙은 [`Infra/tailscale/acl.hujson`](../../Infra/tailscale/acl.hujson)이고(주소는 비워 둔다), 2026-11-10에 사설망 관리 화면에 넣었다. 그 전에는 기본 정책(모든 기기가 서로 전부 허용)이었다. 넣은 뒤 확인: 운영자 기기에서 세 노드 SSH와 리더 API는 되고, 노드에서 다른 노드의 사설망 주소로는 닿지 않는다(노드 대역으로는 그대로 닿는다). 리더 → EC2의 GoCD 서버 포트 규칙은 구축 09′에서 더한다. 서버 태그 쪽 규칙은 EC2가 들어와야 확인된다. 서버 접속 정보는 리더의 Secret과 AWS의 비밀 설정에만 둔다(§12).
+사설망 접근 규칙(Tailscale ACL)은 서버 태그 → 리더 `:6443`, 리더 → EC2의 GoCD 서버 포트 `:8153`(실행기가 일감을 받는 길) 둘만 허용하고, 세 노드의 SSH와 리더 API는 운영자 기기에 연다. 예외로 운영자가 자리를 비우는 동안(2026-11) 세 노드를 공유받은 팀원(`autogroup:shared`)에게는 SSH(22)를 포함해 세 노드의 모든 포트를 열어 둔다. 이 규칙은 길만 열고, 노드 로그인은 노드에 넣어 둔 팀원 공개키로 따로 정해진다. 반납(§13) 때 공유와 함께 지운다. 규칙은 [`Infra/tailscale/acl.hujson`](../../Infra/tailscale/acl.hujson)이고(주소는 비워 둔다), 2026-11-10에 사설망 관리 화면에 넣었다. 그 전에는 기본 정책(모든 기기가 서로 전부 허용)이었다. 넣은 뒤 확인: 운영자 기기에서 세 노드 SSH와 리더 API는 되고, 노드에서 다른 노드의 사설망 주소로는 닿지 않는다(노드 대역으로는 그대로 닿는다). 팀원 공유 규칙은 2026-11-11에 관리 화면에 넣었고 같은 날 파일에도 옮겼다. 리더 → EC2의 GoCD 서버 포트 규칙은 같은 날 파일에 더했고 관리 화면에는 아직 넣지 않았다(넣을 때 시험이 통과해야 저장된다). 서버 태그 쪽 규칙은 EC2가 들어와야 확인된다. 서버 접속 정보는 리더의 Secret과 AWS의 비밀 설정에만 둔다(§12).
 
 ### 9. 공개 진입 (구현됨, 2026-11-10)
 
@@ -182,9 +187,16 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 
 ### 10. 지표 (예정)
 
-- Prometheus · Grafana를 리더에(저장은 `local-path`, 보관 2주). 수집: 노드(node-exporter), Pod 사용량(kubelet), 재시작 · 배포 상태(kube-state-metrics), Traefik, cloudflared(터널 커넥터 수).
-- 플랫폼 서버는 사설망으로 리더 API의 서비스 프록시를 거쳐 Prometheus를 조회한다(ADR-006). Grafana는 운영자용이고 SSH 포트 포워딩으로만 연다.
-- 알림: Grafana 규칙(노드 NotReady, 터널 끊김, 디스크 · 메모리 임계. 터널 끊김은 cloudflared의 연결 수 지표로 보지 않는다: 리더 인터넷을 끊은 시험에서 그 값이 0으로 떨어지지 않았다(§9). `/ready`나 Cloudflare 쪽 상태로 본다) → Discord. 리더가 죽으면 Grafana도 같이 죽으므로 "리더 무응답"은 플랫폼 서버가 API 실패로 알린다.
+범위는 2026-11-11에 정했다(#130). Prometheus · Grafana는 아직 설치하지 않았다.
+
+- **순서**: 지표를 쓰는 기능(학생 지표 화면 UC-15, 운영자 화면 UC-17, 비용 추정)이 모두 P1이라, Prometheus · Grafana 설치는 데모 경로(P0)가 끝까지 돈 뒤에 한다. 그 전에는 k3s에 들어 있는 metrics-server의 사용량 읽기만 연다(§8). 스파이크 판정(메모리 초과 · 재시작 반복)은 플랫폼 서버가 Pod · 이벤트를 watch해서 하므로([배포 워크플로우](deploy-workflow.md) §2) Prometheus를 기다리지 않는다.
+- **설치**: Prometheus · Grafana를 리더에(저장은 `local-path`, 보관 2주). `local-path`는 볼륨 크기를 막지 않으므로 보관 크기 상한도 같이 건다. 수집: 노드(node-exporter), Pod 사용량(kubelet), 재시작 · 배포 상태(kube-state-metrics), Traefik, cloudflared.
+- **조회**: 플랫폼 서버는 사설망으로 리더 API의 서비스 프록시를 거쳐 Prometheus를 조회한다(ADR-006. 포트는 늘지 않는다). 권한은 지표 공간의 Prometheus Service 하나에 대한 `services/proxy` 읽기다. 쿼리를 공간별로 거르는 프록시는 앞에 두지 않는다: 서버 토큰으로 `proj-` 밖(`vllm` · `kube-system` 등)의 지표 수치도 읽히지만, 로그 · Secret · 객체는 여전히 읽히지 않는다(§8). AI 서버는 플랫폼 서버를 거친다.
+- **서버가 묻는 것**: CPU · 메모리 사용량과 재시작 수까지다([api.md](api.md) 운영자 API의 `usage`). Traefik의 요청 수 · 지연 · 에러율은 그것을 보여 줄 화면이 생길 때 더한다.
+- **Grafana**: 운영자용이고 사설망으로만 연다(SSH 포트 포워딩). 플랫폼 웹에 끼워 넣지 않는다.
+- **알림**: Grafana 규칙(노드 NotReady, 디스크 · 메모리 임계) → Discord. Grafana는 Pod라 호스트 방화벽(§3)의 나가는 규칙이 걸리지 않는다. 지표 공간에 NetworkPolicy를 두면 거기서 443을 연다.
+- **리더 밖에서 봐야 하는 것**: 리더가 죽거나 리더의 인터넷 길이 끊기면 Grafana도 Discord에 닿지 못한다. 터널 끊김은 Cloudflare의 터널 상태 알림으로 받는다(무료 플랜에서 되는지 설치 때 확인한다. 안 되면 두지 않는다). cloudflared의 연결 수 지표로는 보지 않는다: 리더 인터넷을 끊은 시험에서 그 값이 0으로 떨어지지 않았다(§9). 리더 무응답은 플랫폼 서버가 API 실패로 알아채 운영자 화면에 알린다(`503 CLUSTER_UNREACHABLE`, [api.md](api.md). ADR-006). Discord 같은 바깥 채널로 보내는 것은 이번 범위에 두지 않는다.
+- **하지 않는 것**: blackbox-exporter(바깥 주소 찔러 보기), 노드 온도 · 디스크 건강, 노드 간 지연 · 손실, GPU · 로컬 모델 지표. 로컬 모델이 팀 일정상 후순위이고(§11) 나머지는 운영자 화면의 부가 항목이다([시스템 정의서 §4.3](../system-definition.md#43-user2-운영자-흐름)).
 
 ### 11. 리더 GPU · 로컬 모델 (구현됨, 2026-11-09)
 
@@ -212,13 +224,14 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 | GHCR 쓰기 토큰(봇 계정) | 빌드 쪽에만 (ADR-003) |
 | Cloudflare 터널 자격 파일 | 리더의 클러스터 Secret(`cloudflared` 공간)만. 터널을 만든 기기에서는 넣은 뒤 지웠고, 계정 로그인 인증서(`cert.pem`)도 남기지 않는다(DNS를 고칠 때 다시 로그인한다) |
 | Discord 웹훅 URL | Grafana 설정 |
-| vLLM API 키 | 리더의 클러스터 Secret(`vllm` 공간), 팀 공유 보관함(AI 서버의 EC2 설정에 넣는다) |
+| vLLM API 키 | 리더의 클러스터 Secret(`vllm` 공간, 원본). AI 담당에게 전달했고(2026-11-11) AI 서버의 EC2 설정에 넣는다 |
 
 ### 13. 반납
 
 1. Cloudflare 와일드카드 · 플랫폼(`app` · `api`) 레코드 · 터널 삭제(`cert.pem`을 남기지 않았으므로 `cloudflared tunnel login`부터 다시 한다), 위 비밀값 폐기, 서버 기기를 사설망에서 뺀다.
-2. 현장에서 한 대씩, 손대기 전에 떠 둔 디스크 이미지로 내장 디스크를 통째로 덮어쓴다. k3s, 공개키, 원격 설치용 설정, Tailscale, 이 문서의 설정 파일이 한 번에 사라진다.
-3. BIOS를 바꾸기 전에 찍어 둔 사진대로 되돌리고 장비(스위치 · 랜선)를 회수한다.
+2. 사설망 관리 화면에서 세 노드를 팀원에게 준 공유를 회수하고, 접근 규칙의 공유 사용자 줄(`autogroup:shared`)을 지운다. 둘 다 관리 화면에 있는 설정이라 아래 디스크 복원으로는 지워지지 않는다.
+3. 현장에서 한 대씩, 손대기 전에 떠 둔 디스크 이미지로 내장 디스크를 통째로 덮어쓴다. k3s, 공개키, 원격 설치용 설정, Tailscale, 이 문서의 설정 파일이 한 번에 사라진다.
+4. BIOS를 바꾸기 전에 찍어 둔 사진대로 되돌리고 장비(스위치 · 랜선)를 회수한다.
 
 ## 결정과 대안
 
@@ -243,6 +256,7 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 | 학생 공간에 NodePort · LoadBalancer Service 0개 (2026-11-10) | 방문자 길을 Traefik 하나로 묶는다. NodePort는 NetworkPolicy · Traefik을 거치지 않고 노드 대역에 앱을 연다 | 노드 대역 제한(§4)만 믿기 |
 | 양식 값은 검사 규칙에 베끼지 않고 기준 공간과 비교 (2026-11-10) | 양식 파일 하나만 고치면 된다. 규칙 안에 값을 다시 적으면 둘이 어긋난다 | 규칙에 값을 직접 적기(상한 11개 · 차단 대역 5개를 두 군데서 관리), 값 검사 없이 권한만(서버 계정이 느슨한 상한을 만들 수 있다) |
 | 서버의 읽기는 공간마다 권한 연결로 (2026-11-10) | 서버 토큰은 클러스터 밖(EC2)에 있다. 새더라도 학생 공간 밖의 Pod · 로그(Traefik 접근 기록, 로컬 모델 요청 등)는 읽히지 않는다 | 클러스터 전체 읽기(서버가 만드는 객체는 하나 줄지만 시스템 공간까지 읽힌다) |
+| 서버의 Prometheus 조회는 거르지 않는 서비스 프록시로 (2026-11-11, 구축 11에서 만든다) | 세우고 시험할 부품이 하나 준다. 새는 것은 지표 수치뿐이고 로그 · Secret · 객체 읽기는 그대로 `proj-` 공간에 묶인다 | 쿼리에 공간 조건을 강제하는 프록시(prom-label-proxy)를 앞에 두기(서버 토큰으로 `proj-` 밖 지표가 안 읽히지만 부품과 시험이 는다) |
 | 실행기의 권한은 공간마다 권한 연결 하나로, 서버가 공간과 같이 만든다 (2026-11-11) | 실행기는 GoCD 서버가 시키는 명령을 그대로 돌린다. 클러스터 전체 권한이 없으면 GoCD 서버가 털려도 학생 공간 밖은 읽히지도 쓰이지도 않는다. `kubectl apply`가 읽기를 먼저 하므로 쓰기만 따로 넓게 줄 이유가 없다 | 쓰기는 클러스터 전체에 주고 검사 규칙으로 좁히기 + 읽기만 공간마다(연결은 똑같이 필요하고 권한만 넓다), 읽기까지 클러스터 전체(서버가 만드는 객체는 하나 줄지만 시스템 공간의 ConfigMap · Pod가 읽힌다), 실행기가 자기 연결을 만들기(RoleBinding 권한이 실행기에 생긴다) |
 | 실행기에 Traefik Middleware 권한, `stripPrefix`만 (2026-11-11, #72) | 학생 백엔드마다 받는 경로가 달라(`/api/usr` 대 `/usr`) 배포 입력의 `stripPrefix`가 동작해야 하고, Ingress만으로는 안 된다. 종류를 하나로 묶어 리다이렉트 · 인증 가로채기를 막는다 | 권한을 주지 않고 `stripPrefix: true`를 입력 검증에서 거부(학생 앱이 경로를 고쳐야 한다), Middleware 종류 제한 없이 허용 |
 | 서버 계정의 Secret 권한은 만들기와 통째로 바꾸기만 (2026-11-10) | patch 응답이 Secret 전체라 "쓰기만"이 깨진다 | patch 허용(빈 patch로 읽힌다), server-side apply(patch 권한이 필요하다) |
@@ -260,7 +274,7 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 - 사설망이 지금 중계(DERP)로 붙어 서버 → 리더 API 응답이 직접 연결보다 느리다.
 - 나가는 443은 목적지를 가리지 않는다. 워커 호스트가 뚫리면 443으로는 어디든 나갈 수 있다.
 - 학생 Pod가 인터넷으로 나가므로 학생 앱이 학교 공인 IP로 바깥에 요청을 보낼 수 있다(남용은 감수한다). 사설 대역 차단이 빠지면 학교망 · 노드 · 사설망에 닿으므로 NetworkPolicy의 예외 대역을 같이 적는다.
-- Secret을 "쓰기만" 줘도 간접 읽기는 막지 못한다. 배포 실행기 계정이 털리면 `proj-` 공간에 그 Secret을 마운트하는 Pod를 띄울 수 있다. 실행기는 Pod 로그를 읽지 못하지만(§8), 그 Pod가 값을 인터넷으로 내보내거나 자기 Ingress 응답에 실으면 읽힌다. 플랫폼 서버 계정도 조치용 Deployment 고치기 권한(구축 09 2차, 아직 없다)을 받으면 같은 길이 생긴다(조치를 scale과 재시작 주석으로만 좁히는 검사 규칙을 그때 본다). 공간에 든 Secret은 그 학생 앱의 접속 정보뿐이라 한 프로젝트 안으로 피해가 묶이고, 다른 공간과 시스템 Secret은 검사 규칙으로 닿지 않는다. 서버 접속 정보를 AWS 비밀 설정에, 실행기 토큰을 리더 안에만 두는 것이 1차 방어다.
+- Secret을 "쓰기만" 줘도 간접 읽기는 막지 못한다. 배포 실행기 계정이 털리면 `proj-` 공간에 그 Secret을 마운트하는 Pod를 띄울 수 있다. 실행기는 Pod 로그를 읽지 못하지만(§8), 그 Pod가 값을 인터넷으로 내보내거나 자기 Ingress 응답에 실으면 읽힌다. 플랫폼 서버 계정의 끄기 권한은 scale을 0으로 내리기뿐이라 이 길이 없다. 플랫폼 서버 계정은 재시작 때문에 Deployment를 고칠 수 있지만, 검사 규칙(`wanggane-platform-server-restart`)이 재시작 주석 말고는 아무것도 못 바꾸게 막아 이 길이 없다. 공간에 든 Secret은 그 학생 앱의 접속 정보뿐이라 한 프로젝트 안으로 피해가 묶이고, 다른 공간과 시스템 Secret은 검사 규칙으로 닿지 않는다. 서버 접속 정보를 AWS 비밀 설정에, 실행기 토큰을 리더 안에만 두는 것이 1차 방어다.
 - Pod 대역(`10.42.0.0/16`)으로 가는 패킷은 FORWARD에서 받는다(k3s 기본 flannel 규칙과 같다). 같은 선의 학교망 기기가 노드를 경로로 지정하면 Pod에 닿을 수 있다. 학생 Pod는 NetworkPolicy(§6)의 들어오는 규칙이 막지만, 시스템 Pod(CoreDNS · Traefik 등)는 아직 NetworkPolicy가 없어 이 길로 닿는다. 운영 도구 Pod의 NetworkPolicy(§3)를 넣을 때 들어오는 쪽도 같이 막는다.
 - 터널 대신 AWS 서버를 공개 입구로 두고 Tailscale로 워커 Traefik에 넘기는 대안을 쓰게 되면 ServiceLB가 없어 Traefik으로 가는 길을 따로 연다.
 - 로컬 모델은 리더에 있어 리더가 꺼지면 제어 · 모니터링과 같이 멈춘다. KV 캐시를 FP8로 저장해 fp16보다 정확도가 조금 떨어질 수 있다(시험한 도구 호출 · 로그 요약은 맞았다).

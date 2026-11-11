@@ -192,6 +192,7 @@ it('saves with the commit from the check, unchanged, and shows what was saved', 
   expect(body.spec.project).toEqual({ slug: 'my-app', repo: 'student/my-app' })
   expect(body.spec.services[0]?.name).toBe('fe')
   expect(screen.getByText('dep-1')).toBeTruthy()
+  expect(screen.getByRole('link', { name: '배포 진행 화면으로 가기' }).getAttribute('href')).toBe('/deploys/dep-1')
   expect(screen.getByText(COMMIT.slice(0, 7))).toBeTruthy()
   expect(screen.queryByText(/비밀값을 넣을 차례/)).toBeNull()
   // 저장한 뒤에는 폼이 사라지고 같은 입력을 또 보낼 수 없다.
