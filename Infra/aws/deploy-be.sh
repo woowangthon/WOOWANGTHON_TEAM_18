@@ -9,7 +9,7 @@ ssm_path=${SSM_PATH:-/wcp/be}
 env_file=${ENV_FILE:-$HOME/.config/wcp/be.env}
 cd "$(dirname "$0")/../.."
 
-answers() { curl -fsS --max-time 5 http://127.0.0.1/api/health >/dev/null; }
+answers() { curl -fsS --max-time 5 http://127.0.0.1:3000/api/health >/dev/null; }
 healthy() {
   for _ in $(seq 30); do
     answers && return 0
@@ -42,11 +42,12 @@ if docker container inspect wcp-be-prev >/dev/null 2>&1; then
   else docker rm -f wcp-be >/dev/null 2>&1 || true; docker rename wcp-be-prev wcp-be; fi
 fi
 
-# Keep the old container (its image and settings) until the new one is healthy. Port 80 is freed by stopping it.
+# Keep the old container (its image and settings) until the new one is healthy. Port 3000 is freed by stopping it.
+# The port is bound to 127.0.0.1 only: requests come in through the tunnel (Infra/aws/start-tunnel.sh).
 had_previous=false
 if docker stop wcp-be >/dev/null 2>&1; then docker rename wcp-be wcp-be-prev; had_previous=true; fi
 
-if docker run -d --name wcp-be --restart unless-stopped -p 80:3000 --env-file "$env_file" -e PORT=3000 "$image" >/dev/null && healthy; then
+if docker run -d --name wcp-be --restart unless-stopped -p 127.0.0.1:3000:3000 --env-file "$env_file" -e PORT=3000 "$image" >/dev/null && healthy; then
   docker rm wcp-be-prev >/dev/null 2>&1 || true
   docker images wcp-be --format '{{.Repository}}:{{.Tag}}' | grep -vx "$image" | xargs -r docker rmi >/dev/null 2>&1 || true
   echo "$image is up"

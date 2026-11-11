@@ -120,6 +120,7 @@ spec:
           type: RuntimeDefault
       containers:
       - name: cloudflared
+        # Same tag as the platform EC2 client (Infra/aws/start-tunnel.sh); bump both together.
         image: cloudflare/cloudflared:2026.10.7
         args: ["tunnel", "--config", "/etc/cloudflared/config/config.yaml", "run"]
         ports:

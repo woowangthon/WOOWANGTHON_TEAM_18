@@ -51,6 +51,8 @@ const protectedRoutes = [
   ['/profile', '프로필'],
   ['/dashboard', '대시보드'],
   ['/deploy/new', '새 배포 요청'],
+  ['/deploys', '내 배포'],
+  ['/deploys/0b6f0c1e-4a52-4d8e-9a1b-3f7d2c5e8a90', '배포 진행 상태'],
 ] as const
 
 it.each(publicRoutes)('%s opens its page without a session', (path, title) => {
@@ -88,6 +90,7 @@ it('shows the app bar with the email, links and logout on protected pages', () =
   expect(screen.getByText('me@example.com')).toBeTruthy()
   expect(screen.getByRole('link', { name: '대시보드' }).getAttribute('href')).toBe('/dashboard')
   expect(screen.getByRole('link', { name: '프로필' }).getAttribute('href')).toBe('/profile')
+  expect(screen.getByRole('link', { name: '내 배포' }).getAttribute('href')).toBe('/deploys')
   expect(screen.getByRole('link', { name: 'WCP' }).getAttribute('href')).toBe('/dashboard')
   expect(screen.getByRole('button', { name: '로그아웃' })).toBeTruthy()
 })

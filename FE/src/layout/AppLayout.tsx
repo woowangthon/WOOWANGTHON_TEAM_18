@@ -38,6 +38,9 @@ function AppLayout() {
           <NavLink to="/profile" className={navLinkClass}>
             프로필
           </NavLink>
+          <NavLink to="/deploys" className={navLinkClass}>
+            내 배포
+          </NavLink>
         </nav>
         <div className="ml-auto flex items-center gap-3">
           <span className="text-sm text-muted">{state.session.user.email}</span>
