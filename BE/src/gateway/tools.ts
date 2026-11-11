@@ -153,7 +153,7 @@ export class GatewayTools {
       case 'run_render':
       case 'run_deploy':
       case 'run_verify':
-        return this.runTrial(ticket, name as TrialTool, args)
+        return this.runTrial(ticket, name, args)
       default:
         return this.submit(ticket, args.result)
     }

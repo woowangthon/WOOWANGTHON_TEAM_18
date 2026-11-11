@@ -10,7 +10,7 @@ const MIN = 60_000
 
 describe('ToolBudget', () => {
   it('allows the same call twice in a row, blocks the third, and the same arguments in another key order count as the same', () => {
-    const budget = new ToolBudget()
+    const budget = new ToolBudget(() => 0)
     expect(budget.take('t', 'read_pod_logs', { service: 'be', lines: 5 }, 0)).toBeNull()
     expect(budget.take('t', 'read_pod_logs', { lines: 5, service: 'be' }, 0)).toBeNull()
     expect(budget.take('t', 'read_pod_logs', { service: 'be', lines: 5 }, 0)).toBe('REPEATED_CALL')

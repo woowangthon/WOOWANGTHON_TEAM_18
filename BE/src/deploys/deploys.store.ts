@@ -210,7 +210,7 @@ export class DeploysStore {
     return rows[0]
   }
 
-  /** 사용자의 배포를 최신순으로.
+  /** 사용자의 배포를 최신순으로. */
   async listOwned(userId: string, limit: number): Promise<DeployRow[]> {
     const rows = await this.call('deploys', 'GET', { select: '*', user_id: `eq.${userId}`, order: 'created_at.desc', limit: String(limit) })
     if (!rows.every(isRow)) throw this.unreadable('deploys', 'GET')
