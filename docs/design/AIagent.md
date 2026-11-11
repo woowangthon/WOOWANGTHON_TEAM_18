@@ -127,7 +127,7 @@ buildspec · 서비스 역할(IAM) · 환경 변수 override는 받지 않는다
 | CodeBuild 빌드 설정 | 그 빌드에만, `buildOverrides` 상한 안 (§3) |
 | 대상 슬롯 운영 | 재시작, 0 · 1개 조정, Ready 다시 기다리기 |
 | 그대로 재실행 | 고칠 것이 없는 일시적 실패 (CodeBuild 준비 실패, 이미지 받기 시간 초과) |
-| dry-run 먼저 | 이름 · 포트 · 쿼터 오류는 `run_render`로 먼저 확인한다 |
+| dry-run 먼저 | 이름 · 포트 오류는 `run_render`로 먼저 확인한다. 자원 합계(쿼터)는 `run_render`에서 걸리지 않고 `run_deploy`의 Prepare에서 걸린다(case `P2`) |
 | 레포 수정 → PR | fork 커밋으로 `run_verify`까지 통과한 변경만 |
 | 사용자 요청 | 비밀값이 틀림 · 빠짐, 학생 DB에 닿지 않음, 학생 DB 스키마 문제 |
 | 플랫폼 문제 보고 | 이미지 공개 설정, 노드 자원 부족, 차트 · 기본 Dockerfile 문제 |
@@ -338,7 +338,7 @@ buildspec · 서비스 역할(IAM) · 환경 변수 override는 받지 않는다
 | `P3` | prepare | `ingressPath` 충돌 | 검증 규칙 `ingressPath` | `runtime.ingressPath` |
 | `R1` | render | 이름 규칙 위반 | `422 Invalid`, `FieldValueInvalid`, `DNS-1035` | 첫 배포 전이면 `name` 수정, 그 뒤면 사용자 요청 |
 | `R2` | render | 포트 · probe 값 오류 | `422 Invalid`, field `...containerPort` | `runtime.port` · `health` |
-| `R3` | render | 쿼터 초과 | `403 Forbidden`, `exceeded quota` | `runtime.resources` |
+| `R3` | render | 쿼터 초과 | `403 Forbidden`, `exceeded quota` | `runtime.resources`. render에서는 드묾: ResourceQuota는 Pod가 생길 때 걸려 Deployment dry-run은 통과한다(2026-11-11 로컬 k3s, CPU 9 Deployment가 통과). 실제로는 Prepare의 `P2`나 apply의 `A4`(FailedCreate)로 온다 |
 | `A1` | apply | 헬스체크 실패 | 이벤트 `Unhealthy` | `runtime.port` · `health.path` · `startupTimeoutSeconds` |
 | `A2` | apply | 시작 직후 종료 | `CrashLoopBackOff`, `exitCode` ≠ 0 | 로그 패턴: env 누락 → `runtime.env`, DB 연결 실패 → 사용자 요청 |
 | `A3` | apply | 메모리 초과 | `OOMKilled` (137) | `runtime.resources.memory` |
