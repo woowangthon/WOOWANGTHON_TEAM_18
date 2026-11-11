@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BuildReport } from '../build.js'
-import { deployInput, digest } from '../fixtures.js'
+import { builtDeployInput, deployInput, digest } from '../fixtures.js'
 import { DEPLOY_ID, fakePlatform, TOKEN } from '../platform-fake.js'
 import { RETRY_WAITS_MS } from '../platform-api.js'
 import { run as fetchInputCli } from './fetch-input.js'
@@ -82,12 +82,7 @@ describe('fetch-input and notify CLIs', () => {
   })
 
   describe('notify', () => {
-    const okBuild = (): BuildReport => {
-      const input = deployInput()
-      input.deploy_condition.services.fe.image = digest('1')
-      input.deploy_condition.services.be.image = digest('2')
-      return { ok: true, input, builds: {}, failures: [] }
-    }
+    const okBuild = (): BuildReport => ({ ok: true, input: builtDeployInput(), builds: {}, failures: [] })
     const report = (value: unknown) => {
       const path = join(dir, 'report.json')
       writeFileSync(path, typeof value === 'string' ? value : JSON.stringify(value))

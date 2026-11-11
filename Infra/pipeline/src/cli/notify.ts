@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { setTimeout } from 'node:timers/promises'
 import { pathToFileURL } from 'node:url'
-import { type NoticeBody, type NotifyStage, noReportNotice, noticeFrom, parseStage, sendNotice } from '../notify.js'
-import { deployIdFromEnv, exitCodeOf, platformFromEnv } from '../platform-api.js'
+import { NOTIFY_STAGES, type NoticeBody, type NotifyStage, noReportNotice, noticeFrom, parseStage, sendNotice } from '../notify.js'
+import { deployIdFromEnv, exitCodeOf, platformFromEnv, type Sleep } from '../platform-api.js'
 
 // GoCD의 알림 task: `node dist/cli/notify.js <build|prepare|render|apply|verify|switch> <스테이지 결과 JSON>`. 환경은 fetch-input과 같다(DEPLOY_ID, PLATFORM_API_URL, PIPELINE_NOTIFY_TOKEN).
 // 결과는 `ok`로 정한다: build는 BuildReport, 그 밖은 `{ ok, failure }`. 성공 · 실패 알림을 모두 이 task가 보내므로 `run_if: any` 하나로 부르면 된다.
@@ -27,12 +27,10 @@ function bodyFrom(deployId: string, stage: NotifyStage, reportPath: string): Not
   }
 }
 
-type Sleep = (ms: number) => Promise<void>
-
 /** 테스트가 env와 대기를 넣을 수 있게 main을 나눴다. 종료 코드를 돌려준다. */
 export async function run([stageArg, reportPath]: string[], env: NodeJS.ProcessEnv, sleep: Sleep): Promise<number> {
   try {
-    if (!stageArg || !reportPath) throw new Error('usage: notify <build|prepare|render|apply|verify|switch> <stage-report.json> (env: DEPLOY_ID, PLATFORM_API_URL, PIPELINE_NOTIFY_TOKEN)')
+    if (!stageArg || !reportPath) throw new Error(`usage: notify <${NOTIFY_STAGES.join('|')}> <stage-report.json> (env: DEPLOY_ID, PLATFORM_API_URL, PIPELINE_NOTIFY_TOKEN)`)
     const stage = parseStage(stageArg)
     const deployId = deployIdFromEnv(env)
     const conn = platformFromEnv(env)

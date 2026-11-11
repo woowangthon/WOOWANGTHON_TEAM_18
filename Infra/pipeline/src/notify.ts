@@ -1,7 +1,7 @@
 import type { BuildFailure } from './build.js'
-import { isImageDigest, parseDeployInput } from './deploy-input.js'
+import { isImageDigest, isRecord, parseDeployInput } from './deploy-input.js'
 import type { StageFailure } from './failure.js'
-import { callPlatform, type PlatformConn } from './platform-api.js'
+import { callPlatform, type PlatformConn, type Sleep } from './platform-api.js'
 
 // 스테이지가 끝났다고 플랫폼 서버에 알린다(`POST /api/pipeline/notify`). 스테이지 CLI가 쓴 결과 JSON을 알림 본문으로 바꾼다.
 // 본문의 계약은 docs/design/api.md "파이프라인 ↔ 플랫폼 서버", 받는 쪽의 검사는 BE의 `validateNotice`(BE/src/deploys/deploy-run.ts)다.
@@ -29,11 +29,9 @@ export type NoticeBody =
   | { deployId: string; stage: NotifyStage; result: 'passed'; images?: Record<string, string> }
   | { deployId: string; stage: NotifyStage; result: 'failed'; failure: FailureBody }
 
-const isRecord = (v: unknown): v is Raw => typeof v === 'object' && v !== null && !Array.isArray(v)
-
 // BE가 플랫폼 문제 코드로 받는 모양(`^[A-Za-z][A-Za-z0-9_]{2,63}$`)과, BE가 스스로 정하는 코드(파이프라인이 보내면 AI를 건너뛰게 되어 거절한다).
 const PLATFORM_CODE = /^[A-Za-z][A-Za-z0-9_]{2,63}$/
-const BE_OWN_CODES = ['BUILD_FAILED', 'DEPLOY_FAILED', 'VERIFY_FAILED', 'SWITCH_FAILED', 'AGENT_UNAVAILABLE', 'TIMED_OUT']
+export const BE_OWN_CODES = ['BUILD_FAILED', 'DEPLOY_FAILED', 'VERIFY_FAILED', 'SWITCH_FAILED', 'AGENT_UNAVAILABLE', 'TIMED_OUT']
 /** 쓸 수 없는 코드의 대신. `null`로 보내면 학생 문제로 읽혀 AI 에이전트에 넘어가므로 플랫폼 문제로 남겨 둔다(원래 코드는 message에 있다). */
 export const FALLBACK_CODE = 'PIPELINE_FAILED'
 
@@ -85,6 +83,7 @@ export function noticeFrom(deployId: string, stage: NotifyStage, report: unknown
 
   if (stage === 'build') {
     if (report.ok) {
+      if (!isRecord(report.input)) throw fail('is ok but has no input')
       const images: Record<string, string> = {}
       const { spec, deploy_condition: condition } = parseDeployInput(JSON.stringify(report.input))
       for (const { name } of spec.services) {
@@ -120,7 +119,7 @@ export const noReportNotice = (deployId: string, stage: NotifyStage, why?: strin
 })
 
 /** 알림을 보낸다. 서버가 상태를 바꾸지 않았으면(이미 끝난 배포 · 지금 스테이지가 아님) `applied`가 false다. */
-export async function sendNotice(conn: PlatformConn, body: NoticeBody, sleep: (ms: number) => Promise<void>): Promise<{ applied: boolean }> {
+export async function sendNotice(conn: PlatformConn, body: NoticeBody, sleep: Sleep): Promise<{ applied: boolean }> {
   const answer = await callPlatform(conn, 'POST', '/api/pipeline/notify', body, sleep)
   return { applied: !(isRecord(answer) && answer.applied === false) }
 }

@@ -1,8 +1,9 @@
+import { readFileSync } from 'node:fs'
 import { afterEach, describe, expect, it } from 'vitest'
 import { checkImages, validateNotice } from '../../../BE/src/deploys/deploy-run.js'
 import type { BuildFailure, BuildReport } from './build.js'
-import { deployInput, digest } from './fixtures.js'
-import { FALLBACK_CODE, noReportNotice, noticeFrom, type NoticeBody, parseStage, pickFailure, sendNotice } from './notify.js'
+import { builtDeployInput, deployInput, digest } from './fixtures.js'
+import { BE_OWN_CODES, FALLBACK_CODE, NOTIFY_STAGES, noReportNotice, noticeFrom, type NoticeBody, parseStage, pickFailure, sendNotice } from './notify.js'
 import { DEPLOY_ID, fakePlatform, TOKEN } from './platform-fake.js'
 
 const NOW = Date.parse('2026-11-11T05:00:00Z')
@@ -15,13 +16,7 @@ const accepted = (body: NoticeBody) => {
   return checked as Extract<typeof checked, { ok: true }>
 }
 
-const builtInput = () => {
-  const input = deployInput()
-  input.deploy_condition.services.fe.image = digest('1')
-  input.deploy_condition.services.be.image = digest('2')
-  return input
-}
-const okBuild = (): BuildReport => ({ ok: true, input: builtInput(), builds: { fe: 'cb:1', be: 'cb:2' }, failures: [] })
+const okBuild = (): BuildReport => ({ ok: true, input: builtDeployInput(), builds: { fe: 'cb:1', be: 'cb:2' }, failures: [] })
 
 const buildFailed = (service: string, over: Partial<Extract<BuildFailure, { kind: 'build' }>> = {}): BuildFailure => ({
   service,
@@ -36,7 +31,7 @@ const platformFailed = (service: string, code = 'CODEBUILD_API_ERROR'): BuildFai
 const failedBuild = (...failures: BuildFailure[]): BuildReport => ({ ok: false, input: deployInput(), builds: {}, failures })
 
 describe('parseStage', () => {
-  it.each(['build', 'prepare', 'render', 'apply', 'verify', 'switch'])('takes %s', (s) => {
+  it.each(NOTIFY_STAGES)('takes %s', (s) => {
     expect(parseStage(s)).toBe(s)
   })
   it.each([undefined, '', 'deploy', 'Build'])('refuses %j', (s) => {
@@ -51,6 +46,10 @@ describe('build report', () => {
     const { notice } = accepted(body)
     // BE also compares the images with the run services of the stored run.
     expect(checkImages(okBuild().input.deploy_condition.services as never, (notice as { images: Record<string, string> }).images)).toEqual([])
+  })
+
+  it('passed but the report has no input: says so instead of failing inside the parser', () => {
+    expect(() => noticeFrom(DEPLOY_ID, 'build', { ok: true, failures: [] }, now)).toThrow('build report: is ok but has no input')
   })
 
   it('passed but a run service has no digest: stops instead of sending an incomplete notice', () => {
@@ -143,6 +142,12 @@ describe('build report', () => {
 })
 
 describe('platform failure codes', () => {
+  it("BE_OWN_CODES is BE's INTERNAL_CODES (a code BE adds must not be forwarded as a platform code: BE would answer 400 and the run would wait for the timeout)", () => {
+    const source = readFileSync(new URL('../../../BE/src/deploys/deploy-run.ts', import.meta.url), 'utf8')
+    const list = /const INTERNAL_CODES = \[([^\]]*)\] as const/.exec(source)?.[1] ?? ''
+    expect([...list.matchAll(/'([A-Z_]+)'/g)].map((m) => m[1])).toEqual(BE_OWN_CODES)
+  })
+
   const codeOf = (code: string) => {
     const body = noticeFrom(DEPLOY_ID, 'build', failedBuild(platformFailed('fe', code)), now)
     return body.result === 'failed' ? body.failure : null
@@ -242,7 +247,7 @@ describe('reports that do not fit', () => {
 })
 
 describe('noReportNotice', () => {
-  it.each(['build', 'prepare', 'render', 'apply', 'verify', 'switch'] as const)('%s: a platform failure STAGE_NO_REPORT that BE closes as failed without the AI', (stage) => {
+  it.each(NOTIFY_STAGES)('%s: a platform failure STAGE_NO_REPORT that BE closes as failed without the AI', (stage) => {
     const body = noReportNotice(DEPLOY_ID, stage)
     expect(body).toEqual({ deployId: DEPLOY_ID, stage, result: 'failed', failure: { code: 'STAGE_NO_REPORT', service: null, message: `the ${stage} stage left no readable report` } })
     expect(accepted(body).notice).toMatchObject({ failure: { platformCode: 'STAGE_NO_REPORT', service: null, evidence: null } })
