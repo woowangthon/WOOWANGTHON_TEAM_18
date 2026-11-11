@@ -2,7 +2,7 @@
 
 - **SRS**: none (in-server functions for W3 #43 and the admin API #100; issue [#111](https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/111), design [`docs/design/cluster-client.md`](../../docs/design/cluster-client.md))
 - **Owner**: seren-wib
-- **Branch**: feat/be-cluster-client (stacked on PR #106, `feat/be-k8s-space`)
+- **Branch**: feat/be-cluster-client (cut from PR #106, rebased on `upstream/main` after #106 merged)
 
 ## Plan
 
@@ -26,10 +26,10 @@ No HTTP endpoint, no DB, no new library, no FE contract. Actions (scale / restar
 - [x] Real leader check in a throwaway space, then delete it (2026-11-11, result table in the design doc)
 - [x] `docs/ai-scope.md` (verified on the real leader from the operator device; from EC2 not verified)
 - [x] `/code-review medium` on the branch: 8 findings, 6 fixed (silent 503 on a 200 that is not a list, log size vs the 5 s limit → 256 KiB, init container waiting reason, scheme decided once, the 199 table row, pointer from `space.md`). 2 left as known limits in the design doc (403 / 404 a caller expects are still logged as errors; a 422 log has no rule name). `/simplify` not run
-- [ ] PR after #106 merges (rebase on `upstream/main`)
+- [x] PR after #106 merges (rebase on `upstream/main`)
 
 ## Done when
 
 - [x] `pnpm verify` exit code 0 seen in `BE/` (16 test files, 896 tests)
-- [ ] Real-leader result written in the design doc (done) and the PR body
-- [ ] tests added; mutation survivors resolved or explained
+- [x] Real-leader result written in the design doc and the PR body
+- [x] tests added; mutation survivors resolved or explained

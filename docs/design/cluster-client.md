@@ -19,7 +19,7 @@
 
 | 함수 | 하는 일 | 요청 |
 | --- | --- | --- |
-| `SpaceService.ensureSpace(slug)` | 공간 객체 다섯 만들기 ([space.md](space.md), 바뀌지 않음) | `POST` 다섯 |
+| `SpaceService.ensureSpace(slug)` | 공간 객체 여섯 만들기 ([space.md](space.md), 바뀌지 않음) | `POST` 여섯 |
 | `ClusterSecrets.write(slug, service, values)` | Secret `<service>-secrets`에 `values`(`{ key: 값 }`)를 넣는다. 이미 있으면 통째로 바꾼다 | `POST /api/v1/namespaces/proj-<slug>/secrets` → `409`면 `PUT /api/v1/namespaces/proj-<slug>/secrets/<service>-secrets` |
 | `ClusterReader.pods(slug)` | 공간의 Pod 목록 | `GET /api/v1/namespaces/proj-<slug>/pods` |
 | `ClusterReader.logs(slug, pod, { container, tailLines })` | Pod 로그의 끝부분(글) | `GET /api/v1/namespaces/proj-<slug>/pods/<pod>/log?tailLines=…&limitBytes=…` |
@@ -33,7 +33,7 @@
 - `request(method, path, body?)`: 요청 하나를 보내고 `2xx`면 응답 본문(글)을 돌려준다. 그 밖은 `ClusterError`를 던진다.
 - `create(path, body)`: `POST`. `201`이면 `'created'`, `409 AlreadyExists`면 `'exists'`를 돌려준다(오류 로그 없음). #106에서는 값을 돌려주지 않았는데, 비밀값 쓰기가 "이미 있음"을 알아야 `PUT`으로 넘어갈 수 있어 값을 돌려주게 했다. `ensureSpace`는 둘 다 성공으로 본다.
 
-연결은 클라이언트가 가진 agent 하나로 재사용한다(keep-alive). 한 번의 배포에서 공간 다섯 + Secret, 운영자 화면에서 공간마다 Pod · Deployment를 연달아 부르는데, 요청마다 TLS 연결을 새로 맺으면 Tailscale 구간에서 그만큼 왕복이 늘어난다. 쉬는 연결은 5초 뒤 닫는다(Node 기본 agent와 같은 값): 오래 쉰 연결은 중간(Tailscale · NAT)에서 소리 없이 끊겨 있을 수 있고, 그 연결로 보낸 `POST`는 다시 보내도 되는지 알 수 없다. 동시 연결은 8개로 묶는다. 요청 하나의 제한 시간 5초, 인증서 검증, 토큰을 `K8S_API_URL`로만 보내는 것은 space.md 그대로다.
+연결은 클라이언트가 가진 agent 하나로 재사용한다(keep-alive). 한 번의 배포에서 공간 여섯 + Secret, 운영자 화면에서 공간마다 Pod · Deployment를 연달아 부르는데, 요청마다 TLS 연결을 새로 맺으면 Tailscale 구간에서 그만큼 왕복이 늘어난다. 쉬는 연결은 5초 뒤 닫는다(Node 기본 agent와 같은 값): 오래 쉰 연결은 중간(Tailscale · NAT)에서 소리 없이 끊겨 있을 수 있고, 그 연결로 보낸 `POST`는 다시 보내도 되는지 알 수 없다. 동시 연결은 8개로 묶는다. 요청 하나의 제한 시간 5초, 인증서 검증, 토큰을 `K8S_API_URL`로만 보내는 것은 space.md 그대로다.
 
 ### 오류 나누기
 
@@ -92,7 +92,7 @@
 
 | 한 것 | 결과 |
 | --- | --- |
-| `ensureSpace` | 다섯 객체 `201`, 101 ms |
+| `ensureSpace` | 다섯 객체 `201`, 101 ms (#106의 여섯째 객체 실행기 RoleBinding이 더해지기 전 코드로 확인) |
 | `write` 첫 번째 | `POST` 하나, `201` |
 | `write` 두 번째 · 세 번째(값 없음) | `POST` `409 AlreadyExists` → `PUT` `200`, 32 ms |
 | `pods` · `deployments` (새 공간) | 빈 목록 |
