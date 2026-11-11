@@ -45,7 +45,8 @@ if out=$(k apply --dry-run=server -f - < agent.yaml 2>&1); then echo "PASS agent
 echo "== check Pod from the same template"
 k create --dry-run=client -o json -f - < agent.yaml | PROBE="$PROBE" POD=$POD node -e '
   let d = ""; process.stdin.on("data", (c) => (d += c)).on("end", () => {
-    const items = JSON.parse(d).items
+    // kubectl prints the two objects one after the other, not as a list.
+    const items = d.split(/\n(?=\{\n)/).map((o) => JSON.parse(o))
     const policy = items.find((o) => o.kind === "NetworkPolicy")
     const spec = items.find((o) => o.kind === "Deployment").spec.template.spec
     const agent = spec.containers[0]
