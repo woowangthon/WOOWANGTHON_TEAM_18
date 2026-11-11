@@ -16,7 +16,7 @@
 - [x] Slug 1~40 and service name 1~30 in the pipeline's input check (#97) — files: `src/deploy-input.ts`
 - [x] Docs — files: `docs/design/deploy-workflow.md`, `docs/design/deploy-handoff.md`, `docs/ai-scope.md`, `Infra/pipeline/CLAUDE.md`
 - [x] Dry-run through the k3s API (server-side apply, raw Status kept) — user decision 1a — files: `src/kube.ts`
-- [x] `stripPrefix` with a Traefik Middleware per service, one Ingress per public service — user decisions 2a · 3a — files: `templates/ingress.yaml`, `docs/design/cluster.md` §8
+- [x] `stripPrefix` with a Traefik Middleware per service, one Ingress per public service — user decisions 2a · 3a — files: `templates/ingress.yaml` (the executor RBAC for Middlewares is in #114, `docs/design/cluster.md` §8)
 
 ## Done when
 
