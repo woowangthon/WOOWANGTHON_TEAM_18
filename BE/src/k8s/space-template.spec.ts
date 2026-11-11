@@ -4,11 +4,33 @@ import { spaceObjects } from './space-template.js'
 
 const yaml = readFileSync(new URL('../../../Infra/student/space.yaml', import.meta.url), 'utf8')
 
-// 모든 값(글자 · 숫자)을 모은다.
-function leaves(v: unknown): string[] {
-  if (Array.isArray(v)) return v.flatMap(leaves)
-  if (typeof v === 'object' && v !== null) return Object.entries(v).flatMap(([k, x]) => [k, ...leaves(x)])
-  return [String(v)]
+// 값 하나하나를 "칸이름: 값" 한 줄(글자 · 숫자 칸)이나 값 하나(글자 목록의 항목)로 바꾼다. 빈 객체(`{}`)는 센 값이 없다.
+function leaves(v: unknown, out: string[] = []): string[] {
+  if (Array.isArray(v)) {
+    for (const x of v) {
+      if (typeof x === 'object' && x !== null) leaves(x, out)
+      else out.push(String(x))
+    }
+  } else if (typeof v === 'object' && v !== null) {
+    for (const [k, x] of Object.entries(v)) {
+      if (typeof x === 'object' && x !== null) leaves(x, out)
+      else out.push(`${k}: ${String(x)}`)
+    }
+  }
+  return out
+}
+
+// space.yaml을 같은 모양으로 읽는다(이 파일이 쓰는 작은 부분만: 블록 YAML, 한 줄 목록 `[..]`, 따옴표, 주석).
+function fileLeaves(text: string): string[] {
+  const out: string[] = []
+  for (const raw of text.split('\n')) {
+    const line = raw.trim().replace(/^- /, '').replaceAll(/["']/g, '')
+    if (line === '' || line.startsWith('#') || line === '---' || line.endsWith(':')) continue
+    const list = /^[\w.-]+: \[(.*)\]$/.exec(line)
+    if (list) out.push(...list[1].split(',').map((x) => x.trim()))
+    else if (!line.endsWith(': {}')) out.push(line)
+  }
+  return out
 }
 
 describe('spaceObjects', () => {
@@ -48,18 +70,10 @@ describe('spaceObjects', () => {
     expect(Object.keys((objects[0].body as { metadata: { labels: object } }).metadata.labels)).toHaveLength(2)
   })
 
-  // 양식은 Infra/student/space.yaml이 정본이다(검사 규칙이 같은 값만 통과시킨다). 값이 하나라도 다르면 만들 때 422가 난다.
-  // 한 방향만 본다(코드의 값이 파일에 있는가). 파일에만 있는 값이 빠진 것까지는 잡지 못한다.
-  it('uses only values that appear in Infra/student/space.yaml', () => {
-    const text = yaml.replaceAll('proj-demo', 'proj-my-app').replaceAll(/["']/g, '')
-    const missing = objects.flatMap((o) => leaves(o.body)).filter((v) => !text.includes(v))
-    expect(missing).toEqual([])
-  })
-
-  it('copies every ResourceQuota line of the template', () => {
-    const block = yaml.split('hard:\n')[1].split('\n---')[0]
-    const fromFile = block.split('\n').filter((l) => /^ {4}[\w.-]+: /.test(l)).map((l) => l.trim().split(':')[0])
-    const quota = objects[2].body as { spec: { hard: Record<string, string> } }
-    expect(Object.keys(quota.spec.hard).sort()).toEqual(fromFile.sort())
+  // 양식은 Infra/student/space.yaml이 정본이다(검사 규칙이 같은 값만 통과시킨다). 값이 하나라도 다르거나 빠지거나 늘면 만들 때 422가 난다.
+  it('has exactly the values of Infra/student/space.yaml (only the name differs)', () => {
+    const fromCode = objects.flatMap((o) => leaves(o.body)).sort()
+    const fromFile = fileLeaves(yaml.replaceAll('proj-demo', 'proj-my-app')).sort()
+    expect(fromCode).toEqual(fromFile)
   })
 })

@@ -7,7 +7,8 @@ import https from 'node:https'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { Logger } from '@nestjs/common'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { Env } from '../config/env.js'
 import { K8sClient } from './k8s.client.js'
 import { SpaceService } from './space.service.js'
@@ -145,6 +146,31 @@ describe('SpaceService.ensureSpace (plain http, loopback)', () => {
     expect(err.message).toBe('Could not reach the cluster')
   })
 
+  it('logs the status and reason, never the token or the answer text', async () => {
+    const logged = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+    try {
+      fake.answers.set(five[0], { status: 403, body: { reason: 'Forbidden', message: 'secret-looking detail' } })
+      await service.ensureSpace('my-app').catch(() => undefined)
+      expect(logged).toHaveBeenCalledWith('POST /api/v1/namespaces answered 403 Forbidden')
+      expect(JSON.stringify(logged.mock.calls)).not.toMatch(new RegExp(`${TOKEN}|secret-looking`))
+    } finally {
+      logged.mockRestore()
+    }
+  })
+
+  // 닿지 않는 주소(Tailscale이 끊겨 패킷이 버려질 때)는 거절이 아니라 무응답이다. 제한 시간이 없으면 요청이 끝나지 않는다.
+  it('gives up on a leader that never answers (5 seconds) with 503', async () => {
+    const silent = http.createServer(() => undefined)
+    await new Promise<void>((r) => silent.listen(0, '127.0.0.1', r))
+    try {
+      const { port } = silent.address() as AddressInfo
+      await expect(serviceOf(`http://127.0.0.1:${port}`).ensureSpace('my-app')).rejects.toMatchObject(unavailable)
+    } finally {
+      silent.closeAllConnections()
+      await new Promise<void>((r) => silent.close(() => r()))
+    }
+  }, 15000)
+
   it.each(['', 'My-App', '-a', 'a-', 'a/b', 'a b', '../x', 'a'.repeat(41)])('refuses the invalid slug %j before calling anything', async (slug) => {
     await expect(service.ensureSpace(slug)).rejects.toThrow(/Not a valid slug/)
     expect(fake.seen).toEqual([])
@@ -160,7 +186,13 @@ describe('SpaceService.ensureSpace (plain http, loopback)', () => {
 describe('SpaceService.ensureSpace (not configured)', () => {
   it('answers 503 CLUSTER_UNAVAILABLE without any network call', async () => {
     const service = new SpaceService(new K8sClient(new ConfigService<Env, true>({ K8S_API_URL: undefined, K8S_TOKEN: undefined, K8S_CA: undefined })))
-    await expect(service.ensureSpace('my-app')).rejects.toMatchObject(unavailable)
+    const logged = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+    try {
+      await expect(service.ensureSpace('my-app')).rejects.toMatchObject(unavailable)
+      expect(logged).toHaveBeenCalledWith(expect.stringContaining('not configured'))
+    } finally {
+      logged.mockRestore()
+    }
   })
 })
 
