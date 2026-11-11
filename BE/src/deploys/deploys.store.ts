@@ -59,12 +59,14 @@ export interface DeployRunRow {
   gateway_token_hash: string | null
   gateway_expires_at: string | null
   images: Record<string, string> | null
+  /** AI 에이전트가 낸 해결 결과 중 학생에게 보일 칸(api.md `agent`). 결과가 없으면 null. */
+  agent_result?: Record<string, unknown> | null
   created_at: string
   updated_at: string
 }
 
 type NewRun = Pick<DeployRunRow, 'deploy_id' | 'user_id' | 'slug' | 'target_slot' | 'input' | 'status' | 'stage'>
-type RunPatch = Partial<Pick<DeployRunRow, 'status' | 'stage' | 'failure' | 'ticket_id' | 'gateway_token_hash' | 'gateway_expires_at' | 'images'>>
+type RunPatch = Partial<Pick<DeployRunRow, 'status' | 'stage' | 'failure' | 'ticket_id' | 'gateway_token_hash' | 'gateway_expires_at' | 'images' | 'agent_result'>>
 
 const isRunRow = (v: unknown): v is DeployRunRow =>
   isRecord(v) &&
@@ -179,6 +181,14 @@ export class DeploysStore {
 
   async findRun(deployId: string): Promise<DeployRunRow | undefined> {
     const rows = await this.call('deploy_runs', 'GET', { select: '*', deploy_id: `eq.${deployId}`, limit: '1' })
+    if (rows.length === 0) return undefined
+    if (!isRunRow(rows[0])) throw this.unreadable('deploy_runs', 'GET')
+    return rows[0]
+  }
+
+  /** 게이트웨이 토큰의 해시(sha256 hex)로 실행 기록을 찾는다. 해시는 우리 코드가 만든 hex 문자열이다. */
+  async findRunByGatewayToken(tokenHash: string): Promise<DeployRunRow | undefined> {
+    const rows = await this.call('deploy_runs', 'GET', { select: '*', gateway_token_hash: `eq.${tokenHash}`, limit: '1' })
     if (rows.length === 0) return undefined
     if (!isRunRow(rows[0])) throw this.unreadable('deploy_runs', 'GET')
     return rows[0]

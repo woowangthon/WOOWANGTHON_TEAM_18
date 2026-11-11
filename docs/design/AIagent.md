@@ -321,7 +321,7 @@ buildspec · 서비스 역할(IAM) · 환경 변수 override는 받지 않는다
   - 조건은 `{ "all": [...] }` · `{ "any": [...] }`로 묶는다. `all` 안의 조건은 서로 다른 원소에서 맞아도 된다(같은 이벤트인지 보지 않는다).
   - 코드 분류는 티켓의 `stage`와 같은 case만 파일 순서대로 대조해 처음 맞는 것을 고른다. 그래서 좁은 case를 넓은 case 앞에 둔다(`A3` OOMKilled는 `A2` CrashLoopBackOff 앞).
   - 초기 case 데이터는 [`AI/ai_server/agent/cases.json`](../../AI/ai_server/agent/cases.json)이다. `playbook`의 `when`과 `{i}` 같은 자리 표시는 에이전트에게 주는 설명이고 코드가 판정하지 않는다.
-  - `verify` stage의 case는 아직 없다(2026-11-11). 그래서 `verify` 티켓은 고를 case가 없어 ⑤ planning으로 간다.
+  - `verify` stage의 case는 `V1` · `V2`다. `verify` 티켓에는 검사 결과 원본이 없으므로 `errorMessage`(통과하지 못한 검사 하나의 경로와 응답 상태)를 정규식으로 대조한다. 그 밖의 `verify` 실패(Ready 아닌 Pod, 빈 엔드포인트, 404가 아닌 상태)는 ② LLM 분류 → ⑤ planning으로 간다.
   - `stats`(`hits` · `solved`)는 AI 서버 메모리에만 있어 재시작하면 0부터다.
 - planning으로 해결한 새 case는 바로 넣지 않는다. 사람이 확인한 뒤 넣는다.
 
@@ -344,6 +344,8 @@ buildspec · 서비스 역할(IAM) · 환경 변수 override는 받지 않는다
 | `A2` | apply | 시작 직후 종료 | `CrashLoopBackOff`, `exitCode` ≠ 0 | 로그 패턴: env 누락 → `runtime.env`, DB 연결 실패 → 사용자 요청 |
 | `A3` | apply | 메모리 초과 | `OOMKilled` (137) | `runtime.resources.memory` |
 | `A4` | apply | Pod 생성 실패 (쿼터) | ReplicaSet 이벤트 `FailedCreate` + `exceeded quota` | `runtime.resources` |
+| `V1` | verify | 정적 파일 404 | `errorMessage`에 파일 경로(`/assets/` 또는 `.js` · `.css` · 이미지 · 글꼴 확장자)와 `404` | 원인은 Vite `base` · `outputDir` 경로. spec(`build.outputDir`)이면 `specPatch`, 레포 파일(`vite.config`의 `base`)이면 수정 PR(수정 PR 도구 전에는 `needs_user`로 고칠 파일 · 값을 알림) |
+| `V2` | verify | API 경로 404 | `errorMessage`에 경로 세그먼트 `/api` · `/health(z)` · `/ready(z)` · `/live(z)`와 `404` (`/healthcare` · `/api-docs`는 아님) | `runtime.stripPrefix` · `ingressPath` · `health.path` |
 
 에이전트를 부르지 않는 플랫폼 문제: CodeBuild API 오류(`AccountLimitExceededException` · `InvalidInputException` · `ResourceNotFoundException`), GHCR push 거부, `ImagePullBackOff` · `ErrImagePull`, `FailedScheduling`(노드 자원 부족), 차트 렌더 실패, 검사 규칙 거부, live 슬롯 보호 중단, 네임스페이스 · Secret 없음.
 
@@ -389,6 +391,7 @@ PydanticAI에서 두 모델을 OpenAI 호환 provider로 붙이고, 추론 모�
 
 - 학생 DB 자체의 문제(테이블 없음, migration 안 함)는 에이전트가 학생 DB에 닿지 못해 고칠 수 없다. `needs_user`로 넘긴다.
 - 초기 case 목록과 신호는 추정이다. 실패 주입 시험 전이다.
+- `V1` · `V2`는 `errorMessage` 문구로 대조한다. 그 문구는 파이프라인 Verify(F05)가 만든다. 정한 모양은 요청 실패 `<service>: GET <path> -> <status>`(응답 없음은 `-> error: <원인>`), Ready 실패 `<service>: not ready (<reason>)`, 빈 엔드포인트 `<service>: no endpoints`이고 테스트도 이 모양으로 했다. F05가 실제로 이렇게 내는지는 F05 머지 뒤 맞춰 봐야 한다.
 - `render` case(`R1` ~ `R3`)는 `raw.k8s.status`(코드 · `message` · `details.causes`)로 대조한다. `prepare` case(`P1` ~ `P3`)는 Status가 없어 `errorMessage` 문장으로 대조하므로, 플랫폼 서버가 쓰는 실제 문장으로 정규식을 맞춰야 한다.
 - CodeBuild API의 오류 이름 · phase 값은 AWS 문서와 대조하지 않았다.
 - 로컬 8B 모델의 분류 · 도구 호출 품질은 검증하지 않았다. 실제 모델(로컬 · 추론 API)은 아직 한 번도 붙여 돌리지 않았다.
@@ -396,4 +399,7 @@ PydanticAI에서 두 모델을 OpenAI 호환 provider로 붙이고, 추론 모�
 - 요약본과 발췌는 정보를 버린다. 오류 표시 단어가 없는 원인 줄은 발췌에서 빠질 수 있고, 지난 도구 결과는 한 줄만 남는다. 에이전트가 필요하면 관찰 도구로 다시 읽는다.
 - 에이전트가 낸 `verified`가 정말 `run_verify` 통과 뒤인지 AI 서버는 따로 확인하지 않는다. 플랫폼이 대상 슬롯을 다시 확인한다(§1).
 - 가림 필터는 정해진 모양만 가린다. 이름 없이 나온 임의의 비밀 문자열은 못 가린다.
+- 게이트웨이(F11)는 관찰 도구와 `submit_result`만 연다. 실행 · 운영 도구와 `read_build_logs`는 F11b(파이프라인 시험 실행)에서 열고, 그 전에는 `verified`를 받지 않는다(`INVALID_RESULT`). 그래서 지금 에이전트가 낼 수 있는 결과는 `needs_user` · `gave_up`(과 F13 뒤 `pr_opened`)이다.
+- 게이트웨이의 호출 횟수 · 작업 시간은 플랫폼 서버 메모리에서 센다. 서버가 다시 뜨면 그 티켓은 처음부터 다시 센다. 도구별 횟수(§3 표)는 그 도구가 열리는 F11b에서 센다. 지금은 전체 20회 · 15분 · 같은 호출 연속 2회만 센다.
+- `read_repo`는 인증 없이 GitHub API를 부른다(서버 IP당 시간당 60번, 레포 소유 확인과 같이 쓴다). 한도에 닿으면 도구 오류로 끝난다.
 - 게이트웨이에 끝내 닿지 못하면 결과를 낼 길이 없다. 계약에 다른 길(콜백 · 재전송 요청)이 없어서, 플랫폼은 자기 제한 시간(1시간 TIMED_OUT)까지 기다린다. AI 서버에는 로그만 남는다.

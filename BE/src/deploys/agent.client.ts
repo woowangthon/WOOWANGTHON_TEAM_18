@@ -23,20 +23,29 @@ export class AgentClient {
   }
 
   async sendTicket(request: TicketRequest): Promise<boolean> {
+    return this.post('/agent/tickets', request, 202)
+  }
+
+  /** 종료 알림(api.md `POST /agent/tickets/{ticketId}/close`). 받지 못해도 실행 기록은 이미 끝났으므로 로그만 남긴다. */
+  async close(ticketId: string, commitSha: string, reason: 'success' | 'superseded' | 'stopped'): Promise<boolean> {
+    return this.post(`/agent/tickets/${encodeURIComponent(ticketId)}/close`, { ticketId, commitSha, reason }, 204)
+  }
+
+  private async post(path: string, body: object, expected: number): Promise<boolean> {
     if (!this.url || !this.token) {
-      this.logger.error('AI_SERVER_URL and AGENT_API_TOKEN must both be set to send a ticket')
+      this.logger.error('AI_SERVER_URL and AGENT_API_TOKEN must both be set to call the AI server')
       return false
     }
     try {
-      const res = await fetch(`${this.url}/agent/tickets`, {
+      const res = await fetch(`${this.url}${path}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.token}` },
-        body: JSON.stringify(request),
+        body: JSON.stringify(body),
         signal: AbortSignal.timeout(TIMEOUT_MS),
       })
       await res.arrayBuffer()
-      if (res.status !== 202) this.logger.error(`AI server answered ${res.status} to a ticket`)
-      return res.status === 202
+      if (res.status !== expected) this.logger.error(`AI server answered ${res.status} to POST ${path.split('/').slice(0, 3).join('/')}`)
+      return res.status === expected
     } catch (err) {
       this.logger.error(err)
       return false

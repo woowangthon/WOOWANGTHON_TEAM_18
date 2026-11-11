@@ -456,6 +456,7 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
     { "key": "done", "state": "pending" }
   ],
   "failure": null,
+  "agent": null,
   "url": null,
   "warnings": [],
   "updatedAt": "2026-11-11T01:00:00.000Z"
@@ -464,6 +465,8 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
 
 - `failure`: `status`가 `failed`이거나 `fixing` · `needs_user`면 `{ "code", "stage", "service", "message" }`, 아니면 `null`. `message`는 학생에게 그대로 보여 줘도 되는 고정 문장이고 로그 · 원본 · 비밀값을 담지 않는다. `service`는 모르면 `null`.
 - `failure.code`: `BUILD_FAILED` · `DEPLOY_FAILED`(prepare · render · apply) · `VERIFY_FAILED` · `SWITCH_FAILED` · 플랫폼 문제(코드는 열려 있다: `^[A-Za-z][A-Za-z0-9_]{2,63}$`면 받는다. 예: `CODEBUILD_API_ERROR` · `IMAGE_PULL_FAILED` · `LIVE_SLOT_PROTECTED` · `BUILD_WAIT_TIMEOUT` · `NO_IMAGE_DIGEST` · `CHART_RENDER_FAILED` · `SPACE_MISSING` · `K8S_UNREACHABLE`. AI를 부르지 않고 실패로 마감하며, 모르는 코드는 일반 문구로 보여 준다) · `AGENT_UNAVAILABLE`(AI 서버가 티켓을 받지 못함) · `TIMED_OUT`(진행 중인 실행이 1시간 넘게 아무 알림 없이 멈춰 있어 중단함).
+- `failure.code`에 `AGENT_GAVE_UP`(AI 에이전트가 해결하지 못하고 결과를 냄)도 있다.
+- `agent`: AI 에이전트가 이 실행에 해결 결과(`submit_result`)를 냈으면 `{ "status", "summary", "userRequest": { "message", "secretKeys" } | null, "prUrl": string | null, "evidence": [{ "ref", "text" }] }`, 아니면 `null`. `status`는 `verified` · `pr_opened` · `needs_user` · `gave_up`이다. 학생에게 무엇을 했고(`summary`) 무엇을 해 달라는지(`userRequest`) 보여 주려는 것이다. 외부 전송 필터를 한 번 더 거친 값이고 도구 호출 원본 · 로그는 담지 않는다. `secretKeys`는 다시 넣어야 할 비밀값 key 이름(값 아님)이고 없으면 `[]`, `evidence`는 없으면 `[]`, `ref` · `text`는 없으면 `null`.
 - `url`: `succeeded`면 `https://<slug>.stairnoworks.com`, 아니면 `null`.
 - `warnings`: 보안 검사 경고(#45). 지금은 항상 `[]`. 항목 모양은 `{ "code": string, "message": string, "service": string | null }`로 정한다(`message`는 그대로 보여 줘도 되는 문장).
 - **갱신**: FE가 `running` · `fixing`인 동안 3초마다 다시 읽는다(polling). `succeeded` · `failed` · `needs_user`면 멈춘다. 응답은 작게 유지한다(원본 · 로그 없음). SSE · WebSocket은 MVP 밖이다.
@@ -641,7 +644,9 @@ DB에 배포가 있는 프로젝트(`slug`)마다 공간 `proj-<slug>`를 읽어
 
 ### MCP 게이트웨이 — 도구 (플랫폼 서버)
 
-- 전송: MCP Streamable HTTP, 플랫폼 서버의 내부 포트(`GATEWAY_PORT`, 공개 포트와 다르다) `POST /mcp`.
+- 전송: MCP Streamable HTTP, 플랫폼 서버의 내부 포트(`GATEWAY_PORT`, 공개 포트와 다르다) `POST /mcp`. 상태 없는 서버라 세션 스트림(`GET`) · 세션 끝내기(`DELETE`)는 `405`다. AI 서버의 `GATEWAY_URL`은 `http://<플랫폼 서버>:<GATEWAY_PORT>/mcp`이고, `GATEWAY_PORT`가 비어 있으면 게이트웨이를 열지 않는다.
+- **지금 여는 도구(F11)**: `get_target_status` · `read_pod_logs` · `read_repo` · `submit_result` 넷뿐이다. 실행 도구(`run_*`) · 대상 슬롯 운영 · `read_build_logs`는 파이프라인의 시험 실행이 생기는 F11b에서, `edit_repo_file` · `open_pr`은 F13에서 연다. 목록에 없는 도구를 부르면 `INVALID_ARGUMENT`다. `read_repo`의 `source`도 그때까지 `INVALID_ARGUMENT`다.
+- **F11b 전에는 `verified` 불가**: 대상 슬롯에서 시험한 적이 없으므로 `submit_result`의 `status: "verified"`(와 `specPatch` · `buildOverrides`)는 `INVALID_RESULT`다. 받은 결과로 실행 기록은 `gave_up`이면 `failed`(`AGENT_GAVE_UP`), `pr_opened` · `needs_user`면 `needs_user`가 된다. 결과의 `status` · `summary` · `userRequest` · `pr` · `evidence` · `classification`만 `deploy_runs.agent_result`에 저장하고(`actions`는 버린다), 진행 상태 응답의 `agent`로 보여 준다.
 - 도구 목록 · 하는 일 · 티켓당 횟수는 [AI 에이전트 설계](AIagent.md) §3이다. 여기는 인자와 결과의 모양만 고정한다. `read_memory`는 AI 서버 안의 도구라 게이트웨이에 없다(case와 통계를 AI 서버가 갖는다).
 - 결과는 MCP 도구 결과의 `structuredContent`에 아래 JSON으로 담는다. 실행이 실패해도(빌드 실패, Ready 안 됨) 도구 호출은 성공이고 `ok: false`다. 게이트웨이가 거절한 호출만 `isError: true`이고 `structuredContent`는 `{ "code", "message" }`다.
 - `run_*` · `wait_target_ready`는 파이프라인이 끝날 때까지 기다렸다가 답한다(최대 30분). AI 서버의 MCP 클라이언트는 호출 제한 시간을 35분으로 둔다.

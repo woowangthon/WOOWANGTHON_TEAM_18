@@ -22,6 +22,8 @@ export interface Env {
   AI_SERVER_URL?: string
   /** 플랫폼 → AI 서버 요청의 Bearer 토큰(비밀). AI 서버의 같은 이름 env와 같은 값. */
   AGENT_API_TOKEN?: string
+  /** AI 에이전트의 MCP 게이트웨이를 여는 내부 포트(api.md "MCP 게이트웨이"). 공개 포트(PORT)와 달라야 하고, 비워 두면 게이트웨이를 열지 않는다. */
+  GATEWAY_PORT: number | undefined
   /** 리더 쿠버네티스 API의 origin(Tailscale 주소). 셋(K8S_*)이 모두 비면 undefined이고, 클러스터를 쓰는 기능만 503이다. 설계는 docs/design/space.md. */
   K8S_API_URL: string | undefined
   /** 서버 계정(platform-server)의 토큰. 비밀이라 로그 · 응답에 남기지 않고 K8S_API_URL로만 보낸다. */
@@ -46,8 +48,18 @@ export function validateEnv(raw: Record<string, string | undefined>): Env {
     PIPELINE_NOTIFY_TOKEN: parseOptionalSecret(raw.PIPELINE_NOTIFY_TOKEN, 'PIPELINE_NOTIFY_TOKEN', 32),
     AI_SERVER_URL: parseOptionalOrigin(raw.AI_SERVER_URL, 'AI_SERVER_URL'),
     AGENT_API_TOKEN: parseOptionalSecret(raw.AGENT_API_TOKEN, 'AGENT_API_TOKEN'),
+    GATEWAY_PORT: parseGatewayPort(raw.GATEWAY_PORT, raw.PORT),
     ...parseCluster(raw),
   }
+}
+
+function parseGatewayPort(value: string | undefined, publicPort: string | undefined): number | undefined {
+  if (value === undefined || value === '') return undefined
+  const port = /^\d+$/.test(value) ? Number(value) : NaN
+  if (!(port >= 1 && port <= 65535)) throw new Error(`GATEWAY_PORT must be an integer from 1 to 65535, got "${value}"`)
+  // 게이트웨이는 내부 망 전용이다. 공개 포트와 같으면 공개 주소로 열린다.
+  if (port === parsePort(publicPort)) throw new Error('GATEWAY_PORT must differ from PORT')
+  return port
 }
 
 function parsePort(value: string | undefined): number {
