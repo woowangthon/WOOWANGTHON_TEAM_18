@@ -8,10 +8,10 @@
 
 The stage CLIs (`Infra/pipeline`) and the platform server side (`BE/src/deploys/pipeline.*`) exist. What is missing is GoCD itself: the pipeline definition, a server and agents to run it, and the script that starts it on the EC2. Design: [ADR-009](../../docs/adr/009-deploy-runs-on-leader-gocd-agent.md), [deploy-workflow §1 · §2 · §6 · §8](../../docs/design/deploy-workflow.md), [platform-hosting](../../docs/design/platform-hosting.md), the leader agent Pod `Infra/executor/agent.yaml`.
 
-- `Infra/gocd/student-deploy.gocd.yaml` (GoCD YAML config repo): pipeline `student-deploy`, stages Build (resource `aws`) → Prepare → Render → Apply (resource `leader`). The material has `auto_update: false` and the first stage is manual, so a commit never starts it; only the platform server's schedule call does (`BE/src/deploys/pipeline.client.ts`, variable `DEPLOY_ID`, `update_materials_before_scheduling`). No Verify / Switch stage yet: those CLIs are not written, and a stage calling a missing CLI would report a fake verify failure on every run.
+- `Infra/gocd/student-deploy.gocd.yaml` (GoCD YAML config repo): pipeline `student-deploy`, stages Build (resource `aws`) → Prepare → Render → Apply (resource `leader`). The first stage needs manual approval, so a commit never starts it (the material keeps default polling: GoCD refuses a material whose autoUpdate differs from its config repo's); only the platform server's schedule call does (`BE/src/deploys/pipeline.client.ts`, variable `DEPLOY_ID`, `update_materials_before_scheduling`). No Verify / Switch stage yet: those CLIs are not written, and a stage calling a missing CLI would report a fake verify failure on every run.
 - Every job is the same shape, `Infra/gocd/job.sh <step>` per task: `setup` (install + build `Infra/pipeline`), the stage, then `notify` with `run_if: any` (PR-A's `notify` sends `STAGE_NO_REPORT` when no report file exists, so one task covers success and every kind of failure).
 - One input per run: only the Build job calls `fetch-input` (the GET input has no images). Build writes `work/` (input, slot, build report, `deploy-input.built.json` = `report.input`) and publishes it; Prepare, Render and Apply fetch it. Apply also fetches Render's `out/slot.yaml`.
-- Secrets are never in the YAML: `PIPELINE_NOTIFY_TOKEN` is a secure variable of a GoCD environment that `setup.sh` creates through the API (GoCD masks it in logs); the AWS key is the AWS agent container's own env and never passes through GoCD.
+- Secrets are never in the YAML: `PIPELINE_NOTIFY_TOKEN` and the AWS key are the agents' own environment (compose for the AWS agent, the Secret `gocd-agent` for the leader Pod). GoCD cannot give a config-repo pipeline a secure variable (an environment in the server's config may not reference it, 422 on the real server) and its secret-manager plugin is not bundled.
 - `Infra/gocd/compose.yaml` (server `gocd/gocd-server:v26.1.0` with `-Xmx1g`, AWS agent, and a local-test-only leader-role agent behind a profile), `aws-agent.Dockerfile`, `local-leader-agent.Dockerfile`.
 - `Infra/gocd/setup.sh`: file-based auth, config repo, environment with the notify token, BE's access token, the agent auto-register key. Same script locally and on the EC2.
 - `Infra/aws/start-gocd.sh`: reads `/wcp/gocd/*` from SSM like `deploy-be.sh`, starts the server, runs `setup.sh`, starts the AWS agent.
@@ -25,12 +25,12 @@ Decisions:
 ## Todo
 
 - [x] Read the design docs, the agent Pod, the SSM script pattern and the CLI usage lines
-- [ ] `Infra/gocd/job.sh`, `student-deploy.gocd.yaml`
-- [ ] `Infra/gocd/compose.yaml`, `aws-agent.Dockerfile`, `local-leader-agent.Dockerfile`
-- [ ] `Infra/gocd/setup.sh`
-- [ ] `Infra/aws/start-gocd.sh`
-- [ ] Docs: `platform-hosting.md`, `deploy-workflow.md`, `docs/ai-scope.md`
-- [ ] Local check L1 (below), recorded in the PR body
+- [x] `Infra/gocd/job.sh`, `student-deploy.gocd.yaml`
+- [x] `Infra/gocd/compose.yaml`, `aws-agent.Dockerfile`, `local-leader-agent.Dockerfile`
+- [x] `Infra/gocd/setup.sh`
+- [x] `Infra/aws/start-gocd.sh`
+- [x] Docs: `platform-hosting.md`, `deploy-workflow.md`, `docs/ai-scope.md`
+- [x] Local check L1 (below), recorded in the PR body
 - [ ] `/code-review low`, `/simplify`; rebase onto `upstream/main` after PR-A merges
 - [ ] Draft PR (`Refs #135`)
 

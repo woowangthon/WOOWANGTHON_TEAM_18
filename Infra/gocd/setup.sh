@@ -30,7 +30,7 @@ repo_branch=${CONFIG_REPO_BRANCH:-main}
 state=${GOCD_STATE:-$HOME/.config/wcp/gocd}
 pipeline=student-deploy
 password_file=/godata/config/password.properties
-admin=admin
+admin='admin'
 
 : "${GOCD_ADMIN_PASSWORD:?set GOCD_ADMIN_PASSWORD}"
 # The values go into JSON by hand (there is no jq on the EC2), so only plain characters are accepted.
