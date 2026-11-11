@@ -118,20 +118,37 @@ deny rbac "create a Pod in a space" ks create -f - < <(pod false NET_RAW | sed '
 deny rbac "create a Deployment in a space" ks -n proj-srvcheck create deployment x --image=busybox:1.37
 deny rbac "create a Middleware in a space" ks create -f - < <(printf 'apiVersion: traefik.io/v1alpha1\nkind: Middleware\nmetadata: {name: x, namespace: proj-srvcheck}\nspec: {stripPrefix: {prefixes: ["/a"]}}\n')
 
-echo "== server account: stop a service (scale to 0, through the read binding of each space)"
+echo "== server account: stop, resume, restart (through the read binding of each space)"
 SCALE0="'{\"spec\":{\"replicas\":0}}'"
 SCALE1="'{\"spec\":{\"replicas\":1}}'"
 SCALE2="'{\"spec\":{\"replicas\":2}}'"
+RESTART="'{\"spec\":{\"template\":{\"metadata\":{\"annotations\":{\"kubectl.kubernetes.io/restartedAt\":\"2026-11-11T00:00:00Z\"}}}}}'"
+replicas_is() { # replicas_is <want> <label>
+  local got; got=$(k -n proj-srvcheck get deployment web -o "jsonpath='{.spec.replicas}'")
+  if [ "$got" = "$1" ]; then echo "PASS $2 ($got)"; else echo "FAIL $2 (want $1, got '$got')"; fail=1; fi
+}
 allow "operator puts a Deployment in the own space" k create -f - < <(doc Deployment proj-srvcheck ../student/app-example.yaml)
-allow "scale it to 0" ks -n proj-srvcheck patch deployment web --subresource=scale --type=merge -p "$SCALE0"
-replicas=$(k -n proj-srvcheck get deployment web -o "jsonpath='{.spec.replicas}'")
-if [ "$replicas" = 0 ]; then echo "PASS the Deployment is at 0"; else echo "FAIL replicas after the stop: '$replicas'"; fail=1; fi
-allow "scale it to 0 again (already stopped)" ks -n proj-srvcheck patch deployment web --subresource=scale --type=merge -p "$SCALE0"
-deny policy "scale it back to 1" ks -n proj-srvcheck patch deployment web --subresource=scale --type=merge -p "$SCALE1"
+allow "stop: scale it to 0" ks -n proj-srvcheck patch deployment web --subresource=scale --type=merge -p "$SCALE0"
+replicas_is 0 "the Deployment is stopped"
+allow "stop again (already stopped)" ks -n proj-srvcheck patch deployment web --subresource=scale --type=merge -p "$SCALE0"
+allow "resume: scale it back to 1" ks -n proj-srvcheck patch deployment web --subresource=scale --type=merge -p "$SCALE1"
+replicas_is 1 "the Deployment is back"
+deny policy "scale it to 2" ks -n proj-srvcheck patch deployment web --subresource=scale --type=merge -p "$SCALE2"
 allow "scale proj-demo to 0 (dry run)" ks -n proj-demo patch deployment web --subresource=scale --type=merge -p "$SCALE0" --dry-run=server
 deny policy "scale proj-demo to 2 (dry run)" ks -n proj-demo patch deployment web --subresource=scale --type=merge -p "$SCALE2" --dry-run=server
-deny rbac "patch the Deployment itself" ks -n proj-srvcheck patch deployment web --type=merge -p "$SCALE0"
+allow "restart: kubectl rollout restart" ks -n proj-srvcheck rollout restart deployment web
+restarted=$(k -n proj-srvcheck get deployment web -o "jsonpath='{.spec.template.metadata.annotations.kubectl\.kubernetes\.io/restartedAt}'")
+if [ -n "$restarted" ]; then echo "PASS the Pod template carries restartedAt"; else echo "FAIL no restartedAt after the restart"; fail=1; fi
+allow "restart proj-demo (dry run)" ks -n proj-demo patch deployment web --type=merge -p "$RESTART" --dry-run=server
+deny policy "change the image" ks -n proj-srvcheck patch deployment web --type=json -p "'[{\"op\":\"replace\",\"path\":\"/spec/template/spec/containers/0/image\",\"value\":\"busybox:1.37\"}]'"
+deny policy "set replicas on the Deployment itself" ks -n proj-srvcheck patch deployment web --type=merge -p "$SCALE2"
+deny policy "add a Pod template label" ks -n proj-srvcheck patch deployment web --type=merge -p "'{\"spec\":{\"template\":{\"metadata\":{\"labels\":{\"x\":\"y\"}}}}}'"
+deny policy "add another Pod template annotation" ks -n proj-srvcheck patch deployment web --type=merge -p "'{\"spec\":{\"template\":{\"metadata\":{\"annotations\":{\"x\":\"y\"}}}}}'"
+deny policy "pause the rollout" ks -n proj-srvcheck patch deployment web --type=merge -p "'{\"spec\":{\"paused\":true}}'"
+deny rbac "replace the Deployment (PUT)" ks replace -f - < <(k -n proj-srvcheck get deployment web -o yaml)
+deny rbac "delete the Deployment" ks -n proj-srvcheck delete deployment web
 deny rbac "scale in vllm" ks -n vllm patch deployment vllm --subresource=scale --type=merge -p "$SCALE0" --dry-run=server
+deny rbac "restart in vllm" ks -n vllm patch deployment vllm --type=merge -p "$RESTART" --dry-run=server
 deny rbac "scale in kube-system" ks -n kube-system patch deployment coredns --subresource=scale --type=merge -p "$SCALE0" --dry-run=server
 deny rbac "scale in a space without the read binding" ks -n proj-srvcheck2 patch deployment web --subresource=scale --type=merge -p "$SCALE0"
 
@@ -186,7 +203,9 @@ status 422 "space without the proj- prefix"  "$(api "$TOKEN" POST '/api/v1/names
 status 403 "read Secrets"                    "$(api "$TOKEN" GET '/api/v1/namespaces/proj-srvcheck/secrets')"
 MERGE=application/merge-patch+json
 status 200 "stop proj-demo web (dry run)"    "$(api "$TOKEN" PATCH '/apis/apps/v1/namespaces/proj-demo/deployments/web/scale?dryRun=All' '{"spec":{"replicas":0}}' $MERGE)"
-status 422 "scale proj-demo web to 1 (dry run)" "$(api "$TOKEN" PATCH '/apis/apps/v1/namespaces/proj-demo/deployments/web/scale?dryRun=All' '{"spec":{"replicas":1}}' $MERGE)"
+status 200 "resume proj-demo web (dry run)"  "$(api "$TOKEN" PATCH '/apis/apps/v1/namespaces/proj-demo/deployments/web/scale?dryRun=All' '{"spec":{"replicas":1}}' $MERGE)"
+status 422 "scale proj-demo web to 2 (dry run)" "$(api "$TOKEN" PATCH '/apis/apps/v1/namespaces/proj-demo/deployments/web/scale?dryRun=All' '{"spec":{"replicas":2}}' $MERGE)"
+status 200 "restart proj-demo web (dry run)" "$(api "$TOKEN" PATCH '/apis/apps/v1/namespaces/proj-demo/deployments/web?dryRun=All' '{"spec":{"template":{"metadata":{"annotations":{"kubectl.kubernetes.io/restartedAt":"2026-11-11T00:00:00Z"}}}}}' $MERGE)"
 status 403 "stop a Deployment in vllm"       "$(api "$TOKEN" PATCH '/apis/apps/v1/namespaces/vllm/deployments/vllm/scale?dryRun=All' '{"spec":{"replicas":0}}' $MERGE)"
 status 401 "wrong token"                     "$(api not-a-token GET '/api/v1/namespaces')"
 unset TOKEN
