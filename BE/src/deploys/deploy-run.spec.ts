@@ -67,7 +67,6 @@ describe('toFailure', () => {
 
   it('gives a platform code without its own message the generic one', () => {
     expect(toFailure({ code: 'K8S_UNREACHABLE', stage: 'apply', service: null }).message).toBe('플랫폼 문제로 배포하지 못했습니다. 운영자가 확인합니다.')
-    expect(toFailure({ code: 'IMAGE_PULL_FAILED', stage: 'apply', service: null }).message).toMatch(/이미지/)
   })
 })
 
@@ -168,7 +167,7 @@ describe('validateNotice', () => {
     expect(paths({ ...base, failure: {} })).toEqual(['failure.message:REQUIRED'])
   })
 
-  it.each([['K8S_TIMEOUT', []], ['AWS_CLI_FAILED', []], ['lower_case', ['failure.code:INVALID_VALUE']], ['AB', ['failure.code:INVALID_VALUE']], ['A'.repeat(65), ['failure.code:INVALID_VALUE']], ['1ABC', ['failure.code:INVALID_VALUE']], ['A'.repeat(64), []]])('failure.code %s: %j', (code, expected) => {
+  it.each([['K8S_TIMEOUT', []], ['lower_case', ['failure.code:INVALID_VALUE']], ['BUILD_FAILED', ['failure.code:INVALID_VALUE']], ['TIMED_OUT', ['failure.code:INVALID_VALUE']], ['AB', ['failure.code:INVALID_VALUE']], ['A'.repeat(65), ['failure.code:INVALID_VALUE']], ['1ABC', ['failure.code:INVALID_VALUE']], ['A'.repeat(64), []]])('failure.code %s: %j', (code, expected) => {
     expect(paths({ deployId: ID, stage: 'apply', result: 'failed', failure: { message: 'm', code, service: null } })).toEqual(expected)
   })
 

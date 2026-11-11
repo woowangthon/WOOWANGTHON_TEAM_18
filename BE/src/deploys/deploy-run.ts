@@ -15,33 +15,36 @@ export type DeployStatus = RunStatus | 'not_started'
 /** 스테이지가 통과하면 다음 스테이지가 돈다. 마지막(switch)은 null: 완료다. */
 export const nextStage = (stage: Stage): Stage | null => STAGES[STAGES.indexOf(stage) + 1] ?? null
 
+/** 플랫폼이 스스로 정하는 실패 코드. 파이프라인이 보낼 수 없다(보내면 AI를 건너뛰게 된다). */
+const INTERNAL_CODES = ['BUILD_FAILED', 'DEPLOY_FAILED', 'VERIFY_FAILED', 'SWITCH_FAILED', 'AGENT_UNAVAILABLE', 'TIMED_OUT'] as const
+type InternalCode = (typeof INTERNAL_CODES)[number]
+
 /** AI를 부르지 않고 "실패"로 마감하는 플랫폼 문제(deploy-workflow.md §6-3). 코드 집합은 열려 있어, 파이프라인이 새 코드를 추가해도 BE를 고치지 않는다(모양만 본다). */
-export type PlatformCode = string
 const PLATFORM_CODE = /^[A-Z][A-Z0-9_]{2,63}$/
-const isPlatformCode = (v: unknown): v is PlatformCode => typeof v === 'string' && PLATFORM_CODE.test(v)
+const isPlatformCode = (v: unknown): v is string => typeof v === 'string' && PLATFORM_CODE.test(v) && !(INTERNAL_CODES as readonly string[]).includes(v)
 
 /** AI 에이전트 설계 §5의 티켓 stage는 이 넷뿐이다. */
 export const TICKET_STAGES: readonly Stage[] = ['build', 'prepare', 'render', 'apply']
 
-export type FailureCode = string
-
-const PLATFORM_FALLBACK_MESSAGE = '플랫폼 문제로 배포하지 못했습니다. 운영자가 확인합니다.'
-
-/** 학생에게 그대로 보여 주는 문장. 로그 · 원본 · 비밀값은 여기 들어오지 않는다. */
-const MESSAGES: Record<string, string> = {
+/** 학생에게 그대로 보여 주는 문장. 로그 · 원본 · 비밀값은 여기 들어오지 않는다. 내부 코드는 하나도 빠지면 안 된다. */
+const INTERNAL_MESSAGES: Record<InternalCode, string> = {
   BUILD_FAILED: '이미지를 만드는 중에 문제가 생겼습니다.',
   DEPLOY_FAILED: '서비스를 클러스터에 올리는 중에 문제가 생겼습니다.',
   VERIFY_FAILED: '서비스가 떴지만 동작 확인을 통과하지 못했습니다. 공개 주소는 바뀌지 않았습니다.',
   SWITCH_FAILED: '공개 주소를 새 서비스로 바꾸는 중에 문제가 생겼습니다.',
-  CODEBUILD_API_ERROR: '빌드 서비스(CodeBuild)에 문제가 있어 배포하지 못했습니다. 잠시 뒤 다시 시도해 주세요.',
-  IMAGE_PULL_FAILED: '이미지를 클러스터로 받아 오지 못했습니다. 잠시 뒤 다시 시도해 주세요.',
-  LIVE_SLOT_PROTECTED: '서비스 중인 슬롯을 보호하기 위해 배포를 중단했습니다. 운영자에게 알려 주세요.',
   AGENT_UNAVAILABLE: '문제를 자동으로 해결하는 서비스에 연결하지 못했습니다. 운영자에게 알려 주세요.',
   TIMED_OUT: '배포가 제한 시간 안에 끝나지 않아 중단했습니다. 다시 시도해 주세요.',
 }
 
+// 알려진 플랫폼 코드의 문구. 여기 없는 플랫폼 코드는 일반 문구를 보인다.
+const PLATFORM_MESSAGES: Record<string, string> = {
+  CODEBUILD_API_ERROR: '빌드 서비스(CodeBuild)에 문제가 있어 배포하지 못했습니다. 잠시 뒤 다시 시도해 주세요.',
+  IMAGE_PULL_FAILED: '이미지를 클러스터로 받아 오지 못했습니다. 잠시 뒤 다시 시도해 주세요.',
+  LIVE_SLOT_PROTECTED: '서비스 중인 슬롯을 보호하기 위해 배포를 중단했습니다. 운영자에게 알려 주세요.',
+}
+
 export interface StoredFailure {
-  code: FailureCode
+  code: string
   stage: Stage
   service: string | null
 }
@@ -50,12 +53,15 @@ export interface Failure extends StoredFailure {
   message: string
 }
 
-export const toFailure = (f: StoredFailure): Failure => ({ ...f, message: MESSAGES[f.code] ?? PLATFORM_FALLBACK_MESSAGE })
+const messageOf = (code: string): string =>
+  (INTERNAL_MESSAGES as Record<string, string>)[code] ?? PLATFORM_MESSAGES[code] ?? '플랫폼 문제로 배포하지 못했습니다. 운영자가 확인합니다.'
+
+export const toFailure = (f: StoredFailure): Failure => ({ ...f, message: messageOf(f.code) })
 
 /** 알림이 알려 준 코드와 스테이지로 실패 코드를 정한다. 플랫폼 문제면 AI를 부르지 않는다. */
-export function classifyFailure(stage: Stage, platformCode: PlatformCode | null): { code: FailureCode; callAgent: boolean } {
+export function classifyFailure(stage: Stage, platformCode: string | null): { code: string; callAgent: boolean } {
   if (platformCode !== null) return { code: platformCode, callAgent: false }
-  const code: FailureCode =
+  const code: string =
     stage === 'build' ? 'BUILD_FAILED' : stage === 'verify' ? 'VERIFY_FAILED' : stage === 'switch' ? 'SWITCH_FAILED' : 'DEPLOY_FAILED'
   // verify · switch는 티켓 stage에 없어 AI에 넘기지 못한다(api.md "결정 필요").
   return { code, callAgent: TICKET_STAGES.includes(stage) }
@@ -102,7 +108,7 @@ export type Notice =
       stage: Stage
       result: 'failed'
       // evidence: 이 실패를 AI 서버에 넘길 때만(`classifyFailure(...).callAgent`) 있다.
-      failure: { platformCode: PlatformCode | null; service: string | null; message: string; evidence: TicketEvidence | null }
+      failure: { platformCode: string | null; service: string | null; message: string; evidence: TicketEvidence | null }
     }
 
 const SERVICE = /^[a-z]([a-z0-9-]{0,50}[a-z0-9])?$/
@@ -143,7 +149,7 @@ export function validateNotice(body: unknown): { ok: true; notice: Notice } | { 
   const service = f.service ?? null
   if (service !== null && (typeof service !== 'string' || !SERVICE.test(service))) add('failure.service', 'INVALID_VALUE')
   if (typeof f.message !== 'string') add('failure.message', f.message === undefined ? 'REQUIRED' : 'INVALID_TYPE')
-  const platformCode = code as PlatformCode | null
+  const platformCode = code as string | null
   const evidence = classifyFailure(base.stage, platformCode).callAgent ? checkEvidence(base.stage, f, add) : null
   if (issues.length > 0) return { ok: false, issues }
   return {
