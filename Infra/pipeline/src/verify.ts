@@ -122,7 +122,7 @@ export function assetPaths(html: string, pagePath: string, host: string): string
   const page = new URL(pagePath, `http://${host}`)
   const paths: string[] = []
   for (const ref of refs) {
-    const url = URL.parse(ref, page)
+    const url = URL.parse(ref, page.href)
     if (!url || (url.protocol !== 'http:' && url.protocol !== 'https:') || url.host !== host) continue
     const path = `${url.pathname}${url.search}`
     if (!paths.includes(path)) paths.push(path)
