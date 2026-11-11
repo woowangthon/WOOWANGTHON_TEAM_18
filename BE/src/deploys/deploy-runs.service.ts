@@ -3,8 +3,10 @@ import { BadRequestException, ConflictException, Injectable, Logger, NotFoundExc
 import type { AuthUser } from '../auth/auth.decorators.js'
 import { parseUuid } from '../common/uuid.js'
 import { redact, redactString } from '../common/redact.js'
+import { ClusterReader } from '../k8s/cluster-reader.js'
+import { DeploymentScaler } from '../k8s/deployment-scaler.js'
 import { AgentClient } from './agent.client.js'
-import type { ServiceConditions } from './deploy-condition.js'
+import { type ServiceConditions, type Slot, targetSlot } from './deploy-condition.js'
 import { DeployPreparer } from './deploy-preparer.js'
 import {
   buildSteps,
@@ -71,6 +73,8 @@ export class DeployRunsService {
     private readonly preparer: DeployPreparer,
     private readonly pipeline: PipelineClient,
     private readonly agent: AgentClient,
+    private readonly reader: ClusterReader,
+    private readonly scaler: DeploymentScaler,
   ) {}
 
   /** 내 배포 하나. 없는 id · 남의 id · UUID가 아닌 id는 모두 404다. */
@@ -193,8 +197,28 @@ export class DeployRunsService {
         return image ? [{ slug: run.slug, service, build_input_hash: c.buildInputHash, image }] : []
       }),
     )
+    // 이전 live 슬롯은 live 슬롯을 바꾸기 전에 읽는다(첫 배포는 없다).
+    const hadLive = (await this.store.liveSlot(run.slug)) !== null
     await this.store.setLiveSlot(run.slug, run.target_slot)
+    // 주소는 이미 바뀌었다. 이전 슬롯을 못 내려도 배포는 성공이다.
+    if (hadLive) await this.scaleDownSlot(run.slug, targetSlot(run.target_slot))
     return this.store.updateRun(run.deploy_id, where, { status: 'succeeded', stage: null })
+  }
+
+  /**
+   * W7: 이전 live 슬롯의 Deployment(`<서비스>-<슬롯>`)를 0개로 줄인다. 실패해도 던지지 않는다: 남은 Pod는 자원만 쓰고
+   * 주소는 새 슬롯을 가리킨다(운영자 강제 중지로 내릴 수 있다). 같은 알림을 다시 받아도 같은 결과다(이미 0이어도 0으로 쓴다).
+   */
+  private async scaleDownSlot(slug: string, slot: Slot): Promise<void> {
+    try {
+      const names = (await this.reader.deployments(slug)).map((d) => d.name).filter((name) => name.endsWith(`-${slot}`))
+      const results = await Promise.allSettled(names.map((name) => this.scaler.scaleToZero(slug, name)))
+      results.forEach((r, i) => {
+        if (r.status === 'rejected') this.logger.error(`W7: could not scale ${slug} ${names[i]} to 0: ${r.reason instanceof Error ? r.reason.message : 'unknown'}`)
+      })
+    } catch (err) {
+      this.logger.error(`W7: could not list deployments of ${slug} to scale the old slot down: ${err instanceof Error ? err.message : 'unknown'}`)
+    }
   }
 
   private async failed(run: DeployRunRow, notice: Extract<Notice, { result: 'failed' }>): Promise<boolean> {

@@ -10,7 +10,10 @@ const TIMEOUT_MS = 5000
 // 쉬는 연결은 5초 뒤 닫는다(Node 기본 agent와 같은 값). 오래 쉰 연결은 Tailscale · NAT에서 소리 없이 끊겨 있을 수 있다.
 const AGENT_OPTIONS = { keepAlive: true, timeout: 5000, maxSockets: 8, scheduling: 'lifo' } as const
 
-export type Method = 'GET' | 'POST' | 'PUT' | 'DELETE'
+export type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
+
+const JSON_TYPE = 'application/json'
+export const MERGE_PATCH = 'application/merge-patch+json'
 
 interface Connection {
   url: URL
@@ -54,15 +57,15 @@ export class K8sClient implements OnModuleDestroy {
   }
 
   /** 요청 하나를 보내고 2xx면 응답 본문을 돌려준다. 그 밖은 ClusterError다. */
-  async request(method: Method, path: string, body?: object): Promise<string> {
-    const answer = await this.send(method, path, body)
+  async request(method: Method, path: string, body?: object, contentType = JSON_TYPE): Promise<string> {
+    const answer = await this.send(method, path, body, contentType)
     if (answer.status >= 200 && answer.status < 300) return answer.text
     throw this.refused(method, path, answer)
   }
 
   /** `path`에 객체를 만든다. 이미 있으면(409 AlreadyExists) 오류가 아니라 'exists'다. */
   async create(path: string, body: object): Promise<'created' | 'exists'> {
-    const answer = await this.send('POST', path, body)
+    const answer = await this.send('POST', path, body, JSON_TYPE)
     if (answer.status === 201) return 'created'
     if (answer.status === 409 && answer.reason === 'AlreadyExists') return 'exists'
     throw this.refused('POST', path, answer)
@@ -74,13 +77,13 @@ export class K8sClient implements OnModuleDestroy {
     return ClusterError.ofStatus(status, reason)
   }
 
-  private async send(method: Method, path: string, body: object | undefined): Promise<Answer> {
+  private async send(method: Method, path: string, body: object | undefined, contentType: string): Promise<Answer> {
     if (!this.conn) {
       this.logger.error('Cluster access is not configured (K8S_API_URL, K8S_TOKEN, K8S_CA_CERT)')
       throw new ClusterError('unconfigured')
     }
     try {
-      return await exchange(this.conn, method, path, body === undefined ? undefined : JSON.stringify(body))
+      return await exchange(this.conn, method, path, body === undefined ? undefined : JSON.stringify(body), contentType)
     } catch (err) {
       // 오류 메시지에는 리더의 주소와 포트가 들어 있어 코드(ECONNREFUSED · TimeoutError 등)만 남긴다.
       this.logger.error(`${method} ${pathOnly(path)} failed: ${errorCode(err)}`)
@@ -89,7 +92,7 @@ export class K8sClient implements OnModuleDestroy {
   }
 }
 
-function exchange({ url, token, secure, agent }: Connection, method: Method, path: string, payload: string | undefined): Promise<Answer> {
+function exchange({ url, token, secure, agent }: Connection, method: Method, path: string, payload: string | undefined, contentType: string): Promise<Answer> {
   return new Promise((resolve, reject) => {
     const options = {
       method,
@@ -101,7 +104,7 @@ function exchange({ url, token, secure, agent }: Connection, method: Method, pat
       agent,
       headers: {
         Authorization: `Bearer ${token}`,
-        ...(payload === undefined ? {} : { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) }),
+        ...(payload === undefined ? {} : { 'Content-Type': contentType, 'Content-Length': Buffer.byteLength(payload) }),
       },
       signal: AbortSignal.timeout(TIMEOUT_MS),
     }

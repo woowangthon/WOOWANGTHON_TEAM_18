@@ -4,8 +4,8 @@ import { SLUG } from '../deploys/deploy-input.js'
 import { publicUrl } from '../deploys/deploy-run.js'
 import { ClusterError } from '../k8s/cluster-error.js'
 import { ClusterReader, type NodeInfo, type PodInfo } from '../k8s/cluster-reader.js'
+import { DeploymentScaler } from '../k8s/deployment-scaler.js'
 import { AdminStore, type ProjectRecord } from './admin.store.js'
-import { DeploymentScaler } from './deployment-scaler.js'
 import { bytes, millicores } from './quantity.js'
 
 // 클러스터가 알려 준 Deployment 이름도 경로에 넣기 전에 DNS 이름 모양인지 본다.
