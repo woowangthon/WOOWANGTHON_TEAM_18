@@ -34,6 +34,7 @@ describe('liveSlotOf', () => {
     ['backends on two slots (interrupted switch)', [ingress('open-fe', 'fe-b'), ingress('open-be', 'be-a')]],
     ['a backend that is not a slot Service', [ingress('open-fe', 'fe-b'), ingress('open-x', 'something')]],
     ['two slots inside one Ingress', [ingress('open-fe', 'fe-a', 'fe-b')]],
+    ['only backends that are not slot Services', [ingress('open-x', 'something')]],
   ])('is mixed for %s', (_, ings) => {
     expect(liveSlotOf(ings)).toBe('mixed')
   })

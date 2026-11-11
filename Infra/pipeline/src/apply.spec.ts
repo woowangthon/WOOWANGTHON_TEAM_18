@@ -58,7 +58,7 @@ describe('waitLimitSeconds', () => {
     expect(waitLimitSeconds(fe)).toBe(130)
     expect(waitLimitSeconds(be)).toBe(180)
     expect(waitLimitSeconds(ai)).toBe(240)
-    expect(waitLimitSeconds({ ...ai, runtime: { ...ai.runtime, health: { ...ai.runtime.health, startupTimeoutSeconds: 300 } } })).toBe(420)
+    expect(waitLimitSeconds({ ...ai, runtime: { ...ai.runtime, health: { ...ai.runtime.health, startupTimeoutSeconds: 400 } } })).toBe(420)
   })
 })
 
@@ -163,8 +163,10 @@ describe('runApply', () => {
     const crashing = pod('ai-b-x-y', waiting('CrashLoopBackOff'))
     const slotEvent = { metadata: { name: 'e1', managedFields: [] }, involvedObject: { kind: 'Pod', name: 'ai-b-x-y' }, reason: 'BackOff' }
     const otherEvent = { metadata: { name: 'e2' }, involvedObject: { kind: 'Pod', name: 'ai-a-x-y' }, reason: 'Started' }
+    // 이름 앞부분만 같은 다른 객체(`ai-b`가 아니라 `ai-bx`)의 이벤트는 대상 슬롯 것이 아니다.
+    const prefixEvent = { metadata: { name: 'e3' }, involvedObject: { kind: 'Pod', name: 'ai-bx-x-y' }, reason: 'Started' }
     const clock = fakeClock()
-    const { call } = cluster({ [dep('ai')]: ok(notReady), [pods('ai')]: list(crashing), [events]: list(slotEvent, otherEvent) })
+    const { call } = cluster({ [dep('ai')]: ok(notReady), [pods('ai')]: list(crashing), [events]: list(slotEvent, otherEvent, prefixEvent) })
     const report = await runApply(built(), 'b', MANIFEST, call, clock)
     expect(report).toEqual({
       ok: false,
