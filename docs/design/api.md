@@ -403,6 +403,8 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
 
 **`secretHash` 계산**: 서비스마다 `HMAC-SHA256(키 = SECRET_HASH_KEY, "service\n" + JSON.stringify([[key, 값], ...]))`(key 순으로 정렬한 쌍, 값은 UTF-8)을 구하고, 서비스 이름 순으로 `[[이름, 서비스 해시], ...]`에 `"combined\n"`을 붙여 같은 방식으로 한 번 더 해시한다(앞의 용도 글자는 두 해시를 가른다). 결과는 `"sha256:" + 64자 hex`다. 값이 DB에 남지 않도록 서비스마다의 해시만 저장하고 전체 해시는 읽을 때 계산한다. 해시는 **서버만 아는 키(`SECRET_HASH_KEY`, 32자 이상)**로 만든다. 키가 없으면 DB 행이나 파드 주석(`wanggane/secret-hash`)의 해시를 읽은 쪽이 짧은 값을 사전 대입으로 맞춰 볼 수 있어서다. 키를 바꾸면 저장된 해시가 새 키로 만든 것과 달라져 `secretHash`가 바뀐다(다시 보내면 맞춰진다). 같은 프로젝트 · 서비스에 거의 동시에 두 번 보내면 기록된 해시가 리더에 마지막으로 들어간 값과 다를 수 있다(드문 경우이고 다시 보내면 맞춰진다).
 
+**빌드 준비 확인 (서버 안, 이슈 #82)**: 배포 시작(`POST /api/deploys/:id/start`, #44)이 빌드를 요청하기 전에 `DeployReadinessService.prepareIfReady(deployId)`를 부른다. 위 `GET`의 `ready`와 같은 판단이다(서비스마다 `secretKeys`와 같은 key 집합이 `in`일 때만 준비됨). 준비됐으면 `DeployConditionService.prepare(deployId, secretHash)`의 결과(W4에 넘기는 배포 입력)를 돌려주고, 아니면 `409 NOT_READY`와 함께 빠진 key를 `error.fields`에 `{ "path": "secrets.<서비스>.<KEY>", "code": "REQUIRED" }`로 싣는다(이름만, 값 · 해시는 없다. 최대 20개). 없는 `deployId`는 `404 DEPLOY_NOT_FOUND`. 이 함수는 사용자를 모르므로 소유 확인은 부르는 쪽이 먼저 한다. 사용자가 보는 "빌드 준비됨"은 새 엔드포인트 없이 위 `GET`의 `ready` · `services`다.
+
 ## 배포 시작 · 진행 상태 (이슈 #44 · #98)
 
 저장한 배포 입력(`deployId`)으로 GoCD 파이프라인을 한 번 실행하고, 파이프라인이 보내는 단계 알림으로 진행 상태를 기록하고, 학생이 그 상태를 읽는다([배포 워크플로우](deploy-workflow.md) §1 · §6). 배포마다 실행 기록 행 하나(`deploy_runs`)가 생긴다.
@@ -428,7 +430,7 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
 
 오류:
 - `401` · `404 DEPLOY_NOT_FOUND`: 위와 같다(남의 배포 포함)
-- `409 NOT_READY`: 준비가 안 됐다. 빠진 항목은 다른 검증 오류처럼 `error.fields`에 칸마다 `{ path: "secrets.<service>.<KEY>", code: "REQUIRED" }`로 온다(#82와 맞출 값)
+- `409 NOT_READY`: 준비가 안 됐다. 빠진 항목은 다른 검증 오류처럼 `error.fields`에 칸마다 `{ path: "secrets.<service>.<KEY>", code: "REQUIRED" }`로 온다(#82의 `DeployReadinessService`가 낸다)
 - `409 DEPLOY_IN_PROGRESS`: 같은 프로젝트의 다른 배포가 `running` · `fixing`이다. 그 실행이 1시간 넘게 바뀌지 않았으면 끝난 것으로 보고 `failed`(`TIMED_OUT`)로 마감한 뒤 이 배포를 시작한다(알림이 오지 않거나 `fixing`을 풀 해결 결과 처리가 없어도 프로젝트가 영영 막히지 않게)
 - `409 ALREADY_STARTED`: 이 배포는 이미 시작했다(다시 배포하려면 새로 저장한다)
 - `503 PIPELINE_UNAVAILABLE`: GoCD에 닿지 못했거나 거절했다. 실행 기록은 남기지 않으므로 같은 요청을 다시 보내도 된다

@@ -5,7 +5,8 @@ import { ReposModule } from '../repos/repos.module.js'
 import { ClusterSecretWriter } from './cluster-secret-writer.js'
 import { DeployConditionService } from './deploy-condition.service.js'
 import { AgentClient } from './agent.client.js'
-import { DeployPreparer, UnavailableDeployPreparer } from './deploy-preparer.js'
+import { DeployPreparer } from './deploy-preparer.js'
+import { DeployReadinessService } from './deploy-readiness.service.js'
 import { DeployRunsService } from './deploy-runs.service.js'
 import { DeploysController } from './deploys.controller.js'
 import { DeploysService } from './deploys.service.js'
@@ -28,8 +29,9 @@ import { SecretsService } from './secrets.service.js'
     AgentClient,
     PipelineTokenGuard,
     SecretsService,
-    // #82가 준비 상태를 확인하는 구현으로 바꾼다.
-    { provide: DeployPreparer, useClass: UnavailableDeployPreparer },
+    DeployReadinessService,
+    // 배포 시작(#44)이 부르는 "준비됐을 때만 입력을 만든다"는 #82의 DeployReadinessService다.
+    { provide: DeployPreparer, useExisting: DeployReadinessService },
     // 공간 확인 → Secret 쓰기. 클러스터 설정이 없으면 쓸 때 503 CLUSTER_UNAVAILABLE이다.
     { provide: SecretWriter, useClass: ClusterSecretWriter },
   ],
