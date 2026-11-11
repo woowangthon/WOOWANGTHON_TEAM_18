@@ -1,0 +1,184 @@
+# Leader deploy executor Pod (build 09′, the GoCD Agent). Design and reasons: docs/design/cluster.md §8.
+# Runs the Prepare, Render, Apply, Verify and Switch stages (docs/design/deploy-workflow.md §2) with the
+# account in account.yaml. The Build stage runs on the AWS executor, so no AWS tool or credential is here.
+#
+# NOT applied yet: it needs the GoCD server on the EC2. On that day the operator creates the Secret
+# `gocd-agent` in this namespace on the leader, values typed there and never put in the repo or a chat:
+#   GO_SERVER_URL            http://<the EC2's tailnet address>:8153/go  (cluster DNS does not know tailnet names)
+#   AGENT_AUTO_REGISTER_KEY  the agent auto-register key from the GoCD server's config
+# then applies this file (from the operator's machine):
+#   ssh k3s-leader 'sudo k3s kubectl apply -f -' < Infra/executor/agent.yaml
+# Without the Secret the Pod stays in CreateContainerConfigError, which is the intended failure.
+#
+# In: nothing (the agent dials the server). Out: cluster DNS, the leader's API, Traefik's Pods (the
+# Verify stage sends its test requests through Traefik), the GoCD server port inside the tailnet range,
+# and HTTPS on public addresses (the pipeline's git material). The Pod's traffic is forwarded, so the
+# host firewall's outgoing rules do not apply (cluster.md §3); this policy keeps a hijacked job away
+# from the kubelets, the image cache, the local model and the node and school ranges.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: executor-only
+  namespace: deploy
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress", "Egress"]
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - port: 53
+      protocol: UDP
+    - port: 53
+      protocol: TCP
+  # The k3s API. The Service address 10.43.0.1:443 is rewritten to the leader's node address before
+  # the policy sees it.
+  - to:
+    - ipBlock:
+        cidr: 192.168.77.11/32
+    ports:
+    - port: 6443
+      protocol: TCP
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: traefik
+    ports:
+    - port: 8000
+      protocol: TCP
+  # The GoCD server on the EC2. Which tailnet device answers is decided by the Tailscale ACL
+  # (Infra/tailscale/acl.hujson: leader → platform server, this port only).
+  - to:
+    - ipBlock:
+        cidr: 100.64.0.0/10
+    ports:
+    - port: 8153
+      protocol: TCP
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+        except: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "169.254.0.0/16"]
+    ports:
+    - port: 443
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: deploy-executor
+  namespace: deploy
+spec:
+  replicas: 1
+  revisionHistoryLimit: 2
+  # One agent, one identity: stop the old Pod before the new one registers.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: deploy-executor
+  template:
+    metadata:
+      labels:
+        app: deploy-executor
+    spec:
+      # On the leader: the deploy right stays inside the cluster and student slots (workers) are not
+      # shared with it (ADR-009).
+      nodeSelector:
+        kubernetes.io/hostname: k3s-leader
+      tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
+      # The short-lived token Kubernetes mounts is the executor's only cluster credential.
+      serviceAccountName: deploy-executor
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      # The pipeline calls `node dist/cli/<stage>.js` and `helm template` (Infra/pipeline). Both come out
+      # of their official images into a shared volume, so there is no image of ours to build, store or
+      # keep credentials for. Bump these tags together with the GoCD server's version.
+      initContainers:
+      - name: tool-node
+        image: node:24.15.0-bookworm-slim
+        command: ["cp", "-RP", "/usr/local", "/tools/node"]
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        volumeMounts:
+        - name: tools
+          mountPath: /tools
+      - name: tool-helm
+        image: alpine/helm:3.22.1
+        command: ["sh", "-c", "mkdir -p /tools/bin && cp /usr/bin/helm /tools/bin/helm"]
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        volumeMounts:
+        - name: tools
+          mountPath: /tools
+      containers:
+      - name: agent
+        # Same version as the GoCD server on the EC2 (26.1.0, port 8153).
+        image: gocd/gocd-agent-debian-12:v26.1.0
+        env:
+        - name: PATH
+          value: /tools/node/bin:/tools/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+        # Read by Infra/pipeline/src/kube.ts. Paths only, so the token never sits in env or a job log.
+        - name: KUBE_API_URL
+          value: https://kubernetes.default.svc
+        - name: KUBE_TOKEN_FILE
+          value: /var/run/secrets/kubernetes.io/serviceaccount/token
+        - name: KUBE_CA_FILE
+          value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        # Deploy jobs ask for this resource so they only land on the leader's agent.
+        - name: AGENT_AUTO_REGISTER_RESOURCES
+          value: leader
+        - name: AGENT_AUTO_REGISTER_HOSTNAME
+          value: k3s-leader-executor
+        envFrom:
+        - secretRef:
+            name: gocd-agent
+        resources:
+          requests:
+            cpu: 250m
+            memory: 512Mi
+          limits:
+            cpu: "2"
+            memory: 1Gi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        volumeMounts:
+        - name: tools
+          mountPath: /tools
+          readOnly: true
+        - name: godata
+          mountPath: /godata
+        - name: home
+          mountPath: /home/go
+      volumes:
+      - name: tools
+        emptyDir: {}
+      # Job checkouts and the agent's own files. Lost on restart on purpose: a deploy is one pipeline run.
+      - name: godata
+        emptyDir:
+          sizeLimit: 4Gi
+      - name: home
+        emptyDir:
+          sizeLimit: 1Gi
