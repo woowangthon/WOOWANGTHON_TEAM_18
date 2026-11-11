@@ -74,7 +74,7 @@
 | `logs` | 글. `tailLines` 기본 200(최대 2000), 응답은 256 KiB에서 자른다(요청 하나의 제한 시간 5초 안에 느린 구간으로도 받을 크기). 이어 받기(follow)는 없다 |
 
 - 목록은 한 번에 받는다(쪽 나눔 없음). 공간 하나의 Pod는 상한(ResourceQuota)으로 묶여 있고 노드는 셋이다.
-- 실제 사용량(CPU · 메모리)은 이 API에 없다. Prometheus(구축 11)나 metrics API 권한이 들어온 뒤의 일이다.
+- 실제 사용량(CPU · 메모리)은 이 모듈에 아직 없다. 권한은 들어갔다([cluster.md](cluster.md) §8, #130): `GET /apis/metrics.k8s.io/v1beta1/nodes`와 `/apis/metrics.k8s.io/v1beta1/namespaces/<공간>/pods`. 응답은 다른 목록처럼 `items` 배열이고, 항목의 `metadata.name`이 노드 · Pod 이름과 같다. 값은 쿠버네티스 수량 글이다(실제 리더 응답: 노드는 `usage`에 CPU `123018642n`(나노코어) · 메모리 `6838040Ki`, Pod는 `containers[].usage`에 같은 모양). 갓 뜬 Pod와 노드는 첫 수집(수십 초) 전까지 목록에 없으므로 없는 항목은 오류가 아니라 "아직 없음"이다. 운영자 API의 응답에는 Pod 사용량 자리가 아직 없다([api.md](api.md)는 노드의 `usage`만 정한다). Pod 사용량을 화면에 내려면 api.md부터 고친다. 호출은 다음 PR.
 
 ### 일부러 없는 것
 
@@ -82,7 +82,7 @@
 | --- | --- |
 | `PATCH` | 서버 계정에 Secret `patch` 권한이 없다. patch의 응답은 Secret 전체라, 빈 patch 하나로 값을 읽을 수 있기 때문이다(cluster.md §8). 다른 객체도 고치기 권한이 없다 |
 | Secret 읽기 · 목록 · 삭제 | 권한이 없다(`403`). 어떤 key가 들어갔는지는 #43이 DB에 key 이름으로 남긴다 |
-| 조치(scale · 재시작), watch · 이벤트 읽기 | 끄기(scale 0) · 이벤트 · Ingress 읽기 권한은 2026-11-11에 들어갔다([cluster.md](cluster.md) §8, #124). 재개 · 재시작 권한은 아직 없다. 호출은 다음 PR |
+| 조치(scale · 재시작), watch · 이벤트 읽기 | 끄기 · 재개(scale 0 · 1), 재시작(rollout restart), 이벤트 · Ingress 읽기 권한은 2026-11-11에 들어갔다([cluster.md](cluster.md) §8, #124 · #129). 호출은 다음 PR |
 | 공간 삭제 | 서버 계정에 권한은 있지만 부르는 기능이 아직 없다 |
 | 다시 시도 | `POST`는 다시 보내도 되는지 모듈이 알 수 없다. 다시 부르는 것은 부르는 쪽이 정한다(`ensureSpace`와 `write`는 다시 불러도 같은 결과다) |
 
