@@ -182,7 +182,10 @@ export class GatewayTools {
         ? { status: 'failed' as const, failure: { code: 'AGENT_GAVE_UP', stage: ticket.failure?.stage ?? 'build', service: ticket.failure?.service ?? null } }
         : // pr_opened(머지 대기)도 needs_user(학생 조치 대기)도 학생을 기다린다.
           { status: 'needs_user' as const }
-    const applied = await this.store.updateRun(ticket.deployId, { status: 'fixing' }, { ...patch, gateway_token_hash: null })
+    // 학생에게 보일 칸만 남긴다(도구 호출 원본 · 로그는 버린다). 외부에서 온 글이라 한 번 더 가린다.
+    const { status, summary, userRequest = null, pr = null, evidence = [], classification } = result
+    const agentResult = redact({ status, summary, userRequest, pr, evidence, classification }) as Record<string, unknown>
+    const applied = await this.store.updateRun(ticket.deployId, { status: 'fixing' }, { ...patch, agent_result: agentResult, gateway_token_hash: null })
     this.budget.forget(ticket.ticketId)
     if (!applied) return reject('TICKET_CLOSED', 'the ticket is no longer open')
     this.logger.log(`ticket ${ticket.ticketId} result ${result.status}`)

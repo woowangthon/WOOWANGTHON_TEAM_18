@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common'
 import type { AuthUser } from '../auth/auth.decorators.js'
+import { isRecord } from '../common/is-record.js'
 import { parseUuid } from '../common/uuid.js'
 import { redact, redactString } from '../common/redact.js'
 import { AgentClient } from './agent.client.js'
@@ -38,9 +39,34 @@ export interface DeployStatusView {
   stage: Stage | null
   steps: { key: StepKey; state: StepState }[]
   failure: Failure | null
+  agent: AgentView | null
   url: string | null
   warnings: string[]
   updatedAt: string
+}
+
+/** AI 에이전트의 해결 결과 중 학생에게 보일 칸(api.md "진행 상태 읽기"의 `agent`). */
+export interface AgentView {
+  status: string
+  summary: string
+  userRequest: { message: string; secretKeys: string[] } | null
+  prUrl: string | null
+  evidence: { ref: string | null; text: string | null }[]
+}
+
+const str = (v: unknown): string | null => (typeof v === 'string' ? v : null)
+
+/** 게이트웨이가 검사하고 저장한 값이다. 빠진 칸만 빈 값으로 읽는다. */
+function toAgent(stored: Record<string, unknown>): AgentView {
+  const u = isRecord(stored.userRequest) ? stored.userRequest : null
+  const pr = isRecord(stored.pr) ? stored.pr : null
+  return {
+    status: str(stored.status) ?? 'gave_up',
+    summary: str(stored.summary) ?? '',
+    userRequest: u ? { message: str(u.message) ?? '', secretKeys: Array.isArray(u.secretKeys) ? (u.secretKeys as unknown[]).filter((k): k is string => typeof k === 'string') : [] } : null,
+    prUrl: pr ? str(pr.url) : null,
+    evidence: Array.isArray(stored.evidence) ? (stored.evidence as unknown[]).filter(isRecord).map((e) => ({ ref: str(e.ref), text: str(e.text) })) : [],
+  }
 }
 
 const iso = (t: string) => new Date(t).toISOString()
@@ -55,6 +81,7 @@ function view(deploy: DeployRow, run: DeployRunRow | undefined): DeployStatusVie
     stage,
     steps: buildSteps(status, stage),
     failure: run?.failure ? toFailure(run.failure) : null,
+    agent: run?.agent_result ? toAgent(run.agent_result) : null,
     url: status === 'succeeded' ? publicUrl(deploy.slug) : null,
     // 보안 검사 경고(#45)는 아직 없다.
     warnings: [],

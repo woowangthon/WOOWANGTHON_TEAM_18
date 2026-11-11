@@ -22,7 +22,7 @@ User decision (2026-11-11, option A): open only what works without the pipeline.
 - [x] Store lookup by token hash, `AGENT_GAVE_UP`, close notice — files: `BE/src/deploys/*`
 - [x] Tests — files: `BE/src/gateway/*.spec.ts`, `BE/src/config/env.spec.ts`, `BE/src/k8s/cluster-reader.spec.ts`, `BE/test/gateway.e2e.spec.ts`, `BE/test/deploy-runs.e2e.spec.ts`
 - [x] Docs — files: `docs/design/api.md` (gateway), `docs/design/AIagent.md` known limits, `docs/ai-scope.md`
-- [ ] Pending contract answer: where the student sees the agent result (`agent_result` column, status API `agent`) — proposed to the coordinating session
+- [x] Agent result for the student (user decision 2026-11-11): `deploy_runs.agent_result jsonb` (status · summary · userRequest · pr · evidence · classification, no actions, redacted again) and status API `agent` — files: `supabase/migrations/20261111030000_add_deploy_runs_agent_result.sql`, `BE/src/gateway/tools.ts`, `BE/src/deploys/deploy-runs.service.ts`, `docs/design/api.md`. FE display is FE's follow-up; #107's owner should check the schema change
 
 ## Done when
 

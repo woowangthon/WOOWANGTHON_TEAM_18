@@ -207,9 +207,26 @@ describe('MCP gateway', () => {
 
   it('takes gave_up: the run fails as AGENT_GAVE_UP and the token closes', async () => {
     const client = await connect()
-    expect((await call(client, 'submit_result', { result: result() })).structuredContent).toEqual({ accepted: true })
+    const summary = `로그에 ${SECRET}가 있어 멈췄습니다.`
+    expect((await call(client, 'submit_result', { result: result({ summary }) })).structuredContent).toEqual({ accepted: true })
     expect(updates).toEqual([
-      { where: { status: 'fixing' }, patch: { status: 'failed', failure: { code: 'AGENT_GAVE_UP', stage: 'apply', service: 'be' }, gateway_token_hash: null } },
+      {
+        where: { status: 'fixing' },
+        patch: {
+          status: 'failed',
+          failure: { code: 'AGENT_GAVE_UP', stage: 'apply', service: 'be' },
+          // 학생에게 보일 칸만, 한 번 더 가려서 저장한다(actions는 버린다).
+          agent_result: {
+            status: 'gave_up',
+            summary: '로그에 [REDACTED]가 있어 멈췄습니다.',
+            userRequest: null,
+            pr: null,
+            evidence: [],
+            classification: { method: 'code', caseId: 'A1', path: 'playbook' },
+          },
+          gateway_token_hash: null,
+        },
+      },
     ])
     expect(rejected(await call(client, 'read_repo', { path: '.' }))).toBe('TICKET_CLOSED')
     await client.close()
@@ -222,6 +239,7 @@ describe('MCP gateway', () => {
     const client = await connect()
     expect((await call(client, 'submit_result', { result: result({ status, ...extra }) })).structuredContent).toEqual({ accepted: true })
     expect(run.status).toBe('needs_user')
+    expect(run.agent_result).toMatchObject({ status, ...extra })
     expect(run.gateway_token_hash).toBeNull()
     await client.close()
   })

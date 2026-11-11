@@ -414,9 +414,46 @@ describe('GET /api/deploys/:id/status', () => {
         { key: 'done', state: 'pending' },
       ],
       failure: null,
+      agent: null,
       url: null,
       warnings: [],
       updatedAt: '2026-11-11T01:00:00.000Z',
+    })
+  })
+
+  it('shows the AI agent result the gateway stored, and only its student-facing fields', async () => {
+    const id = seedDeploy()
+    await start(id)
+    Object.assign(run(id), {
+      status: 'needs_user',
+      agent_result: {
+        status: 'needs_user',
+        summary: 'DATABASE_URL이 비어 있어 서버가 뜨지 않습니다.',
+        userRequest: { message: 'DATABASE_URL을 다시 넣어 주세요.', secretKeys: ['DATABASE_URL'] },
+        pr: null,
+        evidence: [{ ref: 'pod-logs', text: 'Error: DATABASE_URL is not set' }, { text: 'no ref' }],
+        classification: { method: 'code', caseId: 'A3', path: 'playbook' },
+      },
+    })
+    const { agent } = (await status(id)).body as { agent: unknown }
+    expect(agent).toEqual({
+      status: 'needs_user',
+      summary: 'DATABASE_URL이 비어 있어 서버가 뜨지 않습니다.',
+      userRequest: { message: 'DATABASE_URL을 다시 넣어 주세요.', secretKeys: ['DATABASE_URL'] },
+      prUrl: null,
+      evidence: [
+        { ref: 'pod-logs', text: 'Error: DATABASE_URL is not set' },
+        { ref: null, text: 'no ref' },
+      ],
+    })
+
+    run(id).agent_result = { status: 'pr_opened', summary: 'PR을 열었습니다.', pr: { url: 'https://github.com/student/app/pull/3' } }
+    expect(((await status(id)).body as { agent: unknown }).agent).toEqual({
+      status: 'pr_opened',
+      summary: 'PR을 열었습니다.',
+      userRequest: null,
+      prUrl: 'https://github.com/student/app/pull/3',
+      evidence: [],
     })
   })
 

@@ -59,12 +59,14 @@ export interface DeployRunRow {
   gateway_token_hash: string | null
   gateway_expires_at: string | null
   images: Record<string, string> | null
+  /** AI 에이전트가 낸 해결 결과 중 학생에게 보일 칸(api.md `agent`). 결과가 없으면 null. */
+  agent_result?: Record<string, unknown> | null
   created_at: string
   updated_at: string
 }
 
 type NewRun = Pick<DeployRunRow, 'deploy_id' | 'user_id' | 'slug' | 'target_slot' | 'input' | 'status' | 'stage'>
-type RunPatch = Partial<Pick<DeployRunRow, 'status' | 'stage' | 'failure' | 'ticket_id' | 'gateway_token_hash' | 'gateway_expires_at' | 'images'>>
+type RunPatch = Partial<Pick<DeployRunRow, 'status' | 'stage' | 'failure' | 'ticket_id' | 'gateway_token_hash' | 'gateway_expires_at' | 'images' | 'agent_result'>>
 
 const isRunRow = (v: unknown): v is DeployRunRow =>
   isRecord(v) &&
