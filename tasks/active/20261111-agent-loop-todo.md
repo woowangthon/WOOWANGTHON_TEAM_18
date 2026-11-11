@@ -15,7 +15,7 @@ Replace the F10 placeholder runner with the real agent, as designed in [`docs/de
 - Models: OpenAI-compatible, from env (`LOCAL_MODEL_*` required, `PLANNER_MODEL_*` optional). Planner = `FallbackModel(RedactingModel(api), local)`; without an API the local model plans.
 - FR-102: `RedactingModel` masks secret-looking strings in every message part sent to the reasoning API. Not applied to the local model.
 - Model failure → `gave_up` saying so (no plausible fake, F-1).
-- Everything sent to the model is built in `prompts.py`, so the 16K context budget (pending a user decision) can go there.
+- Everything sent to the model is built in `prompts.py`. The 16K context budget (user decision, 2026-11-11): cut on receipt in `budget.py`, a digest instead of the ticket JSON, tool results excerpted, older tool results summarized, Qwen3 thinking off and `max_tokens` for local tool calls.
 
 ## Todo
 
@@ -24,10 +24,12 @@ Replace the F10 placeholder runner with the real agent, as designed in [`docs/de
 - [x] Gateway toolset, stop codes, submit — files: `AI/ai_server/agent/gateway.py`, `AI/tests/test_gateway.py`, `AI/tests/fake_gateway.py`
 - [x] Redaction — files: `AI/ai_server/agent/redact.py`, `AI/tests/test_redact.py`
 - [x] Prompts + loop + runner wiring — files: `AI/ai_server/agent/prompts.py`, `AI/ai_server/agent/loop.py`, `AI/ai_server/main.py`, `AI/ai_server/agent/runs.py`, `AI/tests/test_agent_loop.py`, `AI/tests/scripted.py`, `AI/tests/conftest.py`
+- [x] Local-model 16K context budget (user decision) — files: `AI/ai_server/agent/budget.py`, `AI/ai_server/agent/prompts.py`, `AI/ai_server/agent/gateway.py`, `AI/ai_server/agent/loop.py`, `AI/tests/test_budget.py`
 - [x] Docs — files: `docs/ai-scope.md`, `docs/design/AIagent.md` §10 + known limits, `AI/CLAUDE.md`, `AI/Dockerfile`
 
 ## Done when
 
 - [ ] ruff, mypy strict, pytest pass — PASS from the test session
+- [x] a big ticket and big tool results keep every local-model request under the 30,000-char estimate
 - [x] each path has a test with scripted models and the fake gateway: playbook, LLM classification, unknown → plan, replan after gave_up, stop codes, TICKET_CLOSED, other rejections back to the model, wrong output regenerated, model failure, fallback, redaction, API → submit_result end to end
 - [ ] mutation testing — not run (checks run only in the test session); said in the PR

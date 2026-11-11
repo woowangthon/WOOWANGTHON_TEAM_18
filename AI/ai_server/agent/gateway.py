@@ -6,6 +6,7 @@ from typing import Any
 from pydantic_ai import ModelRetry
 from pydantic_ai.mcp import MCPToolset
 
+from ai_server.agent.budget import trim_tool_result
 from ai_server.agent.models import Action, AgentResult
 
 # 게이트웨이는 run_* · wait_target_ready를 파이프라인이 끝날 때까지(최대 30분) 붙잡는다.
@@ -69,7 +70,8 @@ class GatewayToolset(MCPToolset[Any]):
             raise ModelRetry(f"gateway rejected {name}: {code}: {message}")
         ok = content.get("ok", True) if isinstance(content, dict) else True
         self.actions.append(Action(tool=name, args=args, ok=bool(ok), result=_short(content)))
-        return content
+        # 모델에는 예산 안으로 줄인 결과를 준다(로그 발췌, 큰 원본은 필요한 칸만).
+        return trim_tool_result(content)
 
     async def submit(self, result: AgentResult) -> None:
         reply = await self.client.call_tool(
