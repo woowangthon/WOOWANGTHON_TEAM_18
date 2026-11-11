@@ -23,7 +23,7 @@ Built against the BE contract in `docs/design/api.md` "비밀값" (on `main` sin
 - [x] Hand mutants on the decision logic (PUT method, re-read, 404, ready, empty, path root, done, grouping)
 - [ ] Mutation testing (#67 not introduced yet)
 - [x] Link from the progress screen to the secrets screen (`not_started`, kept after `NOT_READY`, hidden in the other statuses) — #104 is merged
-- [ ] The secrets screen has no link back to the progress screen after "빌드 준비됨" (not asked yet)
+- [x] Link from the secrets screen to the progress screen (`배포 시작하러 가기`, inside the "빌드 준비됨" notice, shown only when the server says `ready`)
 - [ ] Screenshots (light and dark, 1440px and 390px) — attached by the user
 - [ ] A real round trip against the BE (the endpoints are on `main`; not run, and the migration must be applied)
 

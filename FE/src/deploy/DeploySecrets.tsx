@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router'
 import { Alert } from '../components/ui/Alert.tsx'
 import { Button } from '../components/ui/Button.tsx'
 import { ApiError, apiFetch } from '../lib/api.ts'
@@ -90,7 +91,10 @@ function DeploySecrets({ deployId }: { deployId: string }) {
       )}
       {secrets.ready ? (
         <Alert variant="info" title="빌드 준비됨">
-          필요한 비밀값이 모두 들어갔어요. 이제 배포를 시작할 수 있어요.
+          <p>필요한 비밀값이 모두 들어갔어요. 이제 배포를 시작할 수 있어요.</p>
+          <Link to={`/deploys/${deployId}`} className="mt-2 inline-block underline">
+            배포 시작하러 가기
+          </Link>
         </Alert>
       ) : (
         <p className="text-sm text-muted">모든 서비스의 비밀값이 들어가면 빌드가 준비돼요.</p>

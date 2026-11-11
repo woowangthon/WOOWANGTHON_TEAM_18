@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { MemoryRouter } from 'react-router'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { ApiError } from '../lib/api.ts'
 import DeploySecrets from './DeploySecrets.tsx'
@@ -28,7 +29,13 @@ beforeEach(() => {
   api.apiFetch.mockReset()
 })
 
-const show = () => render(<DeploySecrets deployId={ID} />)
+const show = () =>
+  render(
+    <MemoryRouter>
+      <DeploySecrets deployId={ID} />
+    </MemoryRouter>,
+  )
+const startLink = () => screen.queryByRole('link', { name: '배포 시작하러 가기' })
 const reads = () => api.apiFetch.mock.calls.filter((c) => c[0] === PATH && c.length === 1).length
 const input = (name: string) => screen.getByLabelText<HTMLInputElement>(name)
 const saveButton = () => screen.getByRole('button', { name: '비밀값 저장' })
@@ -70,6 +77,19 @@ it('skips the step for a deploy with no secret keys, and says it is ready', asyn
   expect(await screen.findByText('비밀값이 필요 없는 배포예요')).toBeTruthy()
   expect(screen.getByText('빌드 준비됨')).toBeTruthy()
   expect(screen.queryByRole('form')).toBeNull()
+})
+
+it('links to the progress screen to start the deploy once the server says ready, and not before', async () => {
+  api.apiFetch.mockResolvedValue(state('in', 'missing'))
+  const view = show()
+  await screen.findByLabelText('OPENAI_API_KEY')
+  expect(startLink()).toBeNull()
+  view.unmount()
+
+  api.apiFetch.mockResolvedValue(state('in', 'in'))
+  show()
+  await screen.findByText('빌드 준비됨')
+  expect(startLink()?.getAttribute('href')).toBe(`/deploys/${ID}`)
 })
 
 it('keeps the typed values and reads the state again when the save fails midway, so the written service shows as in', async () => {
