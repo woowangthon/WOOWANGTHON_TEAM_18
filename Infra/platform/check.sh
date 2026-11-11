@@ -164,9 +164,13 @@ deny rbac "read events in kube-system" ks -n kube-system get events
 deny rbac "read Ingresses in vllm" ks -n vllm get ingresses
 allow "read nodes" ks get nodes
 M=/apis/metrics.k8s.io/v1beta1
-allow "read node usage" ks get --raw $M/nodes
-allow "read Pod usage in an own space" ks get --raw $M/namespaces/proj-srvcheck/pods
-allow "read Pod usage in proj-demo" ks get --raw $M/namespaces/proj-demo/pods
+# A 200 with an empty list is what a dead metrics-server looks like, so count the values too.
+values() { grep -o '"usage":{"cpu":"[0-9][^"]*","memory":"[0-9][^"]*"}' | wc -l | tr -d " "; }
+got=$(ks get --raw $M/nodes 2>&1 | values)
+if [ "$got" = 3 ]; then echo "PASS read node usage (3 nodes with values)"; else echo "FAIL node usage: values for $got nodes, want 3"; fail=1; fi
+got=$(ks get --raw $M/namespaces/proj-demo/pods 2>&1 | values)
+if [ "$got" -ge 1 ]; then echo "PASS read Pod usage in proj-demo ($got containers with values)"; else echo "FAIL Pod usage in proj-demo: no values"; fail=1; fi
+allow "list Pod usage in an own space (right only; its list may be empty)" ks get --raw $M/namespaces/proj-srvcheck/pods
 deny rbac "read Pod usage in kube-system" ks get --raw $M/namespaces/kube-system/pods
 deny rbac "read Pod usage in vllm" ks get --raw $M/namespaces/vllm/pods
 deny rbac "read Pod usage in every namespace" ks get --raw $M/pods
