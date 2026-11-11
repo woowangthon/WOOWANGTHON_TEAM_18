@@ -232,7 +232,7 @@ AI 서버 (에이전트) → 플랫폼 서버 MCP 게이트웨이 → GoCD 서�
       "description": "verified를 낸 빌드에 쓴 CodeBuild override. 플랫폼은 빌드를 재사용해 다시 실행하므로 기록용이다",
       "properties": {
         "computeType":    { "type": "string" },
-        "timeoutMinutes": { "type": "integer", "maximum": 30 },
+        "timeoutMinutes": { "type": "integer", "maximum": 20 },
         "image":          { "type": "string" },
         "cache":          { "type": "boolean" }
       }
