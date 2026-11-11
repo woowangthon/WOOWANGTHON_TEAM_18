@@ -44,6 +44,7 @@ const running: AdminProject = {
   liveSlot: 'a',
   url: 'https://my-app.stairnoworks.com',
   lastStop: null,
+  clusterError: null,
   services: [
     {
       name: 'fe-a',
@@ -192,6 +193,21 @@ it('treats a project as running while any of its services still has replicas, an
   expect(screen.getByRole('button', { name: 'my-app 강제 중지' })).toBeTruthy()
 })
 
+it.each([
+  ['CLUSTER_UNREACHABLE', '리더 무응답'],
+  ['CLUSTER_FORBIDDEN', '리더에는 닿았지만 서버 계정에 권한이 없어요'],
+] as const)('says only that project could not be read (%s), not that it has no services, and still shows the others', async (clusterError, title) => {
+  serve({ [PROJECTS]: projectsOf([{ ...noSpace, slug: 'broken', clusterError }, running]) })
+  await show()
+  const broken = within(card('broken'))
+  expect(broken.getByText('읽지 못함')).toBeTruthy()
+  expect(broken.getByText(title)).toBeTruthy()
+  expect(broken.getByText(/이 프로젝트만 읽지 못했어요/)).toBeTruthy()
+  expect(broken.queryByText('공간 없음')).toBeNull()
+  expect(screen.queryByRole('button', { name: 'broken 강제 중지' })).toBeNull()
+  expect(within(card('my-app')).getByText('실행 중')).toBeTruthy()
+})
+
 it('says there are no saved deploys instead of an empty list', async () => {
   serve({ [PROJECTS]: projectsOf([]) })
   await show()
@@ -245,6 +261,28 @@ it('shows the forbidden notice and stops reading when the server says the user i
   const before = reads(NODES)
   await advance(REFRESH_MS * 3)
   expect(reads(NODES)).toBe(before)
+})
+
+it('stops reading both when one of them is refused as not an operator', async () => {
+  serve({ [NODES]: new ApiError(403, 'ADMIN_REQUIRED', 'x') })
+  await show()
+  const before = reads(PROJECTS)
+  await advance(REFRESH_MS * 3)
+  expect(reads(PROJECTS)).toBe(before)
+})
+
+it('clears the result of an earlier stop when the project is running again after a new deploy', async () => {
+  serve({ [stopPath('my-app')]: { slug: 'my-app', scaled: ['fe-a', 'be-a'], failed: [] } })
+  await show()
+  replies[PROJECTS] = projectsOf([{ ...running, services: running.services.map((s) => ({ ...s, replicas: 0, readyReplicas: 0 })) }])
+  await press('my-app 강제 중지')
+  await press('my-app 중지하기')
+  expect(within(card('my-app')).getByText('중지했어요')).toBeTruthy()
+  replies[PROJECTS] = projectsOf([running])
+  await advance(REFRESH_MS)
+  expect(within(card('my-app')).getByText('실행 중')).toBeTruthy()
+  expect(within(card('my-app')).queryByText('중지했어요')).toBeNull()
+  expect(screen.getByRole('button', { name: 'my-app 강제 중지' })).toBeTruthy()
 })
 
 it('shows the forbidden notice when only the projects read is refused', async () => {

@@ -23,6 +23,8 @@ export type AdminProject = {
   liveSlot: 'a' | 'b' | null
   url: string | null
   lastStop: { at: string; by: string } | null
+  // 이 프로젝트의 공간만 읽지 못했을 때의 이유. 그러면 services는 []이고, 다른 프로젝트는 그대로 온다.
+  clusterError: 'CLUSTER_FORBIDDEN' | 'CLUSTER_UNREACHABLE' | null
   services: AdminService[]
 }
 export type ProjectsResponse = { projects: AdminProject[] }

@@ -11,12 +11,14 @@ export type AdminRead<T> = { data: T | null; error: unknown; reload: () => void 
 
 // 한 경로를 읽고 REFRESH_MS마다 다시 읽는다. 읽기가 실패해도 마지막으로 읽은 값은 지우지 않는다.
 // 서버가 운영자가 아니라고(403) 하면 다시 읽어도 달라지지 않으므로 멈춘다.
-export function useAdminRead<T>(path: string): AdminRead<T> {
+// paused이면 읽지 않는다(이미 있는 값은 그대로 둔다). 같은 화면의 다른 읽기가 403을 받았을 때 함께 멈추려고 쓴다.
+export function useAdminRead<T>(path: string, paused = false): AdminRead<T> {
   const [data, setData] = useState<T | null>(null)
   const [error, setError] = useState<unknown>(null)
   const [reads, setReads] = useState(0)
 
   useEffect(() => {
+    if (paused) return
     let ignore = false
     let timer: ReturnType<typeof setTimeout> | undefined
     async function read() {
@@ -38,7 +40,7 @@ export function useAdminRead<T>(path: string): AdminRead<T> {
       ignore = true
       clearTimeout(timer)
     }
-  }, [path, reads])
+  }, [path, reads, paused])
 
   return { data, error, reload: () => { setReads((count) => count + 1) } }
 }

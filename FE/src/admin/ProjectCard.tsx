@@ -3,14 +3,15 @@ import { Alert } from '../components/ui/Alert.tsx'
 import { Badge } from '../components/ui/Badge.tsx'
 import { Button } from '../components/ui/Button.tsx'
 import { ApiError, apiFetch } from '../lib/api.ts'
-import { ClusterProblem } from './ClusterProblem.tsx'
+import { clusterAlert, ClusterProblem } from './ClusterProblem.tsx'
 import { timeText } from './format.ts'
 import Row from './Row.tsx'
 import type { AdminProject, StopResponse } from './types.ts'
 
 // 공간의 서비스가 하나도 없거나(공간 없음) 모두 0개로 내려갔으면(중지됨) 끌 것이 없다. 중지 뒤에는 lastStop이 아니라 replicas를 본다.
-const stateOf = ({ services }: AdminProject) =>
-  services.length === 0 ? 'none' : services.every((s) => s.replicas === 0) ? 'stopped' : 'running'
+// 공간을 읽지 못했으면(clusterError) 서비스가 없는 것이 아니라 모르는 것이다.
+const stateOf = ({ services, clusterError }: AdminProject) =>
+  clusterError ? 'unknown' : services.length === 0 ? 'none' : services.every((s) => s.replicas === 0) ? 'stopped' : 'running'
 
 function StateBadge({ state }: { state: ReturnType<typeof stateOf> }) {
   switch (state) {
@@ -20,6 +21,8 @@ function StateBadge({ state }: { state: ReturnType<typeof stateOf> }) {
       return <Badge variant="neutral">중지됨</Badge>
     case 'none':
       return <Badge variant="neutral">공간 없음</Badge>
+    case 'unknown':
+      return <Badge variant="warn">읽지 못함</Badge>
   }
 }
 
@@ -33,6 +36,12 @@ type StopState =
 // running: 끌 것이 있다(버튼을 보인다). 중지한 뒤 다시 읽으면 프로젝트가 중지됨이 되지만, 방금 한 일의 결과는 그대로 보여야 하므로 이 패널은 계속 그린다.
 function StopPanel({ slug, running, onStopped }: { slug: string; running: boolean; onStopped: () => void }) {
   const [stop, setStop] = useState<StopState>({ step: 'idle' })
+  // 다시 배포되어 실행 중으로 돌아오면 지난 중지의 결과는 거둔다(낡은 "중지했어요"가 "실행 중" 아래 남지 않게).
+  const [wasRunning, setWasRunning] = useState(running)
+  if (wasRunning !== running) {
+    setWasRunning(running)
+    if (running && (stop.step === 'done' || stop.step === 'failed')) setStop({ step: 'idle' })
+  }
 
   async function run() {
     setStop({ step: 'stopping' })
@@ -148,6 +157,7 @@ function ProjectCard({ project, onStopped }: { project: AdminProject; onStopped:
           </Row>
         )}
       </dl>
+      {project.clusterError && clusterAlert(project.clusterError, '이 프로젝트만 읽지 못했어요.')}
       {project.services.length > 0 && (
         <ul className="flex flex-col gap-2">
           {project.services.map((service) => (

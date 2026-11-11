@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import ForbiddenNotice from '../admin/ForbiddenNotice.tsx'
 import NodesSection from '../admin/NodesSection.tsx'
 import ProjectsSection from '../admin/ProjectsSection.tsx'
@@ -7,10 +8,12 @@ import type { NodesResponse, ProjectsResponse } from '../admin/types.ts'
 
 // Admin Page(UC-17): 클러스터 노드와 실행 중인 학생 서비스를 보고 강제로 끈다. 숫자와 목록은 모두 서버가 준 그대로다.
 function AdminPage() {
-  const nodes = useAdminRead<NodesResponse>('/api/admin/nodes')
-  const projects = useAdminRead<ProjectsResponse>('/api/admin/projects')
-  // 화면은 편의로 막을 뿐이고 판단은 서버가 한다. 서버가 운영자가 아니라고 하면 같은 화면으로 막는다.
-  if (isForbidden(nodes.error) || isForbidden(projects.error)) return <ForbiddenNotice />
+  // 화면은 편의로 막을 뿐이고 판단은 서버가 한다. 한 읽기라도 운영자가 아니라고(403) 하면 같은 화면으로 막고, 다른 읽기도 멈춘다.
+  const [forbidden, setForbidden] = useState(false)
+  const nodes = useAdminRead<NodesResponse>('/api/admin/nodes', forbidden)
+  const projects = useAdminRead<ProjectsResponse>('/api/admin/projects', forbidden)
+  if (!forbidden && (isForbidden(nodes.error) || isForbidden(projects.error))) setForbidden(true)
+  if (forbidden) return <ForbiddenNotice />
   return (
     <>
       <h1 className="text-xl">관리자</h1>
