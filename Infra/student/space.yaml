@@ -1,6 +1,6 @@
 # Student project space template, applied as the test space proj-demo.
 # Design and reasons: docs/design/cluster.md §6.
-# The platform server creates one of these per project (five objects) with the name proj-<id> (only the name changes;
+# The platform server creates one of these per project (six objects) with the name proj-<id> (only the name changes;
 # the admission policies in Infra/platform/policies.yaml accept only these values). The server may only create these objects
 # (cluster.md §8), so the space's default ServiceAccount is left as Kubernetes makes it; the API token is
 # turned off on each Pod instead. App resources (Deployment, Service, Ingress) come from the leader's
@@ -119,3 +119,19 @@ subjects:
 - kind: ServiceAccount
   name: platform-server
   namespace: platform
+---
+# Lets the leader deploy executor apply and read the app's resources in this space, and nowhere else:
+# the executor account has no cluster-wide rights. The role proj-deployer is in Infra/executor/account.yaml.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: deploy-executor
+  namespace: proj-demo
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: proj-deployer
+subjects:
+- kind: ServiceAccount
+  name: deploy-executor
+  namespace: deploy

@@ -10,7 +10,7 @@ from ai_server.agent.memory import CaseMemory
 from ai_server.agent.runs import RunRegistry, TicketRun
 from ai_server.config import Settings
 from ai_server.main import create_app
-from tests.conftest import AUTH, TOKEN
+from tests.conftest import AUTH, TOKEN, classify_only
 from tests.samples import SHA, ticket_request
 from tests.test_memory import SIGNALS
 
@@ -122,7 +122,6 @@ def test_ticket_is_accepted_and_run_in_the_background(client: TestClient) -> Non
     assert res.json() == {"ticketId": "t_0013"}
     run = runs(client).get("t_0013")
     assert run is not None and run.gateway.token == "gw_abc"
-    # 기본 실행은 코드 분류만 한다.
     wait_until(lambda: not run.running)
     assert run.case_id == "A1"
     a1 = runs(client).memory.get("A1")
@@ -167,7 +166,8 @@ def test_busy_when_too_many_runs(busy_client: TestClient, blocking: Blocking) ->
 
 
 def test_finished_runs_do_not_count_as_busy(settings: Settings) -> None:
-    with TestClient(create_app(settings.model_copy(update={"agent_max_runs": 1}))) as c:
+    settings = settings.model_copy(update={"agent_max_runs": 1})
+    with TestClient(create_app(settings, runner=classify_only)) as c:
         assert post_ticket(c, ticketId="t_1").status_code == 202
         wait_until(lambda: not runs(c).busy())
         assert post_ticket(c, ticketId="t_2").status_code == 202

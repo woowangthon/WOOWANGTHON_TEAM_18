@@ -438,6 +438,7 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
 - `ticket.raw`: stage에 따라 두 모양만 받는다. `build`면 `{ "codebuild": <BatchGetBuilds builds[0] 원본>, "k8s": null }`, 그 밖의 stage면 `{ "codebuild": null, "k8s": { "pod": <Pod 원본> | null, "events": [<Event 원본>], "status": <k3s Status 원본> | null } }`. `status`는 `render`일 때 dry-run이 돌려준 Status(필수)이고 그 밖에는 `null`이다. `render`면 `errorMessage`에 Status의 `message`를 그대로 넣는다.
 - `ticket.previous.status`: `verified` · `pr_opened` · `needs_user` · `gave_up`(그 티켓의 해결 결과) · `stopped`(결과 없이 끝남) 중 하나.
 - `gateway.token`: 이 티켓에만 쓰는 게이트웨이 토큰.
+- AI 서버는 받은 로그(한 줄 400자, 전체 24KB)와 큰 원본(`raw.*`, 게이트웨이 도구 결과의 Pod · 이벤트 · builds[0] · Status)을 받는 쪽에서 직접 줄여 모델에 준다([AI 에이전트 설계](AIagent.md) §10). 플랫폼은 원본을 그대로 보내면 된다.
 
 응답 `202`: `{ "ticketId": "t_0013" }`. 에이전트 실행은 응답 뒤에 시작한다(플랫폼은 끝날 때까지 기다리지 않는다). 같은 `ticketId`를 다시 보내면 새로 시작하지 않고 같은 `202`를 준다(재전송용).
 

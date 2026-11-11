@@ -83,33 +83,34 @@ describe('SpaceService.ensureSpace (plain http, loopback)', () => {
   afterAll(() => fake.close())
 
   const NS = 'proj-my-app'
-  const five = [
+  const six = [
     '/api/v1/namespaces',
     `/api/v1/namespaces/${NS}/limitranges`,
     `/api/v1/namespaces/${NS}/resourcequotas`,
     `/apis/networking.k8s.io/v1/namespaces/${NS}/networkpolicies`,
     `/apis/rbac.authorization.k8s.io/v1/namespaces/${NS}/rolebindings`,
+    `/apis/rbac.authorization.k8s.io/v1/namespaces/${NS}/rolebindings`,
   ]
 
-  it('creates the five objects in order with the bearer token and a JSON body', async () => {
+  it('creates the six objects in order with the bearer token and a JSON body', async () => {
     await service.ensureSpace('my-app')
-    expect(fake.paths).toEqual(five)
+    expect(fake.paths).toEqual(six)
     expect(fake.seen.every((s) => s.method === 'POST' && s.auth === `Bearer ${TOKEN}` && s.contentType === 'application/json')).toBe(true)
-    expect(fake.seen.map((s) => (s.body as { kind: string }).kind)).toEqual(['Namespace', 'LimitRange', 'ResourceQuota', 'NetworkPolicy', 'RoleBinding'])
+    expect(fake.seen.map((s) => (s.body as { kind: string }).kind)).toEqual(['Namespace', 'LimitRange', 'ResourceQuota', 'NetworkPolicy', 'RoleBinding', 'RoleBinding'])
     expect(fake.seen[0].body).toMatchObject({ metadata: { name: NS } })
   })
 
   it('counts 409 AlreadyExists as success, so calling again (or resuming) works', async () => {
-    for (const p of five) fake.answers.set(p, already)
+    for (const p of six) fake.answers.set(p, already)
     await expect(service.ensureSpace('my-app')).resolves.toBeUndefined()
-    expect(fake.paths).toEqual(five)
+    expect(fake.paths).toEqual(six)
   })
 
   it('resumes after a half-made space: the first two exist, the rest are created', async () => {
-    fake.answers.set(five[0], already)
-    fake.answers.set(five[1], already)
+    fake.answers.set(six[0], already)
+    fake.answers.set(six[1], already)
     await service.ensureSpace('my-app')
-    expect(fake.paths).toEqual(five)
+    expect(fake.paths).toEqual(six)
   })
 
   it.each([
@@ -122,10 +123,10 @@ describe('SpaceService.ensureSpace (plain http, loopback)', () => {
     ['an answer that is not JSON', { status: 502, body: 'bad gateway' }],
     ['a 200 that is not 201', { status: 200 }],
   ] as [string, Answer][])('answers 503 CLUSTER_UNAVAILABLE on %s and stops there', async (_, answer) => {
-    fake.answers.set(five[1], answer)
+    fake.answers.set(six[1], answer)
     await expect(service.ensureSpace('my-app')).rejects.toMatchObject(unavailable)
     // 공간(1)은 만들었고, 실패한 둘째에서 멈춘다.
-    expect(fake.paths).toEqual(five.slice(0, 2))
+    expect(fake.paths).toEqual(six.slice(0, 2))
   })
 
   // 리더의 Tailscale 주소가 IPv6(fd7a:...)일 수 있다. 대괄호가 남으면 이름 풀이로 넘어가 연결이 모두 실패한다.
@@ -136,14 +137,14 @@ describe('SpaceService.ensureSpace (plain http, loopback)', () => {
     try {
       const { port } = v6.address() as AddressInfo
       await serviceOf(`http://[::1]:${port}`).ensureSpace('my-app')
-      expect(fakeV6.seen).toHaveLength(5)
+      expect(fakeV6.seen).toHaveLength(six.length)
     } finally {
       await fakeV6.close()
     }
   })
 
   it('answers 503 when the connection is dropped', async () => {
-    fake.answers.set(five[0], 'hangup')
+    fake.answers.set(six[0], 'hangup')
     await expect(service.ensureSpace('my-app')).rejects.toBeInstanceOf(ServiceUnavailableException)
   })
 
@@ -158,7 +159,7 @@ describe('SpaceService.ensureSpace (plain http, loopback)', () => {
   })
 
   it('keeps the token and the answer text out of the error', async () => {
-    fake.answers.set(five[0], { status: 403, body: { reason: 'Forbidden', message: 'secret-looking detail' } })
+    fake.answers.set(six[0], { status: 403, body: { reason: 'Forbidden', message: 'secret-looking detail' } })
     const err = (await service.ensureSpace('my-app').catch((e: unknown) => e)) as ServiceUnavailableException
     expect(JSON.stringify(err.getResponse())).not.toMatch(/secret|token/i)
     expect(err.message).toBe('Could not reach the cluster')
@@ -166,7 +167,7 @@ describe('SpaceService.ensureSpace (plain http, loopback)', () => {
 
   it('logs the status and reason, never the token or the answer text', async () => {
     const logged = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
-    fake.answers.set(five[0], { status: 403, body: { reason: 'Forbidden', message: 'secret-looking detail' } })
+    fake.answers.set(six[0], { status: 403, body: { reason: 'Forbidden', message: 'secret-looking detail' } })
     await service.ensureSpace('my-app').catch(() => undefined)
     expect(logged).toHaveBeenCalledWith('POST /api/v1/namespaces answered 403 Forbidden')
     expect(JSON.stringify(logged.mock.calls)).not.toMatch(new RegExp(`${TOKEN}|secret-looking`))
@@ -193,7 +194,7 @@ describe('SpaceService.ensureSpace (plain http, loopback)', () => {
   it('accepts the shortest and the longest slug', async () => {
     await service.ensureSpace('a')
     await service.ensureSpace('a'.repeat(40))
-    expect(fake.paths).toHaveLength(10)
+    expect(fake.paths).toHaveLength(2 * six.length)
   })
 })
 
@@ -241,7 +242,7 @@ describe('SpaceService.ensureSpace (https with a private CA)', () => {
 
   it('trusts the configured CA', async () => {
     await serviceOf(url, caPem).ensureSpace('my-app')
-    expect(fake.seen).toHaveLength(5)
+    expect(fake.seen).toHaveLength(6)
   })
 
   it('refuses a server whose certificate the CA did not sign, before sending the token', async () => {
