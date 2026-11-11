@@ -195,10 +195,11 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 - **조회**: 플랫폼 서버는 사설망으로 리더 API의 서비스 프록시를 거쳐 Prometheus를 조회한다(ADR-006. 포트는 늘지 않는다): `GET /api/v1/namespaces/monitoring/services/monitoring-prometheus:9090/proxy/api/v1/query?query=…`. 권한은 그 Service 이름 하나에 대한 `services/proxy`의 `get`뿐이라 `POST`는 `403`이다(§8). 쿼리를 공간별로 거르는 프록시는 앞에 두지 않는다: 서버 토큰으로 `proj-` 밖(`vllm` · `kube-system` 등)의 지표 수치도 읽히지만, 로그 · Secret · 객체는 여전히 읽히지 않는다. AI 서버는 플랫폼 서버를 거친다.
 - **서버가 묻는 것**: CPU · 메모리 사용량과 재시작 수까지다([api.md](api.md) 운영자 API의 `usage`). Traefik의 요청 수 · 지연 · 에러율은 그것을 보여 줄 화면이 생길 때 더한다.
 - **Grafana**: 운영자용이고 사설망으로만 연다(SSH 포트 포워딩, 명령은 [`Infra/monitoring/monitoring.yaml`](../../Infra/monitoring/monitoring.yaml) 머리말). 플랫폼 웹에 끼워 넣지 않는다. 관리자 비밀번호는 리더에서 만들어 Secret `grafana-admin`에만 둔다(§12). 차트의 기본 대시보드(노드 · Pod · 공간별 자원)가 들어 있다.
+- **들어오는 길**: 지표 공간의 NetworkPolicy `same-namespace-only`가 같은 공간의 Pod에서 오는 것만 들인다(리뷰 지적으로 더함, 2026-11-12). 없으면 클러스터의 아무 Pod나, 노드를 Pod 대역의 경로로 지정한 학교망 기기(알려진 한계)가 Prometheus API와 Grafana 로그인 화면에 닿는다. 리더 API의 서비스 프록시와 포트 포워딩은 리더 자신에게서 Pod로 가는 통신이라 그대로 된다. node-exporter는 호스트 네트워크라 이 규칙이 아니라 호스트 방화벽(§3)이 막는다.
 - **알림(예정)**: Grafana 규칙(노드 NotReady, 디스크 · 메모리 임계) → Discord. 웹훅 주소가 정해지면 넣는다. Grafana는 Pod라 호스트 방화벽(§3)의 나가는 규칙이 걸리지 않는다.
 - **리더 밖에서 봐야 하는 것**: 리더가 죽거나 리더의 인터넷 길이 끊기면 Grafana도 Discord에 닿지 못한다. 터널 끊김은 Cloudflare의 터널 상태 알림으로 받는다(무료 플랜에서 되는지 설치 때 확인한다. 안 되면 두지 않는다). cloudflared의 연결 수 지표로는 보지 않는다: 리더 인터넷을 끊은 시험에서 그 값이 0으로 떨어지지 않았다(§9). 리더 무응답은 플랫폼 서버가 API 실패로 알아채 운영자 화면에 알린다(`503 CLUSTER_UNREACHABLE`, [api.md](api.md). ADR-006). Discord 같은 바깥 채널로 보내는 것은 이번 범위에 두지 않는다.
-- **시험(2026-11-11, [`Infra/monitoring/check.sh`](../../Infra/monitoring/check.sh), 운영자 기기에서 실행, 아무것도 바꾸지 않는다)**: node-exporter · kubelet · cAdvisor가 세 노드에서, kube-state-metrics 하나, Traefik 둘, cloudflared 하나가 모두 수집되고 죽은 대상이 없다. 노드 셋 Ready, 세 노드의 디스크 여유, 시험 앱의 재시작 수가 쿼리로 나온다. 서버 계정으로는 Prometheus 쿼리가 되고, Grafana · Prometheus의 다른 Service · Pod 프록시, 지표 공간의 Service · Pod · Secret 읽기, 다른 공간(`vllm`)의 서비스 프록시는 거절된다. 실제 토큰으로 쿼리 `200`, `POST` `403`, Grafana `403`. 같은 날 `Infra/platform` · `executor` · `student`의 시험도 다시 돌려 모두 통과했다. 확인하지 않은 것: Grafana 화면을 사람이 열어 본 것, 2주 보관과 크기 상한이 실제로 지워지는지.
-- **하지 않는 것**: blackbox-exporter(바깥 주소 찔러 보기), 노드 온도 · 디스크 건강, 노드 간 지연 · 손실, GPU · 로컬 모델 지표, 지표 공간의 NetworkPolicy(학생 공간은 자기 차단 규칙으로 클러스터 안 대역에 나가지 못한다, §6). 로컬 모델이 팀 일정상 후순위이고(§11) 나머지는 운영자 화면의 부가 항목이다([시스템 정의서 §4.3](../system-definition.md#43-user2-운영자-흐름)).
+- **시험(2026-11-11, [`Infra/monitoring/check.sh`](../../Infra/monitoring/check.sh), 운영자 기기에서 실행, 아무것도 바꾸지 않는다)**: node-exporter · kubelet · cAdvisor가 세 노드에서, kube-state-metrics 하나, Traefik 둘, cloudflared 하나가 모두 수집되고 죽은 대상이 없다. 노드 셋 Ready, 세 노드의 디스크 여유, 시험 앱의 재시작 수가 쿼리로 나온다. 서버 계정으로는 Prometheus 쿼리가 되고, Grafana · Prometheus의 다른 Service · Pod 프록시, 지표 공간의 Service · Pod · Secret 읽기, 다른 공간(`vllm`)의 서비스 프록시는 거절된다. 실제 토큰으로 쿼리 `200`, `POST` `403`, Grafana `403`. 구성요소 넷과 node-exporter 셋이 Ready이고, 다른 공간(`vllm`)의 Pod에서는 Prometheus와 Grafana에 닿지 않는다(규칙을 넣기 전에는 둘 다 `200`이었다). 같은 날 `Infra/platform` · `executor` · `student`의 시험도 다시 돌려 모두 통과했다. 확인하지 않은 것: Grafana 화면을 사람이 열어 본 것, 2주 보관과 크기 상한이 실제로 지워지는지.
+- **하지 않는 것**: blackbox-exporter(바깥 주소 찔러 보기), 노드 온도 · 디스크 건강, 노드 간 지연 · 손실, GPU · 로컬 모델 지표. 로컬 모델이 팀 일정상 후순위이고(§11) 나머지는 운영자 화면의 부가 항목이다([시스템 정의서 §4.3](../system-definition.md#43-user2-운영자-흐름)).
 
 ### 11. 리더 GPU · 로컬 모델 (구현됨, 2026-11-09)
 
@@ -269,7 +270,7 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 
 ## 알려진 한계
 
-- 플랫폼 서버 토큰으로 Prometheus의 지표 수치는 공간을 가리지 않고 읽힌다(§10). 지표 공간에는 NetworkPolicy가 없다.
+- 플랫폼 서버 토큰으로 Prometheus의 지표 수치는 공간을 가리지 않고 읽힌다(§10). 지표 공간에서 나가는 통신은 묶지 않았다.
 - 지표와 Grafana는 리더에만 있다. 리더가 꺼지면 조회가 멈추고, 리더 디스크가 죽으면 지표가 사라진다(ADR-006). 알림은 아직 없다.
 - 리더, 스위치, 벽 랜 포트(인터넷 길)가 단일 장애점이다. 스위치 전원이 잠깐 나가면 돌아오는 순간 학생 Pod가 전부 다시 뜬다.
 - 터널이 리더에 있는 동안은 리더가 꺼지면 방문자가 들어오지 못한다.

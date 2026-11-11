@@ -42,6 +42,29 @@ if [ "$off" = 0 ]; then echo "PASS everything but node-exporter is on the leader
 keep=$(k -n monitoring get prometheus monitoring-prometheus -o "jsonpath='{.spec.retention} {.spec.retentionSize} {.spec.enableAdminAPI}'")
 if [ "$keep" = "14d 20GB false" ]; then echo "PASS retention 14d, size cap 20GB, admin API off"; else echo "FAIL retention settings: '$keep'"; fail=1; fi
 
+ready() { # ready <label> <kind/name>: exists and every replica is Ready
+  local got; got=$(k -n monitoring get "$2" -o "jsonpath='{.status.readyReplicas}/{.spec.replicas}'" 2>/dev/null)
+  if [ "$got" = 1/1 ]; then echo "PASS $1 is Ready"; else echo "FAIL $1: ready/replicas '$got'"; fail=1; fi
+}
+ready Grafana deployment/monitoring-grafana
+ready "the operator" deployment/monitoring-operator
+ready kube-state-metrics deployment/monitoring-kube-state-metrics
+ready Prometheus statefulset/prometheus-monitoring-prometheus
+want_exporters=$(k -n monitoring get daemonset monitoring-prometheus-node-exporter -o "jsonpath='{.status.numberReady}'" 2>/dev/null)
+if [ "$want_exporters" = 3 ]; then echo "PASS node-exporter is Ready on three nodes"; else echo "FAIL node-exporter ready on '$want_exporters' nodes"; fail=1; fi
+
+echo "== who can reach it"
+# From a Pod of another namespace (the local model's, which has python and no egress rule). A blocked
+# call ends in python's "Connection refused" (the policy engine rejects, it does not drop) or a timeout;
+# any other ending (a status, a missing Pod) is a failure.
+reach() { k -n vllm exec deploy/vllm -- python3 -c "\"import urllib.request as u;print(u.urlopen('$1',timeout=5).status)\"" 2>&1; }
+blocked() { # blocked <label> <url>
+  local got; got=$(reach "$2")
+  if echo "$got" | grep -Eq 'Connection refused|timed out|TimeoutError'; then echo "PASS $1 is out of reach from another namespace"; else echo "FAIL $1 from another namespace: $(echo "$got" | tail -1)"; fail=1; fi
+}
+blocked Prometheus http://monitoring-prometheus.monitoring.svc.cluster.local:9090/-/ready
+blocked Grafana http://monitoring-grafana.monitoring.svc.cluster.local/api/health
+
 echo "== what is collected"
 want "node-exporter on the three nodes" 3 'count(up{job="node-exporter"} == 1)'
 want "kubelet on the three nodes" 3 'count(up{job="kubelet",metrics_path="/metrics"} == 1)'

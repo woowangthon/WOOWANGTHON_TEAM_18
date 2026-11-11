@@ -19,6 +19,24 @@ metadata:
     # node-exporter reads the host (hostNetwork, hostPID, host paths), which baseline refuses.
     pod-security.kubernetes.io/enforce: privileged
 ---
+# In: only Pods of this namespace (Prometheus scraping its own parts, Grafana asking Prometheus).
+# Without it any Pod in the cluster, and a school-LAN device that routes the Pod range through a node
+# (cluster.md "알려진 한계"), could read the Prometheus API and reach Grafana's login page.
+# The API server's service proxy and `kubectl port-forward` still work: both reach the Pods from the
+# leader itself, and the policy engine always lets a node talk to its own Pods.
+# node-exporter is on the host network, so this does not cover it; the host firewall does (cluster.md §3).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: same-namespace-only
+  namespace: monitoring
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress"]
+  ingress:
+  - from:
+    - podSelector: {}
+---
 apiVersion: helm.cattle.io/v1
 kind: HelmChart
 metadata:
