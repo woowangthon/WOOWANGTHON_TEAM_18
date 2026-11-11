@@ -31,5 +31,5 @@ User decision (2026-11-11): split F11b and land the contract first, no code. Bot
 - [x] Build stage in `student-trial` (`run_build`, trial image, buildOverrides in the input response), flow picture, ADR-014 alternatives
 - [x] Track A confirms build result assembly and the Build job's input read (failedPhase = phaseType, logTail rules, timeoutMinutes cap 20, cache false = NO_CACHE)
 - [x] CodeRabbit review: cancel leftovers at BE start, raise token expiry when a wait starts, live path protection for `stripPrefix`, notice generations as a known limit
-- [ ] Track A confirms the CodeRabbit changes
+- [x] Track A confirms the CodeRabbit changes (GoCD cancels per stage, not per instance)
 - [ ] Next PR: BE implementation (trial routes, gateway run tools, `verified` re-run, without the build_cache move, which the #107 owner does)
