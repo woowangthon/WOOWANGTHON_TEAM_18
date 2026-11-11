@@ -118,11 +118,33 @@ deny rbac "create a Pod in a space" ks create -f - < <(pod false NET_RAW | sed '
 deny rbac "create a Deployment in a space" ks -n proj-srvcheck create deployment x --image=busybox:1.37
 deny rbac "create a Middleware in a space" ks create -f - < <(printf 'apiVersion: traefik.io/v1alpha1\nkind: Middleware\nmetadata: {name: x, namespace: proj-srvcheck}\nspec: {stripPrefix: {prefixes: ["/a"]}}\n')
 
+echo "== server account: stop a service (scale to 0, through the read binding of each space)"
+SCALE0="'{\"spec\":{\"replicas\":0}}'"
+SCALE1="'{\"spec\":{\"replicas\":1}}'"
+SCALE2="'{\"spec\":{\"replicas\":2}}'"
+allow "operator puts a Deployment in the own space" k create -f - < <(doc Deployment proj-srvcheck ../student/app-example.yaml)
+allow "scale it to 0" ks -n proj-srvcheck patch deployment web --subresource=scale --type=merge -p "$SCALE0"
+replicas=$(k -n proj-srvcheck get deployment web -o "jsonpath='{.spec.replicas}'")
+if [ "$replicas" = 0 ]; then echo "PASS the Deployment is at 0"; else echo "FAIL replicas after the stop: '$replicas'"; fail=1; fi
+allow "scale it to 0 again (already stopped)" ks -n proj-srvcheck patch deployment web --subresource=scale --type=merge -p "$SCALE0"
+deny policy "scale it back to 1" ks -n proj-srvcheck patch deployment web --subresource=scale --type=merge -p "$SCALE1"
+allow "scale proj-demo to 0 (dry run)" ks -n proj-demo patch deployment web --subresource=scale --type=merge -p "$SCALE0" --dry-run=server
+deny policy "scale proj-demo to 2 (dry run)" ks -n proj-demo patch deployment web --subresource=scale --type=merge -p "$SCALE2" --dry-run=server
+deny rbac "patch the Deployment itself" ks -n proj-srvcheck patch deployment web --type=merge -p "$SCALE0"
+deny rbac "scale in vllm" ks -n vllm patch deployment vllm --subresource=scale --type=merge -p "$SCALE0" --dry-run=server
+deny rbac "scale in kube-system" ks -n kube-system patch deployment coredns --subresource=scale --type=merge -p "$SCALE0" --dry-run=server
+deny rbac "scale in a space without the read binding" ks -n proj-srvcheck2 patch deployment web --subresource=scale --type=merge -p "$SCALE0"
+
 echo "== server account: reads (through the read binding of each space)"
 allow "read Pods in an own space" ks -n proj-srvcheck get pods
 allow "read Pods in proj-demo" ks -n proj-demo get pods
 allow "read a Pod log in proj-demo" ks -n proj-demo logs -l app=web --tail=1
 allow "read Deployments in proj-demo" ks -n proj-demo get deployments
+allow "read events in proj-demo" ks -n proj-demo get events
+allow "read events in proj-demo (events.k8s.io)" ks -n proj-demo get events.events.k8s.io
+allow "read Ingresses in proj-demo" ks -n proj-demo get ingresses
+deny rbac "read events in kube-system" ks -n kube-system get events
+deny rbac "read Ingresses in vllm" ks -n vllm get ingresses
 allow "read nodes" ks get nodes
 deny rbac "read Pods in kube-system" ks -n kube-system get pods
 deny rbac "read Pods in vllm" ks -n vllm get pods
@@ -149,10 +171,10 @@ TS=$(ssh k3s-leader 'tailscale ip -4')
 CA=$(mktemp); trap 'rm -f "$CA"; cleanup' EXIT
 k -n platform get secret platform-server-token -o "jsonpath='{.data.ca\.crt}'" | base64 --decode > "$CA"
 TOKEN=$(k -n platform get secret platform-server-token -o "jsonpath='{.data.token}'" | base64 --decode)
-api() { # api <token> <method> <path> [json body] -> HTTP status
+api() { # api <token> <method> <path> [json body] [content type] -> HTTP status
   # --ssl-no-revoke: Windows curl (Schannel) asks for a revocation list, which a cluster CA does not have.
   # The token goes to curl on stdin (-K -), not as an argument, so it does not show in the process list.
-  printf 'header = "Authorization: Bearer %s"\n' "$1" | curl -s --ssl-no-revoke -K - -o /dev/null -m 10 -w '%{http_code}' --cacert "$CA" -H 'Content-Type: application/json' -X "$2" ${4:+-d "$4"} "https://$TS:6443$3"
+  printf 'header = "Authorization: Bearer %s"\n' "$1" | curl -s --ssl-no-revoke -K - -o /dev/null -m 10 -w '%{http_code}' --cacert "$CA" -H "Content-Type: ${5:-application/json}" -X "$2" ${4:+-d "$4"} "https://$TS:6443$3"
 }
 status() { # status <want> <label> <got>
   if [ "$3" = "$1" ]; then echo "PASS $2 ($3)"; else echo "FAIL $2 (want $1, got $3)"; fail=1; fi
@@ -162,6 +184,10 @@ status 201 "create a space (dry run)"        "$(api "$TOKEN" POST '/api/v1/names
 status 409 "create an existing space"        "$(api "$TOKEN" POST '/api/v1/namespaces' "$(printf "$NSJSON" proj-srvcheck)")"
 status 422 "space without the proj- prefix"  "$(api "$TOKEN" POST '/api/v1/namespaces?dryRun=All' "$(printf "$NSJSON" other-space)")"
 status 403 "read Secrets"                    "$(api "$TOKEN" GET '/api/v1/namespaces/proj-srvcheck/secrets')"
+MERGE=application/merge-patch+json
+status 200 "stop proj-demo web (dry run)"    "$(api "$TOKEN" PATCH '/apis/apps/v1/namespaces/proj-demo/deployments/web/scale?dryRun=All' '{"spec":{"replicas":0}}' $MERGE)"
+status 422 "scale proj-demo web to 1 (dry run)" "$(api "$TOKEN" PATCH '/apis/apps/v1/namespaces/proj-demo/deployments/web/scale?dryRun=All' '{"spec":{"replicas":1}}' $MERGE)"
+status 403 "stop a Deployment in vllm"       "$(api "$TOKEN" PATCH '/apis/apps/v1/namespaces/vllm/deployments/vllm/scale?dryRun=All' '{"spec":{"replicas":0}}' $MERGE)"
 status 401 "wrong token"                     "$(api not-a-token GET '/api/v1/namespaces')"
 unset TOKEN
 

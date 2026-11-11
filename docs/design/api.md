@@ -588,7 +588,7 @@ DB에 배포가 있는 프로젝트(`slug`)마다 공간 `proj-<slug>`를 읽어
 
 응답 `200`: `{ "slug", "scaled": ["fe-a", "be-a"], "failed": [] }`. 하나라도 내렸으면 누가 언제 했는지 기록한다(`admin_actions`. 하나도 못 내렸으면 기록하지 않는다. 기록하지 못하면 `503 DATABASE_UNAVAILABLE`이고, 이미 내린 것은 그대로지만 같은 요청을 다시 보내도 안전하다). 일부만 실패해도 `200`이고 `failed`에 이름이 온다(다시 요청하면 이어서 내린다).
 
-오류: `404 PROJECT_NOT_FOUND`(DB에 없는 slug, slug 모양이 아닌 값 포함), `409 NOT_RUNNING`(공간이 없거나 Deployment가 없다), `403 ADMIN_REQUIRED`, `503 CLUSTER_UNREACHABLE`, `503 CLUSTER_FORBIDDEN`(Deployment scale 권한이 아직 없을 때. 인프라 담당이 [`cluster.md`](cluster.md) §8 "남은 것"의 조치용 권한을 주기 전까지 이 오류다. 서버의 scale 호출은 아직 붙이지 않아 지금은 항상 이 오류다), `503 DATABASE_UNAVAILABLE`.
+오류: `404 PROJECT_NOT_FOUND`(DB에 없는 slug, slug 모양이 아닌 값 포함), `409 NOT_RUNNING`(공간이 없거나 Deployment가 없다), `403 ADMIN_REQUIRED`, `503 CLUSTER_UNREACHABLE`, `503 CLUSTER_FORBIDDEN`(서버 계정이 scale을 거절당했을 때. 클러스터 쪽 권한은 2026-11-11에 들어갔지만([`cluster.md`](cluster.md) §8, 0개로 내리기만) 서버의 scale 호출을 아직 붙이지 않아 지금은 항상 이 오류다), `503 DATABASE_UNAVAILABLE`.
 
 ## AI 에이전트 (플랫폼 서버 ↔ AI 서버)
 

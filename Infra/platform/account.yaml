@@ -70,14 +70,15 @@ rules:
   resources: ["nodes"]
   verbs: ["get", "list"]
 ---
-# What the platform server may read in a space it was bound into. Not bound cluster-wide.
+# What the platform server may do in a space it was bound into: read, and stop a service. Not bound
+# cluster-wide. The stop lives in this role so that the binding every space already has carries it.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: proj-reader
 rules:
 - apiGroups: [""]
-  resources: ["pods"]
+  resources: ["pods", "events"]
   verbs: ["get", "list", "watch"]
 - apiGroups: [""]
   resources: ["pods/log"]
@@ -85,6 +86,18 @@ rules:
 - apiGroups: ["apps"]
   resources: ["deployments"]
   verbs: ["get", "list", "watch"]
+- apiGroups: ["events.k8s.io"]
+  resources: ["events"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["networking.k8s.io"]
+  resources: ["ingresses"]
+  verbs: ["get", "list", "watch"]
+# Stop only: the scale subresource, not the Deployment itself (no image or spec change), and
+# policies.yaml lets the server set 0 replicas only. get shows the replica count alone; kubectl reads it
+# before it patches.
+- apiGroups: ["apps"]
+  resources: ["deployments/scale"]
+  verbs: ["get", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
