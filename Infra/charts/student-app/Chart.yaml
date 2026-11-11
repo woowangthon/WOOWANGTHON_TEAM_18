@@ -1,0 +1,5 @@
+apiVersion: v2
+name: student-app
+description: 학생 프로젝트 하나의 슬롯 앱(Deployment · Service · ConfigMap)과 open · test Ingress. 값은 Infra/pipeline의 Render가 배포 입력에서 만든다.
+type: application
+version: 0.1.0

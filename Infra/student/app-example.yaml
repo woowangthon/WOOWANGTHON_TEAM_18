@@ -1,5 +1,5 @@
 # One student service in proj-demo, showing the fields the leader deploy executor's student-app chart
-# must render for every service (design: docs/design/cluster.md §6). The image is a public test app.
+# must render for every service (design: docs/design/cluster.md §6 and §8). The image is a public test app.
 # Apply after space.yaml:
 #   ssh k3s-leader 'sudo k3s kubectl apply -f -' < Infra/student/app-example.yaml
 # The Ingress gives the project its public address <name>.stairnoworks.com (cluster.md §9). The tunnel
@@ -55,12 +55,31 @@ spec:
   - port: 80
     targetPort: 9898
 ---
+# Only for a service whose deploy input has runtime.stripPrefix: true (#72): Traefik removes the public
+# path prefix before the request reaches the app, so /svc/readyz arrives as /readyz. An Ingress alone
+# cannot do this. A Middleware in a student space may hold stripPrefix and nothing else (admission policy
+# wanggane-student-middlewares, Infra/executor/policies.yaml).
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: web-strip
+  namespace: proj-demo
+spec:
+  stripPrefix:
+    prefixes: ["/svc"]
+---
 # HTTPS ends at Cloudflare; the tunnel reaches Traefik over plain HTTP inside the cluster, so no TLS here.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: web
   namespace: proj-demo
+  annotations:
+    # <namespace>-<Middleware name>@kubernetescrd. The annotation covers every path of this Ingress, so
+    # the open and the test Ingress both carry it, and a service that keeps its prefix needs an Ingress
+    # of its own. Traefik collapses repeated hyphens in that name: in proj-a--b write proj-a-b-web-strip,
+    # or the Middleware is not found and the whole Ingress answers 404.
+    traefik.ingress.kubernetes.io/router.middlewares: proj-demo-web-strip@kubernetescrd
 spec:
   ingressClassName: traefik
   rules:

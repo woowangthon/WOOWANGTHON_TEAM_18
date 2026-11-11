@@ -1,14 +1,14 @@
 # 학생 공간 만들기 — 설계
 
-- **상태**: 초안 (2026-11-11, 이슈 [#81](https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/81) 1단계 구현, 2026-11-11 실제 리더에서 확인함 — 아래 알려진 한계)
+- **상태**: 초안 (2026-11-11, 이슈 [#81](https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/81) 1단계. 실제 리더 확인은 아래 알려진 한계)
 - **관련**: [cluster.md](cluster.md) §6(양식) · §8(서버 권한) · §12(비밀값), [deploy-workflow.md](deploy-workflow.md) W3, [ADR-004](../adr/README.md)
 
 ## 범위
 
 플랫폼 서버(BE)가 Tailscale로 리더의 쿠버네티스 API에 붙어 프로젝트의 학생 공간 `proj-<slug>`를 만드는 부분이다.
 
-- 하는 것: 리더 접속 설정(주소 · 토큰 · CA), 쿠버네티스 API 호출 도우미, 공간 객체 다섯 만들기, 오류를 `503`으로 돌려주기.
-- 하지 않는 것: 조치 · 조회(재시작 · Pod 상태 · 로그), 사용자가 부르는 HTTP 엔드포인트. Secret 쓰기(W3)는 이 연결을 쓰는 다음 일이고 [api.md "비밀값"](api.md#비밀값-이슈-43--82)에 있다. 이 모듈은 서버 안에서 W3 같은 쪽이 부르는 서비스이고 FE가 보는 API가 없다.
+- 하는 것: 리더 접속 설정(주소 · 토큰 · CA), 쿠버네티스 API 호출 도우미, 공간 객체 여섯 만들기, 오류를 `503`으로 돌려주기.
+- 하지 않는 것: Secret 쓰기(W3, #43), 조치 · 조회(재시작 · Pod 상태 · 로그), 사용자가 부르는 HTTP 엔드포인트. 이 모듈은 서버 안에서 W3 같은 쪽이 부르는 서비스이고 FE가 보는 API가 없다.
 - 이 서버 계정이 할 수 있는 것은 [cluster.md §8](cluster.md#8-플랫폼-서버와-배포-실행기의-권한-서버-계정-1차-구현됨-2026-11-10-나머지-예정)이 정한다. 여기서는 그 권한 안에서만 부른다.
 
 ## 설계
@@ -33,7 +33,7 @@
 
 ### 공간 만들기
 
-`ensureSpace(slug)`가 [`Infra/student/space.yaml`](../../Infra/student/space.yaml)과 **같은 값**으로 다섯 객체를 이 순서로 만든다. 이름만 `proj-demo` → `proj-<slug>`로 바꾼다(검사 규칙이 양식과 같은 값만 통과시킨다, cluster.md §8). 양식을 고치면 코드도 같이 고친다.
+`ensureSpace(slug)`가 [`Infra/student/space.yaml`](../../Infra/student/space.yaml)과 **같은 값**으로 여섯 객체를 이 순서로 만든다. 이름만 `proj-demo` → `proj-<slug>`로 바꾼다(검사 규칙이 양식과 같은 값만 통과시킨다, cluster.md §8). 양식을 고치면 코드도 같이 고친다.
 
 | 순서 | 객체 | 요청 |
 | --- | --- | --- |
@@ -42,8 +42,9 @@
 | 3 | ResourceQuota `project-cap` | `POST /api/v1/namespaces/proj-<slug>/resourcequotas` |
 | 4 | NetworkPolicy `project-isolation` | `POST /apis/networking.k8s.io/v1/namespaces/proj-<slug>/networkpolicies` |
 | 5 | RoleBinding `platform-server-read` | `POST /apis/rbac.authorization.k8s.io/v1/namespaces/proj-<slug>/rolebindings` |
+| 6 | RoleBinding `deploy-executor` (ClusterRole `proj-deployer` → `deploy` 공간의 ServiceAccount `deploy-executor`) | 같은 경로 |
 
-- 위에서부터 하나씩 차례로 보내고, 하나가 실패하면 거기서 멈춘다. RoleBinding은 읽기 권한 연결이라 마지막이다.
+- 위에서부터 하나씩 차례로 보내고, 하나가 실패하면 거기서 멈춘다. RoleBinding은 권한 연결이라 마지막이다. `deploy-executor`가 없는 공간에는 리더 배포 실행기가 배포하지 못한다(`403`, 실행기 계정에 클러스터 전체 권한이 없다).
 - **`409`(본문 `reason: AlreadyExists`)는 성공으로 본다.** 서버는 고치기 · 읽기 권한이 없어 이미 있는 것을 확인할 수 없고, 같은 `slug`로 다시 부르거나(재시도, 같은 프로젝트의 다음 배포) 중간에 끊긴 뒤 이어 가도 같은 결과가 되게 하려는 것이다. 이미 있는 객체의 값이 양식과 같은지는 확인하지 않는다(알려진 한계).
 - 인자는 검증을 통과한 `slug`만 받는다(`^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$`, [api.md](api.md)). 아니면 던진다: 요청 경로에 들어가는 값이다.
 
@@ -76,5 +77,5 @@
 
 - 양식 값을 코드에 옮겼다. `Infra/student/space.yaml`이 바뀌면 사람이 같이 고친다(테스트가 코드의 값이 양식 파일에 있는지만 본다).
 - 이미 있는 공간의 값이 양식과 다른지는 알 수 없다(읽기 권한이 없다).
-- 실제 리더 · Tailscale · 인증서 주소로는 2026-11-11 운영자 기기에서 확인했다(공간 다섯 객체 생성 · 양식과 값 일치 · 같은 slug 재호출 · 틀린 토큰 · 다른 CA · 읽기 권한 경계, #106 승인 리뷰). EC2에서 닿는지는 EC2가 사설망에 들어온 날 다시 본다. 자동 테스트는 가짜 쿠버네티스 API 응답이다.
-- 다섯 중 일부만 만들어진 채 끊기면 공간이 반쯤 남는다. 같은 `slug`로 다시 부르면 이어서 채운다.
+- 2026-11-11에 유성님(seren-wib)이 실제 리더에 Tailscale로 붙어 #106 커밋 20cefc7로 확인했다(공간 만들기 · 같은 slug 재호출 · 틀린 토큰과 CA 거절 · 읽기 권한, #106 리뷰). 여섯째 객체(실행기 RoleBinding)는 그 뒤에 더해 실제 리더로는 확인하지 않았다(미검증). EC2에서 닿는지는 EC2가 사설망에 들어온 뒤 확인한다.
+- 여섯 중 일부만 만들어진 채 끊기면 공간이 반쯤 남는다. 같은 `slug`로 다시 부르면 이어서 채운다.

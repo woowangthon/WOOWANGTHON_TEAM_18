@@ -1,6 +1,6 @@
 /**
  * 학생 공간 양식. Infra/student/space.yaml과 같은 값이고, 이름만 proj-<slug>로 바뀐다(검사 규칙이 양식과 같은 값만 통과시킨다,
- * docs/design/cluster.md §8). 양식을 고치면 여기도 같이 고친다. 순서는 공간 먼저, 읽기 권한 연결(RoleBinding) 마지막이다.
+ * docs/design/cluster.md §8). 양식을 고치면 여기도 같이 고친다. 순서는 공간 먼저, 권한 연결(RoleBinding 둘: 서버 읽기, 배포 실행기) 마지막이다.
  */
 export interface SpaceObject {
   /** 만들 요청의 경로 */
@@ -123,6 +123,16 @@ export function spaceObjects(slug: string): SpaceObject[] {
         metadata: { name: 'platform-server-read', namespace: ns },
         roleRef: { apiGroup: 'rbac.authorization.k8s.io', kind: 'ClusterRole', name: 'proj-reader' },
         subjects: [{ kind: 'ServiceAccount', name: 'platform-server', namespace: 'platform' }],
+      },
+    },
+    {
+      path: `/apis/rbac.authorization.k8s.io/v1${inNs}/rolebindings`,
+      body: {
+        apiVersion: 'rbac.authorization.k8s.io/v1',
+        kind: 'RoleBinding',
+        metadata: { name: 'deploy-executor', namespace: ns },
+        roleRef: { apiGroup: 'rbac.authorization.k8s.io', kind: 'ClusterRole', name: 'proj-deployer' },
+        subjects: [{ kind: 'ServiceAccount', name: 'deploy-executor', namespace: 'deploy' }],
       },
     },
   ]
