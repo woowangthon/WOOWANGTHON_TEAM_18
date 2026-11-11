@@ -374,7 +374,7 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
 
 ### `GET /api/admin/projects` — 실행 중인 서비스
 
-DB에 배포가 있는 프로젝트(`slug`)마다 공간 `proj-<slug>`를 읽어 돌려준다(공간 전체를 한 번에 읽는 권한은 서버 계정에 없다). 가장 최근에 배포를 저장한 프로젝트부터. 공간이 아직 없으면 `services`가 `[]`다.
+DB에 배포가 있는 프로젝트(`slug`)마다 공간 `proj-<slug>`를 읽어 돌려준다(공간 전체를 한 번에 읽는 권한은 서버 계정에 없다). 가장 최근에 배포를 저장한 프로젝트부터. 공간이 아직 없으면 `services`가 `[]`다. 한 프로젝트의 공간만 못 읽으면(권한 · 시간 초과) 나머지는 그대로 돌려주고 그 프로젝트는 `services: []`에 `clusterError`(`CLUSTER_FORBIDDEN` · `CLUSTER_UNREACHABLE`)를 단다. 모든 프로젝트를 못 읽으면 `503`이다. DB에서 한 번에 읽는 배포는 최근 500개라 그보다 오래된 프로젝트는 빠진다(MVP 규모에서는 넘지 않는다).
 
 응답 `200`:
 
@@ -388,6 +388,7 @@ DB에 배포가 있는 프로젝트(`slug`)마다 공간 `proj-<slug>`를 읽어
       "liveSlot": "a",
       "url": "https://my-app.stairnoworks.com",
       "lastStop": { "at": "2026-11-11T01:00:00.000Z", "by": "operator@example.com" },
+      "clusterError": null,
       "services": [
         {
           "name": "fe-a", "slot": "a", "replicas": 1, "readyReplicas": 1,
@@ -408,7 +409,7 @@ DB에 배포가 있는 프로젝트(`slug`)마다 공간 `proj-<slug>`를 읽어
 
 공간 `proj-<slug>`의 모든 Deployment를 `replicas: 0`으로 내린다. 공개 주소는 응답할 Pod가 없어 더는 응답하지 않는다(Ingress는 그대로 둔다). 다시 켜기는 MVP 밖이고, 학생이 새로 배포하면 다시 뜬다. 요청 본문은 없다.
 
-응답 `200`: `{ "slug", "scaled": ["fe-a", "be-a"], "failed": [] }`. 내리기 전에 누가 언제 요청했는지 기록한다(`admin_actions`. 기록하지 못하면 `503 DATABASE_UNAVAILABLE`이고 아무것도 내리지 않는다). 일부만 실패해도 `200`이고 `failed`에 이름이 온다(다시 요청하면 이어서 내린다).
+응답 `200`: `{ "slug", "scaled": ["fe-a", "be-a"], "failed": [] }`. 하나라도 내렸으면 누가 언제 했는지 기록한다(`admin_actions`. 하나도 못 내렸으면 기록하지 않는다. 기록하지 못하면 `503 DATABASE_UNAVAILABLE`이고, 이미 내린 것은 그대로지만 같은 요청을 다시 보내도 안전하다). 일부만 실패해도 `200`이고 `failed`에 이름이 온다(다시 요청하면 이어서 내린다).
 
 오류: `404 PROJECT_NOT_FOUND`(DB에 없는 slug, slug 모양이 아닌 값 포함), `409 NOT_RUNNING`(공간이 없거나 Deployment가 없다), `403 ADMIN_REQUIRED`, `503 CLUSTER_UNREACHABLE`, `503 CLUSTER_FORBIDDEN`(Deployment scale 권한이 아직 없을 때. 인프라 담당이 [`cluster.md`](cluster.md) §8 "남은 것"의 조치용 권한을 주기 전까지 이 오류다), `503 DATABASE_UNAVAILABLE`.
 

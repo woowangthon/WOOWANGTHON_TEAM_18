@@ -206,7 +206,7 @@ describe('GET /api/admin/projects', () => {
     // 최근에 저장한 프로젝트부터
     expect(projects.map((p) => p.slug)).toEqual(['my-app', 'old-app'])
     expect(projects[0]).toEqual({
-      slug: 'my-app', repo: 'Student/my-app', ownerId: USER, liveSlot: 'a', url: 'https://my-app.stairnoworks.com',
+      slug: 'my-app', repo: 'Student/my-app', ownerId: USER, liveSlot: 'a', url: 'https://my-app.stairnoworks.com', clusterError: null,
       lastStop: { at: '2026-11-11T02:00:00.000Z', by: 'op@example.com' },
       services: [
         { name: 'fe-a', slot: 'a', replicas: 1, readyReplicas: 1, pods: [{ name: 'fe-a-6d9f8c7b5-xk2ab', phase: 'Running', ready: true, node: 'worker-1', restarts: 3 }] },
@@ -237,6 +237,18 @@ describe('GET /api/admin/projects', () => {
     const spy = vi.spyOn(cluster, 'get')
     await call('get', '/api/admin/projects', undefined)
     expect(spy.mock.calls.map(([p]) => p).sort()).toEqual(['/api/v1/namespaces/proj-my-app/pods', '/apis/apps/v1/namespaces/proj-my-app/deployments'])
+  })
+
+  it('still lists the other projects when one namespace cannot be read, and marks the one that failed', async () => {
+    seedProject('my-app', USER, 5)
+    seedProject('bad-app', USER, 1)
+    clusterGets[nsPaths('my-app').deployments] = { items: [deployment('fe-a')] }
+    const real = cluster.get.bind(cluster)
+    vi.spyOn(cluster, 'get').mockImplementation((path) => (path.includes('proj-bad-app') ? Promise.reject(new ClusterApiError('forbidden')) : real(path)))
+    const res = await call('get', '/api/admin/projects', undefined)
+    expect(res.status).toBe(200)
+    const { projects } = res.body as { projects: { slug: string; services: unknown[]; clusterError: string | null }[] }
+    expect(projects.map((p) => [p.slug, p.services.length, p.clusterError])).toEqual([['my-app', 1, null], ['bad-app', 0, 'CLUSTER_FORBIDDEN']])
   })
 
   it('answers 503 CLUSTER_UNREACHABLE when the leader does not answer, and 503 DATABASE_UNAVAILABLE when the database does not', async () => {
@@ -326,14 +338,24 @@ describe('POST /api/admin/projects/:slug/stop', () => {
     expect(db.admin_actions ?? []).toEqual([])
   })
 
-  it('stops nothing when the record cannot be written', async () => {
+  it('answers 503 when the record cannot be written, and the same request can be sent again', async () => {
     seedProject()
     clusterGets[nsPaths('my-app').deployments] = { items: [deployment('fe-a')] }
     restOverride = (table, method) => (table === 'admin_actions' && method === 'POST' ? new Response('{}', { status: 500 }) : undefined)
     const res = await call('post', stopPath, undefined)
     expect(res.status).toBe(503)
     expect(res.body).toEqual(errorBody('DATABASE_UNAVAILABLE'))
-    expect(patches).toEqual([])
+    restOverride = undefined
+    expect((await call('post', stopPath, undefined)).status).toBe(200)
+    expect(db.admin_actions).toHaveLength(1)
+  })
+
+  it('leaves no record behind when nothing could be stopped', async () => {
+    seedProject()
+    clusterGets[nsPaths('my-app').deployments] = { items: [deployment('fe-a')] }
+    patchFails['fe-a'] = new ClusterApiError('forbidden')
+    await call('post', stopPath, undefined)
+    expect(db.admin_actions ?? []).toEqual([])
   })
 
   it('does not build a request path from a cluster-supplied name that is not a name', async () => {

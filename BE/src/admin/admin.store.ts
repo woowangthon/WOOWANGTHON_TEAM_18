@@ -4,6 +4,7 @@ import { isRecord } from '../common/is-record.js'
 import type { Env } from '../config/env.js'
 
 const TIMEOUT_MS = 5000
+// 한 번에 읽는 상한. 이를 넘는 오래된 프로젝트는 목록에서 빠진다(MVP 규모는 수십 개라 넘지 않는다. docs/design/api.md).
 const MAX_DEPLOYS = 500
 
 const databaseUnavailable = () =>
