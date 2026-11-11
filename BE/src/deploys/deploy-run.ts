@@ -23,8 +23,8 @@ type InternalCode = (typeof INTERNAL_CODES)[number]
 const PLATFORM_CODE = /^[A-Za-z][A-Za-z0-9_]{2,63}$/
 const isPlatformCode = (v: unknown): v is string => typeof v === 'string' && PLATFORM_CODE.test(v) && !(INTERNAL_CODES as readonly string[]).includes(v)
 
-/** AI 에이전트 설계 §5의 티켓 stage는 이 넷뿐이다. */
-export const TICKET_STAGES: readonly Stage[] = ['build', 'prepare', 'render', 'apply']
+/** AI 에이전트 설계 §5의 티켓 stage(switch는 없다). */
+export const TICKET_STAGES: readonly Stage[] = ['build', 'prepare', 'render', 'apply', 'verify']
 
 /** 학생에게 그대로 보여 주는 문장. 로그 · 원본 · 비밀값은 여기 들어오지 않는다. 내부 코드는 하나도 빠지면 안 된다. */
 const INTERNAL_MESSAGES: Record<InternalCode, string> = {
@@ -66,7 +66,6 @@ export function classifyFailure(stage: Stage, platformCode: string | null): { co
   if (platformCode !== null) return { code: platformCode, callAgent: false }
   const code: string =
     stage === 'build' ? 'BUILD_FAILED' : stage === 'verify' ? 'VERIFY_FAILED' : stage === 'switch' ? 'SWITCH_FAILED' : 'DEPLOY_FAILED'
-  // verify · switch는 티켓 stage에 없어 AI에 넘기지 못한다(api.md "결정 필요").
   return { code, callAgent: TICKET_STAGES.includes(stage) }
 }
 

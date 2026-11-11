@@ -168,7 +168,7 @@ buildspec · 서비스 역할(IAM) · 환경 변수 override는 받지 않는다
 
 | 칸 | 내용 |
 |---|---|
-| `stage` | `build` · `prepare` · `render` · `apply` |
+| `stage` | `build` · `prepare` · `render` · `apply` · `verify`. `switch`는 없다(전환 실패는 학생 쪽에서 고칠 것이 없어 플랫폼이 `failed`로 마감한다) |
 | `service` | `spec.services[].name`. 서비스와 무관하면 `null` |
 | `targetSlot` | `a` · `b` |
 | `raw` | stage에 따라 두 모양만 받는다. `build`: `{ "codebuild": <원본>, "k8s": null }`. 그 밖: `{ "codebuild": null, "k8s": { "pod", "events", "status" } }` |
@@ -176,7 +176,7 @@ buildspec · 서비스 역할(IAM) · 환경 변수 override는 받지 않는다
 | `raw.k8s.pod` | 실패한 Pod 하나의 원본. 없으면 `null`. `metadata.managedFields`와 적용 기록 annotation은 뺀다 |
 | `raw.k8s.events` | `involvedObject`가 대상 슬롯 리소스인 이벤트 원본 (없으면 `[]`) |
 | `raw.k8s.status` | `render`일 때 server-side apply dry-run에 k3s API가 돌려준 Status 원본(필수), 그 밖에는 `null` |
-| `errorMessage` | 사람이 읽는 오류 한 줄. `render`면 Status의 `message`를 그대로 넣는다 |
+| `errorMessage` | 사람이 읽는 오류 한 줄. `render`면 Status의 `message`를 그대로 넣는다. `verify`면 통과하지 못한 검사 하나(요청한 경로와 응답 상태, 또는 Ready가 아닌 Pod · 엔드포인트가 빈 Service)를 적고, `raw.k8s`에는 그 서비스의 Pod와 이벤트를 넣는다 |
 | `logs` | 오류 시각 10분 전부터, 최대 200줄. 재시작한 Pod는 직전 컨테이너 로그 |
 | `previous` | 직전 티켓. 없으면 `null`. `status`는 `verified` · `pr_opened` · `needs_user` · `gave_up`(그 티켓의 해결 결과) 또는 `stopped`(결과 없이 끝남) |
 
@@ -321,6 +321,7 @@ buildspec · 서비스 역할(IAM) · 환경 변수 override는 받지 않는다
   - 조건은 `{ "all": [...] }` · `{ "any": [...] }`로 묶는다. `all` 안의 조건은 서로 다른 원소에서 맞아도 된다(같은 이벤트인지 보지 않는다).
   - 코드 분류는 티켓의 `stage`와 같은 case만 파일 순서대로 대조해 처음 맞는 것을 고른다. 그래서 좁은 case를 넓은 case 앞에 둔다(`A3` OOMKilled는 `A2` CrashLoopBackOff 앞).
   - 초기 case 데이터는 [`AI/ai_server/agent/cases.json`](../../AI/ai_server/agent/cases.json)이다. `playbook`의 `when`과 `{i}` 같은 자리 표시는 에이전트에게 주는 설명이고 코드가 판정하지 않는다.
+  - `verify` stage의 case는 아직 없다(2026-11-11). 그래서 `verify` 티켓은 고를 case가 없어 ⑤ planning으로 간다.
   - `stats`(`hits` · `solved`)는 AI 서버 메모리에만 있어 재시작하면 0부터다.
 - planning으로 해결한 새 case는 바로 넣지 않는다. 사람이 확인한 뒤 넣는다.
 

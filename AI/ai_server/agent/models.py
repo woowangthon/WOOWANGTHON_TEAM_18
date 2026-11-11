@@ -11,7 +11,7 @@ from pydantic_core import PydanticCustomError
 
 CommitSha = Annotated[str, Field(pattern=r"^[0-9a-f]{40}$")]
 NonEmpty = Annotated[str, Field(min_length=1)]
-Stage = Literal["build", "prepare", "render", "apply"]
+Stage = Literal["build", "prepare", "render", "apply", "verify"]
 ResultStatus = Literal["verified", "pr_opened", "needs_user", "gave_up"]
 ClassifyMethod = Literal["code", "llm"]
 ResultPath = Literal["playbook", "replan_after_playbook", "plan"]
