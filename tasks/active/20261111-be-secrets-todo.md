@@ -17,7 +17,7 @@ Left for the #82 PR: `DeployReadinessService.prepareIfReady(deployId)` (calls `D
 - [x] Contract first (`api.md`, `auth.md`) and send it to FE — files: `docs/design/api.md`, `docs/design/auth.md`
 - [x] `SecretWriter` interface + `UnavailableSecretWriter` binding (the k8s Secret write itself moved to #111, owned by seren-wib) — files: `BE/src/deploys/secret-writer.ts`, `deploys.module.ts`
 - [x] Validation, digests, status as pure functions — files: `BE/src/deploys/secrets-input.ts`
-- [x] `SecretsService`, controller routes, store methods, migration — files: `BE/src/deploys/`, `supabase/migrations/20261111000000_create_deploy_secrets.sql`
+- [x] `SecretsService`, controller routes, store methods, migration — files: `BE/src/deploys/`, `supabase/migrations/20261111020000_create_deploy_secrets.sql`
 - [x] Body-parse error message no longer repeated (it carries a piece of the body) — files: `BE/src/common/api-exception.filter.ts`
 - [x] Tests: unit (validation, hashes with independently computed values, status), e2e through the app with a fake Supabase and a fake `SecretWriter`; checks that no value is in any response, log, database row or request to the database
 - [x] Hand mutants (no BE mutation tool, #67): 29 mutants on the decision lines of this branch, 29 killed (the 41 of the first version also covered the k8s Secret code that is not in this branch)
