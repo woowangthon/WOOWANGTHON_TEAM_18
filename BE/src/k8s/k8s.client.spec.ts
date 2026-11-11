@@ -50,17 +50,19 @@ describe('K8sClient', () => {
     [500, 'unexpected'],
     [300, 'unexpected'],
     [302, 'unexpected'],
-    [199, 'unexpected'],
   ])('turns %i into a ClusterError of kind %s that is still a 503 CLUSTER_UNAVAILABLE', async (status, kind) => {
     vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
-    // 1xx는 node가 응답으로 치지 않아 가짜 서버로 만들 수 없다. 199는 경계만 본다.
-    if (status === 199) return expect(ClusterError.ofStatus(199, undefined).kind).toBe(kind)
     fake.answers.set('/x', { status, body: { reason: 'Why', message: 'secret-looking detail' } })
     const err = await caught(client.request('GET', '/x'))
     expect(err).toBeInstanceOf(ClusterError)
     expect(err).toBeInstanceOf(ServiceUnavailableException)
     expect(err).toMatchObject({ kind, apiStatus: status, apiReason: 'Why', response: { code: 'CLUSTER_UNAVAILABLE' } })
     expect(err?.getStatus()).toBe(503)
+  })
+
+  // 1xx는 node가 응답으로 치지 않아 가짜 서버로 만들 수 없다. 경계는 상태 → 종류 표에서 본다.
+  it('a status below 200 is unexpected', () => {
+    expect(ClusterError.ofStatus(199, undefined)).toMatchObject({ kind: 'unexpected', apiStatus: 199 })
   })
 
   it('accepts every 2xx in request, and only 201 in create', async () => {

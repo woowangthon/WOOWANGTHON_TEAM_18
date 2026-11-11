@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common'
+import { Injectable, Logger } from '@nestjs/common'
 import { isRecord } from '../common/is-record.js'
 import { SLUG } from '../deploys/deploy-input.js'
 import { ClusterError } from './cluster-error.js'
@@ -15,7 +15,7 @@ export interface PodInfo {
   ready: boolean
   /** 컨테이너 재시작 횟수의 합 */
   restarts: number
-  /** 기다리는 컨테이너의 이유(CrashLoopBackOff · ImagePullBackOff 등). 없으면 null */
+  /** 기다리는 컨테이너(init 컨테이너 포함)의 이유(CrashLoopBackOff · ImagePullBackOff 등). 없으면 null */
   waiting: string | null
 }
 
@@ -43,7 +43,8 @@ const POD_NAME = /^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$/
 const CONTAINER_NAME = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/
 const DEFAULT_TAIL = 200
 const MAX_TAIL = 2000
-const MAX_LOG_BYTES = 1024 * 1024
+// 요청 하나의 제한 시간(5초) 안에 느린 구간(Tailscale 중계)으로도 받을 수 있는 크기다.
+const MAX_LOG_BYTES = 256 * 1024
 const ROLE_LABEL = 'node-role.kubernetes.io/'
 const RESOURCES = ['cpu', 'memory', 'ephemeral-storage']
 
@@ -54,12 +55,15 @@ const RESOURCES = ['cpu', 'memory', 'ephemeral-storage']
  */
 @Injectable()
 export class ClusterReader {
+  private readonly logger = new Logger(ClusterReader.name)
+
   constructor(private readonly k8s: K8sClient) {}
 
   async pods(slug: string): Promise<PodInfo[]> {
     return (await this.list(`/api/v1/namespaces/${space(slug)}/pods`)).map((pod) => {
       const statuses = records(record(pod.status).containerStatuses)
-      const waiting = statuses.map((s) => record(record(s.state).waiting).reason).find((r) => typeof r === 'string')
+      // init 컨테이너에서 멈춘 Pod(이미지를 못 받음 등)의 이유도 여기서 보인다.
+      const waiting = [...records(record(pod.status).initContainerStatuses), ...statuses].map((s) => record(record(s.state).waiting).reason).find((r) => typeof r === 'string')
       return {
         ...nameAndLabels(pod),
         phase: text(record(pod.status).phase) ?? 'Unknown',
@@ -100,7 +104,7 @@ export class ClusterReader {
     })
   }
 
-  /** Pod 로그의 끝부분. `tailLines`는 기본 200, 최대 2000이고 응답은 1 MiB에서 잘린다. */
+  /** Pod 로그의 끝부분. `tailLines`는 기본 200, 최대 2000이고 응답은 256 KiB에서 잘린다. */
   async logs(slug: string, pod: string, { container, tailLines = DEFAULT_TAIL }: { container?: string; tailLines?: number } = {}): Promise<string> {
     // 요청 경로와 쿼리에 들어가는 값이다.
     if (!POD_NAME.test(pod)) throw new Error(`Not a valid pod name: ${JSON.stringify(pod)}`)
@@ -119,6 +123,7 @@ export class ClusterReader {
       // 아래에서 던진다.
     }
     // 200인데 목록이 아니다. 리더가 아닌 다른 것이 답했다.
+    this.logger.error(`GET ${path} answered 200 without a list`)
     throw new ClusterError('unexpected', 200)
   }
 }

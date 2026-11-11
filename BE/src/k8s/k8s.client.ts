@@ -12,6 +12,13 @@ const AGENT_OPTIONS = { keepAlive: true, timeout: 5000, maxSockets: 8, schedulin
 
 export type Method = 'GET' | 'POST' | 'PUT' | 'DELETE'
 
+interface Connection {
+  url: URL
+  token: string
+  secure: boolean
+  agent: http.Agent
+}
+
 interface Answer {
   status: number
   text: string
@@ -28,7 +35,7 @@ interface Answer {
 @Injectable()
 export class K8sClient implements OnModuleDestroy {
   private readonly logger = new Logger(K8sClient.name)
-  private readonly conn: { url: URL; token: string; agent: http.Agent } | undefined
+  private readonly conn: Connection | undefined
 
   constructor(config: ConfigService<Env, true>) {
     const url = config.get('K8S_API_URL', { infer: true })
@@ -37,8 +44,9 @@ export class K8sClient implements OnModuleDestroy {
     // validateEnv가 셋이 함께 있거나 함께 없게 한다.
     if (!url || !token || !ca) return
     // http는 로컬 시험 전용이다(env가 loopback만 허용). ca는 https에서만 쓰인다.
-    const agent = url.startsWith('https:') ? new https.Agent({ ...AGENT_OPTIONS, ca }) : new http.Agent(AGENT_OPTIONS)
-    this.conn = { url: new URL(url), token, agent }
+    const parsed = new URL(url)
+    const secure = parsed.protocol === 'https:'
+    this.conn = { url: parsed, token, secure, agent: secure ? new https.Agent({ ...AGENT_OPTIONS, ca }) : new http.Agent(AGENT_OPTIONS) }
   }
 
   onModuleDestroy() {
@@ -81,7 +89,7 @@ export class K8sClient implements OnModuleDestroy {
   }
 }
 
-function exchange({ url, token, agent }: { url: URL; token: string; agent: http.Agent }, method: Method, path: string, payload: string | undefined): Promise<Answer> {
+function exchange({ url, token, secure, agent }: Connection, method: Method, path: string, payload: string | undefined): Promise<Answer> {
   return new Promise((resolve, reject) => {
     const options = {
       method,
@@ -107,7 +115,7 @@ function exchange({ url, token, agent }: { url: URL; token: string; agent: http.
         resolve({ status: res.statusCode ?? 0, text, reason: reasonOf(text) })
       })
     }
-    const req = (url.protocol === 'https:' ? https : http).request(options, onResponse)
+    const req = (secure ? https : http).request(options, onResponse)
     req.on('error', reject)
     req.end(payload)
   })

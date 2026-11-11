@@ -25,10 +25,11 @@ No HTTP endpoint, no DB, no new library, no FE contract. Actions (scale / restar
 - [x] Hand mutants on the changed decision lines (no mutation tool for BE, #67): 68 mutants (status → kind mapping, 2xx bounds, created/exists, log content, token header, keep-alive, POST → PUT, Secret name · type · base64, slug · service · pod · container guards, tail limits, pod · deployment · node fields), 64 killed at first. The 4 survivors (status 300, `AlreadyExists` on a non-409, `available` read from `ready`, non-string label values) each got a test; none left
 - [x] Real leader check in a throwaway space, then delete it (2026-11-11, result table in the design doc)
 - [x] `docs/ai-scope.md` (verified on the real leader from the operator device; from EC2 not verified)
+- [x] `/code-review medium` on the branch: 8 findings, 6 fixed (silent 503 on a 200 that is not a list, log size vs the 5 s limit → 256 KiB, init container waiting reason, scheme decided once, the 199 table row, pointer from `space.md`). 2 left as known limits in the design doc (403 / 404 a caller expects are still logged as errors; a 422 log has no rule name). `/simplify` not run
 - [ ] PR after #106 merges (rebase on `upstream/main`)
 
 ## Done when
 
-- [x] `pnpm verify` exit code 0 seen in `BE/` (16 test files, 895 tests)
+- [x] `pnpm verify` exit code 0 seen in `BE/` (16 test files, 896 tests)
 - [ ] Real-leader result written in the design doc (done) and the PR body
 - [ ] tests added; mutation survivors resolved or explained

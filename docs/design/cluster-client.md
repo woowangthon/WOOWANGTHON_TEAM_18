@@ -68,10 +68,10 @@
 
 | 함수 | 돌려주는 것 |
 | --- | --- |
-| `pods` | `name`, `labels`, `phase`, `node`(놓인 노드), `ready`(컨테이너가 모두 준비됨), `restarts`(컨테이너 재시작 횟수의 합), `waiting`(기다리는 컨테이너의 이유: `CrashLoopBackOff` · `ImagePullBackOff` 등, 없으면 `null`) |
+| `pods` | `name`, `labels`, `phase`, `node`(놓인 노드), `ready`(컨테이너가 모두 준비됨), `restarts`(컨테이너 재시작 횟수의 합), `waiting`(기다리는 컨테이너 — init 컨테이너 포함 — 의 이유: `CrashLoopBackOff` · `ImagePullBackOff` 등, 없으면 `null`) |
 | `deployments` | `name`, `labels`, `replicas`(원하는 수), `ready`, `updated`, `available` |
 | `nodes` | `name`, `ready`, `roles`(`node-role.kubernetes.io/<역할>` 라벨에서), `capacity` · `allocatable`(`cpu` · `memory` · `ephemeral-storage`, 쿠버네티스 수량 글 그대로) |
-| `logs` | 글. `tailLines` 기본 200(최대 2000), 응답은 1 MiB에서 자른다. 이어 받기(follow)는 없다 |
+| `logs` | 글. `tailLines` 기본 200(최대 2000), 응답은 256 KiB에서 자른다(요청 하나의 제한 시간 5초 안에 느린 구간으로도 받을 크기). 이어 받기(follow)는 없다 |
 
 - 목록은 한 번에 받는다(쪽 나눔 없음). 공간 하나의 Pod는 상한(ResourceQuota)으로 묶여 있고 노드는 셋이다.
 - 실제 사용량(CPU · 메모리)은 이 API에 없다. Prometheus(구축 11)나 metrics API 권한이 들어온 뒤의 일이다.
@@ -124,6 +124,8 @@
 - 이미 있는 Secret의 값이 무엇인지 서버는 알 수 없다(읽기 권한 없음). "들어갔는지"는 부르는 쪽이 자기가 쓴 기록으로 판단한다.
 - Secret 값이 바뀌어도 도는 Pod는 그대로다. Pod를 다시 띄우는 것은 `secretHash`(#43)와 배포 파이프라인의 일이다.
 - 서버가 만들지 않은 공간(예: 손으로 만든 `proj-demo` 말고 권한 연결이 없는 공간)은 읽지 못한다(`forbidden`).
+- 부르는 쪽이 잡는 `403` · `404`(아직 없는 공간, 사라진 Pod)도 모듈은 오류 수준으로 로그를 남긴다. 예상한 경우인지는 모듈이 알 수 없다. 자주 읽는 화면에서는 로그가 시끄러울 수 있다.
+- `422`의 로그에는 상태와 reason뿐이라 어느 검사 규칙이 거절했는지 남지 않는다(응답 `message`에 객체 값이 섞일 수 있어 싣지 않는다). 규칙 이름은 같은 요청을 운영자 계정으로 dry run 해서 본다.
 - 로그는 끝부분만 한 번 읽는다. 이어 받기와 지난 컨테이너(`previous`) 로그는 없다.
 - EC2에서 리더에 닿는지는 확인하지 않았다(EC2가 사설망에 들어온 뒤). 실제 리더 확인은 운영자 기기에서 했다.
 - 실제 리더에서 `PUT` 뒤 Secret의 key가 통째로 바뀌었는지는 보지 않았다(서버 계정은 읽지 못한다). 응답이 `200`인 것까지 확인했다.

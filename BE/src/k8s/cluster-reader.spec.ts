@@ -59,6 +59,20 @@ describe('ClusterReader', () => {
     expect(JSON.stringify(pods)).not.toContain('env-value-must-not-pass')
   })
 
+  it('reports why an init container waits, without counting it in ready or restarts', async () => {
+    items(`${NS}/pods`, [
+      {
+        metadata: { name: 'p' },
+        status: {
+          phase: 'Pending',
+          initContainerStatuses: [{ ready: false, restartCount: 4, state: { waiting: { reason: 'ImagePullBackOff' } } }],
+          containerStatuses: [{ ready: false, restartCount: 0, state: { waiting: { reason: 'PodInitializing' } } }],
+        },
+      },
+    ])
+    expect(await reader.pods('my-app')).toMatchObject([{ ready: false, restarts: 0, waiting: 'ImagePullBackOff' }])
+  })
+
   it('a pod is not ready when one of its containers is not', async () => {
     items(`${NS}/pods`, [{ metadata: { name: 'p' }, status: { phase: 'Running', containerStatuses: [{ ready: true }, { ready: false }] } }])
     expect(await reader.pods('my-app')).toMatchObject([{ ready: false, restarts: 0 }])
@@ -97,17 +111,17 @@ describe('ClusterReader', () => {
   })
 
   it('reads the tail of a pod log as text', async () => {
-    const path = `${NS}/pods/api-a-7d9f-x1/log?tailLines=200&limitBytes=1048576`
+    const path = `${NS}/pods/api-a-7d9f-x1/log?tailLines=200&limitBytes=262144`
     fake.answers.set(path, { status: 200, body: 'line 1\nline 2\n' })
     await expect(reader.logs('my-app', 'api-a-7d9f-x1')).resolves.toBe('line 1\nline 2\n')
     expect(fake.calls).toEqual([`GET ${path}`])
   })
 
   it.each([
-    [{ tailLines: 1 }, 'tailLines=1&limitBytes=1048576'],
-    [{ tailLines: 2000 }, 'tailLines=2000&limitBytes=1048576'],
-    [{ tailLines: 2001 }, 'tailLines=2000&limitBytes=1048576'],
-    [{ container: 'side' }, 'tailLines=200&limitBytes=1048576&container=side'],
+    [{ tailLines: 1 }, 'tailLines=1&limitBytes=262144'],
+    [{ tailLines: 2000 }, 'tailLines=2000&limitBytes=262144'],
+    [{ tailLines: 2001 }, 'tailLines=2000&limitBytes=262144'],
+    [{ container: 'side' }, 'tailLines=200&limitBytes=262144&container=side'],
   ])('log options %j become the query %s', async (options, query) => {
     await reader.logs('my-app', 'p', options)
     expect(fake.paths).toEqual([`${NS}/pods/p/log?${query}`])
@@ -141,7 +155,7 @@ describe('ClusterReader', () => {
     ['a container that has not started (400)', { status: 400, body: { reason: 'BadRequest' } }, { kind: 'unexpected', apiStatus: 400 }],
   ] as const)('logs of %s fail with a ClusterError the caller can tell apart', async (_, answer, shape) => {
     vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
-    fake.answers.set(`${NS}/pods/p/log?tailLines=200&limitBytes=1048576`, answer)
+    fake.answers.set(`${NS}/pods/p/log?tailLines=200&limitBytes=262144`, answer)
     await expect(reader.logs('my-app', 'p')).rejects.toMatchObject({ ...shape, status: 503 })
   })
 
@@ -151,8 +165,10 @@ describe('ClusterReader', () => {
     ['items that is not a list', { items: {} }],
     ['a JSON list', []],
   ])('a 200 that is %s is an unexpected ClusterError, not a crash', async (_, body) => {
+    const logged = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
     fake.answers.set(`${NS}/pods`, { status: 200, body })
     await expect(reader.pods('my-app')).rejects.toMatchObject({ kind: 'unexpected', apiStatus: 200, status: 503 })
+    expect(logged).toHaveBeenCalledWith(`GET ${NS}/pods answered 200 without a list`)
   })
 
   it('an empty list is an empty result', async () => {
