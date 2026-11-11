@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common'
 import type { AuthUser } from '../auth/auth.decorators.js'
+import { parseUuid } from '../common/uuid.js'
 import { isCommitSha } from '../repos/repo-url.js'
 import { invalidCommit, ReposService } from '../repos/repos.service.js'
 import { type Issue, type Spec, validateSpec } from './deploy-input.js'
@@ -9,7 +10,6 @@ const invalidSpec = (message: string, fields: Issue[]) => new BadRequestExceptio
 // 대소문자는 GitHub가 구분하지 않는다.
 const sameRepo = (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 /** 저장한 배포 입력. 모양은 docs/design/api.md의 "배포 입력 저장". */
 export interface Deploy {
@@ -70,7 +70,8 @@ export class DeploysService {
 
   /** 내 배포 입력 하나. 없는 id · 남의 id · UUID가 아닌 id는 모두 404다(남의 배포가 있는지 알려 주지 않는다). */
   async get(user: AuthUser, id: string): Promise<Deploy> {
-    const row = UUID.test(id) ? await this.store.findOwned(id.toLowerCase(), user.id) : undefined
+    const uuid = parseUuid(id)
+    const row = uuid ? await this.store.findOwned(uuid, user.id) : undefined
     if (!row) throw new NotFoundException({ code: 'DEPLOY_NOT_FOUND', message: 'No such deploy' })
     return toDeploy(row)
   }
