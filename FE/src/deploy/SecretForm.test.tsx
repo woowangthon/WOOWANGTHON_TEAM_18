@@ -2,14 +2,14 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { ApiError } from '../lib/api.ts'
 import SecretForm from './SecretForm.tsx'
-import { secretId } from './secrets.ts'
-import type { SecretEntry, SecretTarget } from './secrets.ts'
+import type { SecretEntry, SecretKeyState } from './secrets.ts'
 
-const SERVICES: SecretTarget[] = [
+const SERVICES = [
   { service: 'be', keys: ['DATABASE_URL', 'JWT_SECRET'] },
   { service: 'worker', keys: ['QUEUE_URL'] },
 ]
-const none = new Set<string>()
+const DB = 'postgres://u:pw@db/app'
+const LEAK = /postgres|jwt-value|queue-value/
 const onSubmit = vi.fn<(entries: SecretEntry[]) => Promise<void>>()
 
 beforeEach(() => {
@@ -22,8 +22,17 @@ afterEach(() => {
   window.sessionStorage.clear()
 })
 
-const renderForm = (done: ReadonlySet<string> = none, missing: ReadonlySet<string> = none) =>
-  render(<SecretForm services={SERVICES} done={done} missing={missing} onSubmit={onSubmit} />)
+// states: 'service/key'로 고른 key의 상태. 적지 않은 key는 pending이다.
+const renderForm = (states: Record<string, SecretKeyState> = {}) =>
+  render(
+    <SecretForm
+      services={SERVICES.map(({ service, keys }) => ({
+        service,
+        keys: keys.map((name) => ({ name, state: states[`${service}/${name}`] ?? 'pending' })),
+      }))}
+      onSubmit={onSubmit}
+    />,
+  )
 const input = (name: string) => screen.getByLabelText<HTMLInputElement>(name)
 const type = (name: string, value: string) => {
   fireEvent.change(input(name), { target: { value } })
@@ -32,14 +41,16 @@ const submit = () => {
   fireEvent.click(screen.getByRole('button', { name: '비밀값 저장' }))
 }
 const fillAll = () => {
-  type('DATABASE_URL', 'postgres://u:pw@db/app')
+  type('DATABASE_URL', DB)
   type('JWT_SECRET', 'jwt-value')
   type('QUEUE_URL', 'queue-value')
 }
 
 it('asks for every secret key of every service in a password input that can be revealed', () => {
   renderForm()
-  expect(within(screen.getByRole('group', { name: 'be' })).getAllByLabelText(/^(DATABASE_URL|JWT_SECRET)$/)).toHaveLength(2)
+  const be = within(screen.getByRole('group', { name: 'be' }))
+  expect(be.getByLabelText('DATABASE_URL')).toBeTruthy()
+  expect(be.getByLabelText('JWT_SECRET')).toBeTruthy()
   expect(within(screen.getByRole('group', { name: 'worker' })).getByLabelText('QUEUE_URL')).toBeTruthy()
   expect(input('DATABASE_URL').type).toBe('password')
   // 브라우저가 로그인 비밀번호를 대신 채우거나 값을 저장해 두지 않게 한다.
@@ -54,8 +65,8 @@ it('tells the user the server will not show a value again', () => {
   expect(screen.getByText(/서버가 다시 보여 주지 않아요/)).toBeTruthy()
 })
 
-it('shows keys that are already in by name only, with no input, and asks only for the rest', async () => {
-  renderForm(new Set([secretId('be', 'DATABASE_URL')]))
+it('shows keys that are already in by name only, with no input, and asks only for the rest', () => {
+  renderForm({ 'be/DATABASE_URL': 'in' })
   const be = within(screen.getByRole('group', { name: 'be' }))
   expect(be.getByText('DATABASE_URL')).toBeTruthy()
   expect(be.getByText('들어감')).toBeTruthy()
@@ -63,16 +74,14 @@ it('shows keys that are already in by name only, with no input, and asks only fo
   type('JWT_SECRET', 'jwt-value')
   type('QUEUE_URL', 'queue-value')
   submit()
-  await waitFor(() => {
-    expect(onSubmit).toHaveBeenCalledWith([
-      { service: 'be', key: 'JWT_SECRET', value: 'jwt-value' },
-      { service: 'worker', key: 'QUEUE_URL', value: 'queue-value' },
-    ])
-  })
+  expect(onSubmit).toHaveBeenCalledWith([
+    { service: 'be', key: 'JWT_SECRET', value: 'jwt-value' },
+    { service: 'worker', key: 'QUEUE_URL', value: 'queue-value' },
+  ])
 })
 
 it('has no submit button once every key is in', () => {
-  renderForm(new Set([secretId('be', 'DATABASE_URL'), secretId('be', 'JWT_SECRET'), secretId('worker', 'QUEUE_URL')]))
+  renderForm({ 'be/DATABASE_URL': 'in', 'be/JWT_SECRET': 'in', 'worker/QUEUE_URL': 'in' })
   expect(screen.queryByRole('button', { name: '비밀값 저장' })).toBeNull()
   expect(screen.getAllByText('들어감')).toHaveLength(3)
 })
@@ -95,13 +104,11 @@ it('sends all values once and removes them from the screen after the server took
   renderForm()
   fillAll()
   submit()
-  await waitFor(() => {
-    expect(onSubmit).toHaveBeenCalledWith([
-      { service: 'be', key: 'DATABASE_URL', value: 'postgres://u:pw@db/app' },
-      { service: 'be', key: 'JWT_SECRET', value: 'jwt-value' },
-      { service: 'worker', key: 'QUEUE_URL', value: 'queue-value' },
-    ])
-  })
+  expect(onSubmit).toHaveBeenCalledWith([
+    { service: 'be', key: 'DATABASE_URL', value: DB },
+    { service: 'be', key: 'JWT_SECRET', value: 'jwt-value' },
+    { service: 'worker', key: 'QUEUE_URL', value: 'queue-value' },
+  ])
   await waitFor(() => {
     expect(input('DATABASE_URL').value).toBe('')
   })
@@ -126,7 +133,7 @@ it('locks the inputs and the button while sending', async () => {
 })
 
 it('shows a key the server said is missing and asks for it again', () => {
-  renderForm(new Set([secretId('be', 'DATABASE_URL')]), new Set([secretId('be', 'JWT_SECRET')]))
+  renderForm({ 'be/DATABASE_URL': 'in', 'be/JWT_SECRET': 'missing' })
   const be = within(screen.getByRole('group', { name: 'be' }))
   expect(be.getByText('서버에 들어가지 않았어요. 다시 입력해 주세요')).toBeTruthy()
   expect(input('JWT_SECRET').getAttribute('aria-invalid')).toBe('true')
@@ -140,7 +147,7 @@ it('keeps what was typed and says it is not the user fault on 503, then sends th
   submit()
   expect(await screen.findByText('지금은 값을 저장할 수 없어요')).toBeTruthy()
   expect(screen.getByText(/사용자 잘못이 아니에요/)).toBeTruthy()
-  expect(input('DATABASE_URL').value).toBe('postgres://u:pw@db/app')
+  expect(input('DATABASE_URL').value).toBe(DB)
   expect(input('QUEUE_URL').value).toBe('queue-value')
 
   submit()
@@ -153,6 +160,28 @@ it('keeps what was typed and says it is not the user fault on 503, then sends th
   })
 })
 
+it('treats a request that never reached the server like a 503: not the user fault, values kept', async () => {
+  onSubmit.mockRejectedValueOnce(new ApiError(0, 'NETWORK_ERROR', 'x'))
+  renderForm()
+  fillAll()
+  submit()
+  expect(await screen.findByText('지금은 값을 저장할 수 없어요')).toBeTruthy()
+  expect(input('QUEUE_URL').value).toBe('queue-value')
+})
+
+it('drops the old failure notice when a later submit is blocked by a blank value', async () => {
+  onSubmit.mockRejectedValueOnce(new ApiError(503, 'X', 'x'))
+  renderForm()
+  fillAll()
+  submit()
+  await screen.findByText('지금은 값을 저장할 수 없어요')
+  type('QUEUE_URL', '')
+  submit()
+  expect(screen.getByText('값을 입력해 주세요')).toBeTruthy()
+  expect(screen.queryByText('지금은 값을 저장할 수 없어요')).toBeNull()
+  expect(onSubmit).toHaveBeenCalledTimes(1)
+})
+
 it('keeps what was typed on any other failure and does not echo the error message or the values', async () => {
   onSubmit.mockRejectedValueOnce(new Error('upstream said postgres://u:pw@db/app'))
   renderForm()
@@ -160,13 +189,13 @@ it('keeps what was typed on any other failure and does not echo the error messag
   submit()
   const alert = await screen.findByRole('alert')
   expect(alert.textContent).toContain('값을 저장하지 못했어요')
-  expect(document.body.textContent).not.toContain('postgres://u:pw@db/app')
+  expect(document.body.textContent).not.toContain(DB)
   expect(input('JWT_SECRET').value).toBe('jwt-value')
 })
 
 it('never writes a value to storage, the address bar or the console', async () => {
   const consoles = (['log', 'info', 'warn', 'error', 'debug'] as const).map((m) => vi.spyOn(console, m))
-  onSubmit.mockRejectedValueOnce(new ApiError(503, 'X', 'postgres://u:pw@db/app'))
+  onSubmit.mockRejectedValueOnce(new ApiError(503, 'X', DB))
   const before = window.location.href
   renderForm()
   fillAll()
@@ -177,7 +206,7 @@ it('never writes a value to storage, the address bar or the console', async () =
     expect(onSubmit).toHaveBeenCalledTimes(2)
   })
   const dump = [JSON.stringify({ ...window.localStorage }), JSON.stringify({ ...window.sessionStorage }), window.location.href]
-  for (const text of dump) expect(text).not.toMatch(/postgres|jwt-value|queue-value/)
+  for (const text of dump) expect(text).not.toMatch(LEAK)
   expect(window.location.href).toBe(before)
-  for (const spy of consoles) expect(JSON.stringify(spy.mock.calls)).not.toMatch(/postgres|jwt-value|queue-value/)
+  for (const spy of consoles) expect(JSON.stringify(spy.mock.calls)).not.toMatch(LEAK)
 })

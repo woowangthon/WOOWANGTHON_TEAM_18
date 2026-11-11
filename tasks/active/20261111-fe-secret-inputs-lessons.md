@@ -4,6 +4,8 @@
 
 - 2026-11-11: Started from `upstream/main` 41a72aa (#96 merged). New worktree `WOOWANGTHON_TEAM_18_fe83`. The #43 / #82 contract is not in `api.md`, so only the contract-free form is built.
 - 2026-11-11: `pnpm verify` passed (lint, tests, build). Hand mutants on the form: 503 status check, blank check, clear-on-success, done filter, blank predicate and "failure reset on resend" were killed; the `autoComplete` mutant survived until a test asserted the attribute.
+- 2026-11-11: `/code-review low` (second run; the first returned "(none)" after 4 seconds without reading the diff, so it was not trusted). Real: a blocked blank submit left the old 503 notice up — fixed with a test. Not real: a `service/key` id collision (names cannot contain `/`; comment added). Left: no focus move to the first invalid field (matches the other forms; `Field` errors are `role="alert"`); stale `missing` text after a clear is intended.
+- 2026-11-11: `/simplify` (4 angles). Applied: failure classification through `failureOf` (a network error now also reads as "not your fault"), per-key `state` instead of two id Sets, `empty` as an array, error text computed before the JSX, test constants. Skipped: reusing `RepoFailureAlert` (the copy needs the extra "values are kept" sentence), merging the two failure Alerts, folding the leak test into the 503 test.
 - 2026-11-11: Not checked: a browser, a real BE, the real submit and readiness responses (no contract), mutation tool (#67).
 
 ## Lessons
