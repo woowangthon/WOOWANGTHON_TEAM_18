@@ -29,7 +29,7 @@ describe.skipIf(!hasHelm && !process.env.CI)('student-app chart', () => {
     const yaml = await helmTemplate(renderValues(input(), 'b', 'slot', 'stairnoworks.com'), 'proj-my-app')
     await expect(normalize(yaml)).toMatchFileSnapshot('__snapshots__/chart-slot-b.yaml')
     expect(kinds(yaml).sort()).toEqual(
-      ['ConfigMap/ai-b', 'ConfigMap/be-b', 'ConfigMap/fe-b', 'Deployment/ai-b', 'Deployment/be-b', 'Deployment/fe-b', 'Ingress/test-be', 'Ingress/test-fe', 'Middleware/be-b-strip', 'Service/ai-b', 'Service/be-b', 'Service/fe-b'],
+      ['ConfigMap/ai-b', 'ConfigMap/be-b', 'ConfigMap/fe-b', 'Deployment/ai-b', 'Deployment/be-b', 'Deployment/fe-b', 'Ingress/test-be', 'Ingress/test-fe', 'Middleware/be-strip', 'Service/ai-b', 'Service/be-b', 'Service/fe-b'],
     )
     const deployments = docs(yaml).filter((d) => /^kind: Deployment/m.test(d))
     // 검사 규칙 wanggane-student-pods가 요구하는 것과 배치(cluster.md §6).
@@ -39,32 +39,46 @@ describe.skipIf(!hasHelm && !process.env.CI)('student-app chart', () => {
       expect(d).toContain('wanggane/pool: student')
       expect(d).toContain('wanggane/secret-hash: "sha256:abc"')
     }
-    // 공개 서비스마다 Ingress 하나(AI는 내부 전용). Ingress에는 slot 라벨이 없다(슬롯 비우기에 지워지지 않게).
+    // 공개 서비스마다 Ingress 하나(AI는 내부 전용). Ingress · Middleware에는 slot 라벨이 없다(슬롯 비우기에 지워지지 않게).
     const ingresses = docs(yaml).filter((d) => /^kind: Ingress/m.test(d))
     expect(ingresses.map((d) => [/path: "(\S+)"/.exec(d)![1], /service:\n\s+name: (\S+)/.exec(d)![1], /wanggane\/ingress: (\S+)/.exec(d)![1]])).toEqual([
       ['/', 'fe-b', 'test'],
       ['/api', 'be-b', 'test'],
     ])
-    for (const d of ingresses) expect(d).not.toMatch(/slot:/)
+    for (const d of docs(yaml).filter((d) => /^kind: (Ingress|Middleware)/m.test(d))) expect(d).not.toMatch(/slot:/)
     for (const d of ingresses) expect(d).toContain('host: "my-app.test.internal"')
     // 떼기는 stripPrefix인 BE Ingress에만 건다.
     const [fe, be] = ingresses
     expect(fe).not.toContain('router.middlewares')
-    expect(be).toContain('traefik.ingress.kubernetes.io/router.middlewares: "proj-my-app-be-b-strip@kubernetescrd"')
-    // Middleware는 대상 슬롯 것이라 slot 라벨이 있다(슬롯 비우기로 함께 지워지고, live 슬롯의 것은 건드리지 않는다).
-    const middleware = docs(yaml).find((d) => /^kind: Middleware/m.test(d))!
-    expect(middleware).toContain('prefixes:\n      - "/api"')
-    expect(middleware).toContain('slot: b')
+    expect(be).toContain('traefik.ingress.kubernetes.io/router.middlewares: "proj-my-app-be-strip@kubernetescrd"')
+    expect(docs(yaml).find((d) => /^kind: Middleware/m.test(d))).toContain('prefixes:\n      - "/api"')
   })
 
   it('renders only the open Ingresses for the open part', async () => {
     const yaml = await helmTemplate(renderValues(input(), 'b', 'open', 'stairnoworks.com'), 'proj-my-app')
     await expect(normalize(yaml)).toMatchFileSnapshot('__snapshots__/chart-open-b.yaml')
-    // open은 Middleware를 만들지 않고, 대상 슬롯(Switch 뒤 live)의 것을 가리킨다.
-    expect(kinds(yaml)).toEqual(['Ingress/open-fe', 'Ingress/open-be'])
-    expect(yaml).toContain('traefik.ingress.kubernetes.io/router.middlewares: "proj-my-app-be-b-strip@kubernetescrd"')
+    expect(kinds(yaml)).toEqual(['Ingress/open-fe', 'Ingress/open-be', 'Middleware/be-strip'])
     expect(yaml.match(/host: "my-app.stairnoworks.com"/g)).toHaveLength(2)
     expect(yaml.match(/wanggane\/ingress: open/g)).toHaveLength(2)
+  })
+
+  it('collapses repeated hyphens in the Middleware reference, as Traefik does (cluster.md §8)', async () => {
+    // slug에 `--`가 있으면 공간은 proj-my--app이지만 Traefik은 참조 이름을 proj-my-app-…으로 줄여 찾는다. 그대로 적으면 Ingress 전체가 404다.
+    const i = input()
+    i.spec.project.slug = 'my--app'
+    const yaml = await helmTemplate(renderValues(i, 'b', 'open', 'stairnoworks.com'), 'proj-my--app')
+    await expect(normalize(yaml)).toMatchFileSnapshot('__snapshots__/chart-open-b-double-hyphen.yaml')
+    expect(yaml).toContain('traefik.ingress.kubernetes.io/router.middlewares: "proj-my-app-be-strip@kubernetescrd"')
+    expect(yaml).toContain('host: "my--app.stairnoworks.com"')
+  })
+
+  it('collapses repeated hyphens of the service name in the reference too, but keeps the Middleware name', async () => {
+    const i = input()
+    i.spec.services[1].name = 'be--x'
+    i.deploy_condition.services['be--x'] = i.deploy_condition.services.be
+    const yaml = await helmTemplate(renderValues(i, 'b', 'open', 'stairnoworks.com'), 'proj-my-app')
+    expect(yaml).toContain('traefik.ingress.kubernetes.io/router.middlewares: "proj-my-app-be-x-strip@kubernetescrd"')
+    expect(yaml).toMatch(/^ {2}name: be--x-strip$/m)
   })
 
   it('renders no Ingress for internal-only services and an empty ConfigMap as {}', async () => {
@@ -78,8 +92,8 @@ describe.skipIf(!hasHelm && !process.env.CI)('student-app chart', () => {
   it('makes no Middleware when no service strips its prefix', async () => {
     const i = input()
     i.spec.services[1].runtime.stripPrefix = false
-    const yaml = await helmTemplate(renderValues(i, 'a', 'slot', 'stairnoworks.com'), 'proj-my-app')
-    expect(kinds(yaml).filter((k) => k.startsWith('Middleware'))).toEqual([])
+    const yaml = await helmTemplate(renderValues(i, 'a', 'open', 'stairnoworks.com'), 'proj-my-app')
+    expect(kinds(yaml)).toEqual(['Ingress/open-fe', 'Ingress/open-be'])
     expect(yaml).not.toContain('router.middlewares')
   })
 

@@ -11,7 +11,7 @@
 
 ## Lessons
 
-- An object shared by both slots (here a Middleware) leaks a target-slot change into live before the check. Anything the target slot needs that can differ per commit belongs to the slot.
+- When the infra side has written what the chart must produce (cluster.md §8, `Infra/student/app-example.yaml`), follow it even when a reviewer suggests a cleaner shape; record the gap as a known limitation and agree on a spec change first. A slot-split Middleware was built and reverted the same day.
 
 - kubectl turns API errors into text; when the raw Status matters, call the API. Server-side apply needs the `patch` verb even to create.
 
