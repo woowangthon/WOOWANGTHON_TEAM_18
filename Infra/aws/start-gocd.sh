@@ -39,6 +39,8 @@ export GOCD_STATE=$state
 export GOCD_TAILNET_ADDR=${TAILNET_ADDR:-$(tailscale ip -4 2>/dev/null | head -1)}
 [[ -n $GOCD_TAILNET_ADDR ]] || { echo "no Tailscale address: bring Tailscale up or set TAILNET_ADDR" >&2; exit 1; }
 export GOCD_BIND=$GOCD_TAILNET_ADDR
+# The port is published on the Tailscale address only, so setup.sh must call that address (not 127.0.0.1).
+export GOCD_URL=http://$GOCD_BIND:8153
 
 "${compose[@]}" up -d gocd-server
 bash Infra/gocd/setup.sh
