@@ -71,7 +71,7 @@ const MAX_LINKS = 30
 
 export const SLUG = /^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/
 const REPO = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/
-const SERVICE_NAME = /^[a-z]([a-z0-9-]{0,28}[a-z0-9])?$/
+export const SERVICE_NAME = /^[a-z]([a-z0-9-]{0,28}[a-z0-9])?$/
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/
 const NODE_VERSION = /^\d{1,2}(\.\d{1,3}){0,2}$/
 // 공개 경로는 `/` 하나이거나 `/api` · `/api/v1`처럼 끝 슬래시 없는 경로 조각이다.
