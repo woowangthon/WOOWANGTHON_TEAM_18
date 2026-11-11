@@ -105,7 +105,7 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 - 시험(2026-11-10, [`Infra/student/check.sh`](../../Infra/student/check.sh), 운영자 기기에서 실행): 같은 양식으로 공간을 하나 더(`proj--check`. 하이픈이 둘이라 어떤 `slug`도 이 이름이 되지 않는다), 정책 없는 대조 공간을 하나 만들고 각 공간의 시험 Pod에서 재 본 뒤 지운다.
   - 된다: 같은 공간 Service, 클러스터 DNS, 인터넷 HTTPS, 바깥 DB 포트 3306 · 5432(학교망에서도 열려 있다), Traefik → 학생 Service(Ingress 시험 호스트로 200. 다른 워커 쪽은 스크립트를 만들기 전에 손으로 쟀다).
   - 막힌다: 리더 API(Service 주소 · 노드 주소), 이미지 캐시, 두 워커의 kubelet, 학교망 DNS 서버, 리더의 Tailscale 주소, 로컬 모델(`vllm`), Traefik Service에 직접, 다른 학생 공간(Service · Pod 주소, 양쪽 방향). 대조 공간에서는 같은 대상에 닿아, 막는 것이 이 정책임을 확인했다. 막힌 연결은 시간 초과가 아니라 바로 거절된다.
-  - 받아들여지지 않는다(서버 쪽 dry run): hostNetwork · privileged Pod, CPU 5개를 요청하는 Pod(상한 초과), NodePort Service. 배치: 워커 라벨을 단 시험 Pod는 워커에, nodeSelector가 없는 Pod도 리더 taint 때문에 워커에 뜨고, 리더를 지정한 Pod는 Pending으로 남는다. 스크립트가 중간에 멈춰도 만든 것은 지우고, 시험 Pod에 들어가지 못한 측정과 연결 거절 · 시간 초과가 아닌 curl 오류(이름 풀이 실패 등)는 "막힘"이 아니라 실패로 센다.
+  - 받아들여지지 않는다(서버 쪽 dry run): hostNetwork · privileged Pod, CPU 5개를 요청하는 Pod(상한 초과), NodePort Service. NodePort Service는 2026-11-11부터 상한보다 앞에서 Service 검사 규칙(§8)이 거절한다(상한의 `services.nodeports: 0`은 둘째 겹으로 남는다). 배치: 워커 라벨을 단 시험 Pod는 워커에, nodeSelector가 없는 Pod도 리더 taint 때문에 워커에 뜨고, 리더를 지정한 Pod는 Pending으로 남는다. 스크립트가 중간에 멈춰도 만든 것은 지우고, 시험 Pod에 들어가지 못한 측정과 연결 거절 · 시간 초과가 아닌 curl 오류(이름 풀이 실패 등)는 "막힘"이 아니라 실패로 센다.
   - 리더 호스트에서 학생 Pod로 바로 가는 길도 막힌다. 배포 뒤 동작 확인(배포 실행기)은 Traefik을 거쳐야 한다.
 
 ### 7. 학생 볼륨 (빠짐)

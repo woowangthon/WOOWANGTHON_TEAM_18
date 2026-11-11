@@ -155,7 +155,10 @@ deny() { # deny <label> <expected text> <kubectl args...>   stdin = manifest, if
 deny "hostNetwork Pod" PodSecurity create -f - < <(testpod x 'hostNetwork: true')
 deny "privileged Pod" PodSecurity create -f - < <(testpod x '' 'privileged: true')
 deny "Pod asking 5 CPU" "exceeded quota" create -f - < <(testpod x '' '' 'resources: {requests: {cpu: "5"}, limits: {cpu: "5"}}')
-deny "NodePort Service" "exceeded quota" -n proj-demo create service nodeport x --tcp=80:9898 </dev/null
+# The Service rule (wanggane-student-services, Infra/executor/policies.yaml) refuses a NodePort before
+# the quota's services.nodeports: 0 is asked, so this one refusal is expected to come from the policy.
+out=$(k -n proj-demo create service nodeport x --tcp=80:9898 --dry-run=server 2>&1 </dev/null)
+if echo "$out" | grep -q wanggane-student-services; then echo "PASS NodePort Service rejected"; else echo "FAIL NodePort Service: $(echo "$out" | head -1)"; fail=1; fi
 
 echo "== cleanup"
 [ $fail = 0 ] && echo "ALL PASS" || { echo "SOME FAILED"; exit 1; }
