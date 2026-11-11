@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { ConflictException, type INestApplication, Logger } from '@nestjs/common'
 import request from 'supertest'
 import type { App } from 'supertest/types.js'
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, type MockInstance, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from 'vitest'
 import { AgentClient } from '../src/deploys/agent.client.js'
 import { DeployConditionService } from '../src/deploys/deploy-condition.service.js'
 import { DeployPreparer } from '../src/deploys/deploy-preparer.js'
@@ -32,9 +32,6 @@ let aiAnswer: () => Response
 let restOverride: ((table: string, method: string) => Response | undefined) | undefined
 // 가짜 준비 확인(#82). 기본은 준비됨이고 슬롯은 a다.
 let prepare: (deployId: string) => Promise<unknown>
-// 'real-readiness'면 DeployPreparer를 바꾸지 않고(실제 DeployReadinessService) 그 아래의 DeployConditionService.prepare만 가짜로 둔다.
-let wiring: 'fake-preparer' | 'real-readiness' = 'fake-preparer'
-let preparedWith: (string | null)[]
 let app: INestApplication<App>
 let logError: MockInstance<Logger['error']>
 
@@ -170,17 +167,7 @@ beforeEach(async () => {
   fetchMock.mockClear()
   vi.stubGlobal('fetch', fetchMock)
   logError = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
-  preparedWith = []
-  app = await startApp([], (b) =>
-    wiring === 'real-readiness'
-      ? b.overrideProvider(DeployConditionService).useValue({
-          prepare: (id: string, secretHash: string | null) => {
-            preparedWith.push(secretHash)
-            return prepare(id)
-          },
-        })
-      : b.overrideProvider(DeployPreparer).useValue({ prepareIfReady: (id: string) => prepare(id) }),
-  )
+  app = await startApp([], (b) => b.overrideProvider(DeployPreparer).useValue({ prepareIfReady: (id: string) => prepare(id) }))
 })
 
 afterEach(async () => {
@@ -336,11 +323,19 @@ describe('POST /api/deploys/:id/start with the real readiness check', () => {
   const specWith = (secretKeys: string[]) => ({ project: { slug: 'my-app' }, services: [{ name: 'be', runtime: { secretKeys, env: {} } }] })
   const secretRow = (over: Row = {}) => ({ slug: 'my-app', service: 'be', keys: ['DATABASE_URL', 'JWT_SECRET'], status: 'in', digest: serviceDigest(BE), ...over })
 
-  beforeAll(() => {
-    wiring = 'real-readiness'
-  })
-  afterAll(() => {
-    wiring = 'fake-preparer'
+  // DeployPreparer는 그대로 두고(실제 DeployReadinessService) 그 아래의 DeployConditionService.prepare만 가짜로 둔다.
+  let preparedWith: (string | null)[]
+  beforeEach(async () => {
+    await app.close()
+    preparedWith = []
+    app = await startApp([], (b) =>
+      b.overrideProvider(DeployConditionService).useValue({
+        prepare: (id: string, secretHash: string | null) => {
+          preparedWith.push(secretHash)
+          return prepare(id)
+        },
+      }),
+    )
   })
 
   it('answers 409 NOT_READY with the missing keys and starts nothing', async () => {
