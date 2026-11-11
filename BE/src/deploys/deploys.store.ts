@@ -249,7 +249,9 @@ export class DeploysStore {
         // 새 secret key는 JWT가 아니라 Authorization 헤더로 보내면 거부된다. apikey 하나로 보낸다.
         headers: {
           apikey: this.secretKey,
-          ...(body ? { 'Content-Type': 'application/json', Prefer: prefer } : {}),
+          // 쓰는 요청(본문 없는 DELETE 포함)은 Prefer를 보내야 PostgREST가 204 빈 본문 대신 지운 줄을 JSON 배열로 돌려준다.
+          ...(method !== 'GET' ? { Prefer: prefer } : {}),
+          ...(body ? { 'Content-Type': 'application/json' } : {}),
         },
         body: body ? JSON.stringify(body) : undefined,
         signal: AbortSignal.timeout(TIMEOUT_MS),
