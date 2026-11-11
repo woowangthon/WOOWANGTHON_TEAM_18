@@ -35,8 +35,11 @@ export function buildInputHash(build: Build, source: BuildSource): string {
   // 검증한 spec에서 framework는 Dockerfile이 없을 때만 있다.
   const defaultDockerfile = build.framework === null ? null : `${build.framework}@${DEFAULT_DOCKERFILE_VERSIONS[build.framework]}`
   const input = { build, contextTree: source.contextTree, defaultDockerfile, dockerfileBlob: source.dockerfileBlob }
-  return `sha256:${createHash('sha256').update(canonicalJson(input)).digest('hex')}`
+  return taggedSha256(canonicalJson(input))
 }
+
+/** `sha256:` + 64자 hex. 빌드 입력 해시와 비밀값 해시가 같은 모양을 쓴다. */
+export const taggedSha256 = (text: string): string => `sha256:${createHash('sha256').update(text, 'utf8').digest('hex')}`
 
 function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`

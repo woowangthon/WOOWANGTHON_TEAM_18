@@ -4,10 +4,14 @@ import request from 'supertest'
 import type { App } from 'supertest/types.js'
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from 'vitest'
 import { AgentClient } from '../src/deploys/agent.client.js'
+import { DeployConditionService } from '../src/deploys/deploy-condition.service.js'
 import { DeployPreparer } from '../src/deploys/deploy-preparer.js'
+import { combineDigests, serviceDigest } from '../src/deploys/secrets-input.js'
 import { errorBody, JWKS_URL, keySet, token } from './auth-helpers.js'
 import { startApp } from './start-app.js'
 
+// vitest.config.ts가 넣은 서버의 해시 키.
+const HASH_KEY = process.env.SECRET_HASH_KEY ?? ''
 const REST = 'https://test.supabase.co/rest/v1/'
 const GOCD_URL = 'https://gocd.test/go/api/pipelines/student-deploy/schedule'
 const AI_URL = 'https://ai.test/agent/tickets'
@@ -312,6 +316,74 @@ describe('POST /api/deploys/:id/start', () => {
     expect(res.status).toBe(503)
     expect(res.body).toEqual(errorBody('DATABASE_UNAVAILABLE'))
     expect(callsTo(GOCD_URL)).toHaveLength(0)
+  })
+})
+
+// DeploysModule의 묶음 그대로: 시작이 부르는 DeployPreparer가 실제 DeployReadinessService(#82)다.
+describe('POST /api/deploys/:id/start with the real readiness check', () => {
+  const BE = { DATABASE_URL: 'postgres://u:p@h/db', JWT_SECRET: 'jwt-secret-value' }
+  const specWith = (secretKeys: string[]) => ({ project: { slug: 'my-app' }, services: [{ name: 'be', runtime: { secretKeys, env: {} } }] })
+  const secretRow = (over: Row = {}) => ({ slug: 'my-app', service: 'be', keys: ['DATABASE_URL', 'JWT_SECRET'], status: 'in', digest: serviceDigest(BE, HASH_KEY), ...over })
+
+  // DeployPreparer는 그대로 두고(실제 DeployReadinessService) 그 아래의 DeployConditionService.prepare만 가짜로 둔다.
+  let preparedWith: (string | null)[]
+  beforeEach(async () => {
+    await app.close()
+    preparedWith = []
+    app = await startApp([], (b) =>
+      b.overrideProvider(DeployConditionService).useValue({
+        prepare: (id: string, secretHash: string | null) => {
+          preparedWith.push(secretHash)
+          return prepare(id)
+        },
+      }),
+    )
+  })
+
+  it('answers 409 NOT_READY with the missing keys and starts nothing', async () => {
+    const id = seedDeploy({ spec: specWith(['DATABASE_URL', 'JWT_SECRET']) })
+    const res = await start(id)
+    expect(res.status).toBe(409)
+    expect(res.body).toMatchObject({
+      error: {
+        code: 'NOT_READY',
+        fields: [
+          { path: 'secrets.be.DATABASE_URL', code: 'REQUIRED' },
+          { path: 'secrets.be.JWT_SECRET', code: 'REQUIRED' },
+        ],
+      },
+    })
+    expect(preparedWith).toEqual([])
+    expect(db.deploy_runs ?? []).toEqual([])
+    expect(callsTo(GOCD_URL)).toHaveLength(0)
+  })
+
+  it('does not count a half-written Secret as ready', async () => {
+    ;(db.deploy_secrets ??= []).push(secretRow({ status: 'writing', digest: null }))
+    const res = await start(seedDeploy({ spec: specWith(['DATABASE_URL', 'JWT_SECRET']) }))
+    expect(res.status).toBe(409)
+    expect(callsTo(GOCD_URL)).toHaveLength(0)
+  })
+
+  it('starts once every key is in and hands the combined secret hash to the condition', async () => {
+    ;(db.deploy_secrets ??= []).push(secretRow())
+    const id = seedDeploy({ spec: specWith(['DATABASE_URL', 'JWT_SECRET']) })
+    const res = await start(id)
+    expect(res.status).toBe(202)
+    expect(preparedWith).toEqual([combineDigests([{ name: 'be', digest: serviceDigest(BE, HASH_KEY) }], HASH_KEY)])
+    expect(callsTo(GOCD_URL)).toHaveLength(1)
+  })
+
+  it('starts without any secret when the spec has no secret keys (hash is null)', async () => {
+    const res = await start(seedDeploy({ spec: specWith([]) }))
+    expect(res.status).toBe(202)
+    expect(preparedWith).toEqual([null])
+  })
+
+  it('still hides another user\'s deploy before the readiness check runs', async () => {
+    const res = await start(seedDeploy({ user_id: OTHER, spec: specWith(['DATABASE_URL']) }))
+    expect(res.status).toBe(404)
+    expect(preparedWith).toEqual([])
   })
 })
 
