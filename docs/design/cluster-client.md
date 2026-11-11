@@ -82,7 +82,7 @@
 | --- | --- |
 | `PATCH` | 서버 계정에 Secret `patch` 권한이 없다. patch의 응답은 Secret 전체라, 빈 patch 하나로 값을 읽을 수 있기 때문이다(cluster.md §8). 다른 객체도 고치기 권한이 없다 |
 | Secret 읽기 · 목록 · 삭제 | 권한이 없다(`403`). 어떤 key가 들어갔는지는 #43이 DB에 key 이름으로 남긴다 |
-| 조치(scale · 재시작), watch · 이벤트 읽기 | 끄기(scale 0) · 이벤트 · Ingress 읽기 권한은 2026-11-11에 들어갔다([cluster.md](cluster.md) §8, #124). 재개 · 재시작 권한은 아직 없다. 호출은 다음 PR |
+| 조치(scale · 재시작), watch · 이벤트 읽기 | 끄기 · 재개(scale 0 · 1), 재시작(rollout restart), 이벤트 · Ingress 읽기 권한은 2026-11-11에 들어갔다([cluster.md](cluster.md) §8, #124 · #129). 호출은 다음 PR |
 | 공간 삭제 | 서버 계정에 권한은 있지만 부르는 기능이 아직 없다 |
 | 다시 시도 | `POST`는 다시 보내도 되는지 모듈이 알 수 없다. 다시 부르는 것은 부르는 쪽이 정한다(`ensureSpace`와 `write`는 다시 불러도 같은 결과다) |
 
