@@ -1,0 +1,78 @@
+# Admission policies for the leader deploy executor (build 09′). Design and reasons: docs/design/cluster.md §8.
+#   wanggane-deploy-executor       the executor account writes only in proj- spaces
+#   wanggane-student-middlewares   a Traefik Middleware in a proj- space holds stripPrefix and nothing else
+# The rules for what a student Pod may look like (no API token, NET_RAW dropped, no toleration, no preset
+# node) are in wanggane-student-pods, and the rule that fixes the executor's RoleBinding is
+# wanggane-space-deployers; both are in Infra/platform/policies.yaml.
+# Apply (from the operator's machine), before account.yaml:
+#   ssh k3s-leader 'sudo k3s kubectl apply -f -' < Infra/executor/policies.yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: wanggane-deploy-executor
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups: ["*"]
+      apiVersions: ["*"]
+      operations: ["CREATE", "UPDATE", "DELETE", "CONNECT"]
+      resources: ["*/*"]
+      scope: "*"
+    # "What may I do" questions change nothing.
+    excludeResourceRules:
+    - apiGroups: ["authorization.k8s.io", "authentication.k8s.io"]
+      apiVersions: ["*"]
+      operations: ["*"]
+      resources: ["selfsubjectaccessreviews", "selfsubjectrulesreviews", "selfsubjectreviews"]
+  matchConditions:
+  - name: deploy-executor-account
+    expression: request.userInfo.username == 'system:serviceaccount:deploy:deploy-executor'
+  validations:
+  # RBAC gives the account rights only where the RoleBinding deploy-executor exists. This holds even if
+  # a binding turns up elsewhere (the reference copy in student-template is one).
+  # For a Namespace object request.namespace is the namespace's own name, so that kind is named here.
+  - expression: >-
+      request.namespace.startsWith('proj-')
+      && !(request.resource.group == '' && request.resource.resource == 'namespaces')
+    message: the deploy executor may write only inside proj-<id> spaces
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: wanggane-deploy-executor
+spec:
+  policyName: wanggane-deploy-executor
+  validationActions: ["Deny"]
+---
+# Applies to every account, operators included. A Middleware changes requests before they reach the
+# app: a redirect, forwardAuth or plugin Middleware would send visitors or their headers elsewhere.
+# stripPrefix is what the deploy input's runtime.stripPrefix needs (#72).
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: wanggane-student-middlewares
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups: ["traefik.io"]
+      apiVersions: ["*"]
+      operations: ["CREATE", "UPDATE"]
+      resources: ["middlewares"]
+  matchConditions:
+  - name: student-space
+    expression: request.namespace.startsWith('proj-')
+  validations:
+  - expression: >-
+      has(object.spec) && has(object.spec.stripPrefix)
+      && object.spec.all(k, k == 'stripPrefix')
+    message: "a Middleware in a student space may hold spec.stripPrefix only"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: wanggane-student-middlewares
+spec:
+  policyName: wanggane-student-middlewares
+  validationActions: ["Deny"]
