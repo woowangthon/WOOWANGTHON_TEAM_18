@@ -172,6 +172,7 @@ describe('MCP gateway trial tools', () => {
 
   it('raises the token expiry when the wait starts and writes it again when it ends', async () => {
     const before = Date.parse(run.gateway_expires_at!)
+    behave = answering('render', { ok: true, status: null, failure: null })
     const client = await connect()
     await call(client, 'run_render', { specPatch: port8000 })
     expect(expiries).toHaveLength(2)
