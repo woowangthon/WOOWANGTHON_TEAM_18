@@ -31,11 +31,11 @@ deny() { # deny <rbac|policy|exists|escalation|builtin> <label> <command...>   s
   else echo "FAIL $label refused for another reason: $(echo "$out" | head -1)"; fail=1; fi
 }
 space() { sed "s/proj-demo/$1/g" ../student/space.yaml; }
-doc() { # doc <Kind> <namespace> [file]: one document of the template, renamed
-  sed "s/proj-demo/$2/g" "${3:-../student/space.yaml}" | awk -v k="kind: $1" '
-    function flush() { if (hit) printf "%s", buf; buf = ""; hit = 0 }
+doc() { # doc <Kind> <namespace> [file] [name]: one document of the template, renamed
+  sed "s/proj-demo/$2/g" "${3:-../student/space.yaml}" | awk -v k="kind: $1" -v n="  name: ${4:-}" '
+    function flush() { if (hit && (n == "  name: " || named)) printf "%s", buf; buf = ""; hit = 0; named = 0 }
     /^---$/ { flush(); next }
-    { buf = buf $0 "\n"; if (index($0, k) == 1) hit = 1 }
+    { buf = buf $0 "\n"; if (index($0, k) == 1) hit = 1; if ($0 == n) named = 1 }
     END { flush() }'
 }
 ns() { # ns <name> [label=value ...]
@@ -67,7 +67,7 @@ trap cleanup EXIT
 k delete namespace proj-srvcheck proj-srvcheck2 --ignore-not-found >/dev/null
 
 echo "== server account: what #81 and #43 do"
-allow "create a space from the template (5 objects)" ks create -f - < <(space proj-srvcheck)
+allow "create a space from the template (6 objects)" ks create -f - < <(space proj-srvcheck)
 deny exists "create the same space again" ks create -f - < <(space proj-srvcheck)
 allow "create a Secret" ks create -f - < <(secret proj-srvcheck be-secrets Opaque first)
 allow "replace the Secret (PUT)" ks replace -f - < <(secret proj-srvcheck be-secrets Opaque second)
@@ -91,10 +91,15 @@ deny policy "NetworkPolicy without the private-range block" ks create -f - < <(d
 deny policy "second NetworkPolicy under another name" ks create -f - < <(doc NetworkPolicy proj-srvcheck2 | sed 's/name: project-isolation/name: allow-more/')
 deny rbac "delete the ResourceQuota" ks -n proj-srvcheck delete resourcequota project-cap
 deny rbac "delete the NetworkPolicy" ks -n proj-srvcheck delete networkpolicy project-isolation
-deny policy "read binding under another name" ks create -f - < <(doc RoleBinding proj-srvcheck2 | sed 's/name: platform-server-read/name: more-read/')
+deny policy "read binding under another name" ks create -f - < <(doc RoleBinding proj-srvcheck2 '' platform-server-read | sed 's/name: platform-server-read/name: more-read/')
 deny policy "read binding for another account" ks create -f - < <(printf 'apiVersion: rbac.authorization.k8s.io/v1\nkind: RoleBinding\nmetadata: {name: platform-server-read, namespace: proj-srvcheck2}\nroleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: proj-reader}\nsubjects: [{kind: ServiceAccount, name: default, namespace: proj-srvcheck2}]\n')
 deny escalation "binding to cluster-admin" ks create -f - < <(printf 'apiVersion: rbac.authorization.k8s.io/v1\nkind: RoleBinding\nmetadata: {name: platform-server-read, namespace: proj-srvcheck2}\nroleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-admin}\nsubjects: [{kind: ServiceAccount, name: platform-server, namespace: platform}]\n')
 deny rbac "delete the read binding" ks -n proj-srvcheck delete rolebinding platform-server-read
+deny policy "executor binding to the read role" ks create -f - < <(doc RoleBinding proj-srvcheck2 '' deploy-executor | sed 's/name: proj-deployer/name: proj-reader/')
+deny policy "executor role under another binding name" ks create -f - < <(doc RoleBinding proj-srvcheck2 '' deploy-executor | sed 's/^  name: deploy-executor$/  name: more-deploy/')
+deny policy "executor binding for another account" ks create -f - < <(printf 'apiVersion: rbac.authorization.k8s.io/v1\nkind: RoleBinding\nmetadata: {name: deploy-executor, namespace: proj-srvcheck2}\nroleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: proj-deployer}\nsubjects: [{kind: ServiceAccount, name: platform-server, namespace: platform}]\n')
+allow "executor binding from the template" ks create -f - < <(doc RoleBinding proj-srvcheck2 '' deploy-executor)
+deny rbac "delete the executor binding" ks -n proj-srvcheck delete rolebinding deploy-executor
 deny rbac "patch the ResourceQuota" ks -n proj-srvcheck patch resourcequota project-cap --type=merge -p "'{\"spec\":{\"hard\":{\"pods\":\"100\"}}}'"
 
 echo "== server account: Secrets"
@@ -111,6 +116,7 @@ deny policy "replace the vLLM key" ks replace --dry-run=server -f - < <(secret v
 echo "== server account: everything else"
 deny rbac "create a Pod in a space" ks create -f - < <(pod false NET_RAW | sed 's/proj-demo/proj-srvcheck/')
 deny rbac "create a Deployment in a space" ks -n proj-srvcheck create deployment x --image=busybox:1.37
+deny rbac "create a Middleware in a space" ks create -f - < <(printf 'apiVersion: traefik.io/v1alpha1\nkind: Middleware\nmetadata: {name: x, namespace: proj-srvcheck}\nspec: {stripPrefix: {prefixes: ["/a"]}}\n')
 
 echo "== server account: reads (through the read binding of each space)"
 allow "read Pods in an own space" ks -n proj-srvcheck get pods

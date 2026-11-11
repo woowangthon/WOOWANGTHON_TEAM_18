@@ -94,7 +94,7 @@
   },
   {
     "caseId": "R3", "stage": "render", "category": "spec",
-    "title": "쿼터 초과",
+    "title": "쿼터 초과 (render에서는 드묾: Deployment dry-run은 쿼터에 걸리지 않아 보통 P2 · A4로 온다)",
     "match": { "all": [
       { "path": "raw.k8s.status.code", "equals": 403 },
       { "path": "raw.k8s.status.message", "regex": "exceeded quota" }
