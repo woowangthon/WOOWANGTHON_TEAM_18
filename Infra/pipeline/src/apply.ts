@@ -14,6 +14,9 @@ export const MAX_WAIT_S = 420
 
 const ROLE_ORDER = ['ai', 'be', 'fe']
 
+/** 서비스를 AI → BE → FE 순서로. 앞 서비스가 떠야 뒤 서비스가 붙을 수 있다. */
+export const byRole = (services: Service[]) => [...services].sort((a, b) => ROLE_ORDER.indexOf(a.role) - ROLE_ORDER.indexOf(b.role))
+
 /** 서비스 하나의 Ready 대기 한도(초). */
 export const waitLimitSeconds = (svc: Service) => Math.min(svc.runtime.health.startupTimeoutSeconds + PULL_ALLOWANCE_S, MAX_WAIT_S)
 
@@ -47,7 +50,7 @@ export function quotaEvent(events: Obj[], fullName: string): Obj | null {
 }
 
 /** 이벤트가 대상 슬롯의 리소스(`<서비스>-<슬롯>` 또는 그 아래 ReplicaSet · Pod)에 대한 것인가. */
-const ofSlot = (fullNames: string[]) => (e: Obj) => {
+export const ofSlot = (fullNames: string[]) => (e: Obj) => {
   const name = isRecord(e.involvedObject) ? e.involvedObject.name : undefined
   return typeof name === 'string' && fullNames.some((n) => name === n || name.startsWith(`${n}-`))
 }
@@ -90,7 +93,7 @@ export async function runApply(input: DeployInput, slot: Slot, manifest: string,
   const ready: string[] = []
   const fail = (failure: StageFailure): ApplyReport => ({ ok: false, slot, ready, failure })
   const { byService, rest } = groupDocs(splitManifest(manifest, namespace), input, slot)
-  const ordered = [...input.spec.services].sort((a, b) => ROLE_ORDER.indexOf(a.role) - ROLE_ORDER.indexOf(b.role))
+  const ordered = byRole(input.spec.services)
   const fullNames = input.spec.services.map((s) => `${s.name}-${slot}`)
 
   let current: string | null = null
