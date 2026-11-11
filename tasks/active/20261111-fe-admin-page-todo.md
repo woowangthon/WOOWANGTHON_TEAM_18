@@ -6,7 +6,7 @@
 
 ## Plan
 
-Built against the BE operator API contract in `docs/design/api.md` "운영자 API" (BE branch `feat/admin-cluster-100`, commit 5f8b3a3, code not written yet at the time of this commit).
+Built against the BE operator API contract in `docs/design/api.md` "운영자 API" (BE #121, on `main`; at first a BE branch whose code was not written yet at the time of this commit).
 
 - `isAdmin(session)` reads `app_metadata.role === 'admin'` (never `user_metadata`). Hiding the screen is a convenience; the server decides, and its `403 ADMIN_REQUIRED` on either read shows the same `ForbiddenNotice` and stops the refresh.
 - `RequireAdmin` is a layout route inside `RequireAuth`; route `/admin`; the menu link `관리자` is for admins only.
@@ -24,7 +24,7 @@ Built against the BE operator API contract in `docs/design/api.md` "운영자 AP
 - [x] Tests: `pages/AdminPage.test.tsx` (29), guard tests in `App.test.tsx`
 - [x] Hand mutants on the decision logic (state of a project, https link, usage collected, 403 handling, refresh, stop flow, formatting)
 - [ ] Mutation testing (#67 not introduced)
-- [ ] A real round trip with the BE (needs `feat/admin-cluster-100` merged, an admin account and the cluster permissions)
+- [ ] A real round trip with the BE (the operator API is on `main` via #121; needs an admin account and the cluster permissions; force stop answers `503 CLUSTER_FORBIDDEN` until #123 wires the scale call). Not run
 - [ ] 390px layout looked at in a browser (built as cards with no fixed widths, never viewed)
 - [ ] Screenshots (light and dark, 1440px and 390px) — attached by the user
 - [ ] Whether `isAdmin` should move onto `useAuth()` when a third consumer appears
@@ -32,3 +32,4 @@ Built against the BE operator API contract in `docs/design/api.md` "운영자 AP
 ## Done when
 
 An admin sees node status and running services from the real API, can force-stop a service after confirming, and a non-admin cannot reach or use the page.
+- [x] Re-checked against the operator API contract on `main` (2026-11-11): shapes match; only the failed-stop messages were off and are fixed (`CLUSTER_FORBIDDEN` = not available yet, not the operator's fault; a stop is not retried by itself)
