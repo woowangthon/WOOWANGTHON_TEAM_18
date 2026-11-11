@@ -63,7 +63,7 @@ W0 접수 · 사전 검사 → W1 분석 → W2 배포 설정 → W3 비밀값 �
 | **W3 비밀값 받기** | 플랫폼 서버 | 빠진 필수 env 값을 사용자에게 바로 요청. 받은 값은 **플랫폼 서버가 Tailscale로 k3s API에 접속해 Secret으로 만든다.** GoCD를 거치지 않으므로 실행 기록에 남지 않는다. DB에는 key 이름과 상태만 저장 | 응답이 없으면 "사용자 조치 필요"로 마감 |
 | **W4 빌드** | AWS 실행기 → CodeBuild | 배포 입력으로 서비스별 CodeBuild를 병렬 호출한다. 학생 Dockerfile(`build.dockerfile`) 또는 배포 입력 값(Dockerfile이 없을 때, 빌드 값 사용)으로 빌드 → 이미지 검사 → GHCR에 push. 빌드 입력 해시가 같으면 건너뜀. 이미지 검사는 규칙 검사만 한다: 이미지가 만들어졌는지, 크기 2GiB 이하인지 보고, root로 실행하는 이미지는 경고만 한다(새 도구 없음. 취약점 검사는 ADR-010대로 W1) | 빌드 실패 → **문제 티켓** |
 | **W5 배포** | 리더 실행기 | Prepare: 배포 입력을 받고 필수 Secret key 확인, live 슬롯 보호 검사, 대상 슬롯 비우기(4절). Render: 대상 슬롯 manifest 생성(3절). Apply: AI → BE → FE 순서로 대상 슬롯에 적용하고 Ready를 기다린다. 기다리는 동안 대상 슬롯 Pod · 이벤트를 watch하다가 다시 기다려도 나아지지 않는 신호가 보이면 제한 시간 전에 바로 실패로 끝낸다(4절 "제한 시간") | 배포 실패 → live 슬롯은 그대로 → **문제 티켓** |
-| **W6 동작 확인** | 리더 실행기 | 대상 슬롯의 Pod Ready(readinessProbe 통과)와 Service Endpoints를 확인(BE → AI 같은 내부 연결 포함)한다. 공개 서비스(`ingressPath`가 있는 서비스)가 있으면 test Ingress의 대상을 대상 슬롯으로 적용하고, Traefik에 Host `<slug>.test.internal`로 **그 서비스에 있는 경로만** 요청한다(4절 "동작 확인과 전환"). 검사한 항목이 모두 성공해야 통과다 | 실패 → open Ingress를 바꾸지 않음 (live 슬롯은 그대로) → **문제 티켓** |
+| **W6 동작 확인** | 리더 실행기 | 대상 슬롯의 Pod Ready(readinessProbe 통과)와 Service Endpoints를 확인(BE → AI 같은 내부 연결 포함)한다. 공개 서비스(`ingressPath`가 있는 서비스)가 있으면 test Ingress의 대상을 대상 슬롯으로 적용하고, Traefik에 Host `<slug>.test.internal`로 **그 서비스에 있는 경로만** 요청한다(4절 "동작 확인과 전환"). 검사한 항목이 모두 성공해야 통과다 | 실패 → open Ingress를 바꾸지 않음 (live 슬롯은 그대로) → 실패로 끝남. 대회 기간에는 문제 티켓을 보내지 않는다(에이전트 계약의 `stage`에 verify가 없다. 2026-11-11 결정, 대회 뒤 후보) |
 | **전환** | 리더 실행기 | open Ingress의 대상을 대상 슬롯의 Service로 바꿔 적용. 첫 배포면 open Ingress를 만든다 | - |
 | **W7 완료 · 보고** | 플랫폼 서버 | DB의 `live_slot`을 대상 슬롯으로 바꾸고 이전 live 슬롯의 Deployment를 0개로 줄임, 사용자에게 주소 · 상태 · 경고 표시, 프로젝트 메모리에 기록, 운영 감시 시작 | - |
 | (운영 중) | 플랫폼 서버 | 재시작 반복 · 메모리 초과를 감시. Tailscale로 리더 k3s API에 Pod · 이벤트 watch 연결을 유지해 바뀔 때마다 받는다(주기적으로 조회하지 않는다). 로그는 계속 받지 않고, 문제를 감지한 순간에 최근 10분만 읽는다 | 재시작 1회 → **장애 대응 job**의 문제 티켓 |
@@ -157,7 +157,7 @@ W6은 배포 입력에 있는 서비스와 설정된 경로만 검사한다. 정
 |---|---|---|
 | CodeBuild 빌드 하나 | 15분 (CodeBuild 프로젝트 `timeoutInMinutes`) | 빌드 실패 → 문제 티켓 |
 | Apply 뒤 Pod Ready 대기 | 서비스마다 `startupTimeoutSeconds` + 120초(이미지 pull 몫), 최대 7분 (`kubectl rollout status --timeout`) | 배포 실패 → 문제 티켓. Pod 상태 이유(`ImagePullBackOff`, ResourceQuota 초과 `FailedCreate`, `CrashLoopBackOff`, `Pending`)와 이벤트를 티켓에 넣는다. 아래 신호는 제한 시간을 기다리지 않고 바로 실패로 끝낸다 |
-| W6 Traefik 요청 하나 | 10초, 5초 간격 3번까지 | 확인 실패 → 문제 티켓 |
+| W6 Traefik 요청 하나 | 10초, 5초 간격 3번까지 | 확인 실패 → 실패로 끝남 (W6 행) |
 | 파이프라인 전체 | 30분 (GoCD job 제한 시간) | 파이프라인 실패 → 문제 티켓 |
 
 **Apply의 빠른 실패.** Apply는 Ready를 기다리는 동안 대상 슬롯의 Pod · 이벤트를 watch한다. 아래 신호는 더 기다려도 나아지지 않으므로, 보이는 즉시 실패로 끝낸다. 그 밖에는 위 제한 시간까지 기다린다.
