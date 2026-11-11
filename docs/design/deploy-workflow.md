@@ -192,7 +192,7 @@ W6은 배포 입력에 있는 서비스와 설정된 경로만 검사한다. 정
 
 ```
 [지시: 이미지 주소 한 줄]
-CodeBuild ─태그─▶ GoCD ─▶ 리더 실행기: kubectl apply ─▶ 리더 k3s API ─▶ 워커에 배치
+CodeBuild ─태그─▶ GoCD ─▶ 리더 실행기: server-side apply ─▶ 리더 k3s API ─▶ 워커에 배치
 
 [이미지 자체]
 CodeBuild ─push─▶ GHCR ─────────────────────────────────────────▶ 워커가 직접 pull
