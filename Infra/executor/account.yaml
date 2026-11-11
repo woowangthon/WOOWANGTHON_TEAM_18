@@ -1,0 +1,60 @@
+# Leader deploy executor account (build 09′). Design and reasons: docs/design/cluster.md §8.
+# The GoCD Agent on the leader applies the student-app chart's output with this account
+# (helm template, then kubectl apply). The account has no cluster-wide rights at all: everything it may
+# do is in the role proj-deployer, and it holds that role only in the spaces where the RoleBinding
+# deploy-executor exists. The platform server creates that binding with the space (Infra/student/space.yaml).
+# Infra/executor/policies.yaml is the second layer: it refuses this account's writes outside proj- spaces
+# even where a binding exists.
+# Apply (from the operator's machine), policies.yaml first:
+#   ssh k3s-leader 'sudo k3s kubectl apply -f -' < Infra/executor/account.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: deploy
+  labels:
+    # The GoCD Agent Pod will run here (leader only). Nothing runs here yet.
+    pod-security.kubernetes.io/enforce: restricted
+---
+# No token Secret: the Agent Pod gets a short-lived token mounted by Kubernetes, so the credential
+# never leaves the leader and there is nothing to revoke by hand.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: deploy-executor
+  namespace: deploy
+---
+# What the executor may do in a space it was bound into. Not bound cluster-wide.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: proj-deployer
+rules:
+# What the chart renders. get and patch are what `kubectl apply` (also with --dry-run=server) uses;
+# list and watch serve `rollout status`, the open-Ingress read in Prepare and deleting a slot by label.
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: [""]
+  resources: ["services", "configmaps"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["networking.k8s.io"]
+  resources: ["ingresses"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# stripPrefix only: wanggane-student-middlewares (policies.yaml) refuses every other kind of Middleware.
+- apiGroups: ["traefik.io"]
+  resources: ["middlewares"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Read only, for the Ready wait, the fast-fail signals and the W6 check. No Pod logs, no exec.
+- apiGroups: [""]
+  resources: ["pods", "events", "endpoints"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["replicasets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["discovery.k8s.io"]
+  resources: ["endpointslices"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["events.k8s.io"]
+  resources: ["events"]
+  verbs: ["get", "list", "watch"]
+# Nothing on secrets, namespaces, resourcequotas, limitranges, networkpolicies or rolebindings.

@@ -55,14 +55,15 @@ rules:
 - apiGroups: [""]
   resources: ["secrets"]
   verbs: ["create", "update"]
-# Reads inside a space come from a RoleBinding the server creates with the space (space.yaml).
-# It may bind the role proj-reader only, and policies.yaml fixes the binding's name and subject.
+# Reads inside a space come from a RoleBinding the server creates with the space (space.yaml), and so
+# does the deploy executor's right to work there. It may bind the roles proj-reader and proj-deployer
+# only, and policies.yaml fixes each binding's name and subject.
 - apiGroups: ["rbac.authorization.k8s.io"]
   resources: ["rolebindings"]
   verbs: ["create"]
 - apiGroups: ["rbac.authorization.k8s.io"]
   resources: ["clusterroles"]
-  resourceNames: ["proj-reader"]
+  resourceNames: ["proj-reader", "proj-deployer"]
   verbs: ["bind"]
 # Nodes belong to no space. Name, addresses and Ready state, for the operator view.
 - apiGroups: [""]

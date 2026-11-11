@@ -1,4 +1,4 @@
-import { Route, Routes } from 'react-router'
+import { Navigate, Route, Routes } from 'react-router'
 import AuthProvider from './auth/AuthProvider.tsx'
 import RequireAuth from './auth/RequireAuth.tsx'
 import AppLayout from './layout/AppLayout.tsx'
@@ -11,12 +11,13 @@ import ProfilePage from './pages/ProfilePage.tsx'
 import ResetPasswordPage from './pages/ResetPasswordPage.tsx'
 import SignupPage from './pages/SignupPage.tsx'
 
-// 정의하지 않은 경로는 아무것도 그리지 않는다. `/` 이동과 404 화면은 아직 없다.
+// `/`는 대시보드로 보낸다(로그인하지 않았으면 RequireAuth가 로그인 화면으로 보낸다). 정의하지 않은 다른 경로는 아무것도 그리지 않는다. 404 화면은 아직 없다.
 // /login, /signup, /reset-password는 공개이고 나머지는 로그인해야 열린다.
 function App() {
   return (
     <AuthProvider>
       <Routes>
+        <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/signup" element={<SignupPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />

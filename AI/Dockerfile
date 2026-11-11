@@ -15,7 +15,8 @@ COPY ai_server ./ai_server
 FROM python:3.12-slim-bookworm
 WORKDIR /app
 COPY --from=build /app /app
-ENV PATH="/app/.venv/bin:$PATH" HOST=0.0.0.0 PYTHONUNBUFFERED=1
+# PYDANTIC_AI_NO_BANNER: 첫 에이전트 실행 때 찍히는 관측 도구 안내문을 끈다.
+ENV PATH="/app/.venv/bin:$PATH" HOST=0.0.0.0 PYTHONUNBUFFERED=1 PYDANTIC_AI_NO_BANNER=1
 # root가 아닌 사용자로 실행한다.
 RUN useradd --system --uid 10001 app
 USER app
