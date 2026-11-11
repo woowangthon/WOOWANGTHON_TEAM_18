@@ -69,7 +69,7 @@ const MAX_COMMAND_LENGTH = 1000
 const MAX_PATH_LENGTH = 200
 const MAX_LINKS = 30
 
-const SLUG = /^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/
+export const SLUG = /^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/
 const REPO = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/
 const SERVICE_NAME = /^[a-z]([a-z0-9-]{0,28}[a-z0-9])?$/
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/

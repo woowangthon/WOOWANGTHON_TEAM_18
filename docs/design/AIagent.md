@@ -66,7 +66,7 @@ AI 서버 (에이전트) → 플랫폼 서버 MCP 게이트웨이 → GoCD 서�
 | 도구 | 하는 일 | 입력 | 출력 | 티켓당 횟수 |
 |---|---|---|---|---|
 | `run_build` | Build (CodeBuild). 해시가 같으면 재사용 | `service`, `specPatch?`, `source?`, `buildOverrides?` | `BatchGetBuilds`의 `builds[0]` 원본, 실패 phase, 로그 마지막 200줄, 성공 시 이미지 digest | 2 |
-| `run_render` | Render + `kubectl apply --dry-run=server`. 클러스터에 적용하지 않는다 | `specPatch?` | 통과 여부, 실패 시 k3s Status 원본 | 5 |
+| `run_render` | Render + k3s API server-side apply dry-run. 클러스터에 적용하지 않는다 | `specPatch?` | 통과 여부, 실패 시 k3s Status 원본 | 5 |
 | `run_deploy` | Prepare(live 슬롯 보호 검사, 대상 슬롯 비우기) → Render → Apply → Ready 대기 | `specPatch?`, `source?` | Pod · 이벤트 원본, rollout 결과 | 2 |
 | `run_verify` | Verify. 배포 입력에 있는 공개 서비스와 설정된 경로만 test Ingress로 Traefik에 요청하고, 내부 전용 서비스는 Pod Ready만 본다([배포 워크플로우](deploy-workflow.md) §4) | 없음 | 요청별 경로 · 상태 코드 · 응답 시간, 서비스별 Ready | 3 |
 
@@ -127,7 +127,7 @@ buildspec · 서비스 역할(IAM) · 환경 변수 override는 받지 않는다
 | CodeBuild 빌드 설정 | 그 빌드에만, `buildOverrides` 상한 안 (§3) |
 | 대상 슬롯 운영 | 재시작, 0 · 1개 조정, Ready 다시 기다리기 |
 | 그대로 재실행 | 고칠 것이 없는 일시적 실패 (CodeBuild 준비 실패, 이미지 받기 시간 초과) |
-| dry-run 먼저 | 이름 · 포트 · 쿼터 오류는 `run_render`로 먼저 확인한다 |
+| dry-run 먼저 | 이름 · 포트 오류는 `run_render`로 먼저 확인한다. 자원 합계(쿼터)는 `run_render`에서 걸리지 않고 `run_deploy`의 Prepare에서 걸린다(case `P2`) |
 | 레포 수정 → PR | fork 커밋으로 `run_verify`까지 통과한 변경만 |
 | 사용자 요청 | 비밀값이 틀림 · 빠짐, 학생 DB에 닿지 않음, 학생 DB 스키마 문제 |
 | 플랫폼 문제 보고 | 이미지 공개 설정, 노드 자원 부족, 차트 · 기본 Dockerfile 문제 |
@@ -175,7 +175,7 @@ buildspec · 서비스 역할(IAM) · 환경 변수 override는 받지 않는다
 | `raw.codebuild` | `BatchGetBuilds`의 `builds[0]` 원본. `build`가 아니면 `null` |
 | `raw.k8s.pod` | 실패한 Pod 하나의 원본. 없으면 `null`. `metadata.managedFields`와 적용 기록 annotation은 뺀다 |
 | `raw.k8s.events` | `involvedObject`가 대상 슬롯 리소스인 이벤트 원본 (없으면 `[]`) |
-| `raw.k8s.status` | `render`일 때 `kubectl apply --dry-run=server`가 돌려준 k3s Status 원본(필수), 그 밖에는 `null` |
+| `raw.k8s.status` | `render`일 때 server-side apply dry-run에 k3s API가 돌려준 Status 원본(필수), 그 밖에는 `null` |
 | `errorMessage` | 사람이 읽는 오류 한 줄. `render`면 Status의 `message`를 그대로 넣는다 |
 | `logs` | 오류 시각 10분 전부터, 최대 200줄. 재시작한 Pod는 직전 컨테이너 로그 |
 | `previous` | 직전 티켓. 없으면 `null`. `status`는 `verified` · `pr_opened` · `needs_user` · `gave_up`(그 티켓의 해결 결과) 또는 `stopped`(결과 없이 끝남) |
@@ -338,7 +338,7 @@ buildspec · 서비스 역할(IAM) · 환경 변수 override는 받지 않는다
 | `P3` | prepare | `ingressPath` 충돌 | 검증 규칙 `ingressPath` | `runtime.ingressPath` |
 | `R1` | render | 이름 규칙 위반 | `422 Invalid`, `FieldValueInvalid`, `DNS-1035` | 첫 배포 전이면 `name` 수정, 그 뒤면 사용자 요청 |
 | `R2` | render | 포트 · probe 값 오류 | `422 Invalid`, field `...containerPort` | `runtime.port` · `health` |
-| `R3` | render | 쿼터 초과 | `403 Forbidden`, `exceeded quota` | `runtime.resources` |
+| `R3` | render | 쿼터 초과 | `403 Forbidden`, `exceeded quota` | `runtime.resources`. render에서는 드묾: ResourceQuota는 Pod가 생길 때 걸려 Deployment dry-run은 통과한다(2026-11-11 로컬 k3s, CPU 9 Deployment가 통과). 실제로는 Prepare의 `P2`나 apply의 `A4`(FailedCreate)로 온다 |
 | `A1` | apply | 헬스체크 실패 | 이벤트 `Unhealthy` | `runtime.port` · `health.path` · `startupTimeoutSeconds` |
 | `A2` | apply | 시작 직후 종료 | `CrashLoopBackOff`, `exitCode` ≠ 0 | 로그 패턴: env 누락 → `runtime.env`, DB 연결 실패 → 사용자 요청 |
 | `A3` | apply | 메모리 초과 | `OOMKilled` (137) | `runtime.resources.memory` |
@@ -355,10 +355,44 @@ buildspec · 서비스 역할(IAM) · 환경 변수 override는 받지 않는다
 
 PydanticAI에서 두 모델을 OpenAI 호환 provider로 붙이고, 추론 모델 API를 못 쓰면 로컬 모델로 넘긴다.
 
+### 10. AI 서버 구현 (`AI/ai_server/agent/`)
+
+| 단계 | 모델 | 하는 일 |
+|---|---|---|
+| ① 코드 분류 | 없음 | §8 `match`로 같은 stage의 case를 고른다 |
+| ② LLM 분류 | 로컬 | 같은 stage의 case 목록(id · 제목)에서 하나를 고르거나 null. 목록에 없는 id는 모르는 것으로 본다 |
+| ③ playbook | 로컬 | case의 playbook을 따라 도구를 부르고 해결 결과(§6의 status · `specPatch` · `pr` · `userRequest` · `evidence` · `summary`)를 낸다 |
+| ④ 재계획 | 추론 API | ③이 `gave_up`이면 playbook · 지금까지의 도구 호출 · ③의 요약을 받아 다시 계획하고 실행한다 |
+| ⑤ planning | 추론 API | ②가 null이면 처음부터 계획하고 실행한다 |
+
+- **결과는 코드가 낸다.** 모델에게 `submit_result`를 주지 않는다. 모델의 출력(위 ③의 칸들)이 모양에 맞지 않으면 PydanticAI가 다시 만들게 하고(2번까지), 코드가 봉투(`ticketId` · `commitSha` · `classification` · `actions`)를 붙여 게이트웨이 `submit_result`를 한 번 부른다. `actions`는 모델이 말한 것이 아니라 게이트웨이에 실제로 한 호출의 기록이다(`ok`는 결과의 `ok`, 거절은 `ok: false`와 `rejected <code>`).
+- **거절 코드.** `TOOL_LIMIT` · `TIME_LIMIT` · `LIVE_SLOT_PROTECTED`는 실행을 멈추고 이유와 할 일을 담은 `gave_up`을 낸다(재계획하지 않는다). `TICKET_CLOSED`는 토큰이 무효라 아무것도 내지 않는다. 그 밖의 거절은 코드와 메시지를 모델에게 돌려줘 인자를 고치게 한다.
+- **모델 호출 실패**(연결 실패, 출력이 계속 틀림)는 `gave_up`과 그 사실을 적은 `summary`로 낸다. 그럴듯한 결과로 대신하지 않는다. 게이트웨이 거절이 반복되어 도구 재시도 한도(3번)를 넘긴 것은 모델 실패가 아니라 "배포 설정 수정이 플랫폼 검사에서 계속 거절되어 멈췄습니다(마지막 거절: <code>)"로 알린다.
+- **게이트웨이 장애**: 연결 실패 · 도구 호출 중 전송 오류 · 시간 초과는 "플랫폼 게이트웨이에 닿지 못해 멈췄습니다"라는 `gave_up`으로 바꾼다. 결과 제출이 전송 오류면 2 · 5 · 10초 뒤 다시 낸다(모두 4번). `INVALID_RESULT`로 거절되면 모델이 정한 칸을 빼고 봉투와 사실 요약만 담은 `gave_up`으로 한 번 더 낸다. 그래도 안 되면 로그만 남는다.
+- **모델 설정이 없으면**(`LOCAL_MODEL_*` 비움) 서버는 뜨고, 티켓마다 코드 분류만 한 뒤 "AI 모델 설정이 없어 문제 해결을 하지 않았습니다"라는 `gave_up`을 낸다.
+- **가림 필터**(FR-102): 추론 모델 API로 가는 요청의 지시문 · 프롬프트 · 도구 결과 · 이전 도구 인자에서 비밀값 같은 키의 값, Authorization 헤더 값, 주소 안의 비밀번호, 모양으로 아는 토큰(GitHub · OpenAI · AWS · Slack · Supabase · 게이트웨이 · JWT · 개인 키)을 `[REDACTED]`로 바꾼다. 로컬 모델은 클러스터 안이라 걸지 않는다. 게이트웨이로 내는 결과의 기록은 원본이다.
+- **모델 연결**: 두 모델 모두 OpenAI 호환 API이고 env로 받는다(`LOCAL_MODEL_*` · `PLANNER_MODEL_*` 모두 선택, 주소와 이름은 함께). 추론 API가 없으면 ④ · ⑤도 로컬 모델이 하고, 있는데 호출이 실패하면 그 요청은 로컬 모델로 넘어간다.
+- **모델로 보내는 글**은 `prompts.py` 한 곳에서 만든다.
+
+**로컬 모델 16K 컨텍스트 예산** (`AI/ai_server/agent/budget.py`). vLLM `--max-model-len 16384`는 입력 + 출력의 합이라 입력은 약 10K 토큰을 목표로 한다. 플랫폼이 보내는 크기에 기대지 않고 AI 서버가 받는 쪽에서 줄인다.
+
+| 어디서 | 무엇을 |
+|---|---|
+| 티켓을 받을 때 | 로그 한 줄 400자(넘으면 `…[truncated N chars]`), 로그 전체 24KB(넘으면 앞줄부터 버린다). `raw.codebuild` · `raw.k8s.pod` · `raw.k8s.events` · `raw.k8s.status`가 각각 6,000자를 넘으면 필요한 칸만 남긴다(Pod: 이름 · phase · 컨테이너 상태 · 직전 종료 · 재시작 횟수, builds[0]: buildStatus · phase별 상태와 메시지, Status: code · reason · message · causes, 이벤트: type · reason · message · 대상, 최근 50개). 코드 분류(①)는 자르기 전 원본으로 한다 |
+| 프롬프트 | 티켓 JSON 대신 요약본을 넣는다: 단계 · 서비스 · 슬롯 · `errorMessage` · 직전 티켓 · 받을 때 자른 사실 · 배포 spec(4,000자까지) · 빌드의 실패 phase · Render Status · 컨테이너 상태 · 이벤트(reason · message, 같은 것은 한 번, 최근 10개) · 로그 발췌(오류 표시 줄의 앞뒤 2줄 + 마지막 20줄, 합쳐 최대 60줄, 줄마다 200자). 추론 모델에도 같은 요약본을 준다. 추론 API가 실패하면 그 요청이 로컬 모델로 넘어가기 때문이다. 더 필요한 것은 관찰 도구로 읽는다 |
+| 게이트웨이 도구 결과 | 로그(`lines` · `logTail`)는 같은 발췌, 이벤트는 같은 규칙으로 최근 10개, Pod · builds[0] · Status는 크면 필요한 칸만. 줄인 것은 결과의 `_truncated`에 적는다. 해결 결과의 `actions` 기록은 줄이기 전 원본에서 만든다 |
+| 대화 기록 | 가장 최근 도구 결과만 전체로 두고, 그 이전 결과는 한 줄 요약(도구 · 짧은 값 칸 · 목록 길이)으로 바꾼다(PydanticAI history processor) |
+| 모델 설정 | 로컬 도구 고르기 · 분류: Qwen3 생각 모드 끔(요청 본문 `chat_template_kwargs: {"enable_thinking": false}`), `max_tokens` 2048. 로컬이 계획할 때(추론 API 없음 · 실패): 생각 모드 켬, `max_tokens` 4096 |
+
 ## 알려진 한계
 
 - 학생 DB 자체의 문제(테이블 없음, migration 안 함)는 에이전트가 학생 DB에 닿지 못해 고칠 수 없다. `needs_user`로 넘긴다.
 - 초기 case 목록과 신호는 추정이다. 실패 주입 시험 전이다.
 - `render` case(`R1` ~ `R3`)는 `raw.k8s.status`(코드 · `message` · `details.causes`)로 대조한다. `prepare` case(`P1` ~ `P3`)는 Status가 없어 `errorMessage` 문장으로 대조하므로, 플랫폼 서버가 쓰는 실제 문장으로 정규식을 맞춰야 한다.
 - CodeBuild API의 오류 이름 · phase 값은 AWS 문서와 대조하지 않았다.
-- 로컬 8B 모델의 분류 · 도구 호출 품질은 검증하지 않았다.
+- 로컬 8B 모델의 분류 · 도구 호출 품질은 검증하지 않았다. 실제 모델(로컬 · 추론 API)은 아직 한 번도 붙여 돌리지 않았다.
+- 컨텍스트 예산은 글자 수로 어림했다(가장 큰 시험 티켓 · 도구 결과로 로컬 모델 입력이 도구 정의까지 합쳐 30,000자 이하). 실제 토큰 수는 vLLM에 붙인 뒤 응답의 `usage.prompt_tokens`로 재야 한다. 한글은 글자당 토큰이 더 많아 어림이 빗나갈 수 있다.
+- 요약본과 발췌는 정보를 버린다. 오류 표시 단어가 없는 원인 줄은 발췌에서 빠질 수 있고, 지난 도구 결과는 한 줄만 남는다. 에이전트가 필요하면 관찰 도구로 다시 읽는다.
+- 에이전트가 낸 `verified`가 정말 `run_verify` 통과 뒤인지 AI 서버는 따로 확인하지 않는다. 플랫폼이 대상 슬롯을 다시 확인한다(§1).
+- 가림 필터는 정해진 모양만 가린다. 이름 없이 나온 임의의 비밀 문자열은 못 가린다.
+- 게이트웨이에 끝내 닿지 못하면 결과를 낼 길이 없다. 계약에 다른 길(콜백 · 재전송 요청)이 없어서, 플랫폼은 자기 제한 시간(1시간 TIMED_OUT)까지 기다린다. AI 서버에는 로그만 남는다.
