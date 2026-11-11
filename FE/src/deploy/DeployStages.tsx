@@ -1,39 +1,43 @@
 import { Badge } from '../components/ui/Badge.tsx'
-import { STAGES } from './stages.ts'
-import type { StageCondition, StageKey } from './stages.ts'
+import { STAGES, stateLabels } from './stages.ts'
+import type { StageKey, StageState } from './stages.ts'
 
-// 색만으로 뜻을 전하지 않도록 상태마다 글자를 둔다.
-const conditions: Record<StageCondition, { label: string; variant: 'neutral' | 'info' | 'warn' | 'err' }> = {
-  waiting: { label: '배포 대기', variant: 'neutral' },
-  fixing: { label: '문제 해결 중', variant: 'info' },
-  action: { label: '사용자 조치 필요', variant: 'warn' },
-  failed: { label: '실패', variant: 'err' },
+// 린트가 객체 안의 문자열을 전부 클래스로 읽어서(Alert.tsx와 같은 이유) 함수로 둔다.
+function variantOf(state: StageState) {
+  switch (state) {
+    case 'done':
+      return 'ok'
+    case 'active':
+    case 'fixing':
+      return 'info'
+    case 'action':
+      return 'warn'
+    case 'failed':
+      return 'err'
+    case 'pending':
+    case 'queued':
+    case 'skipped':
+      return 'neutral'
+  }
 }
+// 지나갔거나 아직 오지 않은 단계. 나머지는 지금 눈여겨볼 단계다.
+const quiet = new Set<StageState>(['pending', 'done', 'skipped'])
 
-type DeployStagesProps = { current: StageKey; condition?: StageCondition }
-
-function DeployStages({ current, condition }: DeployStagesProps) {
-  const currentIndex = STAGES.findIndex((stage) => stage.key === current)
+// 배포 진행 단계 표시. 그리기만 한다. 서버가 준 상태를 단계별 상태로 바꾸는 일은 부모가 맡는다.
+function DeployStages({ states }: { states: Record<StageKey, StageState> }) {
   return (
     <ol aria-label="배포 단계" className="flex flex-col gap-2">
-      {STAGES.map((stage, index) => {
-        const isCurrent = index === currentIndex
-        // 마지막 단계에 닿았고 다른 상태도 없으면 모두 끝난 것이다.
-        const finished = index < currentIndex || (isCurrent && stage.key === 'done' && !condition)
+      {STAGES.map(({ key, label }) => {
+        const state = states[key]
+        const attention = !quiet.has(state)
         return (
           <li
-            key={stage.key}
-            aria-current={isCurrent ? 'step' : undefined}
-            className={`flex items-center gap-2 text-sm ${index > currentIndex ? 'text-muted' : ''}`}
+            key={key}
+            aria-current={attention ? 'step' : undefined}
+            className={`flex items-center gap-2 text-sm ${state === 'pending' ? 'text-muted' : ''}`}
           >
-            <span className={isCurrent ? 'font-bold' : ''}>{stage.label}</span>
-            {finished && <Badge variant="ok">끝남</Badge>}
-            {isCurrent && !finished && (
-              <Badge variant={condition ? conditions[condition].variant : 'info'}>
-                {condition ? conditions[condition].label : '진행 중'}
-              </Badge>
-            )}
-            {index > currentIndex && <Badge>대기</Badge>}
+            <span className={attention ? 'font-bold' : ''}>{label}</span>
+            <Badge variant={variantOf(state)}>{stateLabels[state]}</Badge>
           </li>
         )
       })}

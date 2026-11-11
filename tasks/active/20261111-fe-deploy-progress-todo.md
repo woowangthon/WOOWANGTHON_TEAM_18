@@ -8,12 +8,13 @@
 
 Issue #99 waits for the BE progress read contract (#98) and the deploy start API contract (#44) in `docs/design/api.md`. Neither has landed, and SRS says the progress fields are "not decided". So this branch holds only the stage display, which comes from FR-060 and `deploy-workflow.md` §2 and needs no server shape.
 
-- `DeployStages` takes a current stage and an optional condition (`waiting` / `fixing` / `action` / `failed`) and draws the eight stages with a word on each (done / in progress / waiting), so colour is never the only signal. The parent maps whatever the server returns onto these keys.
-- Stage keys are UI keys, not server values. If #98 names the stages differently or has a different set, only the mapping changes.
+- `DeployStages` only draws. It takes one state per stage (`pending` / `queued` / `active` / `done` / `skipped` / `fixing` / `action` / `failed`) and writes a word on each, so colour is never the only signal. Which stage may be in which state, which are skipped and whether a retry moves back are not decided here: they depend on the #98 contract, and the parent decides them.
+- Stage keys and states are UI values, not server values. The parent maps the server's progress onto them; a server value the parent does not know must be handled there (a missing key would draw nothing for that stage).
 
 ## Todo
 
-- [x] Stage display: eight stages in order, done / in progress / waiting, the four conditions in words, `aria-current` on the current stage — files: `deploy/DeployStages.tsx`, `deploy/stages.ts`
+- [x] Stage display: eight stages in order, a word per state, `aria-current` on the stages that need attention — files: `deploy/DeployStages.tsx`, `deploy/stages.ts`
+- [ ] Map the #98 progress response onto the per-stage states, including an unknown server value — blocked on the contract
 - [ ] Start button (#44 API): show the reason the server gives when not ready or already running — blocked on the contract
 - [ ] Progress read and polling: only while in progress, interval from the BE doc, stop when leaving the screen, loading indicator — blocked on the contract
 - [ ] Done: public address as a link with a copy button, scan warnings shown without blocking (UC-10) — blocked on the contract
