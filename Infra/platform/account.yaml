@@ -69,6 +69,10 @@ rules:
 - apiGroups: [""]
   resources: ["nodes"]
   verbs: ["get", "list"]
+# CPU and memory in use per node, from the metrics-server k3s ships. Numbers only.
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["nodes"]
+  verbs: ["get", "list"]
 ---
 # What the platform server may do in a space it was bound into: read, and stop, resume or restart a
 # service. Not bound cluster-wide. The actions live in this role so that the binding every space already
@@ -95,6 +99,10 @@ rules:
 - apiGroups: ["networking.k8s.io"]
   resources: ["ingresses"]
   verbs: ["get", "list", "watch"]
+# CPU and memory in use per Pod (metrics-server). That API has no watch.
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["pods"]
+  verbs: ["get", "list"]
 # Stop and resume: the scale subresource, and policies.yaml lets the server set 0 or 1 replicas only.
 # get shows the replica count alone; kubectl reads it before it patches.
 - apiGroups: ["apps"]

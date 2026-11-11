@@ -163,6 +163,18 @@ allow "read Ingresses in proj-demo" ks -n proj-demo get ingresses
 deny rbac "read events in kube-system" ks -n kube-system get events
 deny rbac "read Ingresses in vllm" ks -n vllm get ingresses
 allow "read nodes" ks get nodes
+M=/apis/metrics.k8s.io/v1beta1
+# A 200 with an empty list is what a dead metrics-server looks like, so count the values too.
+values() { grep -o '"usage":{"cpu":"[0-9][^"]*","memory":"[0-9][^"]*"}' | wc -l | tr -d " "; }
+got=$(ks get --raw $M/nodes 2>&1 | values)
+if [ "$got" = 3 ]; then echo "PASS read node usage (3 nodes with values)"; else echo "FAIL node usage: values for $got nodes, want 3"; fail=1; fi
+got=$(ks get --raw $M/namespaces/proj-demo/pods 2>&1 | values)
+if [ "$got" -ge 1 ]; then echo "PASS read Pod usage in proj-demo ($got containers with values)"; else echo "FAIL Pod usage in proj-demo: no values"; fail=1; fi
+allow "list Pod usage in an own space (right only; its list may be empty)" ks get --raw $M/namespaces/proj-srvcheck/pods
+deny rbac "read Pod usage in kube-system" ks get --raw $M/namespaces/kube-system/pods
+deny rbac "read Pod usage in vllm" ks get --raw $M/namespaces/vllm/pods
+deny rbac "read Pod usage in every namespace" ks get --raw $M/pods
+deny rbac "read Pod usage in a space without the binding" ks get --raw $M/namespaces/proj-srvcheck2/pods
 deny rbac "read Pods in kube-system" ks -n kube-system get pods
 deny rbac "read Pods in vllm" ks -n vllm get pods
 deny rbac "read a log in vllm" ks -n vllm logs -l app=vllm --tail=1
@@ -206,6 +218,9 @@ status 200 "stop proj-demo web (dry run)"    "$(api "$TOKEN" PATCH '/apis/apps/v
 status 200 "resume proj-demo web (dry run)"  "$(api "$TOKEN" PATCH '/apis/apps/v1/namespaces/proj-demo/deployments/web/scale?dryRun=All' '{"spec":{"replicas":1}}' $MERGE)"
 status 422 "scale proj-demo web to 2 (dry run)" "$(api "$TOKEN" PATCH '/apis/apps/v1/namespaces/proj-demo/deployments/web/scale?dryRun=All' '{"spec":{"replicas":2}}' $MERGE)"
 status 200 "restart proj-demo web (dry run)" "$(api "$TOKEN" PATCH '/apis/apps/v1/namespaces/proj-demo/deployments/web?dryRun=All' '{"spec":{"template":{"metadata":{"annotations":{"kubectl.kubernetes.io/restartedAt":"2026-11-11T00:00:00Z"}}}}}' $MERGE)"
+status 200 "read node usage"                 "$(api "$TOKEN" GET /apis/metrics.k8s.io/v1beta1/nodes)"
+status 200 "read Pod usage in proj-demo"     "$(api "$TOKEN" GET /apis/metrics.k8s.io/v1beta1/namespaces/proj-demo/pods)"
+status 403 "read Pod usage in vllm"          "$(api "$TOKEN" GET /apis/metrics.k8s.io/v1beta1/namespaces/vllm/pods)"
 status 403 "stop a Deployment in vllm"       "$(api "$TOKEN" PATCH '/apis/apps/v1/namespaces/vllm/deployments/vllm/scale?dryRun=All' '{"spec":{"replicas":0}}' $MERGE)"
 status 401 "wrong token"                     "$(api not-a-token GET '/api/v1/namespaces')"
 unset TOKEN
