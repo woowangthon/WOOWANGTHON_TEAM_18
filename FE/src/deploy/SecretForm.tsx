@@ -1,0 +1,129 @@
+import { useState } from 'react'
+import type { FormEvent } from 'react'
+import PasswordField from '../components/PasswordField.tsx'
+import { Alert } from '../components/ui/Alert.tsx'
+import { Badge } from '../components/ui/Badge.tsx'
+import { Button } from '../components/ui/Button.tsx'
+import { ApiError } from '../lib/api.ts'
+import { secretId } from './secrets.ts'
+import type { SecretEntry, SecretTarget } from './secrets.ts'
+
+// 비밀값 입력 화면(#83)의 입력 폼. 요청 · 응답 모양은 #43의 계약이 정해야 하므로 여기서는 모른다.
+// 부모가 계약에 맞춰 보내고(onSubmit), 어느 key가 들어갔는지(done)와 빠졌는지(missing)를 알려 준다.
+type SecretFormProps = {
+  services: SecretTarget[]
+  // 서버에 이미 들어간 key. 값은 서버가 돌려주지 않으므로 이름과 상태만 보인다.
+  done: ReadonlySet<string>
+  // 마지막 제출에서 서버가 빠졌다고 한 key.
+  missing: ReadonlySet<string>
+  // 제출한다. 값이 들어갔다고 서버가 답하면 resolve하고, 못 보냈으면 reject한다.
+  onSubmit: (entries: SecretEntry[]) => Promise<void>
+}
+
+type Failure = 'unavailable' | 'failed'
+
+// 값은 이 컴포넌트의 state에만 둔다. localStorage · URL · 콘솔 · 오류 문구로 내보내지 않는다.
+function SecretForm({ services, done, missing, onSubmit }: SecretFormProps) {
+  const [values, setValues] = useState<Record<string, string>>({})
+  const [empty, setEmpty] = useState<ReadonlySet<string>>(new Set())
+  const [submitting, setSubmitting] = useState(false)
+  const [failure, setFailure] = useState<Failure | null>(null)
+
+  const pending = services.flatMap(({ service, keys }) =>
+    keys.filter((key) => !done.has(secretId(service, key))).map((key) => ({ service, key })),
+  )
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const entries = pending.map(({ service, key }) => ({
+      service,
+      key,
+      value: values[secretId(service, key)] ?? '',
+    }))
+    const blanks = new Set(entries.filter((e) => e.value === '').map((e) => secretId(e.service, e.key)))
+    setEmpty(blanks)
+    if (blanks.size > 0) return
+
+    setFailure(null)
+    setSubmitting(true)
+    try {
+      await onSubmit(entries)
+      // 서버에 넘어갔으면 화면에도 남기지 않는다. 빠진 key는 다시 입력받는다.
+      setValues({})
+    } catch (error) {
+      // 값은 그대로 둔다. 다시 보내려고 처음부터 치지 않아도 된다.
+      setFailure(error instanceof ApiError && error.status === 503 ? 'unavailable' : 'failed')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <form
+      noValidate
+      onSubmit={(event) => {
+        void handleSubmit(event)
+      }}
+      aria-label="비밀값 입력"
+      className="flex flex-col gap-4"
+    >
+      <p className="text-sm text-muted">
+        한 번 넣은 값은 서버가 다시 보여 주지 않아요. 잘못 넣었다면 같은 칸에 다시 넣어 주세요.
+      </p>
+      {failure === 'unavailable' && (
+        <Alert variant="warn" title="지금은 값을 저장할 수 없어요">
+          사용자 잘못이 아니에요. 잠시 뒤에 다시 시도해 주세요. 입력한 값은 그대로 남아 있어요.
+        </Alert>
+      )}
+      {failure === 'failed' && (
+        <Alert title="값을 저장하지 못했어요">
+          잠시 뒤에 다시 시도해 주세요. 입력한 값은 그대로 남아 있어요.
+        </Alert>
+      )}
+      {services.map(({ service, keys }) => (
+        <fieldset key={service} className="flex flex-col gap-3 rounded-md border border-line p-3">
+          <legend className="px-1 font-mono text-sm font-bold">{service}</legend>
+          {keys.map((key) => {
+            const id = secretId(service, key)
+            if (done.has(id)) {
+              return (
+                <div key={key} className="flex items-center gap-2 text-sm">
+                  <span className="font-mono">{key}</span>
+                  <Badge variant="ok">들어감</Badge>
+                </div>
+              )
+            }
+            return (
+              <PasswordField
+                key={key}
+                label={key}
+                autoComplete="new-password"
+                placeholder="값"
+                value={values[id] ?? ''}
+                onChange={(value) => {
+                  setValues((current) => ({ ...current, [id]: value }))
+                  setEmpty((current) => (current.has(id) ? new Set([...current].filter((x) => x !== id)) : current))
+                }}
+                error={
+                  empty.has(id)
+                    ? '값을 입력해 주세요'
+                    : missing.has(id)
+                      ? '서버에 들어가지 않았어요. 다시 입력해 주세요'
+                      : undefined
+                }
+                disabled={submitting}
+              />
+            )
+          })}
+        </fieldset>
+      ))}
+      {pending.length > 0 && (
+        <Button type="submit" className="self-start" disabled={submitting} aria-busy={submitting}>
+          {submitting ? '저장하는 중…' : '비밀값 저장'}
+        </Button>
+      )}
+    </form>
+  )
+}
+
+export default SecretForm
