@@ -1,27 +1,33 @@
-import { Alert } from '../components/ui/Alert.tsx'
+import ForbiddenNotice from '../admin/ForbiddenNotice.tsx'
+import NodesSection from '../admin/NodesSection.tsx'
+import ProjectsSection from '../admin/ProjectsSection.tsx'
+import { Button } from '../components/ui/Button.tsx'
+import { isForbidden, REFRESH_MS, useAdminRead } from '../admin/useAdminRead.ts'
+import type { NodesResponse, ProjectsResponse } from '../admin/types.ts'
 
-// Admin Page의 뼈대. 노드 현황 · 실행 중인 서비스 · 강제 중지는 BE의 운영자 API 계약(#100)이 정해진 뒤에 채운다.
-// 계약 전이라 숫자나 목록을 보여 주지 않는다. 가짜 값을 두지 않기 위해서다.
+// Admin Page(UC-17): 클러스터 노드와 실행 중인 학생 서비스를 보고 강제로 끈다. 숫자와 목록은 모두 서버가 준 그대로다.
 function AdminPage() {
+  const nodes = useAdminRead<NodesResponse>('/api/admin/nodes')
+  const projects = useAdminRead<ProjectsResponse>('/api/admin/projects')
+  // 화면은 편의로 막을 뿐이고 판단은 서버가 한다. 서버가 운영자가 아니라고 하면 같은 화면으로 막는다.
+  if (isForbidden(nodes.error) || isForbidden(projects.error)) return <ForbiddenNotice />
   return (
     <>
       <h1 className="text-xl">관리자</h1>
-      <section aria-labelledby="nodes-heading" className="flex flex-col gap-2">
-        <h2 id="nodes-heading" className="text-lg">
-          노드 현황
-        </h2>
-        <Alert variant="info" title="아직 데이터에 연결되지 않았어요">
-          클러스터 노드의 상태와 자원 사용량이 여기에 보여요.
-        </Alert>
-      </section>
-      <section aria-labelledby="services-heading" className="flex flex-col gap-2">
-        <h2 id="services-heading" className="text-lg">
-          실행 중인 서비스
-        </h2>
-        <Alert variant="info" title="아직 데이터에 연결되지 않았어요">
-          학생 서비스의 상태가 여기에 보이고, 여기서 강제로 중지할 수 있어요.
-        </Alert>
-      </section>
+      <div className="flex items-center gap-2 text-sm text-muted">
+        <span>{REFRESH_MS / 1000}초마다 새로 읽어요</span>
+        <Button
+          variant="outline"
+          onClick={() => {
+            nodes.reload()
+            projects.reload()
+          }}
+        >
+          지금 새로 읽기
+        </Button>
+      </div>
+      <NodesSection read={nodes} />
+      <ProjectsSection read={projects} />
     </>
   )
 }

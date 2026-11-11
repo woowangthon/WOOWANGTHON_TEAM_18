@@ -12,6 +12,11 @@ const auth = vi.hoisted(() => ({
   getUserIdentities: vi.fn(),
 }))
 vi.mock('./lib/supabase.ts', () => ({ supabase: { auth } }))
+// 화면이 읽는 API는 여기서 보지 않는다(각 화면의 테스트가 본다). 답을 기다리는 채로 둔다.
+vi.mock('./lib/api.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./lib/api.ts')>()),
+  apiFetch: () => new Promise(() => undefined),
+}))
 
 const sessionWith = (appMetadata: Record<string, unknown> = {}, userMetadata: Record<string, unknown> = {}) => ({
   access_token: 'tok',

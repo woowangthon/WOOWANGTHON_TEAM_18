@@ -1,0 +1,182 @@
+import { useState } from 'react'
+import { Alert } from '../components/ui/Alert.tsx'
+import { Badge } from '../components/ui/Badge.tsx'
+import { Button } from '../components/ui/Button.tsx'
+import { ApiError, apiFetch } from '../lib/api.ts'
+import { ClusterProblem } from './ClusterProblem.tsx'
+import { timeText } from './format.ts'
+import Row from './Row.tsx'
+import type { AdminProject, StopResponse } from './types.ts'
+
+// 공간의 서비스가 하나도 없거나(공간 없음) 모두 0개로 내려갔으면(중지됨) 끌 것이 없다. 중지 뒤에는 lastStop이 아니라 replicas를 본다.
+const stateOf = ({ services }: AdminProject) =>
+  services.length === 0 ? 'none' : services.every((s) => s.replicas === 0) ? 'stopped' : 'running'
+
+function StateBadge({ state }: { state: ReturnType<typeof stateOf> }) {
+  switch (state) {
+    case 'running':
+      return <Badge variant="ok">실행 중</Badge>
+    case 'stopped':
+      return <Badge variant="neutral">중지됨</Badge>
+    case 'none':
+      return <Badge variant="neutral">공간 없음</Badge>
+  }
+}
+
+type StopState =
+  | { step: 'idle' }
+  | { step: 'confirm' }
+  | { step: 'stopping' }
+  | { step: 'done'; result: StopResponse }
+  | { step: 'failed'; error: unknown }
+
+// running: 끌 것이 있다(버튼을 보인다). 중지한 뒤 다시 읽으면 프로젝트가 중지됨이 되지만, 방금 한 일의 결과는 그대로 보여야 하므로 이 패널은 계속 그린다.
+function StopPanel({ slug, running, onStopped }: { slug: string; running: boolean; onStopped: () => void }) {
+  const [stop, setStop] = useState<StopState>({ step: 'idle' })
+
+  async function run() {
+    setStop({ step: 'stopping' })
+    try {
+      // 계약은 본문 없는 POST지만 apiFetch는 본문이 있어야 POST로 보낸다. 빈 객체를 보낸다.
+      const result = await apiFetch<StopResponse>(`/api/admin/projects/${slug}/stop`, {})
+      setStop({ step: 'done', result })
+    } catch (error) {
+      setStop({ step: 'failed', error })
+    }
+    // 성공이든 실패든 서버가 아는 상태를 다시 읽는다(일부만 내려갔을 수 있다).
+    onStopped()
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      {running && (stop.step === 'idle' || stop.step === 'done' || stop.step === 'failed') && (
+        <Button
+          variant="outline"
+          className="self-start"
+          aria-label={`${slug} 강제 중지`}
+          onClick={() => {
+            setStop({ step: 'confirm' })
+          }}
+        >
+          강제 중지
+        </Button>
+      )}
+      {(stop.step === 'confirm' || stop.step === 'stopping') && (
+        <Alert variant="warn" title={`${slug}를 강제로 중지할까요?`}>
+          <div className="flex flex-col gap-2">
+            <p>모든 서비스를 0개로 내려요. 공개 주소가 더는 응답하지 않아요. 다시 켜는 기능은 아직 없고, 학생이 새로 배포하면 다시 떠요.</p>
+            <div className="flex gap-2">
+              <Button
+                aria-label={`${slug} 중지하기`}
+                disabled={stop.step === 'stopping'}
+                aria-busy={stop.step === 'stopping'}
+                onClick={() => void run()}
+              >
+                {stop.step === 'stopping' ? '중지하는 중…' : '중지하기'}
+              </Button>
+              <Button
+                variant="outline"
+                disabled={stop.step === 'stopping'}
+                onClick={() => {
+                  setStop({ step: 'idle' })
+                }}
+              >
+                취소
+              </Button>
+            </div>
+          </div>
+        </Alert>
+      )}
+      {stop.step === 'done' && (
+        <Alert variant="info" title={stop.result.failed.length === 0 ? '중지했어요' : '일부만 중지했어요'}>
+          <div className="flex flex-col gap-1">
+            {stop.result.scaled.length > 0 && <p>내린 서비스: {stop.result.scaled.join(', ')}</p>}
+            {stop.result.failed.length > 0 && (
+              <p>내리지 못한 서비스: {stop.result.failed.join(', ')}. 다시 중지하면 이어서 내려요.</p>
+            )}
+          </div>
+        </Alert>
+      )}
+      {stop.step === 'failed' && <StopProblem error={stop.error} />}
+    </div>
+  )
+}
+
+function StopProblem({ error }: { error: unknown }) {
+  if (error instanceof ApiError && error.code === 'NOT_RUNNING') {
+    return (
+      <Alert variant="info" title="이미 꺼져 있어요">
+        실행 중인 서비스가 없어서 아무것도 바뀌지 않았어요.
+      </Alert>
+    )
+  }
+  if (error instanceof ApiError && error.code === 'PROJECT_NOT_FOUND') {
+    return <Alert title="프로젝트를 찾을 수 없어요">목록에서 사라졌을 수 있어요. 새로 읽으면 보여요.</Alert>
+  }
+  return <ClusterProblem error={error} fallback="중지하지 못했어요" />
+}
+
+// 프로젝트 하나. 서비스(Deployment)와 Pod의 상태를 보이고, 확인을 거쳐 강제 중지할 수 있다(FR-084 · FR-094).
+function ProjectCard({ project, onStopped }: { project: AdminProject; onStopped: () => void }) {
+  const state = stateOf(project)
+  return (
+    <li className="flex flex-col gap-3 rounded-md border border-line p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-mono font-bold">{project.slug}</span>
+        <StateBadge state={state} />
+        {project.liveSlot && <Badge variant="info">라이브 슬롯 {project.liveSlot}</Badge>}
+      </div>
+      <dl className="flex flex-col gap-1 text-sm">
+        <Row label="레포">
+          <span className="font-mono break-all">{project.repo}</span>
+        </Row>
+        <Row label="소유자">
+          <span className="font-mono break-all">{project.ownerId}</span>
+        </Row>
+        <Row label="주소">
+          {project.url?.startsWith('https://') ? (
+            <a href={project.url} target="_blank" rel="noopener noreferrer" className="font-mono break-all underline">
+              {project.url}
+            </a>
+          ) : (
+            '아직 없음'
+          )}
+        </Row>
+        {project.lastStop && (
+          <Row label="마지막 중지">
+            {timeText(project.lastStop.at)} · {project.lastStop.by}
+          </Row>
+        )}
+      </dl>
+      {project.services.length > 0 && (
+        <ul className="flex flex-col gap-2">
+          {project.services.map((service) => (
+            <li key={service.name} className="flex flex-col gap-1 border-t border-line pt-2 text-sm">
+              <p>
+                <span className="font-mono font-bold">{service.name}</span>
+                <span className="text-muted">
+                  {' '}
+                  · 준비 {service.readyReplicas}/{service.replicas}
+                </span>
+              </p>
+              {service.pods.length > 0 && (
+                <ul className="flex flex-col gap-0.5 text-muted">
+                  {service.pods.map((pod) => (
+                    <li key={pod.name} className="break-all">
+                      <span className="font-mono">{pod.name}</span> · {pod.phase}
+                      {pod.ready ? '' : ' · 준비 안 됨'}
+                      {pod.node ? ` · 노드 ${pod.node}` : ''} · 재시작 {pod.restarts}회
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      <StopPanel slug={project.slug} running={state === 'running'} onStopped={onStopped} />
+    </li>
+  )
+}
+
+export default ProjectCard
