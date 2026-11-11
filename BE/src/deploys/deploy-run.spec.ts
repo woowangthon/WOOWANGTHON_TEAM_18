@@ -67,6 +67,9 @@ describe('toFailure', () => {
 
   it('gives a platform code without its own message the generic one', () => {
     expect(toFailure({ code: 'K8S_UNREACHABLE', stage: 'apply', service: null }).message).toBe('플랫폼 문제로 배포하지 못했습니다. 운영자가 확인합니다.')
+    for (const code of ['constructor', 'toString', 'hasOwnProperty']) {
+      expect(toFailure({ code, stage: 'apply', service: null }).message).toBe('플랫폼 문제로 배포하지 못했습니다. 운영자가 확인합니다.')
+    }
   })
 })
 

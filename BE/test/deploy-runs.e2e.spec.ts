@@ -550,6 +550,7 @@ describe('POST /api/pipeline/notify', () => {
       ['CHART_RENDER_FAILED', 'render'],
       ['K8S_UNREACHABLE', 'apply'],
       ['AccountLimitExceededException', 'build'],
+      ['constructor', 'apply'],
     ])('a platform problem (%s) ends as failed and does not call the AI server', async (code, stage) => {
       const id = stage === 'build' ? seedDeploy() : await reach(stage)
       if (stage === 'build') await start(id)

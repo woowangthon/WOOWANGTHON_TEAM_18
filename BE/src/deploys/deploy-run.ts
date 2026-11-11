@@ -53,8 +53,11 @@ export interface Failure extends StoredFailure {
   message: string
 }
 
+// 코드가 `constructor` · `toString`처럼 Object.prototype의 이름이어도 자기 키만 본다.
+const own = (table: Record<string, string>, code: string): string | undefined => (Object.hasOwn(table, code) ? table[code] : undefined)
+
 const messageOf = (code: string): string =>
-  (INTERNAL_MESSAGES as Record<string, string>)[code] ?? PLATFORM_MESSAGES[code] ?? '플랫폼 문제로 배포하지 못했습니다. 운영자가 확인합니다.'
+  own(INTERNAL_MESSAGES, code) ?? own(PLATFORM_MESSAGES, code) ?? '플랫폼 문제로 배포하지 못했습니다. 운영자가 확인합니다.'
 
 export const toFailure = (f: StoredFailure): Failure => ({ ...f, message: messageOf(f.code) })
 
