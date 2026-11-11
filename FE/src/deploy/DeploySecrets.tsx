@@ -11,7 +11,7 @@ import type { SecretEntry, SecretsState } from './secrets.ts'
 type Load = { status: 'loading' } | { status: 'ready'; secrets: SecretsState } | { status: 'not-found' } | { status: 'failed'; unavailable: boolean }
 
 // 한 배포의 비밀값 입력(W3). 서버의 기록을 읽어 어느 서비스가 들어갔는지 보이고, 빠진 서비스의 값을 받아 보낸다.
-// 값이 모두 들어가면(서버의 ready) "빌드 준비됨"을 보인다. 비밀값이 필요 없는 배포는 이 단계가 필요 없다고 알린다.
+// 값이 모두 들어가면(서버의 ready) "빌드 준비됨"을 보인다. 비밀값이 필요 없는 배포는 이 단계가 필요 없다고 알리는 안내 하나만 보이고, 배포 시작 링크도 그 안에 있다(계약상 이때 ready는 늘 true).
 function DeploySecrets({ deployId }: { deployId: string }) {
   const [load, setLoad] = useState<Load>({ status: 'loading' })
   const [attempt, setAttempt] = useState(0)
