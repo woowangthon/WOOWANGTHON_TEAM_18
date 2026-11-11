@@ -6,7 +6,7 @@
 
 ## Plan
 
-W3: the server takes the values of `runtime.secretKeys` from the user and hands them to `SecretWriter.write(slug, service, values)`, which writes the Secret `<service>-secrets` in `proj-<slug>` over the connection of #81. The writer is an interface (`BE/src/deploys/secret-writer.ts`); the cluster-call module (#111) binds the real one, until then `UnavailableSecretWriter` answers `503 CLUSTER_UNAVAILABLE`. The server account can create and replace a Secret but not read or patch it, so **a send replaces a service's whole Secret**: the sent key set must equal the service's `secretKeys`, services may be sent separately, no per-key partial send. That is decided in the contract (`docs/design/api.md` "비밀값") and sent to FE (#83) before the code.
+W3: the server takes the values of `runtime.secretKeys` from the user and hands them to `SecretWriter.write(slug, service, values)`, which writes the Secret `<service>-secrets` in `proj-<slug>` over the connection of #81. The writer is an interface (`BE/src/deploys/secret-writer.ts`); `ClusterSecretWriter` (`BE/src/deploys/cluster-secret-writer.ts`) binds it to `SpaceService.ensureSpace` then `ClusterSecrets.write` (#118, merged). With no cluster settings the write answers `503 CLUSTER_UNAVAILABLE`. The server account can create and replace a Secret but not read or patch it, so **a send replaces a service's whole Secret**: the sent key set must equal the service's `secretKeys`, services may be sent separately, no per-key partial send. That is decided in the contract (`docs/design/api.md` "비밀값") and sent to FE (#83) before the code.
 
 State: Supabase `deploy_secrets` (slug × service: key names, `writing` / `in`, sha256 of the key/value pairs). Never the values. `writing` is recorded before the cluster call and `in` after it, so no failure leaves `in`. `ready` and `secretHash` are computed on read from those rows; the same GET serves the "build ready" read of #82. `PUT` / `GET /api/deploys/:id/secrets`, owner only.
 
@@ -15,7 +15,7 @@ State: Supabase `deploy_secrets` (slug × service: key names, `writing` / `in`, 
 ## Todo
 
 - [x] Contract first (`api.md`, `auth.md`) and send it to FE — files: `docs/design/api.md`, `docs/design/auth.md`
-- [x] `SecretWriter` interface + `UnavailableSecretWriter` binding (the k8s Secret write itself moved to #111, owned by seren-wib) — files: `BE/src/deploys/secret-writer.ts`, `deploys.module.ts`
+- [x] `SecretWriter` interface + `ClusterSecretWriter` adapter (`ensureSpace` first, then `ClusterSecrets.write` from #118; the k8s code is seren-wib's) — files: `BE/src/deploys/secret-writer.ts`, `cluster-secret-writer.ts`, `deploys.module.ts`
 - [x] Validation, digests, status as pure functions — files: `BE/src/deploys/secrets-input.ts`
 - [x] `SecretsService`, controller routes, store methods, migration — files: `BE/src/deploys/`, `supabase/migrations/20261111020000_create_deploy_secrets.sql`
 - [x] Body-parse error message no longer repeated (it carries a piece of the body) — files: `BE/src/common/api-exception.filter.ts`

@@ -42,7 +42,7 @@ describe('classifyFailure', () => {
     ['prepare', 'DEPLOY_FAILED', true],
     ['render', 'DEPLOY_FAILED', true],
     ['apply', 'DEPLOY_FAILED', true],
-    ['verify', 'VERIFY_FAILED', false],
+    ['verify', 'VERIFY_FAILED', true],
     ['switch', 'SWITCH_FAILED', false],
   ] as const)('%s fails as %s (agent: %s)', (stage, code, callAgent) => {
     expect(classifyFailure(stage, null)).toEqual({ code, callAgent })
@@ -155,15 +155,14 @@ describe('validateNotice', () => {
       expect(r.ok ? [] : r.issues.map((i) => `${i.path}:${i.code}`)).toEqual(expected)
     })
 
-    it('does not look at the evidence of a platform problem or of a verify · switch failure (no ticket goes out)', () => {
+    it('does not look at the evidence of a platform problem or of a switch failure (no ticket goes out)', () => {
       expect(notice(failed('build', { code: 'CODEBUILD_API_ERROR', raw: 'garbage' })).failure.evidence).toBeNull()
-      expect(notice(failed('verify', { raw: 'garbage', logs: 5 })).failure.evidence).toBeNull()
-      expect(notice(failed('switch', {})).failure.evidence).toBeNull()
+      expect(notice(failed('switch', { raw: 'garbage', logs: 5 })).failure.evidence).toBeNull()
     })
   })
 
   it('checks the failure envelope', () => {
-    const base = { deployId: ID, stage: 'verify', result: 'failed' }
+    const base = { deployId: ID, stage: 'switch', result: 'failed' }
     expect(paths(base)).toEqual(['failure:REQUIRED'])
     expect(paths({ ...base, failure: 'x' })).toEqual(['failure:INVALID_TYPE'])
     expect(paths({ ...base, failure: { message: 'm', code: 'x', service: 'Bad Name' } })).toEqual(['failure.code:INVALID_VALUE', 'failure.service:INVALID_VALUE'])
@@ -175,7 +174,7 @@ describe('validateNotice', () => {
   })
 
   it('cuts a very long failure message', () => {
-    const r = validateNotice({ deployId: ID, stage: 'verify', result: 'failed', failure: { message: 'x'.repeat(5000) } })
+    const r = validateNotice({ deployId: ID, stage: 'switch', result: 'failed', failure: { message: 'x'.repeat(5000) } })
     expect(r.ok && r.notice.result === 'failed' && r.notice.failure.message.length).toBe(2000)
   })
 })
