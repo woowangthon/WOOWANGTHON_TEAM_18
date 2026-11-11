@@ -19,9 +19,9 @@ User decision (2026-11-11): split F11b and land the contract first, no code. Bot
 
 - [x] Contract — files: `docs/design/api.md` ("파이프라인 ↔ 플랫폼 서버" 4, gateway notes)
 - [x] Design notes — files: `docs/design/AIagent.md` §2 + known limits, `docs/design/deploy-workflow.md` §3 · §8
-- [ ] Pipeline side review from track A before push
+- [x] Pipeline side review from track A before push (OK after three additions: run_verify input, per-job input read, STAGE_NO_REPORT)
 
 ## Done when
 
-- [ ] Track A confirms the pipeline side; markdown links resolve
+- [x] Track A confirms the pipeline side; markdown links resolve
 - [ ] Next PRs: BE trial routes + gateway run tools (F11b-1), switch after `verified` (F11b-2)
