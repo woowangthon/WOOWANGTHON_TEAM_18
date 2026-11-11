@@ -74,7 +74,7 @@
 | `logs` | 글. `tailLines` 기본 200(최대 2000), 응답은 256 KiB에서 자른다(요청 하나의 제한 시간 5초 안에 느린 구간으로도 받을 크기). 이어 받기(follow)는 없다 |
 
 - 목록은 한 번에 받는다(쪽 나눔 없음). 공간 하나의 Pod는 상한(ResourceQuota)으로 묶여 있고 노드는 셋이다.
-- 실제 사용량(CPU · 메모리)은 이 API에 없다. Prometheus(구축 11)나 metrics API 권한이 들어온 뒤의 일이다.
+- 실제 사용량(CPU · 메모리)은 이 모듈에 아직 없다. 권한은 들어갔다([cluster.md](cluster.md) §8, #130): `GET /apis/metrics.k8s.io/v1beta1/nodes`와 `/apis/metrics.k8s.io/v1beta1/namespaces/<공간>/pods`. 값은 쿠버네티스 수량 글이다(CPU는 `123456789n` 같은 나노코어, 메모리는 `6654Mi` · `Ki`). 호출은 다음 PR.
 
 ### 일부러 없는 것
 

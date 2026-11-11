@@ -163,6 +163,14 @@ allow "read Ingresses in proj-demo" ks -n proj-demo get ingresses
 deny rbac "read events in kube-system" ks -n kube-system get events
 deny rbac "read Ingresses in vllm" ks -n vllm get ingresses
 allow "read nodes" ks get nodes
+M=/apis/metrics.k8s.io/v1beta1
+allow "read node usage" ks get --raw $M/nodes
+allow "read Pod usage in an own space" ks get --raw $M/namespaces/proj-srvcheck/pods
+allow "read Pod usage in proj-demo" ks get --raw $M/namespaces/proj-demo/pods
+deny rbac "read Pod usage in kube-system" ks get --raw $M/namespaces/kube-system/pods
+deny rbac "read Pod usage in vllm" ks get --raw $M/namespaces/vllm/pods
+deny rbac "read Pod usage in every namespace" ks get --raw $M/pods
+deny rbac "read Pod usage in a space without the binding" ks get --raw $M/namespaces/proj-srvcheck2/pods
 deny rbac "read Pods in kube-system" ks -n kube-system get pods
 deny rbac "read Pods in vllm" ks -n vllm get pods
 deny rbac "read a log in vllm" ks -n vllm logs -l app=vllm --tail=1
@@ -206,6 +214,9 @@ status 200 "stop proj-demo web (dry run)"    "$(api "$TOKEN" PATCH '/apis/apps/v
 status 200 "resume proj-demo web (dry run)"  "$(api "$TOKEN" PATCH '/apis/apps/v1/namespaces/proj-demo/deployments/web/scale?dryRun=All' '{"spec":{"replicas":1}}' $MERGE)"
 status 422 "scale proj-demo web to 2 (dry run)" "$(api "$TOKEN" PATCH '/apis/apps/v1/namespaces/proj-demo/deployments/web/scale?dryRun=All' '{"spec":{"replicas":2}}' $MERGE)"
 status 200 "restart proj-demo web (dry run)" "$(api "$TOKEN" PATCH '/apis/apps/v1/namespaces/proj-demo/deployments/web?dryRun=All' '{"spec":{"template":{"metadata":{"annotations":{"kubectl.kubernetes.io/restartedAt":"2026-11-11T00:00:00Z"}}}}}' $MERGE)"
+status 200 "read node usage"                 "$(api "$TOKEN" GET /apis/metrics.k8s.io/v1beta1/nodes)"
+status 200 "read Pod usage in proj-demo"     "$(api "$TOKEN" GET /apis/metrics.k8s.io/v1beta1/namespaces/proj-demo/pods)"
+status 403 "read Pod usage in vllm"          "$(api "$TOKEN" GET /apis/metrics.k8s.io/v1beta1/namespaces/vllm/pods)"
 status 403 "stop a Deployment in vllm"       "$(api "$TOKEN" PATCH '/apis/apps/v1/namespaces/vllm/deployments/vllm/scale?dryRun=All' '{"spec":{"replicas":0}}' $MERGE)"
 status 401 "wrong token"                     "$(api not-a-token GET '/api/v1/namespaces')"
 unset TOKEN

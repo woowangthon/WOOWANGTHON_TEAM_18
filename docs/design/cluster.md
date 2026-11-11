@@ -122,7 +122,7 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 
 - 계정: 운영 공간 `platform`의 ServiceAccount `platform-server`. 토큰은 만료 없는 것 하나(Secret `platform-server-token`)이고, 그 Secret을 지우면 폐기된다.
 - 권한: 네임스페이스 만들기 · 삭제, ResourceQuota · LimitRange · NetworkPolicy 만들기, Secret 만들기 · 통째로 바꾸기(`create` · `update`), 권한 연결(RoleBinding) 만들기(자기 읽기용과 실행기 배포용 둘), 노드 읽기. Secret 읽기와 `patch`는 없다. patch의 응답은 Secret 전체라, 빈 patch 하나로 값을 읽을 수 있기 때문이다. 통째로 바꾸기(PUT)의 응답은 보낸 값뿐이다.
-- 읽기 · 조치: 서버는 `proj-` 공간 안의 Pod · 로그 · Deployment · 이벤트 · Ingress만 읽는다. 이벤트는 배포 뒤 감시와 AI 도구 `get_target_status`가, Ingress는 live 슬롯 확인이 쓴다. 검사 규칙은 쓰기만 걸러서 읽기는 이름으로 좁힐 수 없다. 그래서 읽기 권한을 클러스터 전체에 주지 않고, 읽기 역할 `proj-reader`를 따로 두고 서버가 공간을 만들 때 그 공간에 권한 연결 `platform-server-read`를 같이 만든다(양식의 다섯째 객체). 서버가 연결할 수 있는 역할은 `proj-reader` 하나뿐이다(RBAC `bind`). 연결이 없는 공간과 `kube-system` · `vllm` 등은 읽지 못한다. 노드는 공간에 속하지 않아 클러스터 범위로 읽는다(이름 · 주소 · Ready 상태). 조치도 같은 역할 `proj-reader`에 넣어, 공간마다 이미 있는 연결이 그대로 가져간다(양식과 서버의 공간 만들기는 바뀌지 않는다). 끄기 · 재개는 Deployment 본체가 아니라 `deployments/scale`의 `get` · `patch`로 하고, 아래 검사 규칙이 0 · 1개만 통과시킨다(재개 전 용량 검사는 서버 몫). 재시작(`kubectl rollout restart`)은 Deployment `patch`가 필요한데, 아래 검사 규칙이 Pod 템플릿의 `restartedAt` 주석 말고는 아무것도 못 바꾸게 한다. Deployment 통째로 바꾸기(PUT)와 삭제는 없다.
+- 읽기 · 조치: 서버는 `proj-` 공간 안의 Pod · 로그 · Deployment · 이벤트 · Ingress만 읽는다. 이벤트는 배포 뒤 감시와 AI 도구 `get_target_status`가, Ingress는 live 슬롯 확인이 쓴다. 검사 규칙은 쓰기만 걸러서 읽기는 이름으로 좁힐 수 없다. 그래서 읽기 권한을 클러스터 전체에 주지 않고, 읽기 역할 `proj-reader`를 따로 두고 서버가 공간을 만들 때 그 공간에 권한 연결 `platform-server-read`를 같이 만든다(양식의 다섯째 객체). 서버가 연결할 수 있는 역할은 `proj-reader` 하나뿐이다(RBAC `bind`). 연결이 없는 공간과 `kube-system` · `vllm` 등은 읽지 못한다. 노드는 공간에 속하지 않아 클러스터 범위로 읽는다(이름 · 주소 · Ready 상태). 사용량(CPU · 메모리)은 k3s에 들어 있는 metrics-server(v0.9.0)의 `metrics.k8s.io`로 읽는다(#130): 노드 사용량은 클러스터 범위로, Pod 사용량은 같은 역할 `proj-reader`에 넣어 연결이 있는 공간에서만. 수치뿐이고 `watch`는 없다. 디스크 사용량은 이 API에 없어 구축 11(§10)의 일이다. 조치도 같은 역할 `proj-reader`에 넣어, 공간마다 이미 있는 연결이 그대로 가져간다(양식과 서버의 공간 만들기는 바뀌지 않는다). 끄기 · 재개는 Deployment 본체가 아니라 `deployments/scale`의 `get` · `patch`로 하고, 아래 검사 규칙이 0 · 1개만 통과시킨다(재개 전 용량 검사는 서버 몫). 재시작(`kubectl rollout restart`)은 Deployment `patch`가 필요한데, 아래 검사 규칙이 Pod 템플릿의 `restartedAt` 주석 말고는 아무것도 못 바꾸게 한다. Deployment 통째로 바꾸기(PUT)와 삭제는 없다.
 - 검사 규칙 아홉
   - `wanggane-platform-server`: 서버 계정의 쓰기 · 삭제는 `proj-`로 시작하는 공간에서만 통과한다. 네임스페이스는 만들기 · 삭제만 되고, 만들 때 라벨이 보안 등급 둘(`enforce=baseline`, `warn=restricted`)뿐이어야 한다. Secret은 타입이 `Opaque`이고 이름이 `<서비스>-secrets`일 때만 통과한다(서비스 계정 토큰 타입 Secret으로 공간 안에서 토큰을 찍어내지 못하게).
   - `wanggane-platform-server-scale`: 서버 계정의 scale 요청은 레플리카 0이나 1일 때만 통과한다(중지 · 재개만, 늘리기 없음). Scale 객체는 0이면 `spec.replicas`를 비워 보내므로 빈 값도 0으로 본다.
@@ -133,6 +133,7 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 - 서버가 받는 응답: 권한이 없으면 `403`, 검사 규칙에 걸리면 `422`(메시지에 규칙 이름과 이유), 이미 있으면 `409`, 토큰이 틀리면 `401`.
 - 시험(2026-11-10, [`Infra/platform/check.sh`](../../Infra/platform/check.sh), 운영자 기기에서 실행): 서버 계정으로(impersonation) 양식 그대로 공간 하나를 만들고 Secret을 만들고 바꾼다. 거절되는 것: `proj-` 아닌 이름, 라벨이 없거나 다르거나 더 붙은 공간, `vllm` · `student-template` · `kube-system` 삭제, 값을 바꾼 상한 · 기본값 · 차단 규칙, 다른 이름의 차단 규칙, 상한 · 차단 규칙 지우기 · 고치기, Secret 읽기 · 목록 · patch · 삭제, 다른 이름이나 토큰 타입의 Secret, `proj-` 밖 Secret 쓰기, Pod · Deployment 만들기, 다른 이름이나 다른 계정의 권한 연결(실행기용 연결을 다른 계정 · 다른 역할 · 다른 이름으로 만드는 것 포함), `cluster-admin` 연결, 권한 연결 지우기, Middleware 만들기. 읽기: 자기가 만든 공간과 `proj-demo`의 Pod · 로그 · Deployment · 이벤트 · Ingress, 노드는 읽힌다. `kube-system` · `vllm`의 Pod와 로그, 모든 공간 한꺼번에 읽기, 권한 연결이 없는 공간, Secret · ConfigMap 읽기, Pod 안에서 명령 실행은 거절된다. 실제 객체를 겨누는 거절 시험은 server dry run으로 보낸다. 실제 토큰으로 리더의 Tailscale 주소를 불러 `201` · `409` · `422` · `403` · `401`도 확인했다. EC2에서 닿는지는 EC2가 사설망에 들어온 뒤 본다.
 - 조치 시험(2026-11-11, 같은 스크립트): 운영자가 시험 공간에 예시 Deployment를 놓고 서버 계정으로 0개로 내리면 실제로 0이 되고, 한 번 더 내려도 되고, 1개로 다시 켜진다. `kubectl rollout restart`도 되고 Pod 템플릿에 `restartedAt`이 붙는다. 거절되는 것(검사 규칙): 2로 올리기, 이미지 바꾸기, Deployment 본체의 replicas 바꾸기, Pod 라벨 · 다른 주석 더하기, 롤아웃 멈추기. 거절되는 것(권한): Deployment 통째로 바꾸기(PUT) · 삭제, `vllm` · `kube-system` · 읽기 연결이 없는 공간의 scale · 재시작, `kube-system` 이벤트 · `vllm` Ingress 읽기. 실제 토큰으로는 `proj-demo`를 dry run으로 불러 scale 0 · 1은 `200`, 2는 `422`, 재시작은 `200`, `vllm`은 `403`이었다. `Infra/executor/check.sh` · `Infra/student/check.sh`도 같이 다시 돌려 모두 통과했다.
+- 사용량 읽기 시험(2026-11-11, 같은 스크립트, #130): 서버 계정으로 노드 세 대와 자기가 만든 공간 · `proj-demo`의 Pod 사용량이 읽힌다. 거절되는 것(권한): `kube-system` · `vllm` · 읽기 연결이 없는 공간의 Pod 사용량, 모든 공간 한꺼번에 읽기. 실제 토큰으로는 노드 · `proj-demo`가 `200`, `vllm`이 `403`이었다. `Infra/executor/check.sh` · `Infra/student/check.sh`도 다시 돌려 모두 통과했다.
 
 **만든 것 (구축 09′, [`Infra/executor/`](../../Infra/executor/), 2026-11-11)**: 배포 실행기가 학생 공간에 배포하고 결과를 읽는 데 쓰는 계정이다. 실행기 Pod(GoCD Agent)는 아직 없다.
 
@@ -156,13 +157,13 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 
 **남은 것**
 
-- Prometheus 프록시 읽기(구축 11).
+- Prometheus 프록시 읽기(구축 11, 데모 경로 뒤. §10).
 - 배포 실행기 Pod(GoCD Agent) · 자동 등록 키 · 리더 → EC2 GoCD 포트 규칙(구축 09′의 나머지, GoCD 서버가 생긴 뒤), 네임스페이스 라벨 지우기 막기(지금은 서버에 고치기 권한이 없어 필요 없다).
 
 **전체 설계**
 
 1. **권한(RBAC)**: ServiceAccount 둘.
-   - **플랫폼 서버**: 클러스터 범위 쓰기는 네임스페이스 만들기 · 삭제 둘뿐이다. 공간 안에서는 ResourceQuota · LimitRange · NetworkPolicy **만들기만**, Secret **만들기 · 고치기만**(`get` · `list` · `watch` 없음), 조치용 Deployment 고치기(재시작 · 중지/재개), 읽기(노드 · Pod 상태, 로그, Prometheus 프록시)를 준다. 서버가 자기 공간의 상한과 차단 규칙을 고치거나 지울 수 있으면, 서버 계정이 털렸을 때 그 제한부터 풀린다.
+   - **플랫폼 서버**: 클러스터 범위 쓰기는 네임스페이스 만들기 · 삭제 둘뿐이다. 공간 안에서는 ResourceQuota · LimitRange · NetworkPolicy **만들기만**, Secret **만들기 · 고치기만**(`get` · `list` · `watch` 없음), 조치용 Deployment 고치기(재시작 · 중지/재개), 읽기(노드 · Pod 상태, 로그, 사용량, Prometheus 프록시)를 준다. 서버가 자기 공간의 상한과 차단 규칙을 고치거나 지울 수 있으면, 서버 계정이 털렸을 때 그 제한부터 풀린다.
    - **배포 실행기**: 공간 안 Deployment · Service · Ingress · ConfigMap · Traefik Middleware(`stripPrefix`용, #72) 만들기 · 고치기 · 지우기와, 읽기(Ingress — Prepare의 live 슬롯 보호 검사가 open Ingress를 읽는다 — 와 동작 확인용 Pod · Endpoints · 이벤트 · 롤아웃 상태)만 준다. Secret은 읽지 않는다. 필요한 키가 들어갔는지는 플랫폼 서버가 남긴 키 이름으로 확인한다(값은 보지 않는다). 네임스페이스 · 상한 · 차단 규칙은 건드리지 못한다. 실행기 계정의 토큰은 리더 밖으로 나가지 않는다.
 2. **검사 규칙(ValidatingAdmissionPolicy)**: 두 계정 모두 공간 안 쓰기 · 삭제는 `proj-`로 시작하는 공간에서만 통과한다. 네임스페이스는 이름이 `proj-`로 시작하고 보안 등급 라벨이 붙었을 때만 만들어지고, **삭제도 이름이 `proj-`로 시작할 때만** 통과하며, 그 라벨은 지울 수 없다. Pod는 `NET_RAW`를 빼고 API 토큰 자동 마운트를 끈(`automountServiceAccountToken: false`) 것만 통과하고, toleration과 `nodeName`을 달 수 없다. Middleware는 `stripPrefix`만 든 것만 통과한다. 공간의 기본 ServiceAccount는 서버가 고칠 수 없어서(만들기만 가능) 토큰은 Pod마다 끈다. ResourceQuota · LimitRange · NetworkPolicy는 §6 양식과 같은 값일 때만 만들어진다. RBAC만으로는 네임스페이스 이름 조건을 걸 수 없어서 겹친다.
 
