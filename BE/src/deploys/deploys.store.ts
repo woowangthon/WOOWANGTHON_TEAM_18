@@ -220,7 +220,7 @@ export class DeploysStore {
   }
 
   async deleteRun(deployId: string): Promise<void> {
-    await this.call('deploy_runs', 'DELETE', { deploy_id: `eq.${deployId}` })
+    await this.call('deploy_runs', 'DELETE', { deploy_id: `eq.${deployId}`, select: 'deploy_id' })
   }
 
   /** 프로젝트의 live 슬롯을 정한다(첫 전환이면 줄을 만든다). 같은 값으로 다시 불러도 같다. */

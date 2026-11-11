@@ -32,9 +32,9 @@ describe('DeploysStore request headers', () => {
     )
     vi.stubGlobal('fetch', fetchMock)
     await expect(store().deleteRun(ID)).resolves.toBeUndefined()
-    const [url, init] = fetchMock.mock.calls[0]
+    const init = fetchMock.mock.calls[0][1]
     expect(init?.method).toBe('DELETE')
-    expect(Object.fromEntries(new URL(url as string).searchParams)).toEqual({ deploy_id: `eq.${ID}` })
+    expect(queryOf(fetchMock.mock.calls[0])).toEqual({ deploy_id: `eq.${ID}`, select: 'deploy_id' })
     const headers = new Headers(init?.headers)
     expect(headers.get('Prefer')).toBe('return=representation')
     expect(headers.has('Content-Type')).toBe(false)
