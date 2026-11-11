@@ -512,7 +512,7 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
 - `images`: `build`가 `passed`일 때만 받고 필수다. 빌드한(`run`) 서비스마다 이미지 digest 주소 하나(`reuse` 서비스는 넣지 않는다).
 - `failure.code`: 플랫폼 문제면 그 코드(`^[A-Za-z][A-Za-z0-9_]{2,63}$`, 집합은 열려 있고 파이프라인이 정한다. 알려진 코드는 위 예), 아니면 `null`. 모양이 틀리면 400 INVALID_VALUE. 플랫폼 문제는 AI를 부르지 않고 실패로 마감한다.
 - `failure.raw` · `failure.logs`: 문제 티켓에 담을 원본과 로그([AI 에이전트 설계](AIagent.md) §5의 `raw` · `logs` 모양). 문제 티켓으로 가는 실패(플랫폼 문제가 아니고 stage가 `build` · `prepare` · `render` · `apply` · `verify`)에서만 확인한다. `build`는 `raw.codebuild`(객체 필수, `raw.k8s`는 없음), 그 밖은 `raw.k8s`(필수, `pod`는 객체 또는 `null`, `events`는 객체 배열, `status`는 `render`일 때만 객체 필수이고 나머지는 `null`)이다. `logs`는 있으면 `from` · `to`(시간대가 있는 ISO 8601)와 문자열 배열 `lines`(마지막 200줄만 쓴다), 없으면 빈 구간으로 보낸다. 안 맞으면 `400 BAD_REQUEST`와 `fields`(`failure.raw.k8s.status` 등)로 보낸 쪽에 알린다. 서버가 비밀값처럼 보이는 문자열을 가린 뒤(spec의 `secretKeys`는 key 이름 목록이라 그대로 둔다) 티켓에 넣고, 어디에도 저장하지 않는다.
-- `passed`면 다음 스테이지로 넘어간다. `build`가 `passed`면 새로 빌드한 이미지를 그때 `build_cache`에 기록한다(같은 빌드 입력 해시는 같은 이미지라 뒤 스테이지가 실패해도 재사용해도 된다. 5번 다시 실행과 학생의 다음 배포가 빌드를 건너뛴다). `switch`가 `passed`면 완료다: `live_slot`을 대상 슬롯으로 바꾸고, 공개 주소와 함께 `succeeded`로 기록한다. (구현 전: 지금 코드는 `build_cache`를 `switch` passed에 기록한다. F11b 구현 PR에서 옮긴다.)
+- `passed`면 다음 스테이지로 넘어간다. `build`가 `passed`면 새로 빌드한 이미지를 그때 `build_cache`에 기록한다(같은 빌드 입력 해시는 같은 이미지라 뒤 스테이지가 실패해도 재사용해도 된다. 5번 다시 실행과 학생의 다음 배포가 빌드를 건너뛴다). `switch`가 `passed`면 완료다: `live_slot`을 대상 슬롯으로 바꾸고, 공개 주소와 함께 `succeeded`로 기록한다. (구현 전: 지금 코드는 `build_cache`를 `switch` passed에 기록한다. 이 부분 코드는 #107 담당이 별도 PR로 옮긴다.)
 - `failed`면 실패 분류에 따라 `failed`로 마감하거나 문제 티켓을 만들어 AI 서버 `POST /agent/tickets`로 보내고 `fixing`으로 둔다(티켓의 `ticketId` 하나만 보관). **`switch` 실패는 티켓 없이 `failed`로 마감한다**(티켓 `stage`에 없다, [AI 에이전트 설계](AIagent.md) §5).
 - 응답 `200 { "ok": true }`. 이미 끝난 배포(`succeeded` · `failed`)나 지금 스테이지가 아닌 `stage`의 알림은 상태를 바꾸지 않고 `200 { "ok": true, "applied": false }`이다(재전송해도 안전하다).
 - 오류: `401 AUTH_REQUIRED`, `400 BAD_REQUEST`(본문 모양이 다름, `fields` 포함), `404 DEPLOY_NOT_FOUND`(실행 기록 없음), `503 DATABASE_UNAVAILABLE`(파이프라인이 다시 보낸다).
@@ -545,7 +545,7 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
 - **저장**: 패치한 spec을 실행 기록의 `input`에 저장한다. `deploy_condition.services`는 모두 `reuse` + 이미지 digest(그 실행에서 빌드한 `images` 또는 원래 `reuse` 이미지)로 바꿔 저장한다(build_cache로 다시 계산하는 것보다 단순하고 결과가 같다). 학생이 저장한 배포 입력(`deploys.spec`)은 바꾸지 않는다: 학생이 확정한 값이고, 고친 내용은 진행 상태의 `agent`(결과 요약)로 보여 준다. 고친 spec을 학생의 다음 커밋 배포로 이어 주는 것은 범위 밖이다.
 - **다시 실행**: 같은 실행 기록을 `fixing → running`, `stage: build`로 되돌리고 `failure`를 비우고 게이트웨이 토큰을 무효로 한 뒤(`ticket_id`는 종료 알림을 보낼 때까지 남긴다), 1번과 똑같이 `DEPLOY_ID`로 `student-deploy`를 schedule한다. 대상 슬롯은 그 실행 기록의 대상 슬롯 그대로다. 입력은 2번으로 읽어 가므로 고친 입력이 간다. Build는 모든 서비스가 `reuse`라 할 일이 없고(`images`는 `{}`), 그 뒤 Prepare → Render → Apply → Verify → Switch와 W7 · `succeeded`는 3번 상태 기계 그대로다. 다시 실행의 Verify가 대상 슬롯 재확인이다. schedule이 실패하면 `failed`(`PIPELINE_UNAVAILABLE`)로 마감한다.
 - **종료 알림**: `succeeded`가 되면 그 티켓에 `close(success)`, 다시 실행이 플랫폼 문제로 `failed`가 되면 `close(stopped)`를 보낸다.
-- **다시 실패하면**: 평소대로 새 티켓을 만든다(이전 티켓은 `close(superseded)`, 새 티켓의 `previous`는 이전 티켓의 id · `verified` · 요약). 티켓은 **실행 기록당 2개까지**다. 세 번째 티켓이 될 실패는 티켓을 만들지 않고 `failed`(`AGENT_GAVE_UP`)로 마감한다. 횟수는 실행 기록에 센다(구현 PR에서 칸을 더한다).
+- **다시 실패하면**: 평소대로 새 티켓을 만든다(이전 티켓은 `close(superseded)`, 새 티켓의 `previous`는 이전 티켓의 id · `verified` · 요약). 티켓은 **실행 기록당 3개까지**다. 네 번째 티켓이 될 실패는 티켓을 만들지 않고 `failed`(`AGENT_GAVE_UP`)로 마감한다. 횟수는 실행 기록에 센다(구현 PR에서 칸을 더한다).
 
 ## 운영자 API (이슈 #100, UC-17)
 
