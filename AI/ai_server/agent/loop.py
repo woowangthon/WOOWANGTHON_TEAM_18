@@ -12,13 +12,14 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, ModelRetry
+from pydantic_ai.capabilities import ProcessHistory
 from pydantic_ai.exceptions import AgentRunError, FallbackExceptionGroup, UnexpectedModelBehavior
 from pydantic_ai.models import Model
 from pydantic_ai.models.fallback import FallbackModel
-from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
 from pydantic_ai.providers.openai import OpenAIProvider
 
-from ai_server.agent import prompts
+from ai_server.agent import budget, prompts
 from ai_server.agent.gateway import (
     SUBMIT_TOOL,
     GatewayRejected,
@@ -36,6 +37,7 @@ from ai_server.agent.models import (
     Outcome,
     ResultPath,
     Stage,
+    Ticket,
 )
 from ai_server.agent.redact import RedactingModel
 from ai_server.agent.runs import Runner, TicketRun
@@ -63,30 +65,49 @@ class Models:
     planner: Model
 
 
-def make_models(local: Model, api: Model | None) -> Models:
+def make_models(local: Model, api: Model | None, local_planning: Model | None = None) -> Models:
+    """`local_planning`은 로컬 모델이 계획할 때 쓰는 설정(생각 모드)이다. 없으면 `local`."""
+    planning = local_planning or local
     if api is None:
-        return Models(local=local, planner=local)
-    return Models(local=local, planner=FallbackModel(RedactingModel(api), local))
+        return Models(local=local, planner=planning)
+    return Models(local=local, planner=FallbackModel(RedactingModel(api), planning))
 
 
-def _openai_compatible(url: Any, name: str, key: Any) -> Model:
+# 로컬 Qwen3(vLLM). vLLM의 `--max-model-len 16384`는 입력 + 출력의 합이라 출력에 상한을 둔다.
+# 도구 고르기 · 분류는 생각 모드를 끈다: vLLM은 요청 본문의 `chat_template_kwargs`를 Qwen3의
+# chat template에 넘기고, `enable_thinking: false`면 <think> 블록 없이 답한다.
+LOCAL_ACT_SETTINGS = OpenAIChatModelSettings(
+    max_tokens=2048, extra_body={"chat_template_kwargs": {"enable_thinking": False}}
+)
+# 추론 API가 없거나 실패해 로컬 모델이 계획할 때는 생각 모드를 켜고 출력을 더 준다.
+LOCAL_PLAN_SETTINGS = OpenAIChatModelSettings(
+    max_tokens=4096, extra_body={"chat_template_kwargs": {"enable_thinking": True}}
+)
+
+
+def _openai_compatible(
+    url: Any, name: str, key: Any, settings: OpenAIChatModelSettings | None = None
+) -> Model:
     api_key = key.get_secret_value() if key is not None else "unused"
-    return OpenAIChatModel(name, provider=OpenAIProvider(base_url=str(url), api_key=api_key))
+    provider = OpenAIProvider(base_url=str(url), api_key=api_key)
+    return OpenAIChatModel(name, provider=provider, settings=settings)
 
 
 def models_from_settings(settings: Settings) -> Models | None:
     """로컬 모델 설정이 없으면 None(티켓마다 모델 설정 없음을 알리는 gave_up)."""
-    if settings.local_model_url is None or settings.local_model_name is None:
+    url, name = settings.local_model_url, settings.local_model_name
+    if url is None or name is None:
         return None
-    local = _openai_compatible(
-        settings.local_model_url, settings.local_model_name, settings.local_model_api_key
-    )
+
+    def local(model_settings: OpenAIChatModelSettings) -> Model:
+        return _openai_compatible(url, name, settings.local_model_api_key, model_settings)
+
     api = None
     if settings.planner_model_url is not None and settings.planner_model_name is not None:
         api = _openai_compatible(
             settings.planner_model_url, settings.planner_model_name, settings.planner_model_api_key
         )
-    return make_models(local, api)
+    return make_models(local(LOCAL_ACT_SETTINGS), api, local(LOCAL_PLAN_SETTINGS))
 
 
 class CaseChoice(BaseModel):
@@ -106,15 +127,17 @@ def _read_memory_tool(memory: CaseMemory) -> Callable[..., dict[str, Any]]:
     return read_memory
 
 
-async def _llm_classify(run: TicketRun, memory: CaseMemory, model: Model) -> Case | None:
-    cases = [c for c in memory.cases if c.stage == run.ticket.stage]
+async def _llm_classify(
+    ticket: Ticket, notes: list[str], memory: CaseMemory, model: Model
+) -> Case | None:
+    cases = [c for c in memory.cases if c.stage == ticket.stage]
     agent = Agent(
         model,
         output_type=CaseChoice,
         instructions=prompts.CLASSIFY_INSTRUCTIONS,
         retries=OUTPUT_RETRIES,
     )
-    choice = (await agent.run(prompts.classify_prompt(run.ticket, cases))).output
+    choice = (await agent.run(prompts.classify_prompt(ticket, notes, cases))).output
     # 목록에 없는 id는 모르는 것으로 본다(모델이 지어낸 case로 playbook을 돌리지 않는다).
     case = next((c for c in cases if c.case_id == choice.case_id), None)
     if case is not None:
@@ -130,6 +153,8 @@ async def _act(model: Model, prompt: str, gateway: GatewayToolset, memory: CaseM
         toolsets=[gateway.filtered(lambda ctx, tool: tool.name != SUBMIT_TOOL)],
         tools=[_read_memory_tool(memory)],
         retries=OUTPUT_RETRIES,
+        # 가장 최근 도구 결과만 전체로 두고 그 이전 결과는 한 줄 요약으로 바꾼다(컨텍스트 예산).
+        capabilities=[ProcessHistory(budget.compact_history)],
     )
     return (await agent.run(prompt)).output
 
@@ -225,9 +250,10 @@ def make_agent_runner(
     """
 
     async def solve(run: TicketRun, memory: CaseMemory) -> None:
-        ticket = run.ticket
+        # 코드 분류는 원본으로, 모델에는 받는 쪽에서 예산 안으로 자른 티켓을 준다.
+        ticket, notes = budget.trim_ticket(run.ticket)
         gateway = gateway_for(run.gateway.token)
-        case = memory.classify(ticket)
+        case = memory.classify(run.ticket)
         method: ClassifyMethod = "code" if case else "llm"
         path: ResultPath = "playbook" if case else "plan"
         run.case_id = case.case_id if case else None
@@ -238,19 +264,19 @@ def make_agent_runner(
             else:
                 async with gateway:
                     if case is None:
-                        case = await _llm_classify(run, memory, models.local)
+                        case = await _llm_classify(ticket, notes, memory, models.local)
                         path = "playbook" if case else "plan"
                         run.case_id = case.case_id if case else None
                     if case is None:
-                        prompt = prompts.plan_prompt(ticket)
+                        prompt = prompts.plan_prompt(ticket, notes)
                         outcome = await _act(models.planner, prompt, gateway, memory)
                     else:
-                        prompt = prompts.playbook_prompt(ticket, case)
+                        prompt = prompts.playbook_prompt(ticket, notes, case)
                         outcome = await _act(models.local, prompt, gateway, memory)
                         if outcome.status == "gave_up":
                             path = "replan_after_playbook"
                             prompt = prompts.replan_prompt(
-                                ticket, case, gateway.actions, outcome.summary
+                                ticket, notes, case, gateway.actions, outcome.summary
                             )
                             outcome = await _act(models.planner, prompt, gateway, memory)
         except GatewayStop as stop:
