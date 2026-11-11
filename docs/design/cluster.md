@@ -84,7 +84,7 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 
 ### 6. 학생 공간 양식 (구현됨, 2026-11-10)
 
-프로젝트마다 만드는 공간의 틀. 공간 · 보안 등급 · 자원 상한 · 차단 규칙은 플랫폼 서버가 처음에 만들고, 앱 자원(Deployment · Service · Ingress)은 리더의 배포 실행기가 배포 설정에서 값을 뽑아 채운다. 양식은 [`Infra/student/space.yaml`](../../Infra/student/space.yaml)이고 시험 공간 `proj-demo`에 적용해 두었다. 서버는 이 파일에서 이름만 `proj-<id>`로 바꿔 Namespace · LimitRange · ResourceQuota · NetworkPolicy · RoleBinding 다섯을 만든다(RoleBinding은 서버가 그 공간을 읽게 하는 권한 연결이다, §8). 배포 실행기의 `student-app` 차트가 서비스마다 넣어야 할 필드는 [`Infra/student/app-example.yaml`](../../Infra/student/app-example.yaml)에 있다.
+프로젝트마다 만드는 공간의 틀. 공간 · 보안 등급 · 자원 상한 · 차단 규칙은 플랫폼 서버가 처음에 만들고, 앱 자원(Deployment · Service · Ingress)은 리더의 배포 실행기가 배포 설정에서 값을 뽑아 채운다. 양식은 [`Infra/student/space.yaml`](../../Infra/student/space.yaml)이고 시험 공간 `proj-demo`에 적용해 두었다. 서버는 이 파일에서 이름만 `proj-<id>`로 바꿔 Namespace · LimitRange · ResourceQuota · NetworkPolicy · RoleBinding 다섯을 만든다(RoleBinding은 서버가 그 공간을 읽게 하는 권한 연결이다, §8). 서버 쪽 구현(접속 설정 · 호출 · 오류)은 [space.md](space.md). 배포 실행기의 `student-app` 차트가 서비스마다 넣어야 할 필드는 [`Infra/student/app-example.yaml`](../../Infra/student/app-example.yaml)에 있다.
 
 | 항목 | 값 |
 | --- | --- |
