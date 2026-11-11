@@ -1,35 +1,44 @@
 {{- /*
-open · test Ingress. 프로젝트마다 하나씩이고 공개 서비스(ingressPath가 있는 서비스)의 경로를 모두 담는다(docs/design/deploy-workflow.md §3 · §4).
-part slot이면 test(<slug>.test.internal → 대상 슬롯), part open이면 open(<slug>.<도메인> → live로 바꿀 슬롯). 경로 규칙이 같아 test를 통과하면 open도 같다.
-Ingress에는 slot 라벨이 없다: 슬롯을 비울 때 지워지면 live 주소가 끊긴다.
-stripPrefix는 아직 만들지 않는다(Traefik Middleware 권한과 Ingress 모양을 정하는 중). true인 서비스가 있으면 조용히 무시하지 않고 렌더를 멈춘다.
+공개 서비스(ingressPath가 있는 서비스)마다 Ingress 하나. part slot이면 test-<서비스>(<slug>.test.internal → 대상 슬롯),
+part open이면 open-<서비스>(<slug>.<도메인> → live로 바꿀 슬롯). 경로 규칙이 같아 test를 통과하면 open도 같다(docs/design/deploy-workflow.md §3 · §4).
+Traefik의 미들웨어는 Ingress 주석이라 그 Ingress의 모든 경로에 걸린다. 서비스마다 Ingress를 나눠 stripPrefix를 그 서비스에만 건다.
+Ingress와 Middleware에는 slot 라벨이 없다: 슬롯을 비울 때 지워지면 live 주소가 끊긴다. live 슬롯 보호는 라벨 wanggane/ingress=open으로 읽는다.
 */ -}}
 {{- $kind := ternary "test" "open" (eq .Values.part "slot") }}
 {{- $host := ternary .Values.hosts.test .Values.hosts.open (eq .Values.part "slot") }}
-{{- $public := list }}
 {{- range .Values.services }}
 {{- if .ingressPath }}
 {{- if .stripPrefix }}
-{{- fail (printf "service %s: stripPrefix is not supported yet" .name) }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ .name }}-strip
+  labels:
+    app: {{ .name }}
+spec:
+  stripPrefix:
+    prefixes:
+      - {{ .ingressPath | quote }}
 {{- end }}
-{{- $public = append $public . }}
-{{- end }}
-{{- end }}
-{{- if $public }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ $kind }}
+  name: {{ $kind }}-{{ .name }}
   labels:
     wanggane/ingress: {{ $kind }}
+    app: {{ .name }}
+  {{- if .stripPrefix }}
+  annotations:
+    traefik.ingress.kubernetes.io/router.middlewares: {{ printf "%s-%s-strip@kubernetescrd" $.Release.Namespace .name | quote }}
+  {{- end }}
 spec:
   ingressClassName: traefik
   rules:
     - host: {{ $host | quote }}
       http:
         paths:
-          {{- range $public }}
           - path: {{ .ingressPath | quote }}
             pathType: Prefix
             backend:
@@ -37,5 +46,5 @@ spec:
                 name: {{ .fullName }}
                 port:
                   number: {{ .port }}
-          {{- end }}
+{{- end }}
 {{- end }}

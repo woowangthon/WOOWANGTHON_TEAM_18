@@ -1,5 +1,5 @@
 // 배포 입력(docs/design/deploy-handoff.md). 플랫폼 서버(BE)가 검증하고 deploy_condition을 채워 넘긴 값이다.
-// 이 패키지는 그 값을 믿고, 쓰는 칸의 모양만 확인한다(틀린 값으로 CodeBuild · kubectl을 부르지 않게).
+// 이 패키지는 그 값을 믿고, 쓰는 칸의 모양만 확인한다(틀린 값으로 CodeBuild · k3s API를 부르지 않게).
 
 export type Slot = 'a' | 'b'
 

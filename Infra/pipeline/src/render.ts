@@ -1,4 +1,5 @@
 import type { DeployInput, Service, Slot } from './deploy-input.js'
+import { KubeError } from './kube.js'
 
 // Render(W5): 배포 입력 + 이미지 digest + 슬롯 → student-app 차트의 values. 사람도 AI 에이전트도 manifest를 직접 쓰지 않는다.
 // 설계: docs/design/deploy-workflow.md §3 · §4 "슬롯과 라벨" · "헬스체크", docs/design/deploy-handoff.md runtime.
@@ -152,7 +153,7 @@ export function checkQuota(input: DeployInput): QuotaIssue[] {
 export interface RenderTools {
   /** `helm template`의 출력(manifest YAML) */
   helmTemplate: (values: Values, namespace: string) => Promise<string>
-  /** manifest를 클러스터에 적용하지 않고 서버 검사만(`--dry-run=server`). 실패면 k3s의 Status 원본(못 받았으면 null)과 그 message */
+  /** manifest를 클러스터에 적용하지 않고 서버 검사만(server-side apply dry-run). 거절이면 k3s의 Status 원본(못 읽었으면 null)과 그 message. API에 닿지 못하면 KubeError를 던진다 */
   dryRun: (manifest: string, namespace: string) => Promise<{ ok: true } | { ok: false; status: unknown; message: string }>
 }
 
@@ -160,6 +161,7 @@ export type RenderFailure =
   | { kind: 'quota'; issues: QuotaIssue[] }
   | { kind: 'helm'; message: string }
   | { kind: 'dry-run'; part: Part; status: unknown; errorMessage: string }
+  | { kind: 'cluster'; code: KubeError['code']; message: string }
 
 export interface RenderReport {
   ok: boolean
@@ -170,8 +172,9 @@ export interface RenderReport {
 }
 
 /**
- * 쿼터 합계 × 2 검사 → values → `helm template` → `kubectl apply --dry-run=server`. 앞에서 걸리면 뒤는 하지 않는다.
- * 실패 종류: quota(spec의 resources를 고치면 된다), helm(차트 렌더 실패: 플랫폼 문제), dry-run(k3s Status 원본을 그대로 남긴다).
+ * 쿼터 합계 × 2 검사 → values → `helm template` → k3s API server-side apply dry-run(객체마다). 앞에서 걸리면 뒤는 하지 않는다.
+ * 실패 종류: quota(spec의 resources를 고치면 된다), helm(차트 렌더 실패: 플랫폼 문제), dry-run(k3s가 거절했다. Status 원본을 그대로 남긴다),
+ * cluster(k3s API에 닿지 못했다: 플랫폼 문제).
  */
 export async function runRender(input: DeployInput, slot: Slot, domain: string, tools: RenderTools): Promise<RenderReport> {
   const fail = (failure: RenderFailure, manifests: RenderReport['manifests'] = { slot: null, open: null }): RenderReport => ({ ok: false, slot, manifests, failure })
@@ -190,7 +193,13 @@ export async function runRender(input: DeployInput, slot: Slot, domain: string, 
   for (const part of ['slot', 'open'] as const) {
     const manifest = manifests[part]
     if (manifest === null) continue
-    const result = await tools.dryRun(manifest, namespace)
+    let result: Awaited<ReturnType<RenderTools['dryRun']>>
+    try {
+      result = await tools.dryRun(manifest, namespace)
+    } catch (err) {
+      if (err instanceof KubeError) return fail({ kind: 'cluster', code: err.code, message: err.message }, manifests)
+      throw err
+    }
     if (!result.ok) return fail({ kind: 'dry-run', part, status: result.status, errorMessage: result.message }, manifests)
   }
   return { ok: true, slot, manifests, failure: null }

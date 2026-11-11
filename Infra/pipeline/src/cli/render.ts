@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url'
 import { required } from '../config.js'
 import { parseDeployInput, type Slot } from '../deploy-input.js'
 import { helmTemplate } from '../helm.js'
-import { kubectlDryRun } from '../kubectl.js'
+import { kubeFromEnv, makeKube, makeServerDryRun } from '../kube.js'
 import { runRender } from '../render.js'
 
 // GoCD Render 스테이지의 task: `node dist/cli/render.js <배포 입력 JSON(이미지가 채워진 것)> <a|b> <출력 폴더>`.
@@ -23,7 +23,8 @@ async function main([inputPath, slotArg, outDir]: string[]) {
   const slot = parseSlot(slotArg)
   const domain = domainFromEnv(process.env)
   const input = parseDeployInput(readFileSync(inputPath, 'utf8'))
-  const report = await runRender(input, slot, domain, { helmTemplate, dryRun: kubectlDryRun })
+  const dryRun = makeServerDryRun(makeKube(kubeFromEnv(process.env)))
+  const report = await runRender(input, slot, domain, { helmTemplate, dryRun })
   mkdirSync(outDir, { recursive: true })
   for (const part of ['slot', 'open'] as const) {
     const manifest = report.manifests[part]

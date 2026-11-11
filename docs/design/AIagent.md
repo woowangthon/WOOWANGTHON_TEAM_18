@@ -66,7 +66,7 @@ AI 서버 (에이전트) → 플랫폼 서버 MCP 게이트웨이 → GoCD 서�
 | 도구 | 하는 일 | 입력 | 출력 | 티켓당 횟수 |
 |---|---|---|---|---|
 | `run_build` | Build (CodeBuild). 해시가 같으면 재사용 | `service`, `specPatch?`, `source?`, `buildOverrides?` | `BatchGetBuilds`의 `builds[0]` 원본, 실패 phase, 로그 마지막 200줄, 성공 시 이미지 digest | 2 |
-| `run_render` | Render + `kubectl apply --dry-run=server`. 클러스터에 적용하지 않는다 | `specPatch?` | 통과 여부, 실패 시 k3s Status 원본 | 5 |
+| `run_render` | Render + k3s API server-side apply dry-run. 클러스터에 적용하지 않는다 | `specPatch?` | 통과 여부, 실패 시 k3s Status 원본 | 5 |
 | `run_deploy` | Prepare(live 슬롯 보호 검사, 대상 슬롯 비우기) → Render → Apply → Ready 대기 | `specPatch?`, `source?` | Pod · 이벤트 원본, rollout 결과 | 2 |
 | `run_verify` | Verify. 배포 입력에 있는 공개 서비스와 설정된 경로만 test Ingress로 Traefik에 요청하고, 내부 전용 서비스는 Pod Ready만 본다([배포 워크플로우](deploy-workflow.md) §4) | 없음 | 요청별 경로 · 상태 코드 · 응답 시간, 서비스별 Ready | 3 |
 
@@ -175,7 +175,7 @@ buildspec · 서비스 역할(IAM) · 환경 변수 override는 받지 않는다
 | `raw.codebuild` | `BatchGetBuilds`의 `builds[0]` 원본. `build`가 아니면 `null` |
 | `raw.k8s.pod` | 실패한 Pod 하나의 원본. 없으면 `null`. `metadata.managedFields`와 적용 기록 annotation은 뺀다 |
 | `raw.k8s.events` | `involvedObject`가 대상 슬롯 리소스인 이벤트 원본 (없으면 `[]`) |
-| `raw.k8s.status` | `render`일 때 `kubectl apply --dry-run=server`가 돌려준 k3s Status 원본(필수), 그 밖에는 `null` |
+| `raw.k8s.status` | `render`일 때 server-side apply dry-run에 k3s API가 돌려준 Status 원본(필수), 그 밖에는 `null` |
 | `errorMessage` | 사람이 읽는 오류 한 줄. `render`면 Status의 `message`를 그대로 넣는다 |
 | `logs` | 오류 시각 10분 전부터, 최대 200줄. 재시작한 Pod는 직전 컨테이너 로그 |
 | `previous` | 직전 티켓. 없으면 `null`. `status`는 `verified` · `pr_opened` · `needs_user` · `gave_up`(그 티켓의 해결 결과) 또는 `stopped`(결과 없이 끝남) |

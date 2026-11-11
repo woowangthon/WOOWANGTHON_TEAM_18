@@ -1,6 +1,7 @@
 import { describe, expect, it, type Mock, vi } from 'vitest'
 import type { DeployInput } from './deploy-input.js'
 import { deployInput, digest } from './fixtures.js'
+import { KubeError } from './kube.js'
 import { checkQuota, DEFAULT_RESOURCES, hasPublicService, quantity, type RenderTools, renderValues, runRender, type Values } from './render.js'
 
 // 빌드가 끝나 세 서비스 모두 이미지가 있는 배포 입력.
@@ -240,6 +241,22 @@ describe('runRender', () => {
     // 실패해도 만든 manifest는 남긴다(티켓 · 에이전트가 본다).
     expect(report.manifests).toEqual({ slot: '# slot a\n', open: '# open a\n' })
     expect(t.dryRun).toHaveBeenCalledTimes(1)
+  })
+
+  it('reports an unreachable API as a cluster failure, keeping the manifests', async () => {
+    const t = tools({ dryRun: vi.fn<RenderTools['dryRun']>(() => Promise.reject(new KubeError('K8S_TIMEOUT', 'PATCH /x did not answer in 10s'))) })
+    const report = await runRender(built(), 'a', 'd', t)
+    expect(report).toEqual({
+      ok: false,
+      slot: 'a',
+      manifests: { slot: '# slot a\n', open: '# open a\n' },
+      failure: { kind: 'cluster', code: 'K8S_TIMEOUT', message: 'PATCH /x did not answer in 10s' },
+    })
+  })
+
+  it('lets an unexpected dry-run error through', async () => {
+    const t = tools({ dryRun: vi.fn<RenderTools['dryRun']>(() => Promise.reject(new Error('manifest has an object the pipeline cannot apply'))) })
+    await expect(runRender(built(), 'a', 'd', t)).rejects.toThrow('manifest has an object the pipeline cannot apply')
   })
 
   it('reports a dry-run failure of the open part', async () => {

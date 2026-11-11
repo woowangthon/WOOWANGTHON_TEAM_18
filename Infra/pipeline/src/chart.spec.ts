@@ -13,6 +13,8 @@ const input = () => {
   i.deploy_condition.services.fe.image = digest('d')
   i.deploy_condition.services.be.image = digest('e')
   i.deploy_condition.secretHash = 'sha256:abc'
+  // BE는 /api를 떼고 받는다. 떼기는 BE Ingress에만 걸려야 한다.
+  i.spec.services[1].runtime.stripPrefix = true
   return i
 }
 
@@ -24,7 +26,7 @@ describe.skipIf(!hasHelm && !process.env.CI)('student-app chart', () => {
     const yaml = await helmTemplate(renderValues(input(), 'b', 'slot', 'stairnoworks.com'), 'proj-my-app')
     await expect(yaml).toMatchFileSnapshot('__snapshots__/chart-slot-b.yaml')
     expect(kinds(yaml).sort()).toEqual(
-      ['ConfigMap/ai-b', 'ConfigMap/be-b', 'ConfigMap/fe-b', 'Deployment/ai-b', 'Deployment/be-b', 'Deployment/fe-b', 'Ingress/test', 'Service/ai-b', 'Service/be-b', 'Service/fe-b'],
+      ['ConfigMap/ai-b', 'ConfigMap/be-b', 'ConfigMap/fe-b', 'Deployment/ai-b', 'Deployment/be-b', 'Deployment/fe-b', 'Ingress/test-be', 'Ingress/test-fe', 'Middleware/be-strip', 'Service/ai-b', 'Service/be-b', 'Service/fe-b'],
     )
     const deployments = docs(yaml).filter((d) => /^kind: Deployment/m.test(d))
     // 검사 규칙 wanggane-student-pods가 요구하는 것과 배치(cluster.md §6).
@@ -34,35 +36,43 @@ describe.skipIf(!hasHelm && !process.env.CI)('student-app chart', () => {
       expect(d).toContain('wanggane/pool: student')
       expect(d).toContain('wanggane/secret-hash: "sha256:abc"')
     }
-    // Ingress에는 slot 라벨이 없다(슬롯 비우기에 지워지지 않게). 공개 서비스 둘의 경로를 대상 슬롯으로 보낸다(AI는 내부 전용).
-    const ingress = docs(yaml).find((d) => /^kind: Ingress/m.test(d))!
-    expect(ingress).not.toMatch(/slot:/)
-    expect(ingress).toContain('host: "my-app.test.internal"')
-    expect([...ingress.matchAll(/path: "(\S+)"[\s\S]*?name: (\S+)/g)].map((m) => [m[1], m[2]])).toEqual([
-      ['/', 'fe-b'],
-      ['/api', 'be-b'],
+    // 공개 서비스마다 Ingress 하나(AI는 내부 전용). Ingress · Middleware에는 slot 라벨이 없다(슬롯 비우기에 지워지지 않게).
+    const ingresses = docs(yaml).filter((d) => /^kind: Ingress/m.test(d))
+    expect(ingresses.map((d) => [/path: "(\S+)"/.exec(d)![1], /service:\n\s+name: (\S+)/.exec(d)![1], /wanggane\/ingress: (\S+)/.exec(d)![1]])).toEqual([
+      ['/', 'fe-b', 'test'],
+      ['/api', 'be-b', 'test'],
     ])
+    for (const d of docs(yaml).filter((d) => /^kind: (Ingress|Middleware)/m.test(d))) expect(d).not.toMatch(/slot:/)
+    for (const d of ingresses) expect(d).toContain('host: "my-app.test.internal"')
+    // 떼기는 stripPrefix인 BE Ingress에만 건다.
+    const [fe, be] = ingresses
+    expect(fe).not.toContain('router.middlewares')
+    expect(be).toContain('traefik.ingress.kubernetes.io/router.middlewares: "proj-my-app-be-strip@kubernetescrd"')
+    expect(docs(yaml).find((d) => /^kind: Middleware/m.test(d))).toContain('prefixes:\n      - "/api"')
   })
 
   it('renders only the open Ingresses for the open part', async () => {
     const yaml = await helmTemplate(renderValues(input(), 'b', 'open', 'stairnoworks.com'), 'proj-my-app')
     await expect(yaml).toMatchFileSnapshot('__snapshots__/chart-open-b.yaml')
-    expect(kinds(yaml)).toEqual(['Ingress/open'])
-    expect(yaml).toContain('host: "my-app.stairnoworks.com"')
+    expect(kinds(yaml)).toEqual(['Ingress/open-fe', 'Ingress/open-be', 'Middleware/be-strip'])
+    expect(yaml.match(/host: "my-app.stairnoworks.com"/g)).toHaveLength(2)
+    expect(yaml.match(/wanggane\/ingress: open/g)).toHaveLength(2)
   })
 
   it('renders no Ingress for internal-only services and an empty ConfigMap as {}', async () => {
     const i = input()
     for (const s of i.spec.services) s.runtime.ingressPath = null
     const yaml = await helmTemplate(renderValues(i, 'a', 'slot', 'stairnoworks.com'), 'proj-my-app')
-    expect(kinds(yaml).filter((k) => k.startsWith('Ingress'))).toEqual([])
+    expect(kinds(yaml).filter((k) => /^(Ingress|Middleware)/.test(k))).toEqual([])
     expect(docs(yaml).find((d) => d.includes('name: fe-a') && /^kind: ConfigMap/m.test(d))).toContain('data: {}')
   })
 
-  it('stops instead of ignoring stripPrefix, which is not built yet', async () => {
+  it('makes no Middleware when no service strips its prefix', async () => {
     const i = input()
-    i.spec.services[1].runtime.stripPrefix = true
-    await expect(helmTemplate(renderValues(i, 'a', 'slot', 'stairnoworks.com'), 'proj-my-app')).rejects.toThrow('service be: stripPrefix is not supported yet')
+    i.spec.services[1].runtime.stripPrefix = false
+    const yaml = await helmTemplate(renderValues(i, 'a', 'open', 'stairnoworks.com'), 'proj-my-app')
+    expect(kinds(yaml)).toEqual(['Ingress/open-fe', 'Ingress/open-be'])
+    expect(yaml).not.toContain('router.middlewares')
   })
 
   it('omits the secret annotation and secret env when there are none', async () => {

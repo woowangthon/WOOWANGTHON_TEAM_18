@@ -6,7 +6,7 @@
 
 ## Plan
 
-`Infra/charts/student-app` renders, per slot, a Deployment · Service · ConfigMap per service (`<name>-<slot>`, labels `app` · `slot`), plus one test Ingress (part `slot`) or one open Ingress (part `open`) with every public path; Ingresses carry no slot label so slot cleanup never removes them. All judgement is in `Infra/pipeline/src/render.ts`: values from the deploy input (probes from `runtime.health`, default resources incl. ephemeral storage, same-slot link URLs, secret keys from `<name>-secrets`, `secretHash` as a Pod annotation), the quota × 2 check first, then `helm template` and `kubectl apply --dry-run=server` behind one function each. Pending user decisions: how to keep the raw k3s Status of a dry-run failure (kubectl prints only text), and `stripPrefix` (needs a Traefik Middleware and executor RBAC), which the chart refuses for now. Design: `docs/design/deploy-workflow.md` §3 · §4, `docs/design/deploy-handoff.md`, `docs/design/cluster.md` §6 · §8.
+`Infra/charts/student-app` renders, per slot, a Deployment · Service · ConfigMap per service (`<name>-<slot>`, labels `app` · `slot`), plus one test Ingress (part `slot`) or one open Ingress (part `open`) with every public path; Ingresses carry no slot label so slot cleanup never removes them. All judgement is in `Infra/pipeline/src/render.ts`: values from the deploy input (probes from `runtime.health`, default resources incl. ephemeral storage, same-slot link URLs, secret keys from `<name>-secrets`, `secretHash` as a Pod annotation), the quota × 2 check first, then `helm template` and `kubectl apply --dry-run=server` behind one function each. User decisions (2026-11-11): the dry-run calls the k3s API directly (server-side apply per object) so the raw Status survives; `stripPrefix` gets a Middleware `<name>-strip`; one Ingress per public service (`open-<name>` / `test-<name>`) because a Traefik middleware applies to every path of its Ingress. Design: `docs/design/deploy-workflow.md` §3 · §4, `docs/design/deploy-handoff.md`, `docs/design/cluster.md` §6 · §8.
 
 ## Todo
 
@@ -15,8 +15,8 @@
 - [x] helm / kubectl runners and the CLI — files: `src/helm.ts`, `src/kubectl.ts`, `src/exec.ts`, `src/cli/render.ts`
 - [x] Slug 1~40 and service name 1~30 in the pipeline's input check (#97) — files: `src/deploy-input.ts`
 - [x] Docs — files: `docs/design/deploy-workflow.md`, `docs/design/deploy-handoff.md`, `docs/ai-scope.md`, `Infra/pipeline/CLAUDE.md`
-- [ ] Dry-run Status raw (waiting for the user's answer)
-- [ ] `stripPrefix` (waiting for the user's answer)
+- [x] Dry-run through the k3s API (server-side apply, raw Status kept) — user decision 1a — files: `src/kube.ts`
+- [x] `stripPrefix` with a Traefik Middleware per service, one Ingress per public service — user decisions 2a · 3a — files: `templates/ingress.yaml`, `docs/design/cluster.md` §8
 
 ## Done when
 
