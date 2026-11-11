@@ -54,8 +54,15 @@ spec:
       variables.isNamespace
         ? (request.operation == 'DELETE' ? oldObject.metadata.name : object.metadata.name)
         : request.namespace
+  # Reading metrics: the API server counts a service proxy call as CONNECT, like exec. The one call let
+  # through outside proj- spaces is the Prometheus Service of build 11 (Infra/monitoring); RBAC there
+  # allows GET on that name only.
+  - name: isPrometheusQuery
+    expression: >-
+      request.operation == 'CONNECT' && request.resource.group == '' && request.resource.resource == 'services'
+      && request.subResource == 'proxy' && request.namespace == 'monitoring' && request.name == 'monitoring-prometheus:9090'
   validations:
-  - expression: variables.space.startsWith('proj-')
+  - expression: variables.space.startsWith('proj-') || variables.isPrometheusQuery
     message: the platform server may write only in proj-<id> spaces
   - expression: "!variables.isNamespace || request.operation in ['CREATE', 'DELETE']"
     message: the platform server may only create or delete a space
