@@ -100,11 +100,15 @@ describe('assetPaths', () => {
       <script src="/a.js"></script><script src='b.js?v=2'></script><script>inline()</script>
       <link href="/s.css" rel="stylesheet"><link rel=stylesheet href="./t.css"><link rel="icon" href="/favicon.ico">
       <script src="https://cdn.example.com/x.js"></script><script src="//${HOST}/c.js"></script><script src="/a.js"></script>`
-    expect(assetPaths(html, '/app/', HOST)).toEqual(['/a.js', '/app/b.js?v=2', '/c.js', '/s.css', '/app/t.css'])
+    expect(assetPaths(html, '/app/', HOST)).toEqual(['/a.js', '/app/b.js?v=2', '/s.css', '/app/t.css', '/c.js'])
   })
   it('keeps at most 10', () => {
     const html = Array.from({ length: 12 }, (_, i) => `<script src="/f${i}.js"></script>`).join('')
     expect(assetPaths(html, '/', HOST)).toHaveLength(10)
+  })
+  it('takes scripts and stylesheets in the order they appear, before cutting to 10', () => {
+    const html = `<link rel="stylesheet" href="/s.css">${Array.from({ length: 11 }, (_, i) => `<script src="/f${i}.js"></script>`).join('')}`
+    expect(assetPaths(html, '/', HOST)).toEqual(['/s.css', ...Array.from({ length: 9 }, (_, i) => `/f${i}.js`)])
   })
 })
 
@@ -181,9 +185,23 @@ describe('runVerify', () => {
     expect(get).not.toHaveBeenCalled()
   })
 
-  it('fails a Service with no ready endpoints, with its Pod without managed fields', async () => {
-    const { call } = cluster({ [slices('ai')]: list(slice(false)) })
-    const report = await runVerify(input(), 'b', call, traefik(), fakeClock())
+  it('waits for endpoints that appear after the Pod is Ready', async () => {
+    let n = 0
+    const clock = fakeClock()
+    const { call } = cluster({ [slices('ai')]: () => (++n === 1 ? list() : list(slice())) })
+    const report = await runVerify(input(), 'b', call, traefik(), clock)
+    expect(report.ok).toBe(true)
+    expect(report.ready[0]).toEqual({ service: 'ai', ready: true })
+    expect(clock.sleep.mock.calls[0]).toEqual([5000])
+    expect(n).toBe(2)
+  })
+
+  it('fails a Service with no ready endpoints after 3 looks 5 seconds apart, with its Pod without managed fields', async () => {
+    const clock = fakeClock()
+    const { call, calls } = cluster({ [slices('ai')]: list(slice(false)) })
+    const report = await runVerify(input(), 'b', call, traefik(), clock)
+    expect(calls.filter((c) => c.path === slices('ai').slice(4))).toHaveLength(3)
+    expect(clock.sleep.mock.calls).toEqual([[5000], [5000]])
     expect(report.ready[0]).toEqual({ service: 'ai', ready: false })
     expect(report.failure).toEqual({ kind: 'student', service: 'ai', errorMessage: 'ai: no endpoints', raw: { pod: { metadata: { name: 'ai-b-x-y' }, status: readyPod('x').status }, events: [], status: null } })
   })

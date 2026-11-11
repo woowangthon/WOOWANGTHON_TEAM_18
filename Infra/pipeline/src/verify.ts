@@ -110,14 +110,14 @@ export function requestPath(svc: Service): { path: string; kind: 'page' | 'healt
   return under ? { path: health.path, kind: 'health' } : null
 }
 
-/** 페이지 HTML의 `<script src>` · `<link rel="stylesheet" href>` 중 같은 호스트 파일의 경로(쿼리 포함), 앞에서부터 최대 10개. */
+/** 페이지 HTML의 `<script src>` · `<link rel="stylesheet" href>` 중 같은 호스트 파일의 경로(쿼리 포함), HTML에 나온 순서로 최대 10개. */
 export function assetPaths(html: string, pagePath: string, host: string): string[] {
   const refs: string[] = []
-  for (const m of html.matchAll(/<script\b[^>]*?\bsrc\s*=\s*["']([^"']+)["']/gi)) refs.push(m[1])
-  for (const m of html.matchAll(/<link\b[^>]*>/gi)) {
-    if (!/\brel\s*=\s*["']?stylesheet\b/i.test(m[0])) continue
-    const href = /\bhref\s*=\s*["']([^"']+)["']/i.exec(m[0])
-    if (href) refs.push(href[1])
+  for (const [tag, name] of html.matchAll(/<(script|link)\b[^>]*>/gi)) {
+    const isScript = name.toLowerCase() === 'script'
+    if (!isScript && !/\brel\s*=\s*["']?stylesheet\b/i.test(tag)) continue
+    const ref = (isScript ? /\bsrc\s*=\s*["']([^"']+)["']/i : /\bhref\s*=\s*["']([^"']+)["']/i).exec(tag)
+    if (ref) refs.push(ref[1])
   }
   const page = new URL(pagePath, `http://${host}`)
   const paths: string[] = []
@@ -177,9 +177,16 @@ export async function runVerify(input: DeployInput, slot: Slot, call: KubeCall, 
     for (const svc of services) {
       current = svc.name
       const full = `${svc.name}-${slot}`
-      const pods = await podsOf(svc)
-      const podOk = pods.some(podReady)
-      const endpointOk = podOk && hasReadyEndpoint(await listItems(call, listPath('/apis/discovery.k8s.io/v1', 'endpointslices', namespace, `kubernetes.io/service-name=${full}`)))
+      // EndpointSlice는 Pod와 다른 컨트롤러가 늦게 채운다. Ready가 막 된 Pod를 빈 엔드포인트로 실패시키지 않게, 5초 간격으로 3번까지 다시 본다.
+      let pods: Obj[] = []
+      let podOk = false
+      let endpointOk = false
+      for (let i = 0; i < TRIES && !endpointOk; i++) {
+        if (i > 0) await clock.sleep(RETRY_MS)
+        pods = await podsOf(svc)
+        podOk = pods.some(podReady)
+        endpointOk = podOk && hasReadyEndpoint(await listItems(call, listPath('/apis/discovery.k8s.io/v1', 'endpointslices', namespace, `kubernetes.io/service-name=${full}`)))
+      }
       ready.push({ service: svc.name, ready: podOk && endpointOk })
       notReady ??= !podOk ? { svc, why: `not ready (${notReadyReason(pods)})` } : !endpointOk ? { svc, why: 'no endpoints' } : null
     }
