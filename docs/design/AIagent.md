@@ -55,7 +55,7 @@ AI 서버 (에이전트) → 플랫폼 서버 MCP 게이트웨이 → GoCD 서�
 ```
 
 - 에이전트(AI 서버)에는 클러스터 · GoCD · 봇 계정 자격 증명이 없다. 도구는 모두 게이트웨이가 실행한다([ADR-012](../adr/012-agent-acts-through-platform-gateway.md)). 예외는 AI 서버 자신의 장기 메모리를 읽는 `read_memory` 하나다(클러스터 · GitHub에 닿지 않는다).
-- 게이트웨이는 GoCD 파이프라인을 환경 변수 옵션으로 실행한다: 대상 슬롯, 시작 스테이지, `DRY_RUN_ONLY`, `SKIP_SWITCH=true`, 소스 커밋(봇 fork). 환경 변수에 비밀값은 넣지 않는다.
+- 게이트웨이는 시험 전용 GoCD 파이프라인 `student-trial`(Prepare → Render → Apply → Verify, Build · Switch 없음)을 환경 변수 옵션으로 실행한다: 시험 id `TRIAL_ID`, 돌릴 스테이지 `TRIAL_STAGES`(`run_render` = `render`, `run_deploy` = `prepare,render,apply`, `run_verify` = `verify`). 대상 슬롯 · `specPatch`를 적용한 입력은 파이프라인이 시험 id로 읽어 간다. 환경 변수에 비밀값은 넣지 않는다. 모양은 [API 계약](api.md) "파이프라인 ↔ 플랫폼 서버" 4번이다. 소스 커밋(봇 fork)과 Build는 `run_build` · F13에서 정한다.
 - 게이트웨이는 모든 실행 도구에서 `specPatch` 경로 검사와 live 슬롯 보호 검사를 한다.
 - 티켓 접수 · 종료 알림 API, 게이트웨이 접속 · 토큰(티켓마다 하나), 도구마다의 인자 · 결과 모양과 거절 코드는 [API 계약](api.md) "AI 에이전트"에 있다.
 
@@ -400,6 +400,7 @@ PydanticAI에서 두 모델을 OpenAI 호환 provider로 붙이고, 추론 모�
 - 에이전트가 낸 `verified`가 정말 `run_verify` 통과 뒤인지 AI 서버는 따로 확인하지 않는다. 플랫폼이 대상 슬롯을 다시 확인한다(§1).
 - 가림 필터는 정해진 모양만 가린다. 이름 없이 나온 임의의 비밀 문자열은 못 가린다.
 - 게이트웨이(F11)는 관찰 도구와 `submit_result`만 연다. 실행 · 운영 도구와 `read_build_logs`는 F11b(파이프라인 시험 실행)에서 열고, 그 전에는 `verified`를 받지 않는다(`INVALID_RESULT`). 그래서 지금 에이전트가 낼 수 있는 결과는 `needs_user` · `gave_up`(과 F13 뒤 `pr_opened`)이다.
+- 시험 실행(F11b)의 계약은 정했고 구현 전이다. 시험 기록과 기다림은 플랫폼 서버 메모리에 있어, 서버가 다시 뜨면 기다리던 `run_*` 호출은 끊긴다(에이전트는 게이트웨이에 닿지 못한 것으로 본다). 시험 실행에는 Build가 없어 빌드에 닿는 `specPatch`는 `run_build`가 열릴 때까지 `PATCH_FORBIDDEN`이다. `verified` 뒤 Switch를 누가 부르는지는 다음 PR에서 정한다.
 - 게이트웨이의 호출 횟수 · 작업 시간은 플랫폼 서버 메모리에서 센다. 서버가 다시 뜨면 그 티켓은 처음부터 다시 센다. 도구별 횟수(§3 표)는 그 도구가 열리는 F11b에서 센다. 지금은 전체 20회 · 15분 · 같은 호출 연속 2회만 센다.
 - `read_repo`는 인증 없이 GitHub API를 부른다(서버 IP당 시간당 60번, 레포 소유 확인과 같이 쓴다). 한도에 닿으면 도구 오류로 끝난다.
 - 게이트웨이에 끝내 닿지 못하면 결과를 낼 길이 없다. 계약에 다른 길(콜백 · 재전송 요청)이 없어서, 플랫폼은 자기 제한 시간(1시간 TIMED_OUT)까지 기다린다. AI 서버에는 로그만 남는다.

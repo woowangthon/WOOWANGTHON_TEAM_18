@@ -1,0 +1,27 @@
+# Agent: trial run contract (F11b, docs only)
+
+- **SRS**: UC-14 (P0) — FR-076, FR-098, FR-099, demo step 7
+- **Owner**: track B (AI agent)
+- **Branch**: docs/agent-trial-contract (from team `main` a9dafd8)
+
+## Plan
+
+User decision (2026-11-11): split F11b and land the contract first, no code. Both tracks' proposals merged by the coordinating session:
+
+- A separate GoCD pipeline `student-trial` (leader executor, Prepare → Render → Apply → Verify, no Build or Switch). `student-deploy` stays as it is; its YAML is the GoCD owner's.
+- BE schedules it with `DEPLOY_ID` · `TRIAL_ID` · `TRIAL_STAGES`; a stage outside the list ends at once; the Switch CLI refuses with `TRIAL_SWITCH_REFUSED` when `TRIAL_ID` is set.
+- Input `GET /api/pipeline/trials/:id/input` in the same shape as the deploy input; result `POST /api/pipeline/trials/:id/result` `{ stage, result }` with `result` in the tool's shape plus `failure`. The run's state machine is untouched.
+- Gateway: `run_render` · `run_deploy` · `run_verify`, 30 min wait outside the 15 min budget, one trial at a time, build-path patches `PATCH_FORBIDDEN`, `source` `INVALID_ARGUMENT`.
+- Trials live in BE memory (no migration); a restart cuts the waiting call.
+- Who calls Switch after `verified` is left to the next PR; `verified` stays `INVALID_RESULT`.
+
+## Todo
+
+- [x] Contract — files: `docs/design/api.md` ("파이프라인 ↔ 플랫폼 서버" 4, gateway notes)
+- [x] Design notes — files: `docs/design/AIagent.md` §2 + known limits, `docs/design/deploy-workflow.md` §3 · §8
+- [ ] Pipeline side review from track A before push
+
+## Done when
+
+- [ ] Track A confirms the pipeline side; markdown links resolve
+- [ ] Next PRs: BE trial routes + gateway run tools (F11b-1), switch after `verified` (F11b-2)

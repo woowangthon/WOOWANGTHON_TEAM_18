@@ -483,7 +483,7 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
 
 ### 파이프라인 ↔ 플랫폼 서버 (기계용)
 
-> GoCD(서버 설치, 파이프라인 정의, 아래 세 가지를 잇는 task)는 플랫폼 서버 담당이 만든다([배포 워크플로우](deploy-workflow.md#정할-것) 3번, 2026-11-11). 아래 세 가지도 그 담당이 정했다. 스테이지 판단 코드(`Infra/pipeline`)가 쓰는 결과 JSON을 아래 알림 모양으로 바꿔 보내는 task도 플랫폼 서버 담당이 만든다.
+> GoCD(서버 설치, 파이프라인 정의, 아래 세 가지를 잇는 task)는 플랫폼 서버 담당이 만든다([배포 워크플로우](deploy-workflow.md#정할-것) 3번, 2026-11-11). 아래 1~3도 그 담당이 정했다. 4번(AI 에이전트의 시험 실행)은 AI 담당이 정하고 GoCD · 파이프라인 담당과 맞췄다. 스테이지 판단 코드(`Infra/pipeline`)가 쓰는 결과 JSON을 아래 알림 모양으로 바꿔 보내는 task도 플랫폼 서버 담당이 만든다.
 
 사용자 로그인 토큰이 아니라 **기계용 비밀 토큰** `PIPELINE_NOTIFY_TOKEN`(`Authorization: Bearer`)으로 인증한다. 서버 env에 있고 파이프라인의 GoCD secure 변수에 같은 값을 넣는다. 설정이 없거나 틀리면 `401 AUTH_REQUIRED`다. 이 토큰 하나로 배포 완료를 위조할 수 있어 서버는 32자 이상만 받는다. 플랫폼 서버는 GoCD를 주기적으로 조회하지 않는다(§6-1).
 
@@ -516,6 +516,29 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
 - `failed`면 실패 분류에 따라 `failed`로 마감하거나 문제 티켓을 만들어 AI 서버 `POST /agent/tickets`로 보내고 `fixing`으로 둔다(티켓의 `ticketId` 하나만 보관). **`switch` 실패는 티켓 없이 `failed`로 마감한다**(티켓 `stage`에 없다, [AI 에이전트 설계](AIagent.md) §5).
 - 응답 `200 { "ok": true }`. 이미 끝난 배포(`succeeded` · `failed`)나 지금 스테이지가 아닌 `stage`의 알림은 상태를 바꾸지 않고 `200 { "ok": true, "applied": false }`이다(재전송해도 안전하다).
 - 오류: `401 AUTH_REQUIRED`, `400 BAD_REQUEST`(본문 모양이 다름, `fields` 포함), `404 DEPLOY_NOT_FOUND`(실행 기록 없음), `503 DATABASE_UNAVAILABLE`(파이프라인이 다시 보낸다).
+
+**4. 시험 실행 (AI 에이전트의 `run_render` · `run_deploy` · `run_verify`)**: 문제를 고치는 동안 게이트웨이가 대상 슬롯에서 스테이지 일부만 돌린다([AI 에이전트 설계](AIagent.md) §2 · §3). 위 1~3의 모양은 바꾸지 않는다. 시험 실행은 실행 기록의 상태(`status` · `stage`, 3번 알림의 상태 기계)를 바꾸지 않고, `live_slot` · W7도 건드리지 않는다. 계약만 정하고 구현 전이다(BE는 F11b, 파이프라인 쪽은 GoCD · 파이프라인 담당).
+
+- **파이프라인**: 시험 전용 GoCD 파이프라인 `student-trial`(이름은 BE env `GOCD_TRIAL_PIPELINE`). 리더 실행기에서만 돌고 스테이지는 Prepare → Render → Apply → Verify다. **Build · Switch 스테이지가 없다.** `student-deploy`(1번)는 그대로다. 정의(YAML)는 GoCD 담당이 만든다.
+- **실행**: 1번과 같은 요청을 `POST {GOCD_URL}/go/api/pipelines/{GOCD_TRIAL_PIPELINE}/schedule`로 보낸다. `environment_variables`는 셋이다. 비밀값은 넣지 않는다.
+
+| 이름 | 값 |
+| --- | --- |
+| `DEPLOY_ID` | 실행 기록의 `deployId` (1번과 같다) |
+| `TRIAL_ID` | BE가 시험마다 만드는 id `tr_<hex 12자>` |
+| `TRIAL_STAGES` | 도구에 따라 셋 중 하나: `render`(`run_render`) · `prepare,render,apply`(`run_deploy`) · `verify`(`run_verify`) |
+
+- **스테이지 거르기**: 각 스테이지 job은 자기 스테이지가 `TRIAL_STAGES`에 없으면 아무것도 하지 않고 성공으로 끝난다(결과도 보내지 않는다). 실패하면 GoCD가 뒤 스테이지를 돌리지 않는 것은 그대로다.
+- **이중 안전**: Switch CLI는 env `TRIAL_ID`가 있으면 아무것도 바꾸지 않고 플랫폼 문제 `TRIAL_SWITCH_REFUSED`로 끝난다(시험 파이프라인에 Switch 스테이지가 잘못 들어가도 공개 주소가 바뀌지 않게).
+- **입력**: `GET /api/pipeline/trials/:trialId/input` → `200 { "deployId", "slot", "input" }`(2번과 같은 모양이라 같은 입력 task를 쓴다). `slot`은 실행 기록의 대상 슬롯, `input`은 실행 기록의 `input`에 게이트웨이가 검사한 `specPatch`를 적용하고 `deploy_condition.services`를 모두 `reuse` + 이미지 digest(그 실행에서 빌드한 이미지 `images` 또는 원래 `reuse` 이미지)로 바꾼 것이다. Build가 없으므로 빌드에 닿는 경로의 패치는 게이트웨이가 미리 거절한다(`PATCH_FORBIDDEN`, `run_build`가 열릴 때까지). 모르는 id이거나 이미 끝난 시험이면 `404 TRIAL_NOT_FOUND`.
+- **결과**: `POST /api/pipeline/trials/:trialId/result` `{ "stage", "result" }`. 같은 `PIPELINE_NOTIFY_TOKEN`으로 인증한다. 시험 하나에 **한 번** 보낸다: 실패한 스테이지에서, 모두 통과했으면 `TRIAL_STAGES`의 마지막 스테이지에서. 파이프라인 쪽 CLI(`trial-report`)가 스테이지 결과 JSON을 바꿔 보낸다.
+  - `stage`: 결과를 낸 스테이지(`prepare` · `render` · `apply` · `verify`).
+  - `result`: 그 시험을 부른 **도구의 결과 모양 그대로**(아래 "MCP 게이트웨이 — 도구" 실행 표: `run_render` · `run_deploy` · `run_verify`)에 `failure` 한 칸을 더한 것이다. `failure`는 통과면 `null`, 아니면 `{ "stage", "code", "message" }`다. `code`는 플랫폼 문제면 3번과 같은 코드(`^[A-Za-z][A-Za-z0-9_]{2,63}$`), 학생 문제면 `null`이다. `message`는 3번 `failure.message`와 같은 문장이다(Verify는 통과하지 못한 검사 하나, Prepare의 쿼터 초과는 자원 합계 문장).
+  - `run_deploy`가 Prepare · Render에서 실패하면 `services` · `pods` · `events`는 `[]`일 수 있고 원인은 `failure`에 있다. 성공한 `run_deploy`의 `pods` · `events`도 `[]`를 받는다.
+  - BE가 외부 전송 필터를 거쳐 도구 결과로 돌려준다. `failure.code`가 `LIVE_SLOT_PROTECTED`면 도구 결과 대신 같은 코드로 거절한다(에이전트가 실행을 멈춘다).
+  - 응답 `200 { "ok": true }`. 모르는 id · 이미 결과를 받은 시험 · 기다림이 끝난 시험은 `200 { "ok": true, "applied": false }`(재전송에 안전). 오류: `401 AUTH_REQUIRED`, `400 BAD_REQUEST`(`stage`가 `TRIAL_STAGES` 밖이거나 `result`가 그 도구 모양과 다름, `fields` 포함).
+- **기다림**: 시험 기록과 기다림은 BE 메모리에 있다(DB에 저장하지 않는다). 그래서 BE가 다시 뜨면 기다리던 도구 호출은 연결이 끊기고(AI 서버는 게이트웨이에 닿지 못한 것으로 본다), 그 뒤 오는 결과는 `applied: false`다.
+- **verified 뒤 전환**: 누가 Switch를 부르는지는 다음 PR에서 정한다. 그때까지 `submit_result`의 `verified`는 `INVALID_RESULT`다(아래).
 
 ## 운영자 API (이슈 #100, UC-17)
 
@@ -646,10 +669,12 @@ DB에 배포가 있는 프로젝트(`slug`)마다 공간 `proj-<slug>`를 읽어
 
 - 전송: MCP Streamable HTTP, 플랫폼 서버의 내부 포트(`GATEWAY_PORT`, 공개 포트와 다르다) `POST /mcp`. 상태 없는 서버라 세션 스트림(`GET`) · 세션 끝내기(`DELETE`)는 `405`다. AI 서버의 `GATEWAY_URL`은 `http://<플랫폼 서버>:<GATEWAY_PORT>/mcp`이고, `GATEWAY_PORT`가 비어 있으면 게이트웨이를 열지 않는다.
 - **지금 여는 도구(F11)**: `get_target_status` · `read_pod_logs` · `read_repo` · `submit_result` 넷뿐이다. 실행 도구(`run_*`) · 대상 슬롯 운영 · `read_build_logs`는 파이프라인의 시험 실행이 생기는 F11b에서, `edit_repo_file` · `open_pr`은 F13에서 연다. 목록에 없는 도구를 부르면 `INVALID_ARGUMENT`다. `read_repo`의 `source`도 그때까지 `INVALID_ARGUMENT`다.
-- **F11b 전에는 `verified` 불가**: 대상 슬롯에서 시험한 적이 없으므로 `submit_result`의 `status: "verified"`(와 `specPatch` · `buildOverrides`)는 `INVALID_RESULT`다. 받은 결과로 실행 기록은 `gave_up`이면 `failed`(`AGENT_GAVE_UP`), `pr_opened` · `needs_user`면 `needs_user`가 된다. 결과의 `status` · `summary` · `userRequest` · `pr` · `evidence` · `classification`만 `deploy_runs.agent_result`에 저장하고(`actions`는 버린다), 진행 상태 응답의 `agent`로 보여 준다.
+- **F11b(다음 PR들, 구현 전)**: `run_render` · `run_deploy` · `run_verify`를 위 "파이프라인 ↔ 플랫폼 서버" 4번 시험 실행으로 연다. 이 셋에 한해 `source`는 F13까지 `INVALID_ARGUMENT`, 빌드에 닿는 `specPatch` 경로는 `run_build`가 열릴 때까지 `PATCH_FORBIDDEN`이다. 티켓마다 시험은 한 번에 하나다(겹치면 `INVALID_ARGUMENT`). `run_build` · 대상 슬롯 운영 · `read_build_logs`는 이 셋 뒤에 연다.
+- **`verified`는 아직 불가(F11b의 전환 PR까지)**: 시험 실행 도구가 열려도 verified 뒤 Switch를 누가 부르는지 정하기 전에는 `submit_result`의 `status: "verified"`(와 `specPatch` · `buildOverrides`)는 `INVALID_RESULT`다. 받은 결과로 실행 기록은 `gave_up`이면 `failed`(`AGENT_GAVE_UP`), `pr_opened` · `needs_user`면 `needs_user`가 된다. 결과의 `status` · `summary` · `userRequest` · `pr` · `evidence` · `classification`만 `deploy_runs.agent_result`에 저장하고(`actions`는 버린다), 진행 상태 응답의 `agent`로 보여 준다.
 - 도구 목록 · 하는 일 · 티켓당 횟수는 [AI 에이전트 설계](AIagent.md) §3이다. 여기는 인자와 결과의 모양만 고정한다. `read_memory`는 AI 서버 안의 도구라 게이트웨이에 없다(case와 통계를 AI 서버가 갖는다).
 - 결과는 MCP 도구 결과의 `structuredContent`에 아래 JSON으로 담는다. 실행이 실패해도(빌드 실패, Ready 안 됨) 도구 호출은 성공이고 `ok: false`다. 게이트웨이가 거절한 호출만 `isError: true`이고 `structuredContent`는 `{ "code", "message" }`다.
-- `run_*` · `wait_target_ready`는 파이프라인이 끝날 때까지 기다렸다가 답한다(최대 30분). AI 서버의 MCP 클라이언트는 호출 제한 시간을 35분으로 둔다.
+- `run_*` · `wait_target_ready`는 파이프라인이 끝날 때까지 기다렸다가 답한다(최대 30분). AI 서버의 MCP 클라이언트는 호출 제한 시간을 35분으로 둔다. 30분 안에 결과가 오지 않으면 `ok: false`와 `failure: { "stage": null, "code": "TRIAL_TIMEOUT", "message" }`로 답한다. 기다린 시간은 에이전트 작업 15분과 게이트웨이 토큰 유효 시간에서 뺀다.
+- `run_render` · `run_deploy` · `run_verify`의 결과에는 아래 표의 칸 말고 `failure`(`null` 또는 `{ stage, code, message }`, 위 4번)가 늘 있다.
 - `specPatch`는 JSON Patch(RFC 6902) 배열이고 경로 규칙은 §6과 같다. 그 실행에만 적용한다.
 - `source`는 `{ "commitSha": "<봇 fork의 40자 SHA>" }`이고 `edit_repo_file`이 돌려준 값만 받는다.
 - 로그 · 원본은 외부 전송 필터를 거친 값이다. 원본 k3s 객체에서 `metadata.managedFields`와 적용 기록 annotation은 뺀다.

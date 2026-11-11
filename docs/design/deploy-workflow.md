@@ -81,7 +81,7 @@ W0 접수 · 사전 검사 → W1 분석 → W2 배포 설정 → W3 비밀값 �
 - **stripPrefix**: `stripPrefix: true`인 서비스에는 Traefik Middleware `<서비스>-strip`(`stripPrefix.prefixes: [<ingressPath>]`)을 만들고 그 서비스의 Ingress에만 주석으로 건다. Traefik의 미들웨어는 Ingress 주석이라 그 Ingress의 모든 경로에 걸리므로, Ingress를 공개 서비스마다 나눈다. Middleware에도 slot 라벨이 없다(슬롯 비우기에 지워지면 live 주소가 깨진다). 이름 · 주석은 인프라 명세([클러스터 설계](cluster.md) §8 "차트가 내야 할 것", `Infra/student/app-example.yaml`)를 따른다: 서비스마다 하나 `<서비스>-strip`, 주석은 `<공간>-<서비스>-strip@kubernetescrd`이고 그 부분의 연달은 하이픈은 하나로 줄여 적는다(`proj-a--b` → `proj-a-b-…`. Traefik이 그렇게 찾으므로 그대로 적으면 Ingress 전체가 404).
 - W2에서 미리 만들지 않는 이유: 이미지 digest는 Build 뒤에, 최종 spec은 AI 에이전트가 고친 뒤에 정해진다.
 - 사람도 AI 에이전트도 manifest를 직접 쓰지 않는다. 그래서 결과가 항상 같은 틀에서 나온다.
-- 파이프라인은 매번 Build(해시가 같은 서비스는 기존 이미지 사용) → Render → Apply → W6 → 전환을 한다. 옵션은 AI 에이전트의 시험 실행용 하나뿐이다: 시작 스테이지 지정, `DRY_RUN_ONLY`(Render까지), 소스를 봇 fork 커밋으로, 전환(Switch) 건너뜀. 이때 `live_slot`과 W7은 바뀌지 않는다.
+- 파이프라인(`student-deploy`)은 매번 Build(해시가 같은 서비스는 기존 이미지 사용) → Render → Apply → W6 → 전환을 하고 옵션이 없다. AI 에이전트의 시험 실행은 **시험 전용 파이프라인 `student-trial`**(리더 실행기, Prepare → Render → Apply → Verify, Build · Switch 없음)을 옵션으로 실행한다: 시험 id `TRIAL_ID`와 돌릴 스테이지 `TRIAL_STAGES`(`render` · `prepare,render,apply` · `verify`). 범위 밖 스테이지는 job이 바로 끝내고, Switch CLI는 `TRIAL_ID`가 있으면 거절한다. 시험 실행은 실행 기록의 상태 · `live_slot` · W7을 바꾸지 않는다. 모양은 [API 계약](api.md) "파이프라인 ↔ 플랫폼 서버" 4번이다.
 
 | manifest | 리소스 | 개수 |
 |---|---|---|
@@ -256,7 +256,7 @@ PR이 머지되기 전까지 live 슬롯은 그대로 돈다(첫 배포라면 �
 | 봇 GitHub 계정 | 학생 레포를 fork해 작업 브랜치에 고친 파일을 올리고 수정 PR을 연다 (ADR-002). 학생 레포에 쓰기 권한은 없다 |
 | AWS CodeBuild | 빌드마다 새 환경, VPC 밖, IAM은 로그 쓰기 정도. GHCR push 토큰은 Secrets Manager에서 push 단계에만 꺼낸다. 비밀 env 값은 넘기지 않는다 |
 | GHCR | 공개 이미지. 워커가 토큰 없이 받는다 |
-| 리더 PC | k3s 제어, 리더 실행기, Traefik, Secret(암호화), vLLM |
+| 리더 PC | k3s 제어, 리더 실행기(`student-deploy`의 Prepare ~ Switch와 AI 에이전트의 시험 실행 `student-trial` 전부), Traefik, Secret(암호화), vLLM |
 | 워커 PC 2대 | 프로젝트 네임스페이스(fe · be · ai Pod). 들어오는 건 Traefik에서만, 나가는 건 인터넷만(학교망 · 클러스터 내부 차단). DB는 학생이 가져온 외부 DB |
 | Supabase | 슬롯별 배포 입력 · manifest · 이미지 digest, `live_slot`, 빌드 캐시, 활동 로그, 프로젝트 메모리, env key 이름과 상태 (값은 저장하지 않음) |
 
