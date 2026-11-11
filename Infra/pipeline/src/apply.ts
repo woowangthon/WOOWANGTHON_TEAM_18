@@ -41,7 +41,7 @@ export function quotaEvent(events: Obj[], fullName: string): Obj | null {
   return (
     events.find((e) => {
       const obj = isRecord(e.involvedObject) ? e.involvedObject : {}
-      return obj.kind === 'ReplicaSet' && typeof obj.name === 'string' && obj.name.startsWith(`${fullName}-`) && e.reason === 'FailedCreate' && /exceeded quota/.test(String(e.message ?? ''))
+      return obj.kind === 'ReplicaSet' && typeof obj.name === 'string' && obj.name.startsWith(`${fullName}-`) && e.reason === 'FailedCreate' && typeof e.message === 'string' && /exceeded quota/.test(e.message)
     }) ?? null
   )
 }

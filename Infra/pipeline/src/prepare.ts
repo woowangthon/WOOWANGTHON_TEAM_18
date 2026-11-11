@@ -58,7 +58,10 @@ const SLOT_KINDS = [
 ]
 const INGRESSES = { base: '/apis/networking.k8s.io/v1', plural: 'ingresses' }
 
-const nameOf = (obj: Record<string, unknown>) => String((obj.metadata as { name?: unknown } | undefined)?.name ?? '')
+const nameOf = (obj: Record<string, unknown>) => {
+  const name = (obj.metadata as { name?: unknown } | undefined)?.name
+  return typeof name === 'string' ? name : ''
+}
 
 /** 대상 슬롯에 배포할 준비를 한다. 앞에서 걸리면 뒤는 하지 않는다(보호에 걸리면 아무것도 지우지 않는다). */
 export async function runPrepare(input: DeployInput, slot: Slot, call: KubeCall): Promise<PrepareReport> {

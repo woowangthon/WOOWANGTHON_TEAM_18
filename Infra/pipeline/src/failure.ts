@@ -47,7 +47,7 @@ export function stripManaged<T>(obj: T): T {
     delete annotations['kubectl.kubernetes.io/last-applied-configuration']
     metadata.annotations = annotations
   }
-  return { ...obj, metadata } as T
+  return { ...obj, metadata }
 }
 
 /** 실행기 로그 한 줄용 요약. 원본은 결과 파일에 있다. */
