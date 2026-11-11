@@ -53,6 +53,7 @@ describe('classifyFailure', () => {
       expect(classifyFailure(stage, 'CODEBUILD_API_ERROR')).toEqual({ code: 'CODEBUILD_API_ERROR', callAgent: false })
       expect(classifyFailure(stage, 'IMAGE_PULL_FAILED').callAgent).toBe(false)
       expect(classifyFailure(stage, 'LIVE_SLOT_PROTECTED').callAgent).toBe(false)
+      expect(classifyFailure(stage, 'CHART_RENDER_FAILED')).toEqual({ code: 'CHART_RENDER_FAILED', callAgent: false })
     }
   })
 })
@@ -62,6 +63,11 @@ describe('toFailure', () => {
     const f = toFailure({ code: 'BUILD_FAILED', stage: 'build', service: 'fe' })
     expect(Object.keys(f).sort()).toEqual(['code', 'message', 'service', 'stage'])
     expect(f.message).toMatch(/이미지/)
+  })
+
+  it('gives a platform code without its own message the generic one', () => {
+    expect(toFailure({ code: 'K8S_UNREACHABLE', stage: 'apply', service: null }).message).toBe('플랫폼 문제로 배포하지 못했습니다. 운영자가 확인합니다.')
+    expect(toFailure({ code: 'IMAGE_PULL_FAILED', stage: 'apply', service: null }).message).toMatch(/이미지/)
   })
 })
 
@@ -158,8 +164,12 @@ describe('validateNotice', () => {
     const base = { deployId: ID, stage: 'verify', result: 'failed' }
     expect(paths(base)).toEqual(['failure:REQUIRED'])
     expect(paths({ ...base, failure: 'x' })).toEqual(['failure:INVALID_TYPE'])
-    expect(paths({ ...base, failure: { message: 'm', code: 'OTHER', service: 'Bad Name' } })).toEqual(['failure.code:INVALID_VALUE', 'failure.service:INVALID_VALUE'])
+    expect(paths({ ...base, failure: { message: 'm', code: 'other', service: 'Bad Name' } })).toEqual(['failure.code:INVALID_VALUE', 'failure.service:INVALID_VALUE'])
     expect(paths({ ...base, failure: {} })).toEqual(['failure.message:REQUIRED'])
+  })
+
+  it.each([['K8S_TIMEOUT', []], ['AWS_CLI_FAILED', []], ['lower_case', ['failure.code:INVALID_VALUE']], ['AB', ['failure.code:INVALID_VALUE']], ['A'.repeat(65), ['failure.code:INVALID_VALUE']], ['1ABC', ['failure.code:INVALID_VALUE']], ['A'.repeat(64), []]])('failure.code %s: %j', (code, expected) => {
+    expect(paths({ deployId: ID, stage: 'apply', result: 'failed', failure: { message: 'm', code, service: null } })).toEqual(expected)
   })
 
   it('cuts a very long failure message', () => {

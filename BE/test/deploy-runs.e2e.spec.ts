@@ -547,6 +547,8 @@ describe('POST /api/pipeline/notify', () => {
       ['CODEBUILD_API_ERROR', 'build'],
       ['IMAGE_PULL_FAILED', 'apply'],
       ['LIVE_SLOT_PROTECTED', 'prepare'],
+      ['CHART_RENDER_FAILED', 'render'],
+      ['K8S_UNREACHABLE', 'apply'],
     ])('a platform problem (%s) ends as failed and does not call the AI server', async (code, stage) => {
       const id = stage === 'build' ? seedDeploy() : await reach(stage)
       if (stage === 'build') await start(id)

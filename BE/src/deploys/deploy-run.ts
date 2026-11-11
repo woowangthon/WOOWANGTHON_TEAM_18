@@ -15,25 +15,20 @@ export type DeployStatus = RunStatus | 'not_started'
 /** 스테이지가 통과하면 다음 스테이지가 돈다. 마지막(switch)은 null: 완료다. */
 export const nextStage = (stage: Stage): Stage | null => STAGES[STAGES.indexOf(stage) + 1] ?? null
 
-/** AI를 부르지 않고 "실패"로 마감하는 플랫폼 문제(deploy-workflow.md §6-3). */
-export const PLATFORM_CODES = ['CODEBUILD_API_ERROR', 'IMAGE_PULL_FAILED', 'LIVE_SLOT_PROTECTED'] as const
-export type PlatformCode = (typeof PLATFORM_CODES)[number]
-const isPlatformCode = (v: unknown): v is PlatformCode => (PLATFORM_CODES as readonly unknown[]).includes(v)
+/** AI를 부르지 않고 "실패"로 마감하는 플랫폼 문제(deploy-workflow.md §6-3). 코드 집합은 열려 있어, 파이프라인이 새 코드를 추가해도 BE를 고치지 않는다(모양만 본다). */
+export type PlatformCode = string
+const PLATFORM_CODE = /^[A-Z][A-Z0-9_]{2,63}$/
+const isPlatformCode = (v: unknown): v is PlatformCode => typeof v === 'string' && PLATFORM_CODE.test(v)
 
 /** AI 에이전트 설계 §5의 티켓 stage는 이 넷뿐이다. */
 export const TICKET_STAGES: readonly Stage[] = ['build', 'prepare', 'render', 'apply']
 
-export type FailureCode =
-  | 'BUILD_FAILED'
-  | 'DEPLOY_FAILED'
-  | 'VERIFY_FAILED'
-  | 'SWITCH_FAILED'
-  | PlatformCode
-  | 'AGENT_UNAVAILABLE'
-  | 'TIMED_OUT'
+export type FailureCode = string
+
+const PLATFORM_FALLBACK_MESSAGE = '플랫폼 문제로 배포하지 못했습니다. 운영자가 확인합니다.'
 
 /** 학생에게 그대로 보여 주는 문장. 로그 · 원본 · 비밀값은 여기 들어오지 않는다. */
-const MESSAGES: Record<FailureCode, string> = {
+const MESSAGES: Record<string, string> = {
   BUILD_FAILED: '이미지를 만드는 중에 문제가 생겼습니다.',
   DEPLOY_FAILED: '서비스를 클러스터에 올리는 중에 문제가 생겼습니다.',
   VERIFY_FAILED: '서비스가 떴지만 동작 확인을 통과하지 못했습니다. 공개 주소는 바뀌지 않았습니다.',
@@ -55,7 +50,7 @@ export interface Failure extends StoredFailure {
   message: string
 }
 
-export const toFailure = (f: StoredFailure): Failure => ({ ...f, message: MESSAGES[f.code] })
+export const toFailure = (f: StoredFailure): Failure => ({ ...f, message: MESSAGES[f.code] ?? PLATFORM_FALLBACK_MESSAGE })
 
 /** 알림이 알려 준 코드와 스테이지로 실패 코드를 정한다. 플랫폼 문제면 AI를 부르지 않는다. */
 export function classifyFailure(stage: Stage, platformCode: PlatformCode | null): { code: FailureCode; callAgent: boolean } {
