@@ -1,6 +1,6 @@
 # 배포 워크플로우 — 설계
 
-- **상태**: 합의됨 (2026-11-10. GoCD 파이프라인 · 플랫폼 서버의 앞 단계는 ADR-009 · 010, 슬롯 A · B는 ADR-011, AI 에이전트의 경계는 ADR-012로 확정. 시스템 정의서 · ai-scope에 반영함)
+- **상태**: 합의됨 (2026-11-10. GoCD 파이프라인 · 플랫폼 서버의 앞 단계는 ADR-009 · 010, 슬롯 A · B는 ADR-011, AI 에이전트의 경계는 ADR-012로 확정, 그중 시험 실행 방식 · verified 뒤 처리는 ADR-014로 바꿈. 시스템 정의서 · ai-scope에 반영함)
 - **관련**: [시스템 정의서](../system-definition.md) §3 · §4.1 · [ADR-001](../adr/001-stack-and-deployment.md) (빌드 = CodeBuild) · [ADR-002](../adr/002-bot-account-for-fix-prs.md) (봇 계정 수정 PR) · [ADR-003](../adr/003-registry-ghcr.md) (GHCR) · [ADR-004](../adr/004-server-cluster-link-tailscale.md) (Tailscale) · [ADR-005](../adr/005-k3s-cluster-on-school-pcs.md) (k3s) · [ADR-009](../adr/009-deploy-runs-on-leader-gocd-agent.md) (GoCD 리더 실행기) · [ADR-010](../adr/010-repo-analysis-and-security-scan-in-platform-server.md) (레포 분석 · 보안 검사) · [배포 입력](deploy-handoff.md)
 
 ![배포 워크플로우](../architecture/deploy-workflow.drawio.svg)
@@ -81,7 +81,7 @@ W0 접수 · 사전 검사 → W1 분석 → W2 배포 설정 → W3 비밀값 �
 - **stripPrefix**: `stripPrefix: true`인 서비스에는 Traefik Middleware `<서비스>-strip`(`stripPrefix.prefixes: [<ingressPath>]`)을 만들고 그 서비스의 Ingress에만 주석으로 건다. Traefik의 미들웨어는 Ingress 주석이라 그 Ingress의 모든 경로에 걸리므로, Ingress를 공개 서비스마다 나눈다. Middleware에도 slot 라벨이 없다(슬롯 비우기에 지워지면 live 주소가 깨진다). 이름 · 주석은 인프라 명세([클러스터 설계](cluster.md) §8 "차트가 내야 할 것", `Infra/student/app-example.yaml`)를 따른다: 서비스마다 하나 `<서비스>-strip`, 주석은 `<공간>-<서비스>-strip@kubernetescrd`이고 그 부분의 연달은 하이픈은 하나로 줄여 적는다(`proj-a--b` → `proj-a-b-…`. Traefik이 그렇게 찾으므로 그대로 적으면 Ingress 전체가 404).
 - W2에서 미리 만들지 않는 이유: 이미지 digest는 Build 뒤에, 최종 spec은 AI 에이전트가 고친 뒤에 정해진다.
 - 사람도 AI 에이전트도 manifest를 직접 쓰지 않는다. 그래서 결과가 항상 같은 틀에서 나온다.
-- 파이프라인은 매번 Build(해시가 같은 서비스는 기존 이미지 사용) → Render → Apply → W6 → 전환을 한다. 옵션은 AI 에이전트의 시험 실행용 하나뿐이다: 시작 스테이지 지정, `DRY_RUN_ONLY`(Render까지), 소스를 봇 fork 커밋으로, 전환(Switch) 건너뜀. 이때 `live_slot`과 W7은 바뀌지 않는다.
+- 파이프라인(`student-deploy`)은 매번 Build(해시가 같은 서비스는 기존 이미지 사용) → Render → Apply → W6 → 전환을 하고 옵션이 없다. AI 에이전트의 시험 실행은 **시험 전용 파이프라인 `student-trial`**(Build → Prepare → Render → Apply → Verify, Switch 없음. Build는 AWS 실행기, 나머지는 리더 실행기)을 옵션으로 실행한다: 시험 id `TRIAL_ID`와 돌릴 스테이지 `TRIAL_STAGES`(`build` · `render` · `prepare,render,apply` · `verify`). 공개 주소는 `student-deploy`의 Switch로만 바뀐다. 범위 밖 스테이지는 job이 바로 끝내고, Switch CLI는 `TRIAL_ID`가 있으면 거절한다. 시험 실행은 실행 기록의 상태 · `live_slot` · W7을 바꾸지 않는다. 모양은 [API 계약](api.md) "파이프라인 ↔ 플랫폼 서버" 4번, 결정은 [ADR-014](../adr/014-agent-trial-pipeline-and-rerun.md)다.
 
 | manifest | 리소스 | 개수 |
 |---|---|---|
@@ -213,7 +213,7 @@ GoCD와 리더는 **이미지를 옮기지 않는다.** 이미지 주소만 mani
 3. 플랫폼 문제(CodeBuild API 오류, 이미지 받기 실패, live 슬롯 보호 중단 등)는 코드로 걸러 AI 에이전트를 부르지 않고 보고한다. 코드 집합은 열려 있다: BE는 `^[A-Za-z][A-Za-z0-9_]{2,63}$` 모양이면 플랫폼 문제로 받아 실패로 마감하므로(알 수 없는 코드는 일반 문구), 파이프라인은 새 코드를 BE 수정 없이 추가할 수 있다. 알려진 코드는 `CODEBUILD_API_ERROR` · `AWS_CLI_FAILED` · `BUILD_NOT_FOUND` · `BUILD_WAIT_TIMEOUT` · `NO_IMAGE_DIGEST` · `CHART_RENDER_FAILED` · `SPACE_MISSING` · `EXECUTOR_FORBIDDEN` · `POLICY_REJECTED` · `APPLY_REFUSED` · `IMAGE_PULL_FAILED` · `K8S_TIMEOUT` · `K8S_UNREACHABLE` · `LIVE_SLOT_PROTECTED` · `UNEXPECTED_REFUSAL`(Prepare · Verify가 받은 그 밖의 거절) · `TRAEFIK_UNREACHABLE` · `SWITCH_REFUSED` · `OPEN_MANIFEST_MISSING`.
 4. 그 밖에는 알림을 받은 순간 **문제 티켓**(봉투 + CodeBuild · k3s 출력 원본 + 오류 10분 전부터의 로그)을 만들어 AI 서버에 보낸다. 티켓은 실패 순간의 스냅샷이다(실패한 Pod는 재시작되면 원본이 사라진다). 에이전트는 티켓의 `stage` · `service`로 실패한 단계에서 바로 고치기 시작하고, 그 뒤에 필요한 정보는 관찰 도구로 직접 읽는다. 워크플로우는 티켓 하나(`ticketId`)를 보관하고, 새 티켓이 나오면 덮어쓴다.
 5. AI 에이전트가 MCP 게이트웨이의 도구로 **대상 슬롯에서 직접** Build · Render · Deploy · Verify를 실행하고 결과를 보며 고친다. 실패한 단계부터 다시 하고, 앞 단계는 반복하지 않는다(예: Apply 실패를 `runtime`만 고쳐 다시 배포하면 빌드 입력 해시가 같아 기존 이미지를 쓴다). 에이전트는 사용자 코드를 직접 바꾸지 않는 범위에서 spec · 그 빌드의 CodeBuild 설정 · 대상 슬롯을 조정하고, YAML은 쓰지 않는다.
-6. 에이전트가 **해결 결과**를 돌려준다. `verified`면 플랫폼이 `specPatch`를 검증해 저장하고, 대상 슬롯을 한 번 더 확인한 뒤 **Switch와 W7만** 실행한다(파이프라인을 처음부터 다시 돌리지 않는다). 끝나면 에이전트에 **종료 알림**을 보낸다.
+6. 에이전트가 **해결 결과**를 돌려준다. `verified`면 플랫폼이 `specPatch`를 검증해 실행 기록의 입력에 저장하고, **고친 입력으로 `student-deploy`를 처음부터 다시 실행**한다(같은 대상 슬롯). 빌드 입력 해시가 같으면 이미지를 재사용하므로 Build는 건너뛰고(`build_cache`는 Build가 통과할 때 기록한다), 다시 실행의 Verify가 대상 슬롯 재확인이 되며, 통과하면 Switch와 W7이 평소대로 돈다. 다시 실패하면 새 티켓을 만든다(실행 기록당 3개까지, 넘으면 `failed`). 끝나면 에이전트에 **종료 알림**을 보낸다. 모양은 [API 계약](api.md) "파이프라인 ↔ 플랫폼 서버" 5번, 결정은 [ADR-014](../adr/014-agent-trial-pipeline-and-rerun.md)다.
 
 도구, 입력 · 출력 스키마, 행위 범위, 횟수 제한, 장기 메모리는 [AI 에이전트 설계](AIagent.md)에 있다.
 
@@ -221,7 +221,7 @@ GoCD와 리더는 **이미지를 옮기지 않는다.** 이미지 주소만 mani
 
 | 고친 곳 | 반영 |
 |---|---|
-| 배포 설정(spec)만 (예: 포트를 잘못 읽음, 헬스체크 경로) | 에이전트가 대상 슬롯에서 확인한 `specPatch`를 플랫폼이 저장하고 Switch · W7. PR 없음 |
+| 배포 설정(spec)만 (예: 포트를 잘못 읽음, 헬스체크 경로) | 에이전트가 대상 슬롯에서 확인한 `specPatch`를 플랫폼이 저장하고 고친 입력으로 파이프라인을 다시 실행(빌드 재사용) → Switch · W7. PR 없음 |
 | 레포 파일 (예: `vite.config`의 base 경로, Dockerfile, import 경로 대소문자) | ① 봇 계정 fork의 작업 브랜치에 고친 파일을 commit ② 그 commit으로 대상 슬롯에 빌드 · 배포하고 W6까지 확인한다. 전환은 하지 않는다 ③ 통과하면 학생 레포에 **수정 PR**을 올린다. 본문에는 원인, 근거(로그 줄), 바꾼 줄, 확인 결과를 적는다 ④ 해결 결과는 `pr_opened` ⑤ 사용자가 머지하면 새 commit으로 W0부터 돌고, 바뀌지 않은 서비스는 빌드를 건너뛴다 |
 
 PR이 머지되기 전까지 live 슬롯은 그대로 돈다(첫 배포라면 머지를 기다린다). 학생 레포에 직접 push하지 않고, 머지는 항상 사용자가 한다.
@@ -256,7 +256,7 @@ PR이 머지되기 전까지 live 슬롯은 그대로 돈다(첫 배포라면 �
 | 봇 GitHub 계정 | 학생 레포를 fork해 작업 브랜치에 고친 파일을 올리고 수정 PR을 연다 (ADR-002). 학생 레포에 쓰기 권한은 없다 |
 | AWS CodeBuild | 빌드마다 새 환경, VPC 밖, IAM은 로그 쓰기 정도. GHCR push 토큰은 Secrets Manager에서 push 단계에만 꺼낸다. 비밀 env 값은 넘기지 않는다 |
 | GHCR | 공개 이미지. 워커가 토큰 없이 받는다 |
-| 리더 PC | k3s 제어, 리더 실행기, Traefik, Secret(암호화), vLLM |
+| 리더 PC | k3s 제어, 리더 실행기(`student-deploy`의 Prepare ~ Switch와 `student-trial`의 Prepare ~ Verify. 두 파이프라인의 Build는 AWS 실행기), Traefik, Secret(암호화), vLLM |
 | 워커 PC 2대 | 프로젝트 네임스페이스(fe · be · ai Pod). 들어오는 건 Traefik에서만, 나가는 건 인터넷만(학교망 · 클러스터 내부 차단). DB는 학생이 가져온 외부 DB |
 | Supabase | 슬롯별 배포 입력 · manifest · 이미지 digest, `live_slot`, 빌드 캐시, 활동 로그, 프로젝트 메모리, env key 이름과 상태 (값은 저장하지 않음) |
 
@@ -349,10 +349,11 @@ PR이 머지되기 전까지 live 슬롯은 그대로 돈다(첫 배포라면 �
 
 ## 알려진 한계
 
-- stripPrefix Middleware는 서비스마다 하나를 두 슬롯이 같이 쓴다(인프라 명세). 그래서 `stripPrefix: true`인 서비스의 `ingressPath`를 바꾼 새 커밋(예: `/api` → `/v2`)을 대상 슬롯에 적용하는 순간 live open Ingress가 쓰는 Middleware의 떼기도 새 경로로 바뀐다. 확인(W6) 전에, 또 W6이 실패해도 live 요청이 잘못 전달될 수 있어 "확인 전에는 사용자 요청이 새 커밋으로 가지 않는다"(ADR-011 · FR-055)와 어긋난다. 슬롯별로 나누려면 인프라 명세(cluster.md §8) 변경을 먼저 합의한다.
+- stripPrefix Middleware는 서비스마다 하나를 두 슬롯이 같이 쓴다(인프라 명세). 그래서 `stripPrefix: true`인 서비스의 `ingressPath`를 바꾼 새 커밋(예: `/api` → `/v2`)을 대상 슬롯에 적용하는 순간 live open Ingress가 쓰는 Middleware의 떼기도 새 경로로 바뀐다. 확인(W6) 전에, 또 W6이 실패해도 live 요청이 잘못 전달될 수 있어 "확인 전에는 사용자 요청이 새 커밋으로 가지 않는다"(ADR-011 · FR-055)와 어긋난다. 슬롯별로 나누려면 인프라 명세(cluster.md §8) 변경을 먼저 합의한다(슬롯별 Middleware 이름은 별도 이슈). AI 에이전트의 시험에서는 게이트웨이가 그런 `specPatch`를 `PATCH_FORBIDDEN`으로 막지만([API 계약](api.md) "파이프라인 ↔ 플랫폼 서버" 4번 "live 경로 보호"), 학생이 새 커밋에서 `ingressPath`를 바꾸는 일반 배포에는 같은 위험이 그대로 남는다.
 
 - 전환은 공개 서비스마다 있는 open Ingress들을 한 번의 적용으로 바꾸지만 객체가 여럿이라 동시에 바뀌지 않는다. 아주 짧은 동안(Traefik이 바뀐 Ingress를 읽는 사이) FE는 새 슬롯, BE는 이전 슬롯으로 갈 수 있다. 이전 슬롯은 전환 뒤 W7에서 0개로 줄이므로 그 사이에는 둘 다 떠 있다.
 
+- `build_cache`는 Build가 통과할 때 기록한다(ADR-014). 빌드가 결정적이지 않으면(기본 이미지 태그, 고정되지 않은 의존성) 뒤 스테이지에서 깨진 이미지가 캐시에 남아 다음 배포가 그대로 재사용할 수 있다. 캐시를 비우거나 "다시 빌드"를 고르는 수단은 후속 작업이다.
 - 수정 PR은 작은 변경만 다룬다. 큰 앱 로직 버그는 원인과 근거를 보여 주고 사용자에게 요청한다.
 - 사용자가 수정 PR을 머지하지 않으면 문제는 그대로 남는다. live 슬롯은 그대로 돈다.
 - 두 슬롯이 학생 DB 하나를 같이 쓴다. 대상 슬롯에서 DB 구조 변경(migration)이 돌면 live 슬롯이 실패할 수 있다. MVP는 DB를 슬롯별로 나누지 않고 보고서에 표시한다.

@@ -483,7 +483,7 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
 
 ### 파이프라인 ↔ 플랫폼 서버 (기계용)
 
-> GoCD(서버 설치, 파이프라인 정의, 아래 세 가지를 잇는 task)는 플랫폼 서버 담당이 만든다([배포 워크플로우](deploy-workflow.md#정할-것) 3번, 2026-11-11). 아래 세 가지도 그 담당이 정했다. 스테이지 판단 코드(`Infra/pipeline`)가 쓰는 결과 JSON을 아래 알림 모양으로 바꿔 보내는 task도 플랫폼 서버 담당이 만든다.
+> GoCD(서버 설치, 파이프라인 정의, 아래 세 가지를 잇는 task)는 플랫폼 서버 담당이 만든다([배포 워크플로우](deploy-workflow.md#정할-것) 3번, 2026-11-11). 아래 1~3도 그 담당이 정했다. 4번(AI 에이전트의 시험 실행)은 AI 담당이 정하고 GoCD · 파이프라인 담당과 맞췄다. 스테이지 판단 코드(`Infra/pipeline`)가 쓰는 결과 JSON을 아래 알림 모양으로 바꿔 보내는 task도 플랫폼 서버 담당이 만든다.
 
 사용자 로그인 토큰이 아니라 **기계용 비밀 토큰** `PIPELINE_NOTIFY_TOKEN`(`Authorization: Bearer`)으로 인증한다. 서버 env에 있고 파이프라인의 GoCD secure 변수에 같은 값을 넣는다. 설정이 없거나 틀리면 `401 AUTH_REQUIRED`다. 이 토큰 하나로 배포 완료를 위조할 수 있어 서버는 32자 이상만 받는다. 플랫폼 서버는 GoCD를 주기적으로 조회하지 않는다(§6-1).
 
@@ -512,10 +512,68 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
 - `images`: `build`가 `passed`일 때만 받고 필수다. 빌드한(`run`) 서비스마다 이미지 digest 주소 하나(`reuse` 서비스는 넣지 않는다).
 - `failure.code`: 플랫폼 문제면 그 코드(`^[A-Za-z][A-Za-z0-9_]{2,63}$`, 집합은 열려 있고 파이프라인이 정한다. 알려진 코드는 위 예), 아니면 `null`. 모양이 틀리면 400 INVALID_VALUE. 플랫폼 문제는 AI를 부르지 않고 실패로 마감한다.
 - `failure.raw` · `failure.logs`: 문제 티켓에 담을 원본과 로그([AI 에이전트 설계](AIagent.md) §5의 `raw` · `logs` 모양). 문제 티켓으로 가는 실패(플랫폼 문제가 아니고 stage가 `build` · `prepare` · `render` · `apply` · `verify`)에서만 확인한다. `build`는 `raw.codebuild`(객체 필수, `raw.k8s`는 없음), 그 밖은 `raw.k8s`(필수, `pod`는 객체 또는 `null`, `events`는 객체 배열, `status`는 `render`일 때만 객체 필수이고 나머지는 `null`)이다. `logs`는 있으면 `from` · `to`(시간대가 있는 ISO 8601)와 문자열 배열 `lines`(마지막 200줄만 쓴다), 없으면 빈 구간으로 보낸다. 안 맞으면 `400 BAD_REQUEST`와 `fields`(`failure.raw.k8s.status` 등)로 보낸 쪽에 알린다. 서버가 비밀값처럼 보이는 문자열을 가린 뒤(spec의 `secretKeys`는 key 이름 목록이라 그대로 둔다) 티켓에 넣고, 어디에도 저장하지 않는다.
-- `passed`면 다음 스테이지로 넘어간다. `switch`가 `passed`면 완료다: `live_slot`을 대상 슬롯으로 바꾸고, 새로 빌드한 이미지를 `build_cache`에 기록하고, 공개 주소와 함께 `succeeded`로 기록한다.
+- `passed`면 다음 스테이지로 넘어간다. `build`가 `passed`면 새로 빌드한 이미지를 그때 `build_cache`에 기록한다(같은 빌드 입력 해시는 같은 이미지라 뒤 스테이지가 실패해도 재사용해도 된다. 5번 다시 실행과 학생의 다음 배포가 빌드를 건너뛴다). `switch`가 `passed`면 완료다: `live_slot`을 대상 슬롯으로 바꾸고, 공개 주소와 함께 `succeeded`로 기록한다. (구현 전: 지금 코드는 `build_cache`를 `switch` passed에 기록한다. 이 부분 코드는 #107 담당이 별도 PR로 옮긴다.)
 - `failed`면 실패 분류에 따라 `failed`로 마감하거나 문제 티켓을 만들어 AI 서버 `POST /agent/tickets`로 보내고 `fixing`으로 둔다(티켓의 `ticketId` 하나만 보관). **`switch` 실패는 티켓 없이 `failed`로 마감한다**(티켓 `stage`에 없다, [AI 에이전트 설계](AIagent.md) §5).
 - 응답 `200 { "ok": true }`. 이미 끝난 배포(`succeeded` · `failed`)나 지금 스테이지가 아닌 `stage`의 알림은 상태를 바꾸지 않고 `200 { "ok": true, "applied": false }`이다(재전송해도 안전하다).
 - 오류: `401 AUTH_REQUIRED`, `400 BAD_REQUEST`(본문 모양이 다름, `fields` 포함), `404 DEPLOY_NOT_FOUND`(실행 기록 없음), `503 DATABASE_UNAVAILABLE`(파이프라인이 다시 보낸다).
+
+**4. 시험 실행 (AI 에이전트의 `run_build` · `run_render` · `run_deploy` · `run_verify`)**: 문제를 고치는 동안 게이트웨이가 대상 슬롯에서 스테이지 일부만 돌린다([AI 에이전트 설계](AIagent.md) §2 · §3). 위 1~3의 모양은 바꾸지 않는다. 시험 실행은 실행 기록의 상태(`status` · `stage`, 3번 알림의 상태 기계)를 바꾸지 않고, `live_slot` · W7도 건드리지 않는다. 계약만 정하고 구현 전이다(BE는 F11b, 파이프라인 쪽은 GoCD · 파이프라인 담당). 결정은 [ADR-014](../adr/014-agent-trial-pipeline-and-rerun.md)(ADR-012 일부 대체)다. 시험은 대상 슬롯에서 고쳐 보는 반복이고(공개 주소 불변), 5번 다시 실행은 확인된 입력으로 한 번 전환하는 것이다.
+
+```
+문제 티켓
+  │
+  ▼  시험 — student-trial, 여러 번, 공개 주소는 바뀌지 않는다
+  │    Build(AWS 실행기) → Prepare → Render → Apply → Verify     (TRIAL_STAGES로 일부만)
+  │    run_build · run_render · run_deploy · run_verify로 대상 슬롯에서 고쳐 보며 반복
+  ▼
+verified (submit_result)
+  │
+  ▼  다시 실행 — student-deploy, 한 번
+       Build(모두 reuse) → Prepare → Render → Apply → Verify → Switch → W7
+                                                              ▲ 공개 주소는 여기서만 바뀐다
+```
+
+공개 주소는 `student-deploy`의 Switch로만 바뀐다. 시험에는 Switch 스테이지가 없고, Switch CLI의 `TRIAL_SWITCH_REFUSED`는 시험 env로 잘못 불렸을 때의 이중 안전이다.
+
+- **파이프라인**: 시험 전용 GoCD 파이프라인 `student-trial`(이름은 BE env `GOCD_TRIAL_PIPELINE`). 스테이지는 Build → Prepare → Render → Apply → Verify다. Build job은 `student-deploy`처럼 AWS 실행기(resource `aws`), 나머지는 리더 실행기에서 돈다. **Switch 스테이지는 없다.** `student-deploy`(1번)는 그대로다. 정의(YAML)는 GoCD 담당이 만든다.
+- **실행**: 1번과 같은 요청을 `POST {GOCD_URL}/go/api/pipelines/{GOCD_TRIAL_PIPELINE}/schedule`로 보낸다. `environment_variables`는 셋이다. 비밀값은 넣지 않는다.
+
+| 이름 | 값 |
+| --- | --- |
+| `DEPLOY_ID` | 실행 기록의 `deployId` (1번과 같다) |
+| `TRIAL_ID` | BE가 시험마다 만드는 id `tr_<hex 12자>` |
+| `TRIAL_STAGES` | 도구에 따라 넷 중 하나: `build`(`run_build`) · `render`(`run_render`) · `prepare,render,apply`(`run_deploy`) · `verify`(`run_verify`) |
+
+- **스테이지 거르기**: 각 스테이지 job은 자기 스테이지가 `TRIAL_STAGES`에 없으면 아무것도 하지 않고 성공으로 끝난다(결과도 보내지 않는다). 실패하면 GoCD가 뒤 스테이지를 돌리지 않는 것은 그대로다.
+- **이중 안전**: Switch CLI는 env `TRIAL_ID`가 있으면 아무것도 바꾸지 않고 플랫폼 문제 `TRIAL_SWITCH_REFUSED`로 끝난다(시험 env로 Switch가 잘못 불려도 공개 주소가 바뀌지 않게).
+- **입력**: `GET /api/pipeline/trials/:trialId/input` → `200 { "deployId", "slot", "input", "buildOverrides" }`(앞 셋은 2번과 같은 모양이라 같은 입력 task를 쓰고, `buildOverrides`는 `run_build` 때만 채운다). `slot`은 실행 기록의 대상 슬롯이다. `input`은 도구에 따라 다르다.
+  - `run_build`: 실행 기록의 `input`에 그 호출의 `specPatch`(빌드 경로 허용)를 적용하고, 그 서비스의 `deploy_condition`만 패치한 spec으로 다시 계산한다(배포 입력을 만들 때와 같은 빌드 입력 해시 · `build_cache` 규칙으로 `run` / `reuse`). 다른 서비스는 그대로 `reuse`다. 그래서 빌드할 서비스는 입력의 `run` 하나로 정해지고 따로 env가 필요 없다(같은 해시의 이미지가 이미 있으면 `reuse`가 되어 CodeBuild 없이 `reused: true`). `buildOverrides`(상한은 [AI 에이전트 설계](AIagent.md) §3 표, 게이트웨이가 검사)는 응답의 `input` 옆 `buildOverrides` 칸(`{ computeType?, timeoutMinutes?, image?, cache? }`, 그 밖의 도구는 `null`)으로 준다. 입력 task가 `build-overrides.json`으로 쓰고 Build CLI가 선택 인자로 받아 `StartBuild` override로 넘긴다(`student-deploy`는 그 인자 없이 지금 그대로). `cache: false`는 `cacheOverride: { type: NO_CACHE }`, `true`거나 없으면 override하지 않는다.
+  - `run_render` · `run_deploy`: 실행 기록의 `input`에 그 호출의 `specPatch`를 적용하고, 서비스마다 빌드 입력 해시를 다시 계산해 같은 해시의 이미지(실행 기록의 이미지, 이 티켓의 시험 이미지, `build_cache` 순)를 `reuse` digest로 쓴다. 이미지가 없는 서비스가 있으면(빌드 경로를 고치고 아직 `run_build`를 통과하지 않음) 게이트웨이가 `INVALID_ARGUMENT`("먼저 `run_build`")로 거절한다.
+  - `run_verify`: 이 티켓에서 마지막으로 성공한 `run_deploy`의 `input`(없으면 실행 기록의 `input`). 대상 슬롯에 떠 있는 것과 Verify가 보는 공개 서비스 · 경로(헬스체크 경로 포함)가 같아야 하기 때문이다.
+  - 어느 경우든 `run`이 될 수 있는 것은 `run_build`의 그 서비스 하나뿐이고, 나머지는 모두 `reuse` + 이미지 digest다.
+- **live 경로 보호**: stripPrefix Middleware(`<서비스>-strip`)는 슬롯 라벨이 없어 두 슬롯이 같이 쓰고 Apply가 test Ingress와 함께 적용한다. 그래서 게이트웨이는 live 슬롯에 떠 있는 배포 입력(그 프로젝트의 마지막 성공한 실행 기록)에서 `stripPrefix: true`인 서비스의 `ingressPath`를 바꾸는 `specPatch`를 `PATCH_FORBIDDEN`으로 거절한다(메시지에 "live 경로의 Middleware를 같이 바꾼다"). `stripPrefix`를 `false` → `true`로(데모 V2) 또는 `true` → `false`로 바꾸는 것은 받는다: 앞은 live가 그 Middleware를 쓰지 않고, 뒤는 Middleware를 Switch 뒤에만 지우므로 live에 영향이 없다. live 슬롯이 없으면(첫 배포) 막지 않는다.
+- **입력 읽기 규칙**: `trialId`가 `^tr_[0-9a-f]{12}$`가 아니거나, 그런 시험이 없거나, 그 시험이 지금 그 실행 기록의 열린 티켓에 속하지 않거나, 기다림이 끝난(결과를 받았거나 취소된) 시험이면 `404 TRIAL_NOT_FOUND`다(모양이 틀린 id도 404인 것은 2번의 `DEPLOY_NOT_FOUND`와 같다). job은 읽을 때 쿼리 `?counter=<GO_PIPELINE_COUNTER>`를 붙이고, BE는 그 값을 시험의 GoCD 인스턴스 번호로 기록한다(아래 "끝난 시험 정리"가 쓴다). 범위 안 job이 모두 읽으므로 같은 값이 여러 번 온다: 같으면 그대로 두고, 이미 기록한 값과 다르면 `400 BAD_REQUEST`다(다른 인스턴스가 같은 `trialId`를 쓰는 셈이라 생기면 안 된다). **범위 안 job은 입력 읽기를 첫 task로 둔다**(GoCD artifact 받기 다음, k3s를 부르는 task보다 먼저). 읽기가 실패하면 스테이지 CLI(`run_if: passed`)는 돌지 않고, 결과 보내기(`run_if: any`)는 돌아 `STAGE_NO_REPORT`를 보내지만 BE는 `applied: false`로 버린다. 이 순서가 있어야 아래 "counter가 없으면 입력을 읽은 job이 없다"가 성립한다. student-trial은 첫 스테이지가 시험마다 다르므로(Build job이 입력을 넘겨주지 않는다), Build job을 포함해 범위 안의 각 job이 `TRIAL_ID`로 입력을 직접 읽는다(시험 입력은 시험 하나 동안 바뀌지 않는다). Apply는 같은 시험의 Render artifact(`slot.yaml`)를 받는다.
+- **결과**: `POST /api/pipeline/trials/:trialId/result` `{ "stage", "result" }`. 같은 `PIPELINE_NOTIFY_TOKEN`으로 인증한다. 시험 하나에 **한 번** 보낸다: 실패한 스테이지에서, 모두 통과했으면 `TRIAL_STAGES`의 마지막 스테이지에서. 파이프라인 쪽 CLI(`trial-report`)가 스테이지 결과 JSON을 바꿔 보낸다. 스테이지 결과 JSON이 없거나 모양이 틀리면 `failure.code` `STAGE_NO_REPORT`로 보낸다(3번 알림과 같다). setup · artifact 받기가 실패해 CLI 자체가 돌지 못하면 결과가 오지 않고, 게이트웨이는 30분 뒤 `TRIAL_TIMEOUT`으로 답한다. 30분 대기는 `run_build`에도 같다(CodeBuild 대기 포함). 그래서 시험 빌드의 `timeoutMinutes` 상한은 20분이고, Build CLI는 override가 있으면 빌드 대기 한도를 `timeoutMinutes` + 5분으로 둔다(없으면 지금처럼 20분). `student-trial` Build job의 GoCD 제한 시간은 30분 이상이어야 한다.
+  - `stage`: 결과를 낸 스테이지(`build` · `prepare` · `render` · `apply` · `verify`).
+  - `result`: 그 시험을 부른 **도구의 결과 모양 그대로**(아래 "MCP 게이트웨이 — 도구" 실행 표: `run_build` · `run_render` · `run_deploy` · `run_verify`)에 `failure` 한 칸을 더한 것이다. `failure`는 통과면 `null`, 아니면 `{ "stage", "code", "message" }`다. `code`는 플랫폼 문제면 3번과 같은 코드(`^[A-Za-z][A-Za-z0-9_]{2,63}$`), 학생 문제면 `null`이다. `message`는 3번 `failure.message`와 같은 문장이다(Verify는 통과하지 못한 검사 하나, Prepare의 쿼터 초과는 자원 합계 문장).
+  - 모으는 곳: `run_build`는 Build 스테이지 리포트(`student-deploy`의 Build와 같은 CLI)로 `{ ok, reused, build, failedPhase, logTail, image }`를 만든다: `build`는 실패한 빌드의 CodeBuild 원본(3번 `raw.codebuild`와 같다, 재사용 · 성공 · 플랫폼 실패면 `null`), `failedPhase`는 실패한 phase의 `phaseType`(예 `BUILD` · `POST_BUILD`, 없으면 `null`. phase 원본은 `build`의 `phases`에 있다), `logTail`은 빌드 실패면 마지막 200줄(로그를 못 읽었으면 `[]`)이고 성공 · 재사용 · 플랫폼 실패면 `[]`(성공 때는 로그를 읽지 않는다), `image`는 통과한 digest 또는 재사용한 이미지(실패면 `null`), `reused`는 입력에서 그 서비스가 `reuse`였는지다. 빌드 실패는 `failure.code`가 `null`이고 `message`는 `buildStatus` 문장이다. `run_render`는 `render-report.json`, `run_deploy`는 `prepare-report.json` · `render-report.json` · `apply-report.json`, `run_verify`는 `verify-report.json`이다. `run_deploy`의 `services`는 입력의 서비스마다 하나다(적용 순서 AI → BE → FE). apply-report의 `ready`에 있으면 `ready: true` · `reason: null`, 실패한 서비스는 `ready: false` · `reason`은 failure 문장, 실패 뒤라 적용하지 못한 서비스는 `ready: false` · `reason: "not applied"`다. 실패면 `pods` · `events`는 그 스테이지 실패의 `raw.k8s`(3번과 같은 원본), 성공이면 `[]`다. Prepare · Render에서 실패하면 `services` · `pods` · `events`는 `[]`일 수 있고 원인은 `failure`에 있다. Render에서 학생 문제로 실패하면 k3s Status의 `message`가 `failure.message`에 들어가고 Status 원본은 싣지 않는다(`run_deploy` 결과에는 `status` 칸이 없다. 원본은 `run_render`로 본다). Apply(`run_deploy`)와 Verify(`run_verify`)는 다른 도구라 한 결과에 섞지 않는다.
+  - **시험 이미지**: `run_build`가 통과하면 BE가 그 이미지를 이 티켓의 시험 이미지로 기억하고 `build_cache`에도 쓴다(같은 해시 = 같은 이미지, 3번의 build 통과 때 기록과 같은 규칙). 이후 `run_render` · `run_deploy`의 입력과 5번 다시 실행의 입력은 그 이미지를 `reuse` digest로 쓴다.
+  - BE가 외부 전송 필터를 거쳐 도구 결과로 돌려준다. `failure.code`가 `LIVE_SLOT_PROTECTED`면 도구 결과 대신 같은 코드로 거절한다(에이전트가 실행을 멈춘다).
+  - 응답 `200 { "ok": true }`. 모르는 id(모양이 틀린 id 포함) · 이미 결과를 받은 시험 · 기다림이 끝났거나 취소된 시험의 늦은 결과는 아무것도 바꾸지 않고 `200 { "ok": true, "applied": false }`(재전송에 안전). 오류: `401 AUTH_REQUIRED`, `400 BAD_REQUEST`(`stage`가 `TRIAL_STAGES` 밖이거나 `result`가 그 도구 모양과 다름, `fields` 포함).
+- **기다림**: 시험 기록과 기다림은 BE 메모리에 있다(DB에 저장하지 않는다). 그래서 BE가 다시 뜨면 기다리던 도구 호출은 연결이 끊기고(AI 서버는 게이트웨이에 닿지 못한 것으로 본다), 그 뒤 오는 결과는 `applied: false`다. BE는 **시작할 때** `student-trial`의 끝나지 않은 인스턴스를 모두 찾아(GoCD 파이프라인 이력) 진행 중인 스테이지를 GoCD API로 한 번 취소한다(취소된 스테이지 뒤는 돌지 않는다. 시험 기록이 메모리에 없어 이어 갈 수 없고, 그대로 두면 이미 입력을 읽은 옛 job과 새 시험이 같은 대상 슬롯에서 겹칠 수 있다). 그 뒤 오는 늦은 결과도 `applied: false`다.
+- **시간**: 게이트웨이 토큰의 만료(`gateway_expires_at`)는 `min(티켓 시작 + 60분, 티켓 시작 + 15분 + 누적 시험 대기)`이다. 시험 대기를 **시작할 때** BE가 먼저 `min(티켓 시작 + 60분, 지금 + 남은 15분 예산 + 이번 시험 대기 상한)`으로 늘리고(대기 중에 같은 티켓의 다른 도구 호출이 `TICKET_CLOSED`를 받지 않게), 대기를 마칠 때 위 식으로 다시 쓴다. 티켓 전체 상한 60분은 대기를 포함하고, 넘으면 다음 호출은 `TIME_LIMIT`다. 시험 하나의 대기는 30분과 그 상한까지 남은 시간 중 짧은 쪽에서 끝난다(끝나면 `TRIAL_TIMEOUT`).
+- **멈춘 실행 판정**: BE는 시험 대기를 시작할 때와 끝낼 때 실행 기록의 `updated_at`을 갱신한다. 새 배포를 시작할 때의 1시간 멈춤 판정(`POST /api/deploys/:id/start`의 `DEPLOY_IN_PROGRESS`)은 `fixing`이면서 `gateway_expires_at`이 아직 미래인 실행을 건너뛴다. 티켓 전체 상한(60분)이 지나면 `gateway_expires_at`도 지나므로, 그런 실행도 그 뒤에는 평소대로 판정된다(끝이 늘 있다).
+- **끝난 시험 정리**: `TRIAL_TIMEOUT` · `TIME_LIMIT` · 티켓 종료(결과 제출 · 종료 알림 · 만료) 때 결과가 아직 없는 시험이 있으면 BE가 그 `student-trial` 인스턴스(기록한 `counter`)를 읽어 진행 중인(또는 배정을 기다리는) 스테이지를 GoCD API로 한 번 취소한다(주기 조회가 아니다. GoCD의 취소 단위는 스테이지이고, 취소된 스테이지 뒤는 돌지 않는다. 정확한 경로 · 헤더는 구현 때 GoCD 26.1 문서로 확인한다). `counter`가 아직 없으면 그 인스턴스는 입력을 읽은 job이 없다: 나중에 입력을 읽으면 404라 슬롯을 건드리지 않고 끝난다.
+- **순서**: 다음 시험과 `verified` 뒤 다시 실행(5번)은 같은 프로젝트의 이전 시험 인스턴스가 끝났음(결과 도착, 취소 성공, 또는 입력을 읽은 job이 없음)을 확인한 뒤에만 schedule한다. 확인하지 못하면 다음 시험은 `ok: false`와 `failure: { "stage": null, "code": "TRIAL_STILL_RUNNING", "message" }`로 답한다. 다시 실행은 잠시 기다렸다 한 번 더 확인하고, 그래도 못 하면 `failed`(플랫폼 문제 `TRIAL_STILL_RUNNING`)로 마감한다. 시험이 지우는 것은 대상 슬롯뿐이라(Prepare의 슬롯 비우기) 늦게 끝나는 시험도 공개 주소에는 영향이 없다. 취소가 Apply 도중이면 대상 슬롯이 반쯤 적용된 채 남지만, 다음 `run_deploy` · 다시 실행의 Prepare가 그 슬롯을 비우고 시작한다(`run_render` · `run_verify`에는 Prepare가 없어, 그 사이 `run_verify`는 반쯤 적용된 상태를 그대로 실패로 본다). 취소된 시험 빌드는 CodeBuild 빌드가 끝까지 돌 수 있지만 이미지를 쓰는 곳이 없어 영향이 없다(결과는 `applied: false`).
+
+**5. `verified` 뒤 다시 실행**: 에이전트가 `verified`를 내면 플랫폼이 **고친 입력으로 `student-deploy`를 처음부터 다시 실행**한다. 전환 전용 파이프라인은 두지 않고 1~3번의 모양은 그대로다. 결정은 [ADR-014](../adr/014-agent-trial-pipeline-and-rerun.md)다. 계약만 정하고 구현 전이다(F11b 구현 PR). 흐름은 4번 첫머리 그림과 같다: 공개 주소가 바뀌는 곳은 이 다시 실행의 Switch뿐이다.
+
+- **받는 조건**(게이트웨이 `submit_result`): `specPatch`의 경로 검사(`PATCH_FORBIDDEN`)와 적용한 spec의 검증(`INVALID_SPEC`)을 `run_deploy` 때와 같은 함수로 하고, 이 티켓에서 **같은 `specPatch`로 성공한 `run_deploy`와 그 뒤 통과한 `run_verify`**가 있어야 한다(재실행만 했으면 빈 `specPatch`로 성공한 `run_deploy`). `specPatch`에 빌드 경로가 있으면 **같은 패치로 통과한 `run_build`**도 있어야 한다. 없으면 `INVALID_RESULT`. `buildOverrides`는 기록용이다(그 빌드는 이미 통과했다).
+- **저장**: 패치한 spec을 실행 기록의 `input`에 저장한다. `deploy_condition.services`는 모두 `reuse` + 이미지 digest로 바꿔 저장한다. 이미지는 4번 `run_deploy` 입력과 같은 규칙(같은 해시의 실행 기록 이미지 · 이 티켓의 시험 이미지 · `build_cache`)으로 고르며, 받는 조건을 통과했으면 모든 서비스에 이미지가 있다. 학생이 저장한 배포 입력(`deploys.spec`)은 바꾸지 않는다: 학생이 확정한 값이고, 고친 내용은 진행 상태의 `agent`(결과 요약)로 보여 준다. 고친 spec을 학생의 다음 커밋 배포로 이어 주는 것은 범위 밖이다.
+- **다시 실행**: 같은 실행 기록을 `fixing → running`, `stage: build`로 되돌리고 `failure`를 비우고 게이트웨이 토큰을 무효로 한 뒤(`ticket_id`는 종료 알림을 보낼 때까지 남긴다), 1번과 똑같이 `DEPLOY_ID`로 `student-deploy`를 schedule한다. 대상 슬롯은 그 실행 기록의 대상 슬롯 그대로다. 입력은 2번으로 읽어 가므로 고친 입력이 간다. Build는 모든 서비스가 `reuse`라 할 일이 없고(`images`는 `{}`), 그 뒤 Prepare → Render → Apply → Verify → Switch와 W7 · `succeeded`는 3번 상태 기계 그대로다. 다시 실행의 Verify가 대상 슬롯 재확인이다. schedule이 실패하면 `failed`(`PIPELINE_UNAVAILABLE`)로 마감한다.
+- **종료 알림**: `succeeded`가 되면 그 티켓에 `close(success)`, 다시 실행이 플랫폼 문제로 `failed`가 되거나 다시 실행 중(`running`) 멈춰 `TIMED_OUT`이 되면 `close(stopped)`를 보낸다.
+- **다시 실패하면**: 평소대로 새 티켓을 만든다(이전 티켓은 `close(superseded)`, 새 티켓의 `previous`는 이전 티켓의 id · `verified` · 요약). 티켓은 **실행 기록당 3개까지**다. 네 번째 티켓이 될 실패는 티켓을 만들지 않고 `failed`(`AGENT_GAVE_UP`)로 마감한다. 횟수는 실행 기록에 센다(구현 PR에서 칸을 더한다).
+- **알려진 한계 — 알림 세대**: 다시 실행은 같은 `deployId`로 돌므로 1~3번 알림만으로는 첫 실행과 다시 실행의 알림을 구분하지 못한다. 실제 위험은 좁다: 파이프라인의 알림 재시도는 1 · 2 · 4초 간격(첫 시도 포함 4번, 호출당 10초)이라 늦어도 1분 안에 끝나고, 첫 실행이 실패한 뒤 실행 기록은 `fixing`이라 그동안 오는 알림은 `applied: false`이며, 다시 실행은 시험 뒤(수 분 뒤)에 시작한다. 남는 경우는 운영자가 GoCD에서 옛 인스턴스의 스테이지를 손으로 다시 돌릴 때뿐이다. 필요하면 알림에 `GO_PIPELINE_COUNTER`를 더해 지금 세대만 받는다(후속, 1~3번 모양과 파이프라인 알림 task가 바뀐다).
 
 ## 운영자 API (이슈 #100, UC-17)
 
@@ -646,10 +704,12 @@ DB에 배포가 있는 프로젝트(`slug`)마다 공간 `proj-<slug>`를 읽어
 
 - 전송: MCP Streamable HTTP, 플랫폼 서버의 내부 포트(`GATEWAY_PORT`, 공개 포트와 다르다) `POST /mcp`. 상태 없는 서버라 세션 스트림(`GET`) · 세션 끝내기(`DELETE`)는 `405`다. AI 서버의 `GATEWAY_URL`은 `http://<플랫폼 서버>:<GATEWAY_PORT>/mcp`이고, `GATEWAY_PORT`가 비어 있으면 게이트웨이를 열지 않는다.
 - **지금 여는 도구(F11)**: `get_target_status` · `read_pod_logs` · `read_repo` · `submit_result` 넷뿐이다. 실행 도구(`run_*`) · 대상 슬롯 운영 · `read_build_logs`는 파이프라인의 시험 실행이 생기는 F11b에서, `edit_repo_file` · `open_pr`은 F13에서 연다. 목록에 없는 도구를 부르면 `INVALID_ARGUMENT`다. `read_repo`의 `source`도 그때까지 `INVALID_ARGUMENT`다.
-- **F11b 전에는 `verified` 불가**: 대상 슬롯에서 시험한 적이 없으므로 `submit_result`의 `status: "verified"`(와 `specPatch` · `buildOverrides`)는 `INVALID_RESULT`다. 받은 결과로 실행 기록은 `gave_up`이면 `failed`(`AGENT_GAVE_UP`), `pr_opened` · `needs_user`면 `needs_user`가 된다. 결과의 `status` · `summary` · `userRequest` · `pr` · `evidence` · `classification`만 `deploy_runs.agent_result`에 저장하고(`actions`는 버린다), 진행 상태 응답의 `agent`로 보여 준다.
+- **F11b(다음 PR들, 구현 전)**: `run_render` · `run_deploy` · `run_verify`를 위 "파이프라인 ↔ 플랫폼 서버" 4번 시험 실행으로 연다. `run_build`는 그 다음 PR(B3)에서 같은 시험 실행으로 연다. `source`는 F13까지 `INVALID_ARGUMENT`다. 티켓마다 시험은 한 번에 하나다(겹치면 `INVALID_ARGUMENT`). `run_build`를 열기 전(B1)에는 빌드에 닿는 `specPatch` 경로가 `PATCH_FORBIDDEN`이고, `build` 스테이지 티켓은 이미지가 없어 시험 입력을 만들 수 없으므로 `needs_user` · `gave_up`만 낼 수 있다. `run_build`를 연 뒤(B3)에는 빌드 경로 패치를 받고, `build` 티켓도 `run_build`로 고쳐 본다. 대상 슬롯 운영 · `read_build_logs`는 그 뒤에 연다.
+- **`verified`는 F11b 구현 PR에서 연다**: 받는 조건과 그 뒤 처리는 위 "파이프라인 ↔ 플랫폼 서버" 5번이다. 그 PR 전까지 지금 코드는 `submit_result`의 `status: "verified"`(와 `specPatch` · `buildOverrides`)를 `INVALID_RESULT`로 거절한다. 받은 결과로 실행 기록은 `gave_up`이면 `failed`(`AGENT_GAVE_UP`), `pr_opened` · `needs_user`면 `needs_user`가 된다. 결과의 `status` · `summary` · `userRequest` · `pr` · `evidence` · `classification`만 `deploy_runs.agent_result`에 저장하고(`actions`는 버린다), 진행 상태 응답의 `agent`로 보여 준다.
 - 도구 목록 · 하는 일 · 티켓당 횟수는 [AI 에이전트 설계](AIagent.md) §3이다. 여기는 인자와 결과의 모양만 고정한다. `read_memory`는 AI 서버 안의 도구라 게이트웨이에 없다(case와 통계를 AI 서버가 갖는다).
 - 결과는 MCP 도구 결과의 `structuredContent`에 아래 JSON으로 담는다. 실행이 실패해도(빌드 실패, Ready 안 됨) 도구 호출은 성공이고 `ok: false`다. 게이트웨이가 거절한 호출만 `isError: true`이고 `structuredContent`는 `{ "code", "message" }`다.
-- `run_*` · `wait_target_ready`는 파이프라인이 끝날 때까지 기다렸다가 답한다(최대 30분). AI 서버의 MCP 클라이언트는 호출 제한 시간을 35분으로 둔다.
+- `run_*` · `wait_target_ready`는 파이프라인이 끝날 때까지 기다렸다가 답한다(최대 30분). AI 서버의 MCP 클라이언트는 호출 제한 시간을 35분으로 둔다. 30분 안에 결과가 오지 않으면 `ok: false`와 `failure: { "stage": null, "code": "TRIAL_TIMEOUT", "message" }`로 답한다. 기다린 시간은 에이전트 작업 15분과 게이트웨이 토큰 유효 시간에서 뺀다.
+- `run_render` · `run_deploy` · `run_verify`의 결과에는 아래 표의 칸 말고 `failure`(`null` 또는 `{ stage, code, message }`, 위 4번)가 늘 있다.
 - `specPatch`는 JSON Patch(RFC 6902) 배열이고 경로 규칙은 §6과 같다. 그 실행에만 적용한다.
 - `source`는 `{ "commitSha": "<봇 fork의 40자 SHA>" }`이고 `edit_repo_file`이 돌려준 값만 받는다.
 - 로그 · 원본은 외부 전송 필터를 거친 값이다. 원본 k3s 객체에서 `metadata.managedFields`와 적용 기록 annotation은 뺀다.
@@ -658,7 +718,7 @@ DB에 배포가 있는 프로젝트(`slug`)마다 공간 `proj-<slug>`를 읽어
 
 | 도구 | 인자 | 결과 `structuredContent` |
 | --- | --- | --- |
-| `run_build` | `service`, `specPatch?`, `source?`, `buildOverrides?` (`{ computeType?, timeoutMinutes?, image?, cache? }`) | `{ ok, reused, build: <BatchGetBuilds builds[0] 원본> \| null, failedPhase: string \| null, logTail: string[] (최대 200줄), image: string \| null }` |
+| `run_build` | `service`, `specPatch?`, `source?`, `buildOverrides?` (`{ computeType?, timeoutMinutes?, image?, cache? }`) | `{ ok, reused, build: <BatchGetBuilds builds[0] 원본> \| null, failedPhase: string \| null (실패한 phase의 phaseType), logTail: string[] (최대 200줄), image: string \| null }` |
 | `run_render` | `specPatch?` | `{ ok, status: <k3s Status 원본> \| null }` |
 | `run_deploy` | `specPatch?`, `source?` | `{ ok, services: [{ service, ready, reason: string \| null }], pods: [<Pod 원본>], events: [<Event 원본>] }` |
 | `run_verify` | 없음 | `{ ok, ready: [{ service, ready }], requests: [{ service, path, status: number \| null, ms: number \| null, error: string \| null }] }` |
@@ -696,7 +756,7 @@ DB에 배포가 있는 프로젝트(`slug`)마다 공간 `proj-<slug>`를 읽어
 | `TOOL_LIMIT` | 그 도구의 티켓당 횟수 또는 전체 20회를 넘음 |
 | `TIME_LIMIT` | 에이전트 작업 15분(파이프라인 대기 제외)을 넘음 |
 | `REPEATED_CALL` | 같은 도구 · 같은 인자를 연속 세 번째로 부름 |
-| `PATCH_FORBIDDEN` | `specPatch` 경로가 허용 밖이거나, 첫 배포 뒤 `name` · `slug`를 고침 |
+| `PATCH_FORBIDDEN` | `specPatch` 경로가 허용 밖이거나, 첫 배포 뒤 `name` · `slug`를 고침, `run_build`를 열기 전에 빌드 경로를 고침, 또는 live에서 `stripPrefix: true`인 서비스의 `ingressPath`를 고침 |
 | `INVALID_SPEC` | 패치를 적용한 spec이 배포 입력 검증 규칙을 어김 (`fields` 포함) |
 | `OVERRIDE_LIMIT` | `buildOverrides`가 상한 밖 |
 | `LIVE_SLOT_PROTECTED` | 대상 슬롯이 live 슬롯과 같아 보여 중단함 (플랫폼 문제로도 보고된다) |
