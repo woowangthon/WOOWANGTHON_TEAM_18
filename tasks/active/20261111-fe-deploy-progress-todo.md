@@ -20,7 +20,7 @@ Decisions without a ruling in the issue or the contract:
 - A public address is linked only when it starts with `https://`.
 - Routes `/deploys` and `/deploys/:id`, menu text `내 배포`.
 
-Answered by the BE (woowangthon-team-18-6c, 2026-11-11), to be written into api.md in its next commit: `NOT_READY` carries `error.fields` as `{ path: "secrets.<KEY>", code: "REQUIRED" }` (there is no `missing`; that part comes from #82's readiness check, and until it lands start answers `503 NOT_IMPLEMENTED`); a warning is `{ code, message, service | null }` with a message that is safe to show; `{}` with JSON content type is accepted as the start body. The server does not produce `needs_user` or "배포 대기" yet; the screen already draws them.
+Answered by the BE (woowangthon-team-18-6c, 2026-11-11), to be written into api.md in its next commit: `NOT_READY` carries `error.fields` as `{ path: "secrets.<service>.<KEY>", code: "REQUIRED" }` (the screen shows `<service> · <KEY>`) (there is no `missing`; that part comes from #82's readiness check, and until it lands start answers `503 NOT_IMPLEMENTED`); a warning is `{ code, message, service | null }` with a message that is safe to show; `{}` with JSON content type is accepted as the start body. The server does not produce `needs_user` or "배포 대기" yet; the screen already draws them.
 
 Known limits, left on purpose: the status read and the list read each hand-write the same load / retry state (two callers; a shared hook is not worth it yet); a retryable error is retried every 3 s with no back-off and no pause while the tab is hidden; each poll replaces the state even when `updatedAt` is unchanged (8 rows).
 

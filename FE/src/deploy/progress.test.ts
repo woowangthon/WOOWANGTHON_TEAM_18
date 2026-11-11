@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { isActive, isPlatformProblem, stageStatesOf } from './progress.ts'
+import { isActive, isPlatformProblem, stageStatesOf, statusLabel, statusVariant } from './progress.ts'
 import type { DeployStatus } from './progress.ts'
 import type { StageKey } from './stages.ts'
 
@@ -53,6 +53,12 @@ it('polls only while the deploy is running or being fixed', () => {
   const polled: DeployStatus[] = ['running', 'fixing']
   const all: DeployStatus[] = ['not_started', 'running', 'fixing', 'needs_user', 'succeeded', 'failed']
   expect(all.filter(isActive)).toEqual(polled)
+})
+
+it('keeps polling a status it does not know, and labels it with the raw value', () => {
+  expect(isActive('queued')).toBe(true)
+  expect(statusLabel('queued')).toBe('queued')
+  expect(statusVariant('queued')).toBe('neutral')
 })
 
 it('knows which failure codes are the platform fault', () => {

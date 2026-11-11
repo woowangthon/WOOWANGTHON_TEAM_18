@@ -33,9 +33,12 @@ export type DeployListItem = {
 
 // 진행 중일 때만 이 간격으로 다시 읽는다(계약: 3초). succeeded · failed · needs_user · not_started면 멈춘다.
 export const POLL_MS = 3000
-export const isActive = (status: DeployStatus) => status === 'running' || status === 'fixing'
+// 서버가 나중에 새 status를 추가해도(예: 배포 대기) 끝난 것으로 오해해 멈추지 않도록, 알려진 끝 · 대기 상태가 아니면 계속 읽는다.
+const SETTLED: string[] = ['not_started', 'needs_user', 'succeeded', 'failed']
+export const isActive = (status: string) => !SETTLED.includes(status)
 
-export const statusLabel = (status: DeployStatus) => {
+// 모르는 status는 받은 값을 그대로 보인다.
+export const statusLabel = (status: string) => {
   switch (status) {
     case 'not_started':
       return '시작 전'
@@ -49,6 +52,8 @@ export const statusLabel = (status: DeployStatus) => {
       return '완료'
     case 'failed':
       return '실패'
+    default:
+      return status
   }
 }
 
@@ -77,7 +82,7 @@ export function stageStatesOf({ status, steps }: Pick<Progress, 'status' | 'step
   return Object.fromEntries(STAGES.map(({ key }) => [key, stateOf(key)])) as Record<StageKey, StageState>
 }
 
-export const statusVariant = (status: DeployStatus) => {
+export const statusVariant = (status: string) => {
   switch (status) {
     case 'succeeded':
       return 'ok'
@@ -88,7 +93,7 @@ export const statusVariant = (status: DeployStatus) => {
       return 'warn'
     case 'failed':
       return 'err'
-    case 'not_started':
+    default:
       return 'neutral'
   }
 }

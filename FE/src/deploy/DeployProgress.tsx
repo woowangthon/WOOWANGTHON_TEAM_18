@@ -15,8 +15,11 @@ type StartFailureKind = 'not-ready' | 'in-progress' | 'unavailable' | 'not-found
 // missing: NOT_READY가 알려 준 빠진 항목의 이름(fields의 path). 서버가 알려 주지 않으면 비어 있다.
 type StartFailure = { kind: StartFailureKind; missing: string[] }
 
-// 비밀값은 `secrets.<KEY>`로 오므로 이름만 보이고, 그 밖의 항목은 path를 그대로 보인다.
-const missingName = (path: string) => (path.startsWith('secrets.') ? path.slice('secrets.'.length) : path)
+// 빠진 비밀값은 `secrets.<서비스>.<KEY>`로 오므로 `<서비스> · <KEY>`로 보이고, 그 밖의 항목은 path를 그대로 보인다.
+function missingName(path: string) {
+  const [root, service, key, ...rest] = path.split('.')
+  return root === 'secrets' && service && key && rest.length === 0 ? `${service} · ${key}` : path
+}
 
 // 이미 시작한 배포(ALREADY_STARTED)는 오류로 보이지 않는다. 곧바로 다시 읽는 상태가 그 사실을 보여 준다.
 function startFailureOf(error: unknown): StartFailure | null {
@@ -201,7 +204,7 @@ function DeployProgress({ deployId }: { deployId: string }) {
     <section aria-label="배포 진행 상태" className="flex flex-col gap-4">
       <div className="flex items-center gap-2">
         <StatusBadge status={progress.status} />
-        {isActive(progress.status) && <span className="text-sm text-muted">3초마다 새로 읽고 있어요</span>}
+        {isActive(progress.status) && offline !== 'stopped' && <span className="text-sm text-muted">3초마다 새로 읽고 있어요</span>}
       </div>
       {offlineNotice}
       <DeployStages states={stageStatesOf(progress)} />

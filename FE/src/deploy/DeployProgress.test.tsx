@@ -159,6 +159,25 @@ it.each([
   expect(stage('빌드')).toBe('빌드진행 중')
 })
 
+it('does not say it is reading every 3 seconds once it has stopped reading', async () => {
+  api.apiFetch.mockResolvedValueOnce(progressOf('running', 'build')).mockRejectedValueOnce(new ApiError(500, 'INTERNAL', 'x'))
+  await show()
+  expect(screen.getByText('3초마다 새로 읽고 있어요')).toBeTruthy()
+  await advance(3000)
+  expect(screen.getByText('진행 상태를 읽지 못했어요')).toBeTruthy()
+  expect(screen.queryByText('3초마다 새로 읽고 있어요')).toBeNull()
+})
+
+it('keeps reading on a status it does not know, and shows the value it got', async () => {
+  const queued = 'queued' as DeployStatus
+  api.apiFetch.mockResolvedValueOnce(progressOf(queued, null)).mockResolvedValue(progressOf('succeeded', null))
+  await show()
+  expect(screen.getByText('queued')).toBeTruthy()
+  await advance(3000)
+  expect(reads()).toBe(2)
+  expect(screen.queryByText('queued')).toBeNull()
+})
+
 it('says the deploy was not found on 404 and does not keep reading', async () => {
   api.apiFetch.mockRejectedValue(new ApiError(404, 'DEPLOY_NOT_FOUND', 'x'))
   await show()
@@ -226,8 +245,11 @@ it('lists the missing secret names the server named on NOT_READY, and falls back
     path === START
       ? Promise.reject(
           new ApiError(409, 'NOT_READY', 'x', [
-            { path: 'secrets.DATABASE_URL', code: 'REQUIRED' },
-            { path: 'secrets.JWT_SECRET', code: 'REQUIRED' },
+            { path: 'secrets.be.DATABASE_URL', code: 'REQUIRED' },
+            { path: 'secrets.ai.OPENAI_API_KEY', code: 'REQUIRED' },
+            { path: 'secrets.be', code: 'REQUIRED' },
+            { path: 'services.be.JWT_SECRET', code: 'REQUIRED' },
+            { path: 'secrets.be.A.B', code: 'REQUIRED' },
           ]),
         )
       : Promise.resolve(progressOf('not_started', 'secrets')),
@@ -235,7 +257,7 @@ it('lists the missing secret names the server named on NOT_READY, and falls back
   await show()
   await clickStart()
   const list = within(screen.getByRole('list', { name: '' }))
-  expect(list.getAllByRole('listitem').map((li) => li.textContent)).toEqual(['DATABASE_URL', 'JWT_SECRET'])
+  expect(list.getAllByRole('listitem').map((li) => li.textContent)).toEqual(['be · DATABASE_URL', 'ai · OPENAI_API_KEY', 'secrets.be', 'services.be.JWT_SECRET', 'secrets.be.A.B'])
 })
 
 it('says only the plain text when NOT_READY names nothing', async () => {

@@ -14,6 +14,7 @@
 - 2026-11-11: `/simplify` on the implementation: real — `failure.stage` is a pipeline word (apply, prepare…), not a step name, so the label is now taken from the step marked failed; `useCopy` shared with `CommitRef`; `StatusBadge`; list page conditions merged; test helpers. Left: a shared polling hook, back-off and tab-hidden pause, `updatedAt` comparison, a copy table for the start alerts (see the todo).
 - 2026-11-11: The BE answered the three gaps (see the todo): missing items come as `error.fields`, warnings are `{ code, message, service }`, `{}` is accepted. Added the missing list and the warning box; hand mutants: 7 tried, 6 killed, the survivor (stage word fallback) got a test and is killed.
 - 2026-11-11: Not checked: a browser, the real endpoints (not implemented yet; start answers 503 NOT_IMPLEMENTED until #82 lands), screenshots, mutation tool (#67).
+- 2026-11-11: Peer review fixes: `NOT_READY` field paths are `secrets.<service>.<KEY>` and show as `<service> · <KEY>`; the "every 3 seconds" hint is hidden once reading has stopped; an unknown status keeps polling and shows its raw value (`isActive` is now "not a known settled status").
 
 ## Lessons
 
