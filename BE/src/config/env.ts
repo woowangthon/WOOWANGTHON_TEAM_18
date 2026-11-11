@@ -34,7 +34,7 @@ export function validateEnv(raw: Record<string, string | undefined>): Env {
     GOCD_URL: parseOptionalOrigin(raw.GOCD_URL, 'GOCD_URL'),
     GOCD_TOKEN: parseOptionalSecret(raw.GOCD_TOKEN, 'GOCD_TOKEN'),
     GOCD_PIPELINE: parseOptionalPipeline(raw.GOCD_PIPELINE),
-    PIPELINE_NOTIFY_TOKEN: parseOptionalSecret(raw.PIPELINE_NOTIFY_TOKEN, 'PIPELINE_NOTIFY_TOKEN'),
+    PIPELINE_NOTIFY_TOKEN: parseOptionalSecret(raw.PIPELINE_NOTIFY_TOKEN, 'PIPELINE_NOTIFY_TOKEN', 32),
     AI_SERVER_URL: parseOptionalOrigin(raw.AI_SERVER_URL, 'AI_SERVER_URL'),
     AGENT_API_TOKEN: parseOptionalSecret(raw.AGENT_API_TOKEN, 'AGENT_API_TOKEN'),
   }
@@ -98,9 +98,11 @@ function parseOptionalOrigin(value: string | undefined, name: string): string | 
 }
 
 // 틀린 값이 오류 메시지(로그)에 남지 않도록 값은 메시지에 싣지 않는다.
-function parseOptionalSecret(value: string | undefined, name: string): string | undefined {
+function parseOptionalSecret(value: string | undefined, name: string, minLength = 1): string | undefined {
   if (value === undefined || value === '') return undefined
   if (!/^\S+$/.test(value)) throw new Error(`${name} must not contain whitespace`)
+  // 이 토큰 하나로 알림을 위조할 수 있는 값은 짧으면 안 된다.
+  if (value.length < minLength) throw new Error(`${name} must be at least ${minLength} characters`)
   return value
 }
 

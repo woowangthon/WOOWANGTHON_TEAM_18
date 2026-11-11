@@ -97,28 +97,73 @@ describe('validateNotice', () => {
     expect(paths({ deployId: 'x', stage: 'deploy', result: 'ok' })).toEqual(['deployId:INVALID_VALUE', 'stage:INVALID_VALUE', 'result:INVALID_VALUE'])
   })
 
-  it('reads a failed notice, defaulting code · service to null and raw to {}', () => {
-    const r = validateNotice({ deployId: ID, stage: 'apply', result: 'failed', failure: { message: 'boom' } })
-    expect(r).toEqual({
-      ok: true,
-      notice: { deployId: ID, stage: 'apply', result: 'failed', failure: { platformCode: null, service: null, message: 'boom', raw: {}, logs: null } },
+  describe('a failed notice', () => {
+    const FROM = '2026-11-11T01:00:00Z'
+    const k8s = (status: unknown = null) => ({ pod: null, events: [], status })
+    const failed = (stage: string, failure: Record<string, unknown>) => ({ deployId: ID, stage, result: 'failed', failure: { message: 'boom', ...failure } })
+    const notice = (body: unknown) => {
+      const r = validateNotice(body)
+      if (!r.ok) throw new Error(JSON.stringify(r.issues))
+      return r.notice as Extract<typeof r.notice, { result: 'failed' }>
+    }
+
+    it('keeps the evidence in the shape the AI server takes', () => {
+      const n = notice(failed('build', { service: 'fe', raw: { codebuild: { id: 'cb:1' } }, logs: { from: FROM, to: FROM, lines: ['a'] } }))
+      expect(n.failure).toEqual({
+        platformCode: null,
+        service: 'fe',
+        message: 'boom',
+        evidence: { raw: { codebuild: { id: 'cb:1' }, k8s: null }, logs: { from: FROM, to: FROM, lines: ['a'] } },
+      })
+    })
+
+    it('fills pod and events with null and [] for a k8s stage, and takes no logs as null', () => {
+      const n = notice(failed('apply', { raw: { k8s: {} } }))
+      expect(n.failure.evidence).toEqual({ raw: { codebuild: null, k8s: k8s() }, logs: null })
+    })
+
+    it('keeps only the last 200 log lines', () => {
+      const lines = Array.from({ length: 250 }, (_, i) => `l${i}`)
+      const n = notice(failed('apply', { raw: { k8s: {} }, logs: { from: FROM, to: FROM, lines } }))
+      expect(n.failure.evidence?.logs?.lines).toEqual(lines.slice(50))
+    })
+
+    it.each([
+      ['build without codebuild', failed('build', {}), ['failure.raw.codebuild:REQUIRED']],
+      ['build with k8s', failed('build', { raw: { codebuild: {}, k8s: {} } }), ['failure.raw.k8s:MUST_BE_NULL']],
+      ['apply without k8s', failed('apply', {}), ['failure.raw.k8s:REQUIRED']],
+      ['apply with codebuild', failed('apply', { raw: { codebuild: {}, k8s: {} } }), ['failure.raw.codebuild:MUST_BE_NULL']],
+      ['render without status', failed('render', { raw: { k8s: {} } }), ['failure.raw.k8s.status:REQUIRED']],
+      ['apply with status', failed('apply', { raw: { k8s: { status: {} } } }), ['failure.raw.k8s.status:MUST_BE_NULL']],
+      ['prepare with status', failed('prepare', { raw: { k8s: { status: {} } } }), ['failure.raw.k8s.status:MUST_BE_NULL']],
+      ['raw that is not an object', failed('apply', { raw: [] }), ['failure.raw:INVALID_TYPE']],
+      ['pod that is not an object', failed('apply', { raw: { k8s: { pod: 'x' } } }), ['failure.raw.k8s.pod:INVALID_TYPE']],
+      ['events that are not objects', failed('apply', { raw: { k8s: { events: ['x'] } } }), ['failure.raw.k8s.events:INVALID_TYPE']],
+      ['logs without a time zone', failed('apply', { raw: { k8s: {} }, logs: { from: '2026-11-11T01:00:00', to: FROM, lines: [] } }), ['failure.logs.from:INVALID_VALUE']],
+      ['logs with a missing to', failed('apply', { raw: { k8s: {} }, logs: { from: FROM, lines: [] } }), ['failure.logs.to:REQUIRED']],
+      ['log lines that are not strings', failed('apply', { raw: { k8s: {} }, logs: { from: FROM, to: FROM, lines: [1] } }), ['failure.logs.lines:INVALID_TYPE']],
+    ])('rejects %s', (_n, body, expected) => {
+      const r = validateNotice(body)
+      expect(r.ok ? [] : r.issues.map((i) => `${i.path}:${i.code}`)).toEqual(expected)
+    })
+
+    it('does not look at the evidence of a platform problem or of a verify · switch failure (no ticket goes out)', () => {
+      expect(notice(failed('build', { code: 'CODEBUILD_API_ERROR', raw: 'garbage' })).failure.evidence).toBeNull()
+      expect(notice(failed('verify', { raw: 'garbage', logs: 5 })).failure.evidence).toBeNull()
+      expect(notice(failed('switch', {})).failure.evidence).toBeNull()
     })
   })
 
-  it('checks the failure fields', () => {
-    const base = { deployId: ID, stage: 'apply', result: 'failed' }
+  it('checks the failure envelope', () => {
+    const base = { deployId: ID, stage: 'verify', result: 'failed' }
     expect(paths(base)).toEqual(['failure:REQUIRED'])
     expect(paths({ ...base, failure: 'x' })).toEqual(['failure:INVALID_TYPE'])
-    expect(paths({ ...base, failure: { message: 'm', code: 'OTHER', service: 'Bad Name', raw: [] } })).toEqual([
-      'failure.code:INVALID_VALUE',
-      'failure.service:INVALID_VALUE',
-      'failure.raw:INVALID_TYPE',
-    ])
+    expect(paths({ ...base, failure: { message: 'm', code: 'OTHER', service: 'Bad Name' } })).toEqual(['failure.code:INVALID_VALUE', 'failure.service:INVALID_VALUE'])
     expect(paths({ ...base, failure: {} })).toEqual(['failure.message:REQUIRED'])
   })
 
   it('cuts a very long failure message', () => {
-    const r = validateNotice({ deployId: ID, stage: 'apply', result: 'failed', failure: { message: 'x'.repeat(5000) } })
+    const r = validateNotice({ deployId: ID, stage: 'verify', result: 'failed', failure: { message: 'x'.repeat(5000) } })
     expect(r.ok && r.notice.result === 'failed' && r.notice.failure.message.length).toBe(2000)
   })
 })

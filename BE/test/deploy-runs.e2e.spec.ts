@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { ConflictException, type INestApplication, Logger } from '@nestjs/common'
 import request from 'supertest'
 import type { App } from 'supertest/types.js'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from 'vitest'
 import { AgentClient } from '../src/deploys/agent.client.js'
 import { DeployPreparer } from '../src/deploys/deploy-preparer.js'
 import { errorBody, JWKS_URL, keySet, token } from './auth-helpers.js'
@@ -11,7 +11,7 @@ import { startApp } from './start-app.js'
 const REST = 'https://test.supabase.co/rest/v1/'
 const GOCD_URL = 'https://gocd.test/go/api/pipelines/student-deploy/schedule'
 const AI_URL = 'https://ai.test/agent/tickets'
-const NOTIFY_TOKEN = 'pipeline_notify_test'
+const NOTIFY_TOKEN = 'pipeline_notify_test_0123456789abcdef'
 const SHA = '0123456789abcdef0123456789abcdef01234567'
 const USER = '11111111-1111-4111-8111-111111111111'
 const OTHER = '22222222-2222-4222-8222-222222222222'
@@ -31,6 +31,7 @@ let restOverride: ((table: string, method: string) => Response | undefined) | un
 // 가짜 준비 확인(#82). 기본은 준비됨이고 슬롯은 a다.
 let prepare: (deployId: string) => Promise<unknown>
 let app: INestApplication<App>
+let logError: MockInstance<Logger['error']>
 
 const urlOf = (i: string | URL | Request) => (i instanceof Request ? i.url : i.toString())
 const conflict = (constraint: string) =>
@@ -140,7 +141,7 @@ const preparedFor = (deployId: string, slot = 'a') => ({
         be: { buildInputHash: BE_HASH, build: 'reuse', image: OLD_IMAGE },
       },
     },
-    spec: { project: { slug: 'my-app', repo: 'student/my-app' }, services: [] },
+    spec: { project: { slug: 'my-app', repo: 'student/my-app' }, services: [{ name: 'be', runtime: { secretKeys: ['DATABASE_URL'], env: {} } }] },
   },
 })
 
@@ -163,7 +164,7 @@ beforeEach(async () => {
   restOverride = undefined
   fetchMock.mockClear()
   vi.stubGlobal('fetch', fetchMock)
-  vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+  logError = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
   app = await startApp([], (b) => b.overrideProvider(DeployPreparer).useValue({ prepareIfReady: (id: string) => prepare(id) }))
 })
 
@@ -249,6 +250,35 @@ describe('POST /api/deploys/:id/start', () => {
 
     expect((await start(seedDeploy({ slug: 'other-app' }))).status).toBe(202)
     expect(callsTo(GOCD_URL)).toHaveLength(2)
+  })
+
+  it.each(['running', 'fixing'] as const)('frees the project when its %s run has not changed for over an hour (it ends as TIMED_OUT)', async (state) => {
+    const first = seedDeploy()
+    await start(first)
+    run(first).status = state
+    run(first).updated_at = new Date(Date.now() - 61 * 60_000).toISOString()
+    const res = await start(seedDeploy())
+    expect(res.status).toBe(202)
+    expect(run(first)).toMatchObject({ status: 'failed', failure: { code: 'TIMED_OUT', stage: 'build', service: null } })
+    expect(callsTo(GOCD_URL)).toHaveLength(2)
+    expect(((await status(first)).body as StatusBody).failure?.code).toBe('TIMED_OUT')
+  })
+
+  it('does not free the project for a run that changed within the hour', async () => {
+    const first = seedDeploy()
+    await start(first)
+    run(first).updated_at = new Date(Date.now() - 59 * 60_000).toISOString()
+    expect((await start(seedDeploy())).body).toEqual(errorBody('DEPLOY_IN_PROGRESS'))
+    expect(run(first).status).toBe('running')
+  })
+
+  it('logs a failed clean-up instead of swallowing it when GoCD refuses and the run cannot be deleted', async () => {
+    const id = seedDeploy()
+    gocdAnswer = () => new Response('{}', { status: 500 })
+    restOverride = (table, method) => (table === 'deploy_runs' && method === 'DELETE' ? new Response('{}', { status: 500 }) : undefined)
+    const res = await start(id)
+    expect(res.body).toEqual(errorBody('PIPELINE_UNAVAILABLE'))
+    expect(logError).toHaveBeenCalledWith(expect.any(Error))
   })
 
   it('allows a new deploy once the project\'s last one has ended', async () => {
@@ -542,7 +572,7 @@ describe('POST /api/pipeline/notify', () => {
         deployId: id,
         stage: 'build',
         result: 'failed',
-        failure: { service: 'fe', message: 'npm ERR! build failed', raw: { codebuild: { id: 'cb:1', buildStatus: 'FAILED' } }, logs: { from: 'a', to: 'b', lines: ['x'] } },
+        failure: { service: 'fe', message: 'npm ERR! build failed', raw: { codebuild: { id: 'cb:1', buildStatus: 'FAILED' } }, logs: { from: '2026-11-11T01:00:00Z', to: '2026-11-11T01:10:00Z', lines: ['x'] } },
       })
       expect(res.body).toEqual({ ok: true, applied: true })
 
@@ -577,6 +607,22 @@ describe('POST /api/pipeline/notify', () => {
       expect(ticket.stage).toBe('apply')
       expect(ticket.raw).toEqual({ codebuild: null, k8s: { pod: null, events: [{ reason: 'BackOff' }], status: null } })
       expect(ticket.logs.lines).toEqual([])
+    })
+
+    it('keeps the secret key names in the ticket\'s deploy input (names, not values)', async () => {
+      const id = await reach('apply')
+      await notify({ deployId: id, stage: 'apply', result: 'failed', failure: failure() })
+      const { ticket } = bodyOf(callsTo(AI_URL)[0])
+      expect(JSON.stringify(ticket.deployInput)).toContain('"secretKeys":["DATABASE_URL"]')
+    })
+
+    it('answers 400 and leaves the run alone when the evidence does not fit the ticket shape, so the sender can see it', async () => {
+      const id = await reach('render')
+      const res = await notify({ deployId: id, stage: 'render', result: 'failed', failure: failure() }) // render needs raw.k8s.status
+      expect(res.status).toBe(400)
+      expect(res.body).toMatchObject({ error: { code: 'BAD_REQUEST', fields: [{ path: 'failure.raw.k8s.status', code: 'REQUIRED' }] } })
+      expect(run(id)).toMatchObject({ status: 'running', stage: 'render', ticket_id: null })
+      expect(callsTo(AI_URL)).toHaveLength(0)
     })
 
     it('masks secret-looking strings in everything that leaves the server, and in the answers', async () => {

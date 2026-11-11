@@ -29,6 +29,7 @@ export type FailureCode =
   | 'SWITCH_FAILED'
   | PlatformCode
   | 'AGENT_UNAVAILABLE'
+  | 'TIMED_OUT'
 
 /** 학생에게 그대로 보여 주는 문장. 로그 · 원본 · 비밀값은 여기 들어오지 않는다. */
 const MESSAGES: Record<FailureCode, string> = {
@@ -40,6 +41,7 @@ const MESSAGES: Record<FailureCode, string> = {
   IMAGE_PULL_FAILED: '이미지를 클러스터로 받아 오지 못했습니다. 잠시 뒤 다시 시도해 주세요.',
   LIVE_SLOT_PROTECTED: '서비스 중인 슬롯을 보호하기 위해 배포를 중단했습니다. 운영자에게 알려 주세요.',
   AGENT_UNAVAILABLE: '문제를 자동으로 해결하는 서비스에 연결하지 못했습니다. 운영자에게 알려 주세요.',
+  TIMED_OUT: '배포가 제한 시간 안에 끝나지 않아 중단했습니다. 다시 시도해 주세요.',
 }
 
 export interface StoredFailure {
@@ -91,13 +93,20 @@ export function buildSteps(status: DeployStatus, stage: Stage | null): { key: St
 export const publicUrl = (slug: string) => `https://${slug}.stairnoworks.com`
 
 /** 파이프라인 알림의 본문. 모양은 docs/design/api.md "파이프라인 ↔ 플랫폼 서버". */
+/** 문제 티켓에 담을 증거. AI 서버의 모델(AI/ai_server/agent/models.py)이 받는 모양으로 이미 맞춰 둔다. */
+export interface TicketEvidence {
+  raw: { codebuild: Record<string, unknown> | null; k8s: { pod: Record<string, unknown> | null; events: Record<string, unknown>[]; status: Record<string, unknown> | null } | null }
+  logs: { from: string; to: string; lines: string[] } | null
+}
+
 export type Notice =
   | { deployId: string; stage: Stage; result: 'passed'; images: Record<string, string> | null }
   | {
       deployId: string
       stage: Stage
       result: 'failed'
-      failure: { platformCode: PlatformCode | null; service: string | null; message: string; raw: Record<string, unknown>; logs: unknown }
+      // evidence: 이 실패를 AI 서버에 넘길 때만(`classifyFailure(...).callAgent`) 있다.
+      failure: { platformCode: PlatformCode | null; service: string | null; message: string; evidence: TicketEvidence | null }
     }
 
 const SERVICE = /^[a-z]([a-z0-9-]{0,50}[a-z0-9])?$/
@@ -138,23 +147,76 @@ export function validateNotice(body: unknown): { ok: true; notice: Notice } | { 
   const service = f.service ?? null
   if (service !== null && (typeof service !== 'string' || !SERVICE.test(service))) add('failure.service', 'INVALID_VALUE')
   if (typeof f.message !== 'string') add('failure.message', f.message === undefined ? 'REQUIRED' : 'INVALID_TYPE')
-  const raw = f.raw ?? {}
-  if (!isRecord(raw)) add('failure.raw', 'INVALID_TYPE')
+  const platformCode = code as PlatformCode | null
+  const evidence = classifyFailure(base.stage, platformCode).callAgent ? checkEvidence(base.stage, f, add) : null
   if (issues.length > 0) return { ok: false, issues }
   return {
     ok: true,
     notice: {
       ...base,
       result: 'failed',
-      failure: {
-        platformCode: code as PlatformCode | null,
-        service: service as string | null,
-        message: (f.message as string).slice(0, MAX_MESSAGE),
-        raw: raw as Record<string, unknown>,
-        logs: f.logs ?? null,
-      },
+      failure: { platformCode, service: service as string | null, message: (f.message as string).slice(0, MAX_MESSAGE), evidence },
     },
   }
+}
+
+const MAX_LOG_LINES = 200
+// 시간대가 있는 ISO 8601(AI 서버는 AwareDatetime만 받는다).
+const AWARE_DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/
+
+/**
+ * 문제 티켓으로 갈 실패의 `raw` · `logs`를 AI 서버가 받는 모양으로 확인한다(stage별: build는 CodeBuild 원본, 그 밖은 k3s 원본이고
+ * `status`는 render일 때만 있다). 안 맞으면 파이프라인에 400으로 알려 보내는 쪽이 보이게 한다. 안쪽 객체는 원본 그대로 넘긴다.
+ */
+function checkEvidence(stage: Stage, f: Record<string, unknown>, add: (path: string, code: IssueCode) => void): TicketEvidence | null {
+  const rawIn = f.raw ?? {}
+  if (!isRecord(rawIn)) {
+    add('failure.raw', 'INVALID_TYPE')
+    return null
+  }
+  const optionalRecord = (v: unknown, path: string): Record<string, unknown> | null => {
+    if (v === undefined || v === null) return null
+    if (isRecord(v)) return v
+    add(path, 'INVALID_TYPE')
+    return null
+  }
+
+  let raw: TicketEvidence['raw']
+  if (stage === 'build') {
+    const codebuild = optionalRecord(rawIn.codebuild, 'failure.raw.codebuild')
+    if (codebuild === null) add('failure.raw.codebuild', rawIn.codebuild === undefined || rawIn.codebuild === null ? 'REQUIRED' : 'INVALID_TYPE')
+    if (rawIn.k8s !== undefined && rawIn.k8s !== null) add('failure.raw.k8s', 'MUST_BE_NULL')
+    raw = { codebuild, k8s: null }
+  } else {
+    if (rawIn.codebuild !== undefined && rawIn.codebuild !== null) add('failure.raw.codebuild', 'MUST_BE_NULL')
+    const k8sIn = rawIn.k8s
+    if (!isRecord(k8sIn)) {
+      add('failure.raw.k8s', k8sIn === undefined || k8sIn === null ? 'REQUIRED' : 'INVALID_TYPE')
+      raw = { codebuild: null, k8s: null }
+    } else {
+      const pod = optionalRecord(k8sIn.pod, 'failure.raw.k8s.pod')
+      const eventsIn = k8sIn.events ?? []
+      let events: Record<string, unknown>[] = []
+      if (Array.isArray(eventsIn) && eventsIn.every(isRecord)) events = eventsIn
+      else add('failure.raw.k8s.events', 'INVALID_TYPE')
+      const status = optionalRecord(k8sIn.status, 'failure.raw.k8s.status')
+      if (stage === 'render' && status === null) add('failure.raw.k8s.status', 'REQUIRED')
+      if (stage !== 'render' && status !== null) add('failure.raw.k8s.status', 'MUST_BE_NULL')
+      raw = { codebuild: null, k8s: { pod, events, status } }
+    }
+  }
+
+  let logs: TicketEvidence['logs'] = null
+  const logsIn = f.logs
+  if (logsIn !== undefined && logsIn !== null) {
+    const { from, to, lines } = isRecord(logsIn) ? logsIn : ({} as Record<string, unknown>)
+    const awareTime = (v: unknown): v is string => typeof v === 'string' && AWARE_DATETIME.test(v) && !Number.isNaN(Date.parse(v))
+    if (!awareTime(from)) add('failure.logs.from', from === undefined ? 'REQUIRED' : 'INVALID_VALUE')
+    if (!awareTime(to)) add('failure.logs.to', to === undefined ? 'REQUIRED' : 'INVALID_VALUE')
+    if (!Array.isArray(lines) || !lines.every((l) => typeof l === 'string')) add('failure.logs.lines', lines === undefined ? 'REQUIRED' : 'INVALID_TYPE')
+    else if (awareTime(from) && awareTime(to)) logs = { from, to, lines: lines.slice(-MAX_LOG_LINES) }
+  }
+  return { raw, logs }
 }
 
 /** build가 끝났을 때 알린 이미지가 이번 실행의 `run` 서비스와 맞는지 본다. 어긋난 칸을 `images.<name>`으로 알린다. */

@@ -149,6 +149,14 @@ export class DeploysStore {
     return rows[0]
   }
 
+  /** 이 프로젝트에서 진행 중(running · fixing)인 실행. 없으면 undefined. */
+  async findActiveRun(slug: string): Promise<DeployRunRow | undefined> {
+    const rows = await this.call('deploy_runs', 'GET', { select: '*', slug: `eq.${slug}`, status: 'in.(running,fixing)', limit: '1' })
+    if (rows.length === 0) return undefined
+    if (!isRunRow(rows[0])) throw this.unreadable('deploy_runs', 'GET')
+    return rows[0]
+  }
+
   /** 사용자의 배포를 최신순으로. */
   async listOwned(userId: string, limit: number): Promise<DeployRow[]> {
     const rows = await this.call('deploys', 'GET', { select: '*', user_id: `eq.${userId}`, order: 'created_at.desc', limit: String(limit) })

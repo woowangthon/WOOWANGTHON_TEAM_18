@@ -119,7 +119,7 @@ describe('pipeline and AI server settings', () => {
       GOCD_URL: 'https://gocd.example.com',
       GOCD_TOKEN: 'tok',
       GOCD_PIPELINE: 'student-deploy',
-      PIPELINE_NOTIFY_TOKEN: 'n',
+      PIPELINE_NOTIFY_TOKEN: 'n'.repeat(32),
       AI_SERVER_URL: 'http://localhost:8000',
       AGENT_API_TOKEN: 'a',
     })
@@ -132,6 +132,7 @@ describe('pipeline and AI server settings', () => {
     ['AI_SERVER_URL', 'https://ai.example.com/agent'],
     ['GOCD_TOKEN', 'a b'],
     ['PIPELINE_NOTIFY_TOKEN', 'a\nb'],
+    ['PIPELINE_NOTIFY_TOKEN', 'x'.repeat(31)],
     ['AGENT_API_TOKEN', ' x'],
     ['GOCD_PIPELINE', 'a/b'],
   ])('rejects %s = "%s" at boot', (name, value) => {

@@ -43,7 +43,9 @@ export function redact(value: unknown): unknown {
   // k8s Secret 객체의 data · stringData는 값이 전부 비밀이다.
   const isSecret = value.kind === 'Secret'
   for (const [k, v] of Object.entries(value)) {
-    if (SENSITIVE_NAME.test(k) || (named && k === 'value') || (isSecret && (k === 'data' || k === 'stringData'))) {
+    // spec의 `secretKeys`는 비밀값이 아니라 key 이름 목록이다. 에이전트가 빠진 비밀값을 가려내는 데 필요하다. 안의 문자열은 그대로 필터를 거친다.
+    if (k === 'secretKeys') out[k] = redact(v)
+    else if (SENSITIVE_NAME.test(k) || (named && k === 'value') || (isSecret && (k === 'data' || k === 'stringData'))) {
       out[k] = v === null || v === undefined ? v : REDACTED
     } else {
       out[k] = redact(v)

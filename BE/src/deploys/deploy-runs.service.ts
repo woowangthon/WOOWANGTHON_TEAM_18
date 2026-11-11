@@ -1,7 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common'
 import type { AuthUser } from '../auth/auth.decorators.js'
-import { isRecord } from '../common/is-record.js'
 import { UUID } from '../common/uuid.js'
 import { redact, redactString } from '../common/redact.js'
 import { AgentClient } from './agent.client.js'
@@ -26,6 +25,8 @@ import { type DeployRow, type DeployRunRow, DeploysStore, StoreConflict } from '
 import { PipelineClient } from './pipeline.client.js'
 
 const TICKET_MINUTES = 15
+// 파이프라인(빌드 포함)이 이보다 오래 걸리지 않는다고 본다. 이 시간 동안 아무 알림도 없던 진행 중인 실행은 끝난 것으로 본다.
+const STALE_RUN_MS = 60 * 60_000
 const DEFAULT_LIMIT = 20
 const MAX_LIMIT = 50
 
@@ -85,16 +86,17 @@ export class DeployRunsService {
     if (await this.store.findRun(deploy.id)) throw alreadyStarted()
     // 준비 안 됨(409 NOT_READY)은 여기서 던져진다.
     const prepared = await this.preparer.prepareIfReady(deploy.id)
+    const row = {
+      deploy_id: deploy.id,
+      user_id: user.id,
+      slug: deploy.slug,
+      target_slot: prepared.slot,
+      input: prepared.input as unknown as Record<string, unknown>,
+      status: 'running',
+      stage: 'build',
+    } as const
     try {
-      await this.store.insertRun({
-        deploy_id: deploy.id,
-        user_id: user.id,
-        slug: deploy.slug,
-        target_slot: prepared.slot,
-        input: prepared.input as unknown as Record<string, unknown>,
-        status: 'running',
-        stage: 'build',
-      })
+      await this.insertOrExpireStale(row)
     } catch (err) {
       if (!(err instanceof StoreConflict)) throw err
       // 같은 deploy_id(기본 키)면 이미 시작한 배포, 아니면 같은 프로젝트의 다른 배포가 도는 중이다.
@@ -104,10 +106,32 @@ export class DeployRunsService {
       await this.pipeline.run(deploy.id)
     } catch (err) {
       // 실행하지 못했으면 기록을 지워 같은 요청을 다시 보낼 수 있게 한다.
-      await this.store.deleteRun(deploy.id).catch(() => undefined)
+      await this.store.deleteRun(deploy.id).catch((e: unknown) => this.logger.error(e))
       throw err
     }
     return { deployId: deploy.id, status: 'running' as const, stage: 'build' as const, targetSlot: prepared.slot }
+  }
+
+  /**
+   * 실행 기록을 저장한다. 같은 프로젝트의 진행 중인 실행이 STALE_RUN_MS 넘게 바뀌지 않았으면 끝난 것으로 보고(파이프라인이 알림을 못 보냈거나
+   * `fixing`을 풀어 줄 해결 결과 처리가 아직 없다) TIMED_OUT으로 마감한 뒤 한 번 더 저장한다. 그러지 않으면 한 번 막힌 프로젝트는 영영 시작하지 못한다.
+   */
+  private async insertOrExpireStale(row: Parameters<DeploysStore['insertRun']>[0]): Promise<void> {
+    try {
+      await this.store.insertRun(row)
+    } catch (err) {
+      if (!(err instanceof StoreConflict) || err.constraint.includes('deploy_runs_pkey')) throw err
+      const active = await this.store.findActiveRun(row.slug)
+      if (active && Date.now() - Date.parse(active.updated_at) < STALE_RUN_MS) throw err
+      if (active) {
+        await this.store.updateRun(
+          active.deploy_id,
+          { status: active.status },
+          { status: 'failed', failure: { code: 'TIMED_OUT', stage: active.stage ?? 'build', service: null } },
+        )
+      }
+      await this.store.insertRun(row)
+    }
   }
 
   async status(user: AuthUser, id: string): Promise<DeployStatusView> {
@@ -212,9 +236,10 @@ export class DeployRunsService {
     expiresAt: Date,
   ): Promise<boolean> {
     const { failure } = notice
+    // 이 함수는 티켓으로 가는 실패에서만 불린다(classifyFailure → callAgent). 그때 validateNotice가 증거를 채워 둔다.
+    const { raw, logs: given } = failure.evidence!
     const now = new Date().toISOString()
-    const raw = failure.raw
-    const logs = isRecord(failure.logs) && Array.isArray(failure.logs.lines) ? failure.logs : { from: now, to: now, lines: [] }
+    const logs = given ?? { from: now, to: now, lines: [] }
     // 외부(AI 서버 · 외부 추론 API)로 나가는 값은 모두 비밀값 필터를 거친다(FR-102).
     const ticket = redact({
       ticketId,
@@ -224,10 +249,7 @@ export class DeployRunsService {
       targetSlot: run.target_slot,
       deployInput: run.input,
       errorMessage: redactString(failure.message),
-      raw:
-        notice.stage === 'build'
-          ? { codebuild: raw.codebuild ?? null, k8s: null }
-          : { codebuild: null, k8s: { pod: null, events: [], status: null, ...(isRecord(raw.k8s) ? raw.k8s : {}) } },
+      raw,
       logs,
       previous: null,
     }) as Record<string, unknown>

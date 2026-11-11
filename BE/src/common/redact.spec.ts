@@ -46,6 +46,15 @@ describe('redact', () => {
     })
   })
 
+  it('keeps the key names in secretKeys while still hiding secret values next to them', () => {
+    const out = redact({ runtime: { secretKeys: ['DATABASE_URL', 'API_TOKEN'], env: { API_TOKEN: 'abc', NODE_ENV: 'production' }, token: 'zzz' } })
+    expect(out).toEqual({ runtime: { secretKeys: ['DATABASE_URL', 'API_TOKEN'], env: { API_TOKEN: REDACTED, NODE_ENV: 'production' }, token: REDACTED } })
+  })
+
+  it('still scans the strings inside secretKeys', () => {
+    expect(redact({ secretKeys: [`ghp_${'a'.repeat(36)}`] })).toEqual({ secretKeys: [REDACTED] })
+  })
+
   it('hides every value of a k8s Secret', () => {
     expect(redact({ kind: 'Secret', metadata: { name: 'be-secrets' }, data: { A: 'Zm9v' }, stringData: { B: 'bar' } })).toEqual({
       kind: 'Secret',

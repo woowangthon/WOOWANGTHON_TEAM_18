@@ -10,7 +10,7 @@ export default defineConfig({
       GOCD_URL: 'https://gocd.test',
       GOCD_TOKEN: 'gocd_token_test',
       GOCD_PIPELINE: 'student-deploy',
-      PIPELINE_NOTIFY_TOKEN: 'pipeline_notify_test',
+      PIPELINE_NOTIFY_TOKEN: 'pipeline_notify_test_0123456789abcdef',
       AI_SERVER_URL: 'https://ai.test',
       AGENT_API_TOKEN: 'agent_token_test',
     },
