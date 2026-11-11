@@ -5,7 +5,7 @@ import { DeploysStore } from '../deploys/deploys.store.js'
 import { ClusterReader } from '../k8s/cluster-reader.js'
 import { type BudgetCode, ToolBudget } from './budget.js'
 import { RepoReader, repoPath } from './repo-reader.js'
-import { checkResult } from './result.js'
+import { checkResult, storedResult } from './result.js'
 import type { GatewayTicket } from './tickets.js'
 
 // MCP 게이트웨이의 도구(api.md "MCP 게이트웨이 — 도구"). 인자 · 결과 모양은 거기 고정돼 있다.
@@ -183,8 +183,7 @@ export class GatewayTools {
         : // pr_opened(머지 대기)도 needs_user(학생 조치 대기)도 학생을 기다린다.
           { status: 'needs_user' as const }
     // 학생에게 보일 칸만 남긴다(도구 호출 원본 · 로그는 버린다). 외부에서 온 글이라 한 번 더 가린다.
-    const { status, summary, userRequest = null, pr = null, evidence = [], classification } = result
-    const agentResult = redact({ status, summary, userRequest, pr, evidence, classification }) as Record<string, unknown>
+    const agentResult = redact(storedResult(result)) as Record<string, unknown>
     const applied = await this.store.updateRun(ticket.deployId, { status: 'fixing' }, { ...patch, agent_result: agentResult, gateway_token_hash: null })
     this.budget.forget(ticket.ticketId)
     if (!applied) return reject('TICKET_CLOSED', 'the ticket is no longer open')

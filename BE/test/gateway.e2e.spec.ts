@@ -244,6 +244,19 @@ describe('MCP gateway', () => {
     await client.close()
   })
 
+  it('stores only the student-facing fields, even if the agent adds keys inside them', async () => {
+    const client = await connect()
+    const userRequest = { message: 'DATABASE_URL을 다시 넣어 주세요', secretKeys: ['DATABASE_URL'], rawLogs: ['Error: connect ECONNREFUSED'] }
+    const answer = await call(client, 'submit_result', { result: result({ status: 'needs_user', userRequest, evidence: [{ ref: 'logs', text: 'x', pod: { spec: {} } }] }) })
+    expect(answer.structuredContent).toEqual({ accepted: true })
+    expect(run.agent_result).toMatchObject({
+      userRequest: { message: 'DATABASE_URL을 다시 넣어 주세요', secretKeys: ['DATABASE_URL'] },
+      evidence: [{ ref: 'logs', text: 'x' }],
+    })
+    expect(JSON.stringify(run.agent_result)).not.toMatch(/rawLogs|ECONNREFUSED|"pod"|read_pod_logs/)
+    await client.close()
+  })
+
   it.each([
     ['verified before the trial-run tools exist', { status: 'verified', specPatch: [] }],
     ['another commit', { commitSha: 'f'.repeat(40) }],

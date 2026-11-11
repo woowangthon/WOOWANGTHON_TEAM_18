@@ -76,3 +76,19 @@ export function checkResult(value: unknown, ticket: { ticketId: string; commitSh
   const why = problem(value, ticket)
   return why === null ? { ok: true, result: value as unknown as AgentResult } : { ok: false, message: why }
 }
+
+/**
+ * `deploy_runs.agent_result`에 남길 값: 학생에게 보일 칸만 새 객체로 만든다(api.md "진행 상태 읽기"의 `agent`).
+ * 검사는 중첩 객체의 다른 키를 막지 않으므로(§6), 받은 객체를 그대로 넣지 않는다. 그래야 로그 원본 같은 칸이 끼어 저장되지 않는다.
+ */
+export function storedResult(r: AgentResult): Record<string, unknown> {
+  const { classification: c, userRequest: u, pr } = r
+  return {
+    status: r.status,
+    summary: r.summary,
+    userRequest: u ? { message: u.message, secretKeys: u.secretKeys ?? [] } : null,
+    pr: pr ? { url: pr.url ?? null, files: pr.files ?? [], changedLines: pr.changedLines ?? null } : null,
+    evidence: (r.evidence ?? []).map((e) => ({ ref: e.ref ?? null, text: e.text ?? null })),
+    classification: { method: c.method, caseId: c.caseId, path: c.path },
+  }
+}

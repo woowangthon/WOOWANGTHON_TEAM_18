@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { checkResult } from './result.js'
+import { type AgentResult, checkResult, storedResult } from './result.js'
 
 const SHA = 'a'.repeat(40)
 const ticket = { ticketId: 't_1', commitSha: SHA }
@@ -58,5 +58,38 @@ describe('checkResult', () => {
 
   it('rejects a result that is not an object', () => {
     expect(checkResult([base], ticket)).toEqual({ ok: false, message: 'result must be an object' })
+  })
+
+  it('stores only the student-facing fields, dropping extra keys in nested objects', () => {
+    const checked = checkResult(
+      {
+        ...base,
+        status: 'pr_opened',
+        actions: [{ tool: 'read_pod_logs', ok: true, result: 'raw log line' }],
+        classification: { method: 'code', caseId: 'A1', path: 'playbook', rawLogs: ['x'] },
+        pr: { url: 'https://github.com/a/b/pull/1', files: ['a'], changedLines: 1, diff: '+secret' },
+        userRequest: { message: '값을 넣어 주세요', secretKeys: ['DATABASE_URL'], rawLogs: ['Error: …'] },
+        evidence: [{ ref: 'logs', text: 'line', raw: { pod: {} } }, {}],
+      },
+      ticket,
+    )
+    expect(checked.ok).toBe(true)
+    expect(storedResult((checked as { result: AgentResult }).result)).toEqual({
+      status: 'pr_opened',
+      summary: base.summary,
+      userRequest: { message: '값을 넣어 주세요', secretKeys: ['DATABASE_URL'] },
+      pr: { url: 'https://github.com/a/b/pull/1', files: ['a'], changedLines: 1 },
+      evidence: [
+        { ref: 'logs', text: 'line' },
+        { ref: null, text: null },
+      ],
+      classification: { method: 'code', caseId: 'A1', path: 'playbook' },
+    })
+  })
+
+  it('stores missing optional fields as empty values', () => {
+    const checked = checkResult({ ...base, evidence: undefined, userRequest: { message: 'm' } }, ticket)
+    const stored = storedResult((checked as { result: AgentResult }).result)
+    expect(stored).toMatchObject({ userRequest: { message: 'm', secretKeys: [] }, pr: null, evidence: [] })
   })
 })
