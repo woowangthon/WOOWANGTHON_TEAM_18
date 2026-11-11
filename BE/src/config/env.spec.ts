@@ -6,6 +6,7 @@ const base = {
   SUPABASE_URL: 'https://abc.supabase.co',
   SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_test',
   SUPABASE_SECRET_KEY: 'sb_secret_test',
+  SECRET_HASH_KEY: 'secret_hash_key_test_0123456789abcdef',
 }
 
 describe('PORT', () => {
@@ -196,5 +197,25 @@ describe('K8S_*', () => {
     expect(() => validateEnv({ ...base, ...full, ...bad })).toThrow(
       expect.objectContaining({ message: expect.not.stringContaining('leak') as string }),
     )
+  })
+})
+
+describe('SECRET_HASH_KEY', () => {
+  it('is passed through', () => {
+    expect(validateEnv(base).SECRET_HASH_KEY).toBe('secret_hash_key_test_0123456789abcdef')
+  })
+
+  it('accepts exactly 32 characters', () => {
+    expect(validateEnv({ ...base, SECRET_HASH_KEY: 'k'.repeat(32) }).SECRET_HASH_KEY).toBe('k'.repeat(32))
+  })
+
+  it.each([undefined, '', 'k'.repeat(31), 'short'])('stops the boot when it is missing or shorter than 32 characters (%s)', (key) => {
+    expect(() => validateEnv({ ...base, SECRET_HASH_KEY: key })).toThrow(/SECRET_HASH_KEY is required/)
+  })
+
+  it('stops the boot when it has whitespace, without printing the value', () => {
+    const key = `${'k'.repeat(32)} leak`
+    expect(() => validateEnv({ ...base, SECRET_HASH_KEY: key })).toThrow(/SECRET_HASH_KEY/)
+    expect(() => validateEnv({ ...base, SECRET_HASH_KEY: key })).not.toThrow(/kkkk/)
   })
 })
