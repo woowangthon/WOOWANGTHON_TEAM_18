@@ -1,19 +1,9 @@
-import { useState } from 'react'
 import { Button } from '../components/ui/Button.tsx'
+import { useCopy } from './useCopy.ts'
 
 // 배포할 commit. 보이는 글자는 앞 7자리이고 복사하면 전체 SHA(40자)가 간다.
 function CommitRef({ commit }: { commit: string }) {
-  const [copy, setCopy] = useState<'idle' | 'done' | 'failed'>('idle')
-
-  async function handleCopy() {
-    try {
-      await navigator.clipboard.writeText(commit)
-      setCopy('done')
-    } catch {
-      // 권한이 없거나 안전하지 않은 주소에서는 복사할 수 없다. 전체 값을 title로 남긴다.
-      setCopy('failed')
-    }
-  }
+  const { state: copy, copy: handleCopy } = useCopy(commit)
 
   return (
     <span className="inline-flex flex-wrap items-center gap-2">

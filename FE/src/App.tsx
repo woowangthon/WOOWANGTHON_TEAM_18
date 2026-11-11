@@ -4,6 +4,8 @@ import RequireAuth from './auth/RequireAuth.tsx'
 import AppLayout from './layout/AppLayout.tsx'
 import DashboardPage from './pages/DashboardPage.tsx'
 import DeployNewPage from './pages/DeployNewPage.tsx'
+import DeployProgressPage from './pages/DeployProgressPage.tsx'
+import DeploysPage from './pages/DeploysPage.tsx'
 import LoginPage from './pages/LoginPage.tsx'
 import ProfilePage from './pages/ProfilePage.tsx'
 import ResetPasswordPage from './pages/ResetPasswordPage.tsx'
@@ -24,6 +26,8 @@ function App() {
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/profile" element={<ProfilePage />} />
             <Route path="/deploy/new" element={<DeployNewPage />} />
+            <Route path="/deploys" element={<DeploysPage />} />
+            <Route path="/deploys/:id" element={<DeployProgressPage />} />
           </Route>
         </Route>
       </Routes>

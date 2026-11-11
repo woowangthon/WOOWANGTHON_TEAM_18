@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { Link } from 'react-router'
 import { Alert } from '../components/ui/Alert.tsx'
 import { Badge } from '../components/ui/Badge.tsx'
 import { Table, Td, Th, THead } from '../components/ui/Table.tsx'
@@ -61,6 +62,9 @@ function DeploySaved({ saved }: { saved: SavedDeploy }) {
           ))}
         </tbody>
       </Table>
+      <Link to={`/deploys/${saved.id}`} className="self-start underline">
+        배포 진행 화면으로 가기
+      </Link>
       {secrets.length > 0 && (
         <Alert variant="info" title="비밀값을 넣을 차례가 남았어요">
           <p>저장한 것은 이름뿐이에요. 값은 다음 단계에서 넣어요.</p>
