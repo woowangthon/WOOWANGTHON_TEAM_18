@@ -1,8 +1,11 @@
 import { required } from './config.js'
+import { isRecord } from './deploy-input.js'
 import { LOOPBACK } from './kube.js'
 
 // 플랫폼 서버(BE)의 기계용 API(`/api/pipeline/*`, docs/design/api.md "파이프라인 ↔ 플랫폼 서버")를 부르는 공통 클라이언트.
 // 토큰은 Authorization 헤더로만 나가고 오류 · 로그에 싣지 않는다. 설정은 env: PLATFORM_API_URL(origin), PIPELINE_NOTIFY_TOKEN(GoCD secure 변수).
+
+export type Sleep = (ms: number) => Promise<void>
 
 export interface PlatformConn {
   url: URL
@@ -49,8 +52,6 @@ export const CALL_TIMEOUT_MS = 10_000
 // 503(DATABASE_UNAVAILABLE)과 연결 실패는 잠깐 뒤 다시 보내면 된다(알림은 다시 보내도 안전하다, api.md). 첫 시도 뒤 이만큼씩 기다리며 다시 한다.
 export const RETRY_WAITS_MS = [1_000, 2_000, 4_000]
 
-const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
-
 // 오류 메시지에는 주소가 들어 있을 수 있어 오류 이름이나 코드(ECONNREFUSED · TimeoutError)만 남긴다.
 function transportReason(err: unknown): string {
   const cause = err instanceof Error ? err.cause : undefined
@@ -80,19 +81,21 @@ export async function callPlatform(
   method: 'GET' | 'POST',
   path: string,
   body: unknown,
-  sleep: (ms: number) => Promise<void>,
+  sleep: Sleep,
   timeoutMs = CALL_TIMEOUT_MS,
 ): Promise<unknown> {
   const what = `${method} ${path}`
+  const url = new URL(path, conn.url)
+  const headers: Record<string, string> = { Authorization: `Bearer ${conn.token}`, Accept: 'application/json' }
+  if (body !== undefined) headers['Content-Type'] = 'application/json'
+  const payload = body === undefined ? undefined : JSON.stringify(body)
   for (let attempt = 0; ; attempt++) {
     let status = 0
     let text = ''
     let reason = ''
     try {
-      const headers: Record<string, string> = { Authorization: `Bearer ${conn.token}`, Accept: 'application/json' }
-      if (body !== undefined) headers['Content-Type'] = 'application/json'
       // 다른 곳으로 넘어가는 답은 따라가지 않는다(헤더의 토큰이 따라가지 않게).
-      const res = await fetch(new URL(path, conn.url), { method, headers, body: body === undefined ? undefined : JSON.stringify(body), redirect: 'error', signal: AbortSignal.timeout(timeoutMs) })
+      const res = await fetch(url, { method, headers, body: payload, redirect: 'error', signal: AbortSignal.timeout(timeoutMs) })
       status = res.status
       text = await res.text()
     } catch (err) {
