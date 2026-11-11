@@ -5,6 +5,7 @@ import AppLayout from './layout/AppLayout.tsx'
 import DashboardPage from './pages/DashboardPage.tsx'
 import DeployNewPage from './pages/DeployNewPage.tsx'
 import DeployProgressPage from './pages/DeployProgressPage.tsx'
+import DeploySecretsPage from './pages/DeploySecretsPage.tsx'
 import DeploysPage from './pages/DeploysPage.tsx'
 import LoginPage from './pages/LoginPage.tsx'
 import ProfilePage from './pages/ProfilePage.tsx'
@@ -28,6 +29,7 @@ function App() {
             <Route path="/deploy/new" element={<DeployNewPage />} />
             <Route path="/deploys" element={<DeploysPage />} />
             <Route path="/deploys/:id" element={<DeployProgressPage />} />
+            <Route path="/deploys/:id/secrets" element={<DeploySecretsPage />} />
           </Route>
         </Route>
       </Routes>

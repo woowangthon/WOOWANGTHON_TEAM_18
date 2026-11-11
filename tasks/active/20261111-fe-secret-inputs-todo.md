@@ -1,0 +1,32 @@
+# FE secret value input screen (#83)
+
+- **SRS**: UC-04 follow-up (W3, secret values). No FR number checked in `main` yet.
+- **Owner**: TaeTaeJin (FE session)
+- **Branch**: feat/fe-secret-inputs
+
+## Plan
+
+Built against the BE contract in `docs/design/api.md` "비밀값" (on `main` since #119).
+
+- `GET /api/deploys/:id/secrets` reads the state, `PUT` with `{ services: { <svc>: { KEY: value } } }` writes it. The server reports state per service (`in` / `missing`), and a service is sent with all its keys, so the form keeps state per service, not per key.
+- `FE/src/deploy/DeploySecrets.tsx` loads the state, applies the PUT response, re-reads after a failed PUT (services are written one after another, so an earlier one may be in), and shows "빌드 준비됨" from `ready`. A deploy with no secret keys says the step is skipped.
+- `FE/src/deploy/SecretForm.tsx` is the form: one password input per key, done services show only key names, "값 바꾸기" re-opens a done service (all its keys again), `400 INVALID_SECRETS` field paths (`secrets.<svc>.<KEY>`) map to the input, anything else is a generic "not saved" notice that never echoes the server message or the values.
+- Route `/deploys/:id/secrets` (`pages/DeploySecretsPage.tsx`), linked from the saved screen (`DeploySaved.tsx`) and from the progress screen (`DeployProgress.tsx`, shown on every `not_started` deploy because the progress response does not say whether secrets are needed; no new request).
+- `apiFetch` takes an optional method (`'POST' | 'PUT'`) for the PUT.
+
+## Todo
+
+- [x] Input form, per-service state, value reset on success, kept on failure
+- [x] Load state, PUT, midway-failure re-read, "build ready", no-secrets deploy
+- [x] Route and link from the saved screen
+- [x] Tests, including no leak to storage, URL or console
+- [x] Hand mutants on the decision logic (PUT method, re-read, 404, ready, empty, path root, done, grouping)
+- [ ] Mutation testing (#67 not introduced yet)
+- [x] Link from the progress screen to the secrets screen (`not_started`, kept after `NOT_READY`, hidden in the other statuses) — #104 is merged
+- [x] Link from the secrets screen to the progress screen (`배포 시작하러 가기`, inside the "빌드 준비됨" notice, shown only when the server says `ready`)
+- [ ] Screenshots (light and dark, 1440px and 390px) — attached by the user
+- [ ] A real round trip against the BE (the endpoints are on `main`; not run, and the migration must be applied)
+
+## Done when
+
+A user with a saved deploy can enter every `secretKeys` value, sees which services are in, and sees "빌드 준비됨" from the server.

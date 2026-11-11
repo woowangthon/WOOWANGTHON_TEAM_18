@@ -112,6 +112,30 @@ it('body가 있으면 JSON으로 POST한다', async () => {
   expect(new Headers(init?.headers).get('Content-Type')).toBe('application/json')
 })
 
+it('method를 PUT으로 정하면 JSON으로 PUT한다', async () => {
+  fetchMock.mockResolvedValue(json(200, { ok: true }))
+  await apiFetch('/api/deploys/d/secrets', { services: {} }, 'PUT')
+  const init = fetchMock.mock.calls[0]?.[1]
+  expect(init?.method).toBe('PUT')
+  expect(init?.body).toBe(JSON.stringify({ services: {} }))
+  expect(new Headers(init?.headers).get('Content-Type')).toBe('application/json')
+})
+
+it('401 뒤에 다시 보낼 때도 PUT을 그대로 쓴다', async () => {
+  auth.refreshSession.mockResolvedValue({ data: { session: { access_token: 'tok-2' } }, error: null })
+  fetchMock
+    .mockResolvedValueOnce(json(401, { error: { code: 'INVALID_TOKEN', message: 'x' } }))
+    .mockResolvedValueOnce(json(200, { ok: true }))
+  await apiFetch('/api/deploys/d/secrets', { services: {} }, 'PUT')
+  expect(fetchMock.mock.calls.map((call) => call[1]?.method)).toEqual(['PUT', 'PUT'])
+})
+
+it('body가 없으면 method를 정해도 GET이다', async () => {
+  fetchMock.mockResolvedValue(json(200, { ok: true }))
+  await apiFetch('/api/me', undefined, 'PUT')
+  expect(fetchMock.mock.calls[0]?.[1]?.method).toBe('GET')
+})
+
 it('오류 본문의 status, code, message를 ApiError로 던진다', async () => {
   fetchMock.mockResolvedValue(
     json(403, { error: { code: 'REPO_NOT_OWNED', message: 'Not your repo' } }),

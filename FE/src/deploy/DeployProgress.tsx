@@ -212,6 +212,10 @@ function DeployProgress({ deployId }: { deployId: string }) {
       {progress.status === 'not_started' && (
         <div className="flex flex-col gap-2">
           {startFailure && <StartFailureAlert failure={startFailure} />}
+          {/* 진행 상태 응답은 비밀값이 필요한지 알려 주지 않는다. 새 요청 없이 시작 전에는 늘 링크를 두고, NOT_READY 뒤에도 그대로 보인다. */}
+          <Link to={`/deploys/${deployId}/secrets`} className="self-start underline">
+            비밀값 넣으러 가기
+          </Link>
           <Button className="self-start" onClick={() => void start()} disabled={starting} aria-busy={starting}>
             {starting ? '시작하는 중…' : '배포 시작'}
           </Button>
