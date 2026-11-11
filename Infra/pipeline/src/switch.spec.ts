@@ -12,10 +12,8 @@ const OPEN = readFileSync(new URL('__snapshots__/chart-open-b.yaml', import.meta
 
 const ING = `/apis/networking.k8s.io/v1${NS}/ingresses`
 const MW = `/apis/traefik.io/v1alpha1${NS}/middlewares`
-const DEP = `/apis/apps/v1${NS}/deployments`
 const openList = `GET ${ING}?labelSelector=wanggane%2Fingress%3Dopen`
 const mwList = `GET ${MW}`
-const oldDeps = `GET ${DEP}?labelSelector=slot%3Da`
 
 const named = (...names: string[]) => list(...names.map((name) => ({ metadata: { name } })))
 
@@ -32,16 +30,12 @@ function cluster(over: Record<string, Route> = {}) {
     [`PATCH ${MW}/be-strip`]: ok(),
     [openList]: named('open-fe', 'open-be'),
     [mwList]: named('be-strip'),
-    [oldDeps]: named('fe-a', 'be-a', 'ai-a'),
-    [`PATCH ${DEP}/fe-a`]: ok(),
-    [`PATCH ${DEP}/be-a`]: ok(),
-    [`PATCH ${DEP}/ai-a`]: ok(),
     ...over,
   })
 }
 
 describe('runSwitch', () => {
-  it('applies the open manifest, then scales the previous slot to 0 without deleting it', async () => {
+  it('applies the open manifest and leaves the previous slot to the platform server (W7)', async () => {
     const { call, calls } = cluster()
     const report = await runSwitch(input(), 'b', OPEN, call)
     expect(report).toEqual({
@@ -49,12 +43,13 @@ describe('runSwitch', () => {
       slot: 'b',
       applied: ['Ingress/open-fe', 'Ingress/open-be', 'Middleware/be-strip'],
       deleted: [],
-      scaledDown: ['Deployment/fe-a', 'Deployment/be-a', 'Deployment/ai-a'],
       failure: null,
     })
     const patches = calls.filter((c) => c.method === 'PATCH')
-    expect(patches.slice(0, 3).every((c) => c.path.endsWith('?fieldManager=student-app&force=true'))).toBe(true)
-    expect(patches.slice(3)).toEqual(['fe-a', 'be-a', 'ai-a'].map((n) => ({ method: 'PATCH', path: `${DEP}/${n}`, body: '{"spec":{"replicas":0}}' })))
+    expect(patches).toHaveLength(3)
+    expect(patches.every((c) => c.path.endsWith('?fieldManager=student-app&force=true'))).toBe(true)
+    // 이전 슬롯 Deployment는 건드리지 않는다(BE가 live_slot을 바꾼 뒤 줄인다).
+    expect(calls.some((c) => c.path.includes('/deployments'))).toBe(false)
     expect(calls.some((c) => c.method === 'DELETE')).toBe(false)
   })
 
@@ -87,18 +82,7 @@ describe('runSwitch', () => {
     expect(report).toMatchObject({ ok: true, applied: [], deleted: ['Ingress/open-fe', 'Ingress/open-be', 'Middleware/be-strip'] })
   })
 
-  it('on a first deploy has nothing to scale down', async () => {
-    const { call } = cluster({ [openList]: list(), [oldDeps]: list() })
-    const report = await runSwitch(input(), 'b', OPEN, call)
-    expect(report).toMatchObject({ ok: true, scaledDown: [] })
-  })
 
-  it('scales slot b down when switching to a', async () => {
-    const open = OPEN.replace(/name: (fe|be)-b$/gm, 'name: $1-a')
-    const { call } = cluster({ [`GET ${DEP}?labelSelector=slot%3Db`]: named('fe-b'), [`PATCH ${DEP}/fe-b`]: ok() })
-    const report = await runSwitch(input(), 'a', open, call)
-    expect(report).toMatchObject({ ok: true, slot: 'a', scaledDown: ['Deployment/fe-b'] })
-  })
 
   it('finishes an interrupted switch when run again with the same open manifest', async () => {
     // 앞 실행이 open-fe만 바꾸고 끊겼다: open-be는 아직 슬롯 a를 가리킨다. 다시 돌리면 같은 open.yaml을 모두 적용한다.
@@ -121,15 +105,9 @@ describe('runSwitch', () => {
     expect(report).toMatchObject({ ok: false, applied: [], failure: { kind: 'platform', code: 'SWITCH_REFUSED', service: null, message: status.message, detail: status } })
   })
 
-  it('reports a refused scale-down as a platform problem, after the switch itself', async () => {
-    const forbidden = { kind: 'Status', code: 403, message: 'deployments.apps "be-a" is forbidden: User "x" cannot patch resource "deployments"' }
-    const { call } = cluster({ [`PATCH ${DEP}/be-a`]: refused(403, forbidden) })
-    const report = await runSwitch(input(), 'b', OPEN, call)
-    expect(report).toMatchObject({ ok: false, applied: ['Ingress/open-fe', 'Ingress/open-be', 'Middleware/be-strip'], scaledDown: ['Deployment/fe-a'], failure: { code: 'EXECUTOR_FORBIDDEN' } })
-  })
 
   it('keeps a refusal without a readable body', async () => {
-    const { call } = cluster({ [`PATCH ${DEP}/fe-a`]: { status: 500, body: 'oops' } })
+    const { call } = cluster({ [`PATCH ${ING}/open-fe`]: { status: 500, body: 'oops' } })
     const report = await runSwitch(input(), 'b', OPEN, call)
     expect(report.failure).toMatchObject({ kind: 'platform', code: 'SWITCH_REFUSED', message: 'API answered 500', detail: null })
   })

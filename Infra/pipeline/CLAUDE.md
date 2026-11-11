@@ -29,7 +29,7 @@ Run in `Infra/pipeline/` (Node and pnpm as for BE):
 | `src/prepare.ts`, `src/cli/prepare.ts` | Prepare stage (W5): live slot protection, quota check, clear the target slot by label, drop stale test Ingresses |
 | `src/apply.ts`, `src/cli/apply.ts` | Apply stage (W5): server-side apply AI → BE → FE, Ready wait with fast-fail signals, failed Pod and slot events in the report |
 | `src/verify.ts`, `src/cli/verify.ts` | Verify stage (W6): Pod Ready and EndpointSlices per service, then GET via Traefik with Host `<slug>.test.internal` (`TRAEFIK_URL`); result in the MCP `run_verify` shape |
-| `src/switch.ts`, `src/cli/switch.ts` | Switch: apply `open.yaml`, drop stale open Ingresses and Middlewares, scale the previous slot to 0; safe to rerun |
+| `src/switch.ts`, `src/cli/switch.ts` | Switch: apply `open.yaml`, drop stale open Ingresses and Middlewares; safe to rerun. Scaling the previous slot to 0 is the platform server's (W7), not Switch's |
 | `src/failure.ts` | Stage failure shape: `platform` (a code, no agent) or `student` (ticket `raw.k8s`); which k3s refusals are platform problems |
 | `src/kube.ts` | k3s API client (node:https + cluster CA, 10 s per call, `K8S_TIMEOUT` / `K8S_UNREACHABLE`), splitting the chart output into objects, server-side apply |
 | `src/helm.ts`, `src/exec.ts` | Thin runner for `helm` (no shell) |

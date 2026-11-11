@@ -3,8 +3,9 @@ import { clusterFailure, platformRefusal, type StageFailure } from './failure.js
 import { applyDoc, deleteObject, type KubeCall, KubeRefused, listItems, listPath, splitManifest } from './kube.js'
 
 // Switch(전환, 리더 실행기): Render의 open.yaml(공개 주소 → 대상 슬롯)을 적용하고, 이번 배포에 없는 open Ingress와
-// 지금 stripPrefix가 아닌 서비스의 Middleware를 지우고, 이전 슬롯의 Deployment를 0개로 줄인다(지우지 않는다).
-// 같은 open.yaml로 다시 돌려도 결과가 같다(server-side apply · 이미 없는 것 지우기 · 0을 0으로). 그래서 전환이 중간에 끊겨
+// 지금 stripPrefix가 아닌 서비스의 Middleware를 지운다. 이전 슬롯을 0개로 줄이는 일은 하지 않는다: 플랫폼 서버가 전환 성공을 받아
+// live_slot을 바꾼 뒤 줄인다(W7). 여기서 줄이다 실패하면 공개 주소는 이미 새 슬롯인데 Switch가 실패로 보고되어 live_slot이 어긋난다.
+// 같은 open.yaml로 다시 돌려도 결과가 같다(server-side apply · 이미 없는 것 지우기). 그래서 전환이 중간에 끊겨
 // open Ingress의 슬롯이 섞였으면 같은 실행의 Switch를 다시 돌리면 끝난다(deploy-workflow.md §4 "전환이 중간에 끊겼을 때").
 // 실패는 모두 플랫폼 문제다: 대상 슬롯은 W6을 통과했고 학생이 고칠 것이 없다(BE는 switch 실패를 티켓 없이 마감한다).
 
@@ -15,14 +16,11 @@ export interface SwitchReport {
   applied: string[]
   /** 지운 객체 */
   deleted: string[]
-  /** 0개로 줄인 이전 슬롯 Deployment */
-  scaledDown: string[]
   failure: StageFailure | null
 }
 
 const INGRESSES = { base: '/apis/networking.k8s.io/v1', plural: 'ingresses' }
 const MIDDLEWARES = { base: '/apis/traefik.io/v1alpha1', plural: 'middlewares' }
-const DEPLOYMENTS = { base: '/apis/apps/v1', plural: 'deployments' }
 
 const nameOf = (obj: Record<string, unknown>) => {
   const name = (obj.metadata as { name?: unknown } | undefined)?.name
@@ -34,8 +32,7 @@ export async function runSwitch(input: DeployInput, slot: Slot, openManifest: st
   const namespace = `proj-${input.spec.project.slug}`
   const applied: string[] = []
   const deleted: string[] = []
-  const scaledDown: string[] = []
-  const report = (failure: StageFailure | null): SwitchReport => ({ ok: failure === null, slot, applied, deleted, scaledDown, failure })
+  const report = (failure: StageFailure | null): SwitchReport => ({ ok: failure === null, slot, applied, deleted, failure })
   const docs = openManifest === null ? [] : splitManifest(openManifest, namespace)
   for (const doc of docs) {
     if (doc.kind !== 'Ingress' && doc.kind !== 'Middleware') throw new Error(`open manifest has ${doc.kind} ${doc.name}; only Ingress and Middleware switch`)
@@ -63,15 +60,6 @@ export async function runSwitch(input: DeployInput, slot: Slot, openManifest: st
       await deleteObject(call, `${MIDDLEWARES.base}/namespaces/${namespace}/${MIDDLEWARES.plural}/${nameOf(mw)}`)
       deleted.push(`Middleware/${nameOf(mw)}`)
     }
-
-    // 4. 이전 슬롯은 지우지 않고 0개로 줄인다(손으로 되돌릴 때 다시 늘린다). 다음 배포의 Prepare가 그 슬롯을 비운다.
-    const previous: Slot = slot === 'a' ? 'b' : 'a'
-    for (const dep of await listItems(call, listPath(DEPLOYMENTS.base, DEPLOYMENTS.plural, namespace, `slot=${previous}`))) {
-      const path = `${DEPLOYMENTS.base}/namespaces/${namespace}/${DEPLOYMENTS.plural}/${nameOf(dep)}`
-      const answer = await call('PATCH', path, JSON.stringify({ spec: { replicas: 0 } }), 'application/merge-patch+json')
-      if (answer.status < 200 || answer.status >= 300) throw new KubeRefused(answer.status, parseJson(answer.body))
-      scaledDown.push(`Deployment/${nameOf(dep)}`)
-    }
   } catch (err) {
     if (err instanceof KubeRefused) {
       const platform = platformRefusal(err.status)
@@ -80,12 +68,4 @@ export async function runSwitch(input: DeployInput, slot: Slot, openManifest: st
     return report(clusterFailure(err))
   }
   return report(null)
-}
-
-function parseJson(text: string): unknown {
-  try {
-    return JSON.parse(text)
-  } catch {
-    return null
-  }
 }

@@ -19,7 +19,7 @@ async function main([inputPath, slotArg, openPath, outDir]: string[]) {
   const report = await runSwitch(input, slot, open, makeKube(kubeFromEnv(process.env)))
   mkdirSync(outDir, { recursive: true })
   writeFileSync(join(outDir, 'switch-report.json'), `${JSON.stringify(report, null, 2)}\n`)
-  console.log(report.ok ? `switched to slot ${slot} (applied ${report.applied.length}, deleted ${report.deleted.length}, scaled down ${report.scaledDown.length})` : `switch failed: ${describe(report.failure!)}`)
+  console.log(report.ok ? `switched to slot ${slot} (applied ${report.applied.length}, deleted ${report.deleted.length})` : `switch failed: ${describe(report.failure!)}`)
   return report.ok ? 0 : 1
 }
 
