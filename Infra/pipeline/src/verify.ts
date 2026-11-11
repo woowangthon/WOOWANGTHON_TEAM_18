@@ -106,7 +106,7 @@ export function requestPath(svc: Service): { path: string; kind: 'page' | 'healt
   if (kind === 'static') return { path: ingressPath, kind: 'page' }
   if (health.type !== 'http' || health.path === null) return null
   if (stripPrefix) return { path: `${ingressPath.replace(/\/+$/, '')}${health.path}`, kind: 'health' }
-  const under = ingressPath === '/' || health.path === ingressPath || health.path.startsWith(`${ingressPath.replace(/\/+$/, '')}/`)
+  const under = health.path === ingressPath || health.path.startsWith(`${ingressPath.replace(/\/+$/, '')}/`)
   return under ? { path: health.path, kind: 'health' } : null
 }
 

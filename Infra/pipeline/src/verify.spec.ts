@@ -217,6 +217,18 @@ describe('runVerify', () => {
     expect(clock.sleep).toHaveBeenCalledTimes(1)
   })
 
+  it('reads files only from a static page, not from a health answer', async () => {
+    const get = traefik({ '/api/health': { status: 200, body: '<script src="/api/x.js"></script>' } })
+    await runVerify(input(), 'b', cluster().call, get, fakeClock())
+    expect(get.mock.calls.some(([p]) => p === '/api/x.js')).toBe(false)
+  })
+
+  it('puts a Pod that is not Ready in the ticket ahead of a Ready one', async () => {
+    const { call } = cluster({ [pods('fe')]: list(readyPod('fe-b-1'), unreadyPod('fe-b-2')) })
+    const report = await runVerify(input(), 'b', call, traefik({ '/': { status: 500, body: '' } }), fakeClock())
+    expect(report.failure).toMatchObject({ service: 'fe', errorMessage: 'fe: GET / -> 500', raw: { pod: unreadyPod('fe-b-2') } })
+  })
+
   it('fails the API health path (case V2) before the page is asked for', async () => {
     const { call } = cluster()
     const get = traefik({ '/api/health': { status: 404, body: '' } })
