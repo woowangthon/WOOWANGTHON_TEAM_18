@@ -55,7 +55,7 @@ def test_every_ticket_key_is_required(key: str) -> None:
         {"commitSha": SHA + "0"},
         {"commitSha": " " + SHA},
         {"commitSha": SHA.upper()},
-        {"stage": "verify"},
+        {"stage": "switch"},
         {"targetSlot": "c"},
         {"ticketId": ""},
         {"service": ""},
@@ -133,6 +133,7 @@ def test_raw_must_fit_the_stage(
         ("prepare", {"codebuild": None, "k8s": K8S}),
         ("render", {"codebuild": None, "k8s": {**K8S, "status": STATUS}}),
         ("apply", {"codebuild": None, "k8s": K8S}),
+        ("verify", {"codebuild": None, "k8s": K8S}),
     ],
 )
 def test_raw_shapes_that_fit(stage: str, raw: dict[str, Any]) -> None:

@@ -10,53 +10,9 @@ import { join } from 'node:path'
 import { Logger } from '@nestjs/common'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { Env } from '../config/env.js'
+import { type Answer, FakeK8s } from '../../test/fake-k8s.js'
 import { K8sClient } from './k8s.client.js'
 import { SpaceService } from './space.service.js'
-
-// 가짜 쿠버네티스 API. 받은 요청을 적어 두고, 경로마다 정한 답을 준다(없으면 201).
-interface Seen {
-  method: string
-  path: string
-  auth: string | undefined
-  contentType: string | undefined
-  body: unknown
-}
-type Answer = { status: number; body?: unknown } | 'hangup'
-
-class FakeK8s {
-  seen: Seen[] = []
-  answers = new Map<string, Answer>()
-  constructor(readonly server: http.Server | https.Server) {
-    server.on('request', (req: http.IncomingMessage, res: http.ServerResponse) => {
-      const chunks: Buffer[] = []
-      req.on('data', (c: Buffer) => chunks.push(c))
-      req.on('end', () => {
-        this.seen.push({
-          method: req.method ?? '',
-          path: req.url ?? '',
-          auth: req.headers.authorization,
-          contentType: req.headers['content-type'],
-          body: JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown,
-        })
-        const answer = this.answers.get(req.url ?? '') ?? { status: 201 }
-        if (answer === 'hangup') return void req.socket.destroy()
-        res.writeHead(answer.status, { 'Content-Type': 'application/json' })
-        res.end(JSON.stringify(answer.body ?? { kind: 'Status' }))
-      })
-    })
-  }
-  get paths() {
-    return this.seen.map((s) => s.path)
-  }
-  async listen(): Promise<string> {
-    await new Promise<void>((r) => this.server.listen(0, '127.0.0.1', r))
-    const { port } = this.server.address() as AddressInfo
-    return `${this.server instanceof https.Server ? 'https' : 'http'}://127.0.0.1:${port}`
-  }
-  close() {
-    return new Promise<void>((r) => this.server.close(() => r()))
-  }
-}
 
 const TOKEN = 'k8s-secret-token'
 const configOf = (over: Partial<Record<'K8S_API_URL' | 'K8S_TOKEN' | 'K8S_CA_CERT', string | undefined>>) =>

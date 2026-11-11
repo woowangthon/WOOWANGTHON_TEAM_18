@@ -337,6 +337,259 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
 
 오류: `401`(위와 같다), `404 DEPLOY_NOT_FOUND`(없는 `id`이거나 내 것이 아니다. `id`가 UUID 모양이 아니어도 같다. 남의 배포가 있는지 알려 주지 않으려는 것이다), `503 DATABASE_UNAVAILABLE`.
 
+## 비밀값 (이슈 #43 · #82)
+
+확정한 배포 입력(`spec`)의 `runtime.secretKeys`에는 key 이름만 있다. 값은 사용자에게서 받아 플랫폼 서버가 리더의 쿠버네티스 Secret `<서비스 이름>-secrets`(공간 `proj-<slug>`, 서비스마다 하나, 슬롯 A · B가 같이 쓴다. key는 env 이름 그대로)로 쓴다. 값은 DB · 로그 · 오류 응답 · 빌드에 남기지 않고 **응답으로 돌려주지 않는다**. 값이 거치는 곳은 [`auth.md`](auth.md#비밀값)에 있다.
+
+**서비스 하나를 보내면 그 서비스의 Secret 전체를 바꾼다.** 서버는 Secret을 읽을 권한이 없어(쓰기 전용, [cluster.md](cluster.md) §8) 이미 들어간 값과 합칠 수 없다. 그래서 서비스를 보낼 때는 그 서비스의 `secretKeys`를 **모두** 보낸다(일부 key만 보내는 것은 없다). 서비스는 따로따로 보내도 된다: 이미 `in`인 서비스는 다시 보내지 않으면 그대로 있다.
+
+### `PUT /api/deploys/:id/secrets` — 비밀값 넣기 (내 배포만)
+
+요청:
+
+```json
+{
+  "services": {
+    "be": { "DATABASE_URL": "postgres://...", "JWT_SECRET": "..." }
+  }
+}
+```
+
+- `services`: 서비스 이름 → `{ key: 값 }`. 한 개 이상. 서비스마다 그 서비스의 `secretKeys`와 **정확히 같은 key 집합**이어야 한다(빠진 key도, 모르는 key도 안 된다).
+- 값은 문자열이고 **비어 있거나 공백뿐이면 안 된다**(안 채운 것으로 본다). 공백은 다듬지 않는다: 앞뒤 공백이나 줄바꿈이 있는 값은 그대로 들어간다. 값 하나는 8,192자까지이고, 요청 본문은 100KB까지다.
+- `secretKeys`가 비어 있는 서비스를 보내도 key가 없으면(`{}`) 아무 일도 하지 않는다. key가 있으면 `UNKNOWN_KEY`다.
+- 같은 요청을 다시 보내도 된다(덮어쓴다). 공간 `proj-<slug>`가 없으면 서버가 만든다([space.md](space.md)).
+
+응답 `200`: 아래 `GET`과 같은 모양(값은 없다). 서비스가 여럿이면 서비스 하나씩 차례로 쓰므로 중간에 실패하면 앞의 서비스만 들어간 채 오류가 온다. 그때는 `GET`으로 `in`인 서비스를 확인하고 나머지를 다시 보내면 된다.
+
+오류:
+
+- `400 INVALID_SECRETS`: `error.fields`에 `{ path, code }` 목록(`INVALID_SPEC`과 같은 방식, 최대 20개). 경로는 요청 본문의 `services`가 아니라 `secrets.<서비스>.<KEY>`로 쓴다(배포 시작의 `NOT_READY`가 빠진 key를 알리는 모양과 같다). **값은 응답 · 로그에 싣지 않고 key와 서비스 이름만 알린다.**
+
+| `code` | `path` | 뜻 |
+| --- | --- | --- |
+| `REQUIRED` | `secrets` | 서비스가 하나도 없다 |
+| `REQUIRED` | `secrets.<서비스>.<KEY>` | 그 key가 빠졌다, 값이 비었거나 공백뿐이다 |
+| `INVALID_TYPE` | `secrets` · `secrets.<서비스>` · `secrets.<서비스>.<KEY>` | 객체여야 할 곳이 아니거나, 값이 문자열이 아니다 |
+| `OUT_OF_RANGE` | `secrets.<서비스>.<KEY>` | 값이 8,192자를 넘는다 |
+| `UNKNOWN_SERVICE` | `secrets.<서비스>` | 이 배포에 없는 서비스다 |
+| `UNKNOWN_KEY` | `secrets.<서비스>.<KEY>` | 이 서비스의 `secretKeys`에 없는 key다 |
+
+  이름이 서비스 이름 · env 이름 모양이 아니면 그 이름은 응답에 싣지 않고 한 칸 위 경로로 알린다(`secrets` · `secrets.<서비스>`). 한 칸에는 코드가 하나만 남는다.
+- `401 AUTH_REQUIRED` · `401 INVALID_TOKEN`, `404 DEPLOY_NOT_FOUND`(없는 `id` · 남의 배포 · UUID가 아닌 `id`), `413 PAYLOAD_TOO_LARGE`(100KB 초과), `400 BAD_REQUEST`(본문이 JSON 객체가 아니거나 JSON으로 읽을 수 없다 — 파서의 오류 문구는 본문 조각을 담을 수 있어 `Request body is not valid JSON`으로 바꿔 돌려주고, 본문 내용은 응답 · 로그에 싣지 않는다).
+- `503 CLUSTER_UNAVAILABLE`: 리더에 닿지 못했거나, 서버의 클러스터 접속 설정이 없거나, 거절당했다. 사용자 잘못이 아니므로 **입력한 값을 남겨 두고 다시 시도하게 한다.** 쓴 서비스는 `in`이 되지 않는다(이미 `in`이던 서비스를 다시 보내다 실패하면 그 서비스는 `missing`으로 바뀐다. 새 값이 들어갔는지 알 수 없어서이고, 다시 보내면 된다).
+- `503 DATABASE_UNAVAILABLE`: 상태를 저장하지 못했다. 같은 이유로 다시 보내면 된다.
+
+### `GET /api/deploys/:id/secrets` — 비밀값 상태 읽기 · 빌드 준비됨 (내 배포만)
+
+응답 `200` (**값은 없다**. `secretKeys`가 비어 있지 않은 서비스만 나온다):
+
+```json
+{
+  "ready": false,
+  "secretHash": null,
+  "services": [
+    { "name": "be", "status": "in", "keys": [ { "key": "DATABASE_URL", "status": "in" }, { "key": "JWT_SECRET", "status": "in" } ] },
+    { "name": "ai", "status": "missing", "keys": [ { "key": "OPENAI_API_KEY", "status": "missing" } ] }
+  ]
+}
+```
+
+- `status`는 `in`(들어감) 또는 `missing`(빠짐)이다. **서비스 단위로 전부 들어가거나 전부 빠진다**(Secret을 통째로 바꾸므로). 그래서 한 서비스의 key는 모두 서비스와 같은 `status`다. 이 응답은 서버가 쓴 기록이고, 리더의 Secret을 읽어 확인한 것이 아니다(읽기 권한이 없다).
+- `in`이 되려면 지금 `secretKeys`와 **같은 key 집합**으로 쓴 기록이 있어야 한다. 같은 프로젝트(`slug`)의 이전 배포가 이미 넣은 Secret이 key까지 같으면 다시 입력하지 않아도 `in`이다. 새 배포가 key를 바꿨다면 그 서비스는 `missing`이고 전체를 다시 보낸다.
+- `ready`: `secretKeys`가 있는 모든 서비스가 `in`이면 `true`. 그런 서비스가 하나도 없어도 `true`다(비밀값이 필요 없는 배포). **FE의 "빌드 준비됨"은 이 값이다.**
+- `secretHash`: `ready`이고 비밀 env가 하나라도 있으면 `"sha256:" + 64자 hex`, 아니면 `null`. 넣은 값들의 해시이고(아래), W4에 넘기는 `deploy_condition.secretHash`다. 값이 같으면 항상 같은 해시이고, 비밀값이 바뀌면 달라진다.
+- 오류: `401`, `404 DEPLOY_NOT_FOUND`, `503 DATABASE_UNAVAILABLE`(리더는 부르지 않는다).
+
+**`secretHash` 계산**: 서비스마다 `HMAC-SHA256(키 = SECRET_HASH_KEY, "service\n" + JSON.stringify([[key, 값], ...]))`(key 순으로 정렬한 쌍, 값은 UTF-8)을 구하고, 서비스 이름 순으로 `[[이름, 서비스 해시], ...]`에 `"combined\n"`을 붙여 같은 방식으로 한 번 더 해시한다(앞의 용도 글자는 두 해시를 가른다). 결과는 `"sha256:" + 64자 hex`다. 값이 DB에 남지 않도록 서비스마다의 해시만 저장하고 전체 해시는 읽을 때 계산한다. 해시는 **서버만 아는 키(`SECRET_HASH_KEY`, 32자 이상)**로 만든다. 키가 없으면 DB 행이나 파드 주석(`wanggane/secret-hash`)의 해시를 읽은 쪽이 짧은 값을 사전 대입으로 맞춰 볼 수 있어서다. 키를 바꾸면 저장된 해시가 새 키로 만든 것과 달라져 `secretHash`가 바뀐다(다시 보내면 맞춰진다). 같은 프로젝트 · 서비스에 거의 동시에 두 번 보내면 기록된 해시가 리더에 마지막으로 들어간 값과 다를 수 있다(드문 경우이고 다시 보내면 맞춰진다).
+
+**빌드 준비 확인 (서버 안, 이슈 #82)**: 배포 시작(`POST /api/deploys/:id/start`, #44)이 빌드를 요청하기 전에 `DeployReadinessService.prepareIfReady(deployId)`를 부른다. 위 `GET`의 `ready`와 같은 판단이다(서비스마다 `secretKeys`와 같은 key 집합이 `in`일 때만 준비됨). 준비됐으면 `DeployConditionService.prepare(deployId, secretHash)`의 결과(W4에 넘기는 배포 입력)를 돌려주고, 아니면 `409 NOT_READY`와 함께 빠진 key를 `error.fields`에 `{ "path": "secrets.<서비스>.<KEY>", "code": "REQUIRED" }`로 싣는다(이름만, 값 · 해시는 없다. 최대 20개). 없는 `deployId`는 `404 DEPLOY_NOT_FOUND`. 이 함수는 사용자를 모르므로 소유 확인은 부르는 쪽이 먼저 한다. 사용자가 보는 "빌드 준비됨"은 새 엔드포인트 없이 위 `GET`의 `ready` · `services`다.
+
+## 배포 시작 · 진행 상태 (이슈 #44 · #98)
+
+저장한 배포 입력(`deployId`)으로 GoCD 파이프라인을 한 번 실행하고, 파이프라인이 보내는 단계 알림으로 진행 상태를 기록하고, 학생이 그 상태를 읽는다([배포 워크플로우](deploy-workflow.md) §1 · §6). 배포마다 실행 기록 행 하나(`deploy_runs`)가 생긴다.
+
+**상태 값**
+
+`status`: `not_started`(저장만 했고 시작하지 않음) · `running` · `fixing`(문제 해결 중: 문제 티켓을 AI 서버가 받아 처리하는 중) · `needs_user`(사용자 조치 필요) · `succeeded` · `failed`. `not_started`만 실행 기록 행이 없는 상태다. `needs_user`는 AI 에이전트의 해결 결과를 받는 쪽(별도 이슈)이 정하므로 이 이슈의 코드는 내지 않는다. 배포 대기(FR-054)도 슬롯 대기가 생기면 추가하고 지금은 내지 않는다.
+
+`stage`(지금 도는 파이프라인 스테이지): `build` · `prepare` · `render` · `apply` · `verify` · `switch`. 시작 전이거나 끝난 뒤(`succeeded`)는 `null`이다. 실패하면 실패한 스테이지가 남는다.
+
+`steps`(FR-060 순서, 항상 이 8개): `intake`(접수) · `analysis`(분석) · `config`(배포 설정) · `secrets`(비밀값) · `build`(빌드) · `deploy`(배포) · `verify`(동작 확인) · `done`(완료). 각 `state`는 `done` · `active` · `pending` · `failed`.
+
+- 배포 입력이 저장돼 있으면 `intake` · `analysis` · `config`는 `done`이다.
+- `secrets`는 시작 전에는 `active`, 시작한 뒤에는 `done`이다(시작은 비밀값이 준비된 때만 받는다).
+- `stage`가 `build`면 빌드, `prepare` · `render` · `apply`면 배포, `verify`면 동작 확인, `switch`면 완료 단계가 `active`다(그 앞 단계는 `done`, 뒤는 `pending`). `succeeded`면 모두 `done`.
+- `failed`이면 실패한 스테이지가 속한 단계가 `failed`다. `fixing`이면 그 단계가 `active`로 남는다(해결 중).
+
+### `POST /api/deploys/:id/start` — 배포 시작 (소유자만)
+
+요청 본문은 없어도 되고 `{}`(JSON)도 받는다. 응답 `202`: `{ "deployId", "status": "running", "stage": "build", "targetSlot": "a" | "b" }`. GoCD 파이프라인을 실행하고 바로 돌려준다(끝나기를 기다리지 않는다). FE는 이어서 `GET /api/deploys/:id/status`를 다시 읽는다.
+
+서버가 확인하는 것(순서대로): 내 배포인지(`404`) → 준비 상태가 "준비됨"인지(비밀값 · 필수 env, #82) → 배포 입력과 대상 슬롯을 만들고(`prepare`, #93) → 같은 프로젝트(`slug`)의 배포가 진행 중이 아닌지 → 실행 기록 저장 → 파이프라인 실행.
+
+오류:
+- `401` · `404 DEPLOY_NOT_FOUND`: 위와 같다(남의 배포 포함)
+- `409 NOT_READY`: 준비가 안 됐다. 빠진 항목은 다른 검증 오류처럼 `error.fields`에 칸마다 `{ path: "secrets.<service>.<KEY>", code: "REQUIRED" }`로 온다(#82의 `DeployReadinessService`가 낸다)
+- `409 DEPLOY_IN_PROGRESS`: 같은 프로젝트의 다른 배포가 `running` · `fixing`이다. 그 실행이 1시간 넘게 바뀌지 않았으면 끝난 것으로 보고 `failed`(`TIMED_OUT`)로 마감한 뒤 이 배포를 시작한다(알림이 오지 않거나 `fixing`을 풀 해결 결과 처리가 없어도 프로젝트가 영영 막히지 않게)
+- `409 ALREADY_STARTED`: 이 배포는 이미 시작했다(다시 배포하려면 새로 저장한다)
+- `503 PIPELINE_UNAVAILABLE`: GoCD에 닿지 못했거나 거절했다. 실행 기록은 남기지 않으므로 같은 요청을 다시 보내도 된다
+- `503 DATABASE_UNAVAILABLE`
+
+### `GET /api/deploys/:id/status` — 진행 상태 읽기 (소유자만)
+
+응답 `200`:
+
+```json
+{
+  "deployId": "…",
+  "status": "running",
+  "stage": "apply",
+  "steps": [
+    { "key": "intake", "state": "done" },
+    { "key": "analysis", "state": "done" },
+    { "key": "config", "state": "done" },
+    { "key": "secrets", "state": "done" },
+    { "key": "build", "state": "done" },
+    { "key": "deploy", "state": "active" },
+    { "key": "verify", "state": "pending" },
+    { "key": "done", "state": "pending" }
+  ],
+  "failure": null,
+  "url": null,
+  "warnings": [],
+  "updatedAt": "2026-11-11T01:00:00.000Z"
+}
+```
+
+- `failure`: `status`가 `failed`이거나 `fixing` · `needs_user`면 `{ "code", "stage", "service", "message" }`, 아니면 `null`. `message`는 학생에게 그대로 보여 줘도 되는 고정 문장이고 로그 · 원본 · 비밀값을 담지 않는다. `service`는 모르면 `null`.
+- `failure.code`: `BUILD_FAILED` · `DEPLOY_FAILED`(prepare · render · apply) · `VERIFY_FAILED` · `SWITCH_FAILED` · 플랫폼 문제(코드는 열려 있다: `^[A-Za-z][A-Za-z0-9_]{2,63}$`면 받는다. 예: `CODEBUILD_API_ERROR` · `IMAGE_PULL_FAILED` · `LIVE_SLOT_PROTECTED` · `BUILD_WAIT_TIMEOUT` · `NO_IMAGE_DIGEST` · `CHART_RENDER_FAILED` · `SPACE_MISSING` · `K8S_UNREACHABLE`. AI를 부르지 않고 실패로 마감하며, 모르는 코드는 일반 문구로 보여 준다) · `AGENT_UNAVAILABLE`(AI 서버가 티켓을 받지 못함) · `TIMED_OUT`(진행 중인 실행이 1시간 넘게 아무 알림 없이 멈춰 있어 중단함).
+- `url`: `succeeded`면 `https://<slug>.stairnoworks.com`, 아니면 `null`.
+- `warnings`: 보안 검사 경고(#45). 지금은 항상 `[]`. 항목 모양은 `{ "code": string, "message": string, "service": string | null }`로 정한다(`message`는 그대로 보여 줘도 되는 문장).
+- **갱신**: FE가 `running` · `fixing`인 동안 3초마다 다시 읽는다(polling). `succeeded` · `failed` · `needs_user`면 멈춘다. 응답은 작게 유지한다(원본 · 로그 없음). SSE · WebSocket은 MVP 밖이다.
+
+오류: `401`, `404 DEPLOY_NOT_FOUND`(없는 id · 남의 id · UUID가 아닌 id 모두), `503 DATABASE_UNAVAILABLE`.
+
+### `GET /api/deploys` — 내 배포 목록
+
+내 배포를 최신순(`createdAt` 내림차순)으로 돌려준다. 쿼리 `limit`(1~50, 기본 20). 화면이 새로 고침 뒤에도 진행 중인 배포를 찾게 하려는 것이다.
+
+응답 `200`: `{ "deploys": [{ "id", "repo", "slug", "commit", "createdAt", "status", "stage", "url" }] }`. `status` · `stage` · `url`은 위와 같다.
+
+오류: `401`, `400 INVALID_LIMIT`, `503 DATABASE_UNAVAILABLE`.
+
+### 파이프라인 ↔ 플랫폼 서버 (기계용)
+
+> **현식님 확인 필요**: 아래 세 가지는 파이프라인 쪽(Infra/pipeline, GoCD) 담당과 맞추지 않았다. 가장 단순한 쪽으로 정해 적었다.
+
+사용자 로그인 토큰이 아니라 **기계용 비밀 토큰** `PIPELINE_NOTIFY_TOKEN`(`Authorization: Bearer`)으로 인증한다. 서버 env에 있고 파이프라인의 GoCD secure 변수에 같은 값을 넣는다. 설정이 없거나 틀리면 `401 AUTH_REQUIRED`다. 이 토큰 하나로 배포 완료를 위조할 수 있어 서버는 32자 이상만 받는다. 플랫폼 서버는 GoCD를 주기적으로 조회하지 않는다(§6-1).
+
+**1. 실행**: 서버가 `POST {GOCD_URL}/go/api/pipelines/{GOCD_PIPELINE}/schedule`(헤더 `Accept: application/vnd.go.cd.v1+json` · `X-GoCD-Confirm: true` · `Authorization: Bearer {GOCD_TOKEN}`, GoCD access token)을 부른다. 본문은 `{ "environment_variables": [{ "name": "DEPLOY_ID", "value": "<deployId>" }], "update_materials_before_scheduling": true }`이다. 배포 입력 JSON은 싣지 않고 `deployId`만 넘긴다.
+
+**2. 배포 입력 읽기**: 파이프라인의 첫 task가 `deployId`로 입력을 가져가 JSON 파일로 저장한 뒤 그 경로를 빌드 CLI에 준다.
+
+`GET /api/pipeline/deploys/:deployId/input` → `200 { "deployId", "slot": "a" | "b", "input": { "commitSha", "deploy_condition", "spec" } }`. `input`은 시작할 때 만든 배포 입력이다(`deploy_condition.services`는 채워져 있다). 실행 기록이 없으면 `404 DEPLOY_NOT_FOUND`. 비밀값은 담지 않는다(key 이름만 있다).
+
+**3. 알림**: 각 스테이지가 끝날 때 `POST /api/pipeline/notify`.
+
+```json
+{ "deployId": "…", "stage": "build", "result": "passed", "images": { "fe": "ghcr.io/…/student-apps@sha256:…" } }
+```
+
+```json
+{
+  "deployId": "…", "stage": "apply", "result": "failed",
+  "failure": { "code": null, "service": "be", "message": "deployment \"be-b\" exceeded its progress deadline",
+               "raw": { "codebuild": null, "k8s": { "pod": {}, "events": [], "status": null } },
+               "logs": { "from": "…", "to": "…", "lines": [] } }
+}
+```
+
+- `stage`: `build` · `prepare` · `render` · `apply` · `verify` · `switch`.
+- `images`: `build`가 `passed`일 때만 받고 필수다. 빌드한(`run`) 서비스마다 이미지 digest 주소 하나(`reuse` 서비스는 넣지 않는다).
+- `failure.code`: 플랫폼 문제면 그 코드(`^[A-Za-z][A-Za-z0-9_]{2,63}$`, 집합은 열려 있고 파이프라인이 정한다. 알려진 코드는 위 예), 아니면 `null`. 모양이 틀리면 400 INVALID_VALUE. 플랫폼 문제는 AI를 부르지 않고 실패로 마감한다.
+- `failure.raw` · `failure.logs`: 문제 티켓에 담을 원본과 로그([AI 에이전트 설계](AIagent.md) §5의 `raw` · `logs` 모양). 문제 티켓으로 가는 실패(플랫폼 문제가 아니고 stage가 `build` · `prepare` · `render` · `apply` · `verify`)에서만 확인한다. `build`는 `raw.codebuild`(객체 필수, `raw.k8s`는 없음), 그 밖은 `raw.k8s`(필수, `pod`는 객체 또는 `null`, `events`는 객체 배열, `status`는 `render`일 때만 객체 필수이고 나머지는 `null`)이다. `logs`는 있으면 `from` · `to`(시간대가 있는 ISO 8601)와 문자열 배열 `lines`(마지막 200줄만 쓴다), 없으면 빈 구간으로 보낸다. 안 맞으면 `400 BAD_REQUEST`와 `fields`(`failure.raw.k8s.status` 등)로 보낸 쪽에 알린다. 서버가 비밀값처럼 보이는 문자열을 가린 뒤(spec의 `secretKeys`는 key 이름 목록이라 그대로 둔다) 티켓에 넣고, 어디에도 저장하지 않는다.
+- `passed`면 다음 스테이지로 넘어간다. `switch`가 `passed`면 완료다: `live_slot`을 대상 슬롯으로 바꾸고, 새로 빌드한 이미지를 `build_cache`에 기록하고, 공개 주소와 함께 `succeeded`로 기록한다.
+- `failed`면 실패 분류에 따라 `failed`로 마감하거나 문제 티켓을 만들어 AI 서버 `POST /agent/tickets`로 보내고 `fixing`으로 둔다(티켓의 `ticketId` 하나만 보관). **`switch` 실패는 티켓 없이 `failed`로 마감한다**(티켓 `stage`에 없다, [AI 에이전트 설계](AIagent.md) §5).
+- 응답 `200 { "ok": true }`. 이미 끝난 배포(`succeeded` · `failed`)나 지금 스테이지가 아닌 `stage`의 알림은 상태를 바꾸지 않고 `200 { "ok": true, "applied": false }`이다(재전송해도 안전하다).
+- 오류: `401 AUTH_REQUIRED`, `400 BAD_REQUEST`(본문 모양이 다름, `fields` 포함), `404 DEPLOY_NOT_FOUND`(실행 기록 없음), `503 DATABASE_UNAVAILABLE`(파이프라인이 다시 보낸다).
+
+## 운영자 API (이슈 #100, UC-17)
+
+운영자가 Admin Page에서 클러스터 자원과 실행 중인 학생 서비스를 보고, 서비스를 강제로 끈다(FR-083 · FR-084 · FR-094). 플랫폼 서버가 Tailscale로 리더의 쿠버네티스 API에 붙어 읽고 쓴다([`cluster.md`](cluster.md) §8).
+
+**공통**
+
+- 모두 로그인 토큰이 필요하고, `isAdmin`(`app_metadata.role === 'admin'`, [`auth.md`](auth.md))일 때만 받는다. 아니면 `403 ADMIN_REQUIRED`다. 운영자 계정은 하나다.
+- 리더의 쿠버네티스 API에 닿지 못하면(시간 초과 · 인증서 검증 실패 · 설정 없음) `503 CLUSTER_UNREACHABLE`, 닿았는데 서버 계정에 그 일의 권한이 없으면(401 · 403) `503 CLUSTER_FORBIDDEN`이다. 화면은 앞의 것을 "리더 무응답"으로 보여 준다([`cluster.md`](cluster.md) §10). `503 DATABASE_UNAVAILABLE`도 있다.
+- **사용량 수치는 아직 수집하지 않는다.** 서버 계정에 Prometheus 프록시 읽기나 `metrics.k8s.io` 읽기 권한이 없다([`cluster.md`](cluster.md) §8 "남은 것"). 그래서 `usage`는 `null`이고 응답에 `usageStatus: "not_collected"`를 싣는다. 값을 지어내지 않는다. 권한이 오면 `usage`가 `{ "cpuMillicores", "memoryBytes" }`로 채워지고 `usageStatus`가 `"collected"`가 된다.
+
+### `GET /api/admin/nodes` — 노드 현황
+
+응답 `200`:
+
+```json
+{
+  "usageStatus": "not_collected",
+  "nodes": [
+    {
+      "name": "leader",
+      "ready": true,
+      "role": "leader",
+      "cpu": { "capacityMillicores": 4000, "allocatableMillicores": 3900 },
+      "memory": { "capacityBytes": 16777216000, "allocatableBytes": 16000000000 },
+      "disk": { "capacityBytes": 250000000000, "allocatableBytes": 230000000000 },
+      "usage": null
+    }
+  ]
+}
+```
+
+- `role`: 컨트롤 플레인 라벨(`node-role.kubernetes.io/control-plane` · `master`)이 있으면 `leader`, 아니면 `worker`.
+- `ready`: 노드의 `Ready` 조건이 `True`일 때만 `true`.
+- 수량은 모두 정수다(CPU는 밀리코어, 메모리 · 디스크는 바이트). 읽을 수 없는 칸은 `null`.
+
+### `GET /api/admin/projects` — 실행 중인 서비스
+
+DB에 배포가 있는 프로젝트(`slug`)마다 공간 `proj-<slug>`를 읽어 돌려준다(공간 전체를 한 번에 읽는 권한은 서버 계정에 없다). 가장 최근에 배포를 저장한 프로젝트부터. 공간이 아직 없으면 `services`가 `[]`다. 한 프로젝트의 공간만 못 읽으면(권한 · 시간 초과) 나머지는 그대로 돌려주고 그 프로젝트는 `services: []`에 `clusterError`(`CLUSTER_FORBIDDEN` · `CLUSTER_UNREACHABLE`)를 단다. 모든 프로젝트를 못 읽으면 `503`이다. DB에서 한 번에 읽는 배포는 최근 500개라 그보다 오래된 프로젝트는 빠진다(MVP 규모에서는 넘지 않는다).
+
+응답 `200`:
+
+```json
+{
+  "projects": [
+    {
+      "slug": "my-app",
+      "repo": "student/my-app",
+      "ownerId": "11111111-1111-4111-8111-111111111111",
+      "liveSlot": "a",
+      "url": "https://my-app.stairnoworks.com",
+      "lastStop": { "at": "2026-11-11T01:00:00.000Z", "by": "operator@example.com" },
+      "clusterError": null,
+      "services": [
+        {
+          "name": "fe-a", "slot": "a", "replicas": 1, "readyReplicas": 1,
+          "pods": [{ "name": "fe-a-6d9f-xk2", "phase": "Running", "ready": true, "node": "worker-1", "restarts": 0 }]
+        }
+      ]
+    }
+  ]
+}
+```
+
+- `services[]`는 공간의 Deployment 하나(`<서비스>-<슬롯>`)다. `slot`은 이름 끝의 `a` · `b`(아니면 `null`). `replicas`는 원하는 개수(`spec.replicas`), `readyReplicas`는 준비된 개수.
+- `liveSlot` · `url`: 아직 한 번도 전환하지 않았으면 `null`.
+- `lastStop`: 가장 최근 강제 중지 기록(없으면 `null`). 그 뒤에 다시 배포했는지는 `replicas`로 본다.
+- `ownerId`: 소유자의 사용자 id(이메일은 배포 테이블에 없다).
+
+### `POST /api/admin/projects/:slug/stop` — 강제 중지 (FR-094)
+
+공간 `proj-<slug>`의 모든 Deployment를 `replicas: 0`으로 내린다. 공개 주소는 응답할 Pod가 없어 더는 응답하지 않는다(Ingress는 그대로 둔다). 다시 켜기는 MVP 밖이고, 학생이 새로 배포하면 다시 뜬다. 요청 본문은 없다.
+
+응답 `200`: `{ "slug", "scaled": ["fe-a", "be-a"], "failed": [] }`. 하나라도 내렸으면 누가 언제 했는지 기록한다(`admin_actions`. 하나도 못 내렸으면 기록하지 않는다. 기록하지 못하면 `503 DATABASE_UNAVAILABLE`이고, 이미 내린 것은 그대로지만 같은 요청을 다시 보내도 안전하다). 일부만 실패해도 `200`이고 `failed`에 이름이 온다(다시 요청하면 이어서 내린다).
+
+오류: `404 PROJECT_NOT_FOUND`(DB에 없는 slug, slug 모양이 아닌 값 포함), `409 NOT_RUNNING`(공간이 없거나 Deployment가 없다), `403 ADMIN_REQUIRED`, `503 CLUSTER_UNREACHABLE`, `503 CLUSTER_FORBIDDEN`(Deployment scale 권한이 아직 없을 때. 인프라 담당이 [`cluster.md`](cluster.md) §8 "남은 것"의 조치용 권한을 주기 전까지 이 오류다. 서버의 scale 호출은 아직 붙이지 않아 지금은 항상 이 오류다), `503 DATABASE_UNAVAILABLE`.
+
 ## AI 에이전트 (플랫폼 서버 ↔ AI 서버)
 
 배포 실패를 고치는 AI 에이전트와 플랫폼 서버가 주고받는 약속이다. 흐름 · 티켓 · 결과의 뜻은 [AI 에이전트 설계](AIagent.md), 언제 부르는지는 [배포 워크플로우](deploy-workflow.md) §6에 있다. 두 서버는 같은 EC2의 컨테이너이고, 이 API는 **컨테이너 사이 내부 망에서만** 열고 공개 주소(`/api`)에 붙이지 않는다. 로그인 토큰(사용자)이 아니라 아래 서버 사이 토큰을 쓴다.

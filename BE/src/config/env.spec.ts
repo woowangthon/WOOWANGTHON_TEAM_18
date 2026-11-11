@@ -6,6 +6,7 @@ const base = {
   SUPABASE_URL: 'https://abc.supabase.co',
   SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_test',
   SUPABASE_SECRET_KEY: 'sb_secret_test',
+  SECRET_HASH_KEY: 'secret_hash_key_test_0123456789abcdef',
 }
 
 describe('PORT', () => {
@@ -103,6 +104,47 @@ describe('SUPABASE_URL', () => {
   )
 })
 
+describe('pipeline and AI server settings', () => {
+  const names = ['GOCD_URL', 'GOCD_TOKEN', 'GOCD_PIPELINE', 'PIPELINE_NOTIFY_TOKEN', 'AI_SERVER_URL', 'AGENT_API_TOKEN'] as const
+
+  it('are optional: unset or empty means the feature is off', () => {
+    for (const raw of [base, { ...base, ...Object.fromEntries(names.map((n) => [n, ''])) }]) {
+      const env = validateEnv(raw)
+      for (const n of names) expect(env[n]).toBeUndefined()
+    }
+  })
+
+  it('are passed through when valid', () => {
+    const env = validateEnv({
+      ...base,
+      GOCD_URL: 'https://gocd.example.com',
+      GOCD_TOKEN: 'tok',
+      GOCD_PIPELINE: 'student-deploy',
+      PIPELINE_NOTIFY_TOKEN: 'n'.repeat(32),
+      AI_SERVER_URL: 'http://localhost:8000',
+      AGENT_API_TOKEN: 'a',
+    })
+    expect(env).toMatchObject({ GOCD_URL: 'https://gocd.example.com', GOCD_PIPELINE: 'student-deploy', AI_SERVER_URL: 'http://localhost:8000' })
+  })
+
+  it.each([
+    ['GOCD_URL', 'gocd.example.com'],
+    ['GOCD_URL', 'https://gocd.example.com/'],
+    ['AI_SERVER_URL', 'https://ai.example.com/agent'],
+    ['GOCD_TOKEN', 'a b'],
+    ['PIPELINE_NOTIFY_TOKEN', 'a\nb'],
+    ['PIPELINE_NOTIFY_TOKEN', 'x'.repeat(31)],
+    ['AGENT_API_TOKEN', ' x'],
+    ['GOCD_PIPELINE', 'a/b'],
+  ])('rejects %s = "%s" at boot', (name, value) => {
+    expect(() => validateEnv({ ...base, [name]: value })).toThrow(new RegExp(name))
+  })
+
+  it('does not put a bad secret in the error message', () => {
+    expect(() => validateEnv({ ...base, GOCD_TOKEN: 'very secret value' })).toThrow(/^(?!.*very secret)/s)
+  })
+})
+
 describe('K8S_*', () => {
   const pem = '-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----'
   const b64 = (text: string) => Buffer.from(text).toString('base64')
@@ -155,5 +197,25 @@ describe('K8S_*', () => {
     expect(() => validateEnv({ ...base, ...full, ...bad })).toThrow(
       expect.objectContaining({ message: expect.not.stringContaining('leak') as string }),
     )
+  })
+})
+
+describe('SECRET_HASH_KEY', () => {
+  it('is passed through', () => {
+    expect(validateEnv(base).SECRET_HASH_KEY).toBe('secret_hash_key_test_0123456789abcdef')
+  })
+
+  it('accepts exactly 32 characters', () => {
+    expect(validateEnv({ ...base, SECRET_HASH_KEY: 'k'.repeat(32) }).SECRET_HASH_KEY).toBe('k'.repeat(32))
+  })
+
+  it.each([undefined, '', 'k'.repeat(31), 'short'])('stops the boot when it is missing or shorter than 32 characters (%s)', (key) => {
+    expect(() => validateEnv({ ...base, SECRET_HASH_KEY: key })).toThrow(/SECRET_HASH_KEY is required/)
+  })
+
+  it('stops the boot when it has whitespace, without printing the value', () => {
+    const key = `${'k'.repeat(32)} leak`
+    expect(() => validateEnv({ ...base, SECRET_HASH_KEY: key })).toThrow(/SECRET_HASH_KEY/)
+    expect(() => validateEnv({ ...base, SECRET_HASH_KEY: key })).not.toThrow(/kkkk/)
   })
 })

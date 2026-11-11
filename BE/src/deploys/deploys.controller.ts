@@ -1,11 +1,17 @@
-import { Body, Controller, Get, HttpCode, Param, Post } from '@nestjs/common'
+import { Body, Controller, Get, HttpCode, Param, Post, Put, Query } from '@nestjs/common'
 import { AccessToken, CurrentUser } from '../auth/auth.decorators.js'
 import type { AuthUser } from '../auth/auth.decorators.js'
+import { DeployRunsService } from './deploy-runs.service.js'
 import { DeploysService } from './deploys.service.js'
+import { SecretsService } from './secrets.service.js'
 
 @Controller('deploys')
 export class DeploysController {
-  constructor(private readonly deploys: DeploysService) {}
+  constructor(
+    private readonly deploys: DeploysService,
+    private readonly runs: DeployRunsService,
+    private readonly secrets: SecretsService,
+  ) {}
 
   @Post()
   @HttpCode(201)
@@ -17,8 +23,34 @@ export class DeploysController {
     return this.deploys.create(user, accessToken, body?.repoUrl, body?.commit, body?.spec)
   }
 
+  @Get()
+  list(@CurrentUser() user: AuthUser, @Query('limit') limit: unknown) {
+    return this.runs.list(user, limit)
+  }
+
+  @Post(':id/start')
+  @HttpCode(202)
+  start(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.runs.start(user, id)
+  }
+
+  @Get(':id/status')
+  status(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.runs.status(user, id)
+  }
+
   @Get(':id')
   get(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.deploys.get(user, id)
+  }
+
+  @Put(':id/secrets')
+  putSecrets(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() body: unknown) {
+    return this.secrets.put(user, id, body)
+  }
+
+  @Get(':id/secrets')
+  getSecrets(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.secrets.status(user, id)
   }
 }

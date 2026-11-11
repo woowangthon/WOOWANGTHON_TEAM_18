@@ -45,7 +45,7 @@
 | 터널 만들기 | Cloudflare 대시보드 Zero Trust → Networks → Tunnels에서 터널을 만들고, Public Hostname `api.stairnoworks.com` → `http://localhost:3000`을 더한다. 이때 `api` CNAME이 자동으로 생긴다(같은 이름의 A 레코드가 있으면 먼저 지운다). 터널 토큰은 SSM `/wcp/tunnel/TUNNEL_TOKEN`(SecureString)에 넣는다. `/wcp/be` 밖이라 BE 설정에 섞이지 않는다 |
 | 터널 띄우기 | EC2에서 [`Infra/aws/start-tunnel.sh`](../../Infra/aws/start-tunnel.sh)를 한 번 돌린다(토큰이나 cloudflared 버전을 바꿀 때 다시) |
 | 보안 그룹 | 들어오는 규칙 없음. SSH는 Tailscale로 한다. GoCD 포트도 인터넷에 열지 않는다(리더 실행기는 Tailscale로 붙는다, [클러스터 §8](cluster.md#8-플랫폼-서버와-배포-실행기의-권한-서버-계정-1차-구현됨-2026-11-10-나머지-예정)) |
-| 설정값 | SSM Parameter Store `/wcp/be/<변수 이름>`(SecureString). 이름은 [`BE/.env.example`](../../BE/.env.example)과 같다. `CORS_ORIGINS=https://app.stairnoworks.com`. 값은 한 줄이어야 한다(여러 줄 값은 스크립트가 거절한다. PEM은 base64로) |
+| 설정값 | SSM Parameter Store `/wcp/be/<변수 이름>`(SecureString). 이름은 [`BE/.env.example`](../../BE/.env.example)과 같다. `CORS_ORIGINS=https://app.stairnoworks.com`. 값은 한 줄이어야 한다(여러 줄 값은 스크립트가 거절한다. PEM은 base64로). **필수 `/wcp/be/SECRET_HASH_KEY`**(비밀값 해시의 HMAC 키, 32자 이상, `openssl rand -hex 32`)가 없으면 BE가 부팅하지 않는다 |
 | 권한 | 인스턴스 역할에 `/wcp/be` 경로의 `ssm:GetParametersByPath`, `/wcp/tunnel/TUNNEL_TOKEN`의 `ssm:GetParameter`, `kms:Decrypt`만 |
 | 올리기 | EC2에서 [`Infra/aws/deploy-be.sh`](../../Infra/aws/deploy-be.sh) `[git-ref]`. 새 컨테이너가 `/api/health`에 답하지 않으면 이전 컨테이너(이미지 · 설정 그대로)를 다시 띄운다. 터널은 그대로 두고 BE만 바뀐다 |
 

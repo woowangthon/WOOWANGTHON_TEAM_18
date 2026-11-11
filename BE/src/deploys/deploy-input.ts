@@ -71,7 +71,7 @@ const MAX_LINKS = 30
 
 export const SLUG = /^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/
 const REPO = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/
-const SERVICE_NAME = /^[a-z]([a-z0-9-]{0,28}[a-z0-9])?$/
+export const SERVICE_NAME = /^[a-z]([a-z0-9-]{0,28}[a-z0-9])?$/
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/
 const NODE_VERSION = /^\d{1,2}(\.\d{1,3}){0,2}$/
 // 공개 경로는 `/` 하나이거나 `/api` · `/api/v1`처럼 끝 슬래시 없는 경로 조각이다.
@@ -83,7 +83,7 @@ const FRAMEWORKS = ['vite-react', 'nextjs', 'nest']
 const HEALTH_TYPES = ['http', 'tcp']
 
 // env 이름. `__proto__`는 모양은 맞지만 받지 않는다(받는 쪽이 객체에 그대로 합치면 prototype이 오염된다).
-const isEnvName = (s: string) => ENV_NAME.test(s) && s !== '__proto__'
+export const isEnvName = (s: string) => ENV_NAME.test(s) && s !== '__proto__'
 
 type Obj = Record<string, unknown>
 
