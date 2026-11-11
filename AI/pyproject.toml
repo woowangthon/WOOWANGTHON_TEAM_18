@@ -5,12 +5,14 @@ description = "AI 서버: 배포 실패를 고치는 PydanticAI 에이전트 (Fa
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "fastapi>=0.162.3",
+    "pydantic-ai-slim[mcp,openai]>=2.66.0",
     "pydantic-settings>=2.16.2",
     "uvicorn[standard]>=0.54.0",
 ]
 
 [dependency-groups]
 dev = [
+    "fastmcp-slim[server]>=4.1.7",
     "httpx2>=2.16.0",
     "mypy>=2.4.1",
     "pytest>=9.2.0",
