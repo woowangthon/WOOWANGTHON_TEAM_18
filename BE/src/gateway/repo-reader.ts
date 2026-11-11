@@ -86,7 +86,8 @@ export class RepoReader {
 /** 응답 본문을 `maxBytes`까지만 읽고 나머지는 받지 않는다(큰 파일 전체를 메모리에 올리지 않게). */
 async function readUpTo(res: Response, maxBytes: number): Promise<Buffer> {
   if (!res.body) return Buffer.alloc(0)
-  const reader = res.body.getReader()
+  // 응답 본문 타입이 ReadableStream<any>로 풀리므로 바이트 스트림으로 적는다.
+  const reader = (res.body as ReadableStream<Uint8Array>).getReader()
   const chunks: Buffer[] = []
   let size = 0
   while (size < maxBytes) {
