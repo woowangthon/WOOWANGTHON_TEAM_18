@@ -403,6 +403,8 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
 
 **`secretHash` 계산**: 서비스마다 `sha256(JSON.stringify([[key, 값], ...]))`(key 순으로 정렬한 쌍, 값은 UTF-8)을 구하고, 서비스 이름 순으로 `[[이름, 서비스 해시], ...]`를 같은 방식으로 한 번 더 해시한다. 값이 DB에 남지 않도록 서비스마다의 해시만 저장하고 전체 해시는 읽을 때 계산한다. 이 해시는 저장된 행을 읽는 쪽(서비스 DB 접근 권한이 있는 곳)에서 값을 추측하는 데 쓰일 수 있어(값이 짧고 흔하면 사전 대입), 그 테이블은 서버 키만 읽는다([auth.md](auth.md#비밀값)). 같은 프로젝트 · 서비스에 거의 동시에 두 번 보내면 기록된 해시가 리더에 마지막으로 들어간 값과 다를 수 있다(드문 경우이고 다시 보내면 맞춰진다).
 
+**빌드 준비 확인 (서버 안, 이슈 #82)**: 배포 시작(`POST /api/deploys/:id/start`, #44)이 빌드를 요청하기 전에 `DeployReadinessService.prepareIfReady(deployId)`를 부른다. 위 `GET`의 `ready`와 같은 판단이다(서비스마다 `secretKeys`와 같은 key 집합이 `in`일 때만 준비됨). 준비됐으면 `DeployConditionService.prepare(deployId, secretHash)`의 결과(W4에 넘기는 배포 입력)를 돌려주고, 아니면 `409 NOT_READY`와 함께 빠진 key를 `error.fields`에 `{ "path": "secrets.<서비스>.<KEY>", "code": "REQUIRED" }`로 싣는다(이름만, 값 · 해시는 없다. 최대 20개). 없는 `deployId`는 `404 DEPLOY_NOT_FOUND`. 이 함수는 사용자를 모르므로 소유 확인은 부르는 쪽이 먼저 한다. 사용자가 보는 "빌드 준비됨"은 새 엔드포인트 없이 위 `GET`의 `ready` · `services`다.
+
 ## AI 에이전트 (플랫폼 서버 ↔ AI 서버)
 
 배포 실패를 고치는 AI 에이전트와 플랫폼 서버가 주고받는 약속이다. 흐름 · 티켓 · 결과의 뜻은 [AI 에이전트 설계](AIagent.md), 언제 부르는지는 [배포 워크플로우](deploy-workflow.md) §6에 있다. 두 서버는 같은 EC2의 컨테이너이고, 이 API는 **컨테이너 사이 내부 망에서만** 열고 공개 주소(`/api`)에 붙이지 않는다. 로그인 토큰(사용자)이 아니라 아래 서버 사이 토큰을 쓴다.

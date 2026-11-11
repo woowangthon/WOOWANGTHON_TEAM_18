@@ -10,7 +10,7 @@ W3: the server takes the values of `runtime.secretKeys` from the user and hands 
 
 State: Supabase `deploy_secrets` (slug × service: key names, `writing` / `in`, sha256 of the key/value pairs). Never the values. `writing` is recorded before the cluster call and `in` after it, so no failure leaves `in`. `ready` and `secretHash` are computed on read from those rows; the same GET serves the "build ready" read of #82. `PUT` / `GET /api/deploys/:id/secrets`, owner only.
 
-Left for the #82 PR: `DeployReadinessService.prepareIfReady(deployId)` (calls `DeployConditionService.prepare` with the hash only when ready, else 409 `NOT_READY` with `fields`), agreed with the #44 worker.
+#82 (same branch family, stacked): `DeployReadinessService.prepareIfReady(deployId)` (calls `DeployConditionService.prepare` with the hash only when ready, else 409 `NOT_READY` with `fields`), agreed with the #44 worker. The user-facing "build ready" read is the GET above, no new endpoint.
 
 ## Todo
 
