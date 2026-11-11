@@ -13,7 +13,8 @@ type CheckState =
   | { status: 'done'; dockerfiles: string[]; truncated: boolean }
 
 // 레포 확인(#57)을 통과한 주소의 Dockerfile 경로를 찾는다. 없을 때 무엇을 할지는 아직 정해지지 않아(#25) 사실만 보인다.
-function DockerfileCheck({ repoUrl }: { repoUrl: string }) {
+// 찾은 목록은 onDone으로도 알려, 배포 설정 화면이 Dockerfile 경로를 고르는 데 쓴다.
+function DockerfileCheck({ repoUrl, onDone }: { repoUrl: string; onDone?: (dockerfiles: string[]) => void }) {
   const [state, setState] = useState<CheckState>({ status: 'loading' })
   const [attempt, setAttempt] = useState(0)
 
@@ -21,7 +22,9 @@ function DockerfileCheck({ repoUrl }: { repoUrl: string }) {
     let ignore = false
     apiFetch<DockerfilesResult>('/api/repos/dockerfiles', { repoUrl })
       .then(({ dockerfiles, truncated }) => {
-        if (!ignore) setState({ status: 'done', dockerfiles, truncated })
+        if (ignore) return
+        setState({ status: 'done', dockerfiles, truncated })
+        onDone?.(dockerfiles)
       })
       .catch((error: unknown) => {
         // 실패를 "Dockerfile 없음"으로 바꾸지 않는다(F-1). 로그인 만료는 apiFetch가 로그아웃시킨다.
@@ -30,6 +33,8 @@ function DockerfileCheck({ repoUrl }: { repoUrl: string }) {
     return () => {
       ignore = true
     }
+  // onDone은 렌더마다 새 함수일 수 있어 의존성에 넣지 않는다(넣으면 매 렌더에 다시 부른다).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [repoUrl, attempt])
 
   return (

@@ -5,7 +5,7 @@
 
 ## 범위
 
-FE가 화면을 만들기 전에 쓸 **토큰과 기본 컴포넌트 8종**(`Button`, `Input`, `Field`, `Alert`, `Badge`, `Table`, `Card`, `LogBlock`)을 정한다. `Field`와 `Alert`는 로그인 화면(#51)에서 추가했다. 코드는 `FE/src/styles/`, `FE/src/components/ui/`에 있다.
+FE가 화면을 만들기 전에 쓸 **토큰과 기본 컴포넌트 9종**(`Button`, `Input`, `Field`, `Alert`, `Badge`, `Table`, `Card`, `LogBlock`, `SelectField`)을 정한다. `Field`와 `Alert`는 로그인 화면(#51)에서, `SelectField`(`<select>`에 보이는 라벨 · 오류 문구 · aria 연결을 붙인 것. `Field`와 같은 규칙)는 배포 설정 화면(#71)에서 추가했다. 코드는 `FE/src/styles/`, `FE/src/components/ui/`에 있다.
 
 - 하는 것: 흑백 미니멀(Vercel식), 정보 밀도 높게, 한글과 영문이 한 줄에 섞이는 화면(`nginx:1.27`, `Running 2/3`)을 기준으로 한다. 다크 모드는 OS 설정(`prefers-color-scheme`)을 따른다.
 - 하지 않는 것: 수동 다크 모드 토글, 라우터, 실제 화면, 위 8종 밖의 컴포넌트, 변종 라이브러리, 기성 컴포넌트 키트(shadcn/ui 등).

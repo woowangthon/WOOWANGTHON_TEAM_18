@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { expect, it } from 'vitest'
 import { Alert } from './Alert.tsx'
 import { Badge } from './Badge.tsx'
@@ -6,6 +6,7 @@ import { Button } from './Button.tsx'
 import { Field } from './Field.tsx'
 import { Input } from './Input.tsx'
 import { LogBlock } from './LogBlock.tsx'
+import { SelectField } from './Select.tsx'
 import { Table, Td, Th, THead } from './Table.tsx'
 
 const renderTable = () =>
@@ -213,4 +214,43 @@ it('LogBlock colors level words in mixed string children and leaves elements unt
   expect(screen.getByRole('region', { name: 'logs' }).textContent).toBe(
     '09:12 ERROR pulled WARN',
   )
+})
+
+it('SelectField names its select with the visible label and lists the options', () => {
+  render(<SelectField label="역할" value="be" onChange={() => undefined} options={[{ value: '', label: '골라 주세요' }, { value: 'be', label: 'be' }]} />)
+  const select = screen.getByRole<HTMLSelectElement>('combobox', { name: '역할' })
+  expect(select.value).toBe('be')
+  expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual(['골라 주세요', 'be'])
+  expect(select.getAttribute('aria-invalid')).toBeNull()
+})
+
+it('SelectField with an error marks the select invalid and ties the message to it', () => {
+  render(<SelectField label="역할" value="" onChange={() => undefined} options={[{ value: '', label: '골라 주세요' }]} error="입력해 주세요" />)
+  const select = screen.getByRole('combobox', { name: '역할' })
+  expect(select.getAttribute('aria-invalid')).toBe('true')
+  const message = screen.getByRole('alert')
+  expect(select.getAttribute('aria-describedby')).toBe(message.id)
+  expect(message.textContent).toBe('입력해 주세요')
+})
+
+it('Field and SelectField tie the hint to the control, after the error id when both exist', () => {
+  render(
+    <>
+      <Field label="이름" hint="소문자로 시작" error="입력해 주세요" />
+      <SelectField label="역할" value="" onChange={() => undefined} options={[{ value: '', label: '골라 주세요' }]} hint="하나만 고를 수 있어요" />
+    </>,
+  )
+  const input = screen.getByRole('textbox', { name: '이름' })
+  const [errorId, hintId] = (input.getAttribute('aria-describedby') ?? '').split(' ')
+  expect(document.getElementById(errorId ?? '')?.textContent).toBe('입력해 주세요')
+  expect(document.getElementById(hintId ?? '')?.textContent).toBe('소문자로 시작')
+  const select = screen.getByRole('combobox', { name: '역할' })
+  expect(document.getElementById(select.getAttribute('aria-describedby') ?? '')?.textContent).toBe('하나만 고를 수 있어요')
+})
+
+it('SelectField passes the chosen value, not the event', () => {
+  const seen: string[] = []
+  render(<SelectField label="역할" value="" onChange={(value) => seen.push(value)} options={[{ value: '', label: '골라 주세요' }, { value: 'be', label: 'be' }]} />)
+  fireEvent.change(screen.getByRole('combobox', { name: '역할' }), { target: { value: 'be' } })
+  expect(seen).toEqual(['be'])
 })

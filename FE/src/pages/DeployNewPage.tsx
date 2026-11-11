@@ -4,6 +4,8 @@ import { Badge } from '../components/ui/Badge.tsx'
 import { Button } from '../components/ui/Button.tsx'
 import { Card } from '../components/ui/Card.tsx'
 import { Field } from '../components/ui/Field.tsx'
+import CommitRef from '../deploy/CommitRef.tsx'
+import DeployConfirm from '../deploy/DeployConfirm.tsx'
 import { ApiError, apiFetch } from '../lib/api.ts'
 import DockerfileCheck from './DockerfileCheck.tsx'
 import RepoFailureAlert from './RepoFailureAlert.tsx'
@@ -17,12 +19,16 @@ function DeployNewPage() {
   const [urlError, setUrlError] = useState<string | undefined>()
   const [failure, setFailure] = useState<Failure | null>(null)
   const [checking, setChecking] = useState(false)
-  // 통과한 레포. 입력을 고치면 결과와 오류를 지워서 이전 주소의 것이 새 주소처럼 보이지 않게 한다.
-  const [checked, setChecked] = useState<{ repo: string; repoUrl: string } | null>(null)
+  // 통과한 레포와 접수 때 확정한 commit(빈 레포는 null). 입력을 고치면 결과와 오류를 지워서 이전 주소의 것이 새 주소처럼 보이지 않게 한다.
+  // dockerfiles는 Dockerfile 확인이 끝난 뒤에 채워진다. 배포 설정 화면이 이 목록으로 폼을 채운다.
+  const [checked, setChecked] = useState<{
+    repo: string
+    repoUrl: string
+    commit: string | null
+    dockerfiles?: string[]
+  } | null>(null)
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const trimmed = repoUrl.trim()
+  async function check(trimmed: string) {
     setChecked(null)
     setFailure(null)
     setUrlError(undefined)
@@ -32,8 +38,11 @@ function DeployNewPage() {
     }
     setChecking(true)
     try {
-      const { repo } = await apiFetch<{ repo: string }>('/api/repos/check', { repoUrl: trimmed })
-      setChecked({ repo, repoUrl: trimmed })
+      // commit은 줄이거나 다듬지 않고 그대로 들고 있다가 이후 단계에 넘긴다.
+      const { repo, commit } = await apiFetch<{ repo: string; commit: string | null }>('/api/repos/check', {
+        repoUrl: trimmed,
+      })
+      setChecked({ repo, repoUrl: trimmed, commit })
     } catch (error) {
       if (error instanceof ApiError && error.code === 'INVALID_REPO_URL') setUrlError(URL_FORMAT_HINT)
       else setFailure(failureOf(error))
@@ -42,15 +51,18 @@ function DeployNewPage() {
     }
   }
 
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    void check(repoUrl.trim())
+  }
+
   return (
     <>
       <h1 className="text-xl">새 배포 요청</h1>
       <Card className="flex flex-col gap-4">
         <form
           noValidate
-          onSubmit={(event) => {
-            void handleSubmit(event)
-          }}
+          onSubmit={handleSubmit}
           className="flex flex-col gap-4"
         >
           <div className="flex flex-col gap-1">
@@ -89,6 +101,10 @@ function DeployNewPage() {
               <li className="flex items-center gap-2">
                 <Badge variant="ok">통과</Badge> 내 계정의 레포예요
               </li>
+              <li className="flex flex-wrap items-center gap-2">
+                <Badge variant="ok">확정</Badge> 배포할 commit
+                {checked.commit ? <CommitRef commit={checked.commit} /> : <span>없음 (빈 레포)</span>}
+              </li>
             </ul>
           </div>
         )}
@@ -96,7 +112,28 @@ function DeployNewPage() {
 
       {checked && (
         <Card>
-          <DockerfileCheck key={checked.repoUrl} repoUrl={checked.repoUrl} />
+          <DockerfileCheck
+            key={checked.repoUrl}
+            repoUrl={checked.repoUrl}
+            onDone={(dockerfiles) => {
+              setChecked((current) => (current?.repoUrl === checked.repoUrl ? { ...current, dockerfiles } : current))
+            }}
+          />
+        </Card>
+      )}
+
+      {checked?.dockerfiles && (
+        <Card>
+          <DeployConfirm
+            key={`${checked.repoUrl}@${checked.commit ?? ''}`}
+            repoUrl={checked.repoUrl}
+            repo={checked.repo}
+            commit={checked.commit}
+            dockerfiles={checked.dockerfiles}
+            onRecheck={() => {
+              void check(checked.repoUrl)
+            }}
+          />
         </Card>
       )}
     </>

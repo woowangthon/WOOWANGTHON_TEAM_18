@@ -94,6 +94,35 @@ it('오류 본문의 status, code, message를 ApiError로 던진다', async () =
   expect(auth.signOut).not.toHaveBeenCalled()
 })
 
+it('INVALID_SPEC의 fields를 칸마다의 { path, code }로 싣고, 모양이 틀린 항목은 버린다', async () => {
+  fetchMock.mockResolvedValue(
+    json(400, {
+      error: {
+        code: 'INVALID_SPEC',
+        message: 'spec has invalid fields',
+        fields: [
+          { path: 'project.slug', code: 'RESERVED' },
+          { path: 'services[0].name' },
+          'x',
+          { path: 'services[1].runtime.port', code: 'OUT_OF_RANGE' },
+        ],
+      },
+    }),
+  )
+  const error = await failure(apiFetch('/api/deploys', {}))
+  expect(error.code).toBe('INVALID_SPEC')
+  expect(error.fields).toEqual([
+    { path: 'project.slug', code: 'RESERVED' },
+    { path: 'services[1].runtime.port', code: 'OUT_OF_RANGE' },
+  ])
+})
+
+it('fields가 없는 오류는 빈 목록이다', async () => {
+  fetchMock.mockResolvedValue(json(409, { error: { code: 'SLUG_TAKEN', message: 'x' } }))
+  const error = await failure(apiFetch('/api/deploys', {}))
+  expect(error.fields).toEqual([])
+})
+
 const sessionError = (code = 'INVALID_TOKEN') =>
   json(401, { error: { code, message: 'no' } })
 const refreshed = (token: string) =>

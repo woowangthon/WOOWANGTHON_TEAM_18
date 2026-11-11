@@ -1,16 +1,27 @@
 import { isAuthRetryableFetchError } from '@supabase/supabase-js'
 import { supabase } from './supabase.ts'
 
+// 400 INVALID_SPEC이 칸마다 알려 주는 오류. `code`로 구분한다(message 문장이 아니다).
+export type FieldIssue = { path: string; code: string }
+
 // BE는 오류를 { error: { code, message } }로 준다(docs/design/api.md). 화면은 message가 아니라 code로 구분한다.
 export class ApiError extends Error {
   readonly status: number
   readonly code: string
+  // 400 INVALID_SPEC만 칸마다의 오류를 싣는다. 다른 오류에는 없다.
+  readonly fields: FieldIssue[]
 
-  constructor(status: number, code: string, message: string) {
+  constructor(
+    status: number,
+    code: string,
+    message: string,
+    fields: FieldIssue[] = [],
+  ) {
     super(message)
     this.name = 'ApiError'
     this.status = status
     this.code = code
+    this.fields = fields
   }
 }
 
@@ -25,16 +36,24 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 async function readError(response: Response): Promise<ApiError> {
   let code = `HTTP_${response.status}`
   let message = response.statusText
+  const fields: FieldIssue[] = []
   try {
     const body: unknown = await response.json()
     if (isRecord(body) && isRecord(body.error)) {
       if (typeof body.error.code === 'string') code = body.error.code
       if (typeof body.error.message === 'string') message = body.error.message
+      if (Array.isArray(body.error.fields)) {
+        for (const field of body.error.fields as unknown[]) {
+          if (isRecord(field) && typeof field.path === 'string' && typeof field.code === 'string') {
+            fields.push({ path: field.path, code: field.code })
+          }
+        }
+      }
     }
   } catch {
     // 본문이 JSON이 아니면 HTTP 상태로 만든 코드를 그대로 쓴다.
   }
-  return new ApiError(response.status, code, message)
+  return new ApiError(response.status, code, message, fields)
 }
 
 // 요청 한 번. 네트워크 자체가 실패하면 ApiError로 바꿔 던진다.
