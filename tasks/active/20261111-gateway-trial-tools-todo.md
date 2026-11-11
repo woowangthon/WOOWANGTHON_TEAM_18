@@ -26,6 +26,6 @@ Contract: `docs/design/api.md` "파이프라인 ↔ 플랫폼 서버" 4 (merged 
 
 ## Done when
 
-- [ ] `pnpm verify` in `BE/` passes — PASS from the test session
+- [x] `pnpm verify` in `BE/` passes — PASS from the test session (8b74f66: 35 files, 1392 passed, 1 skipped)
 - [x] An SDK MCP client over real HTTP runs run_deploy → the fake pipeline reads the patched all-reuse input and posts a result → the tool answers it masked; run_verify reads the last deploy input; refusals happen before anything is scheduled
-- [ ] mutation testing — not run (checks run only in the test session); said in the PR
+- [x] mutation testing — 5 hand mutants run by the test session, all caught (no tool for BE yet)
