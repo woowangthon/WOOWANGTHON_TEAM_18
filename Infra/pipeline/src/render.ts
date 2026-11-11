@@ -128,6 +128,7 @@ export interface QuotaIssue {
 /**
  * 두 슬롯이 같이 뜰 때의 합계(서비스 합 × 2)가 프로젝트 ResourceQuota 안인지 본다. 확인 중에는 live 슬롯과 대상 슬롯의 Pod가 같은 쿼터를 나눠 쓴다.
  * 넘는 항목마다 하나씩 알린다. 빈 목록이면 통과다.
+ * Prepare(F04)가 대상 슬롯을 비우기 전에 부른다. 실패는 티켓 stage `prepare`(AIagent.md case P2)로, Status 없이 문장으로 알린다.
  */
 export function checkQuota(input: DeployInput): QuotaIssue[] {
   const issues: QuotaIssue[] = []
@@ -158,7 +159,6 @@ export interface RenderTools {
 }
 
 export type RenderFailure =
-  | { kind: 'quota'; issues: QuotaIssue[] }
   | { kind: 'helm'; message: string }
   | { kind: 'dry-run'; part: Part; status: unknown; errorMessage: string }
   | { kind: 'cluster'; code: KubeError['code']; message: string }
@@ -172,15 +172,13 @@ export interface RenderReport {
 }
 
 /**
- * 쿼터 합계 × 2 검사 → values → `helm template` → k3s API server-side apply dry-run(객체마다). 앞에서 걸리면 뒤는 하지 않는다.
- * 실패 종류: quota(spec의 resources를 고치면 된다), helm(차트 렌더 실패: 플랫폼 문제), dry-run(k3s가 거절했다. Status 원본을 그대로 남긴다),
+ * values → `helm template` → k3s API server-side apply dry-run(객체마다). 앞에서 걸리면 뒤는 하지 않는다.
+ * 쿼터 합계 검사(`checkQuota`)는 여기서 하지 않는다: 그 실패는 k3s Status가 없는 prepare 단계 문제다(AIagent.md case P2, 티켓 stage `prepare`).
+ * 실패 종류: helm(차트 렌더 실패: 플랫폼 문제), dry-run(k3s가 거절했다. Status 원본을 그대로 남긴다: 티켓 `raw.k8s.status`),
  * cluster(k3s API에 닿지 못했다: 플랫폼 문제).
  */
 export async function runRender(input: DeployInput, slot: Slot, domain: string, tools: RenderTools): Promise<RenderReport> {
   const fail = (failure: RenderFailure, manifests: RenderReport['manifests'] = { slot: null, open: null }): RenderReport => ({ ok: false, slot, manifests, failure })
-  const issues = checkQuota(input)
-  if (issues.length > 0) return fail({ kind: 'quota', issues })
-
   const namespace = `proj-${input.spec.project.slug}`
   const manifests: RenderReport['manifests'] = { slot: null, open: null }
   try {

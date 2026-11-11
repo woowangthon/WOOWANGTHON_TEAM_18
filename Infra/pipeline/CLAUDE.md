@@ -24,7 +24,8 @@ Run in `Infra/pipeline/` (Node and pnpm as for BE):
 | `src/build.ts`, `src/cli/build.ts` | Build stage (W4): StartBuild per `run` service, BatchGetBuilds polling, digest, failure report |
 | `../build/buildspec.yml`, `../build/build.sh` | The one buildspec every student build uses (passed inline) and the script it runs |
 | `../build/dockerfiles/` | Default Dockerfiles per framework and `versions.json` (sha256 + version, checked by a test) |
-| `src/render.ts`, `src/cli/render.ts` | Render stage (W5): quota × 2 check, chart values, `helm template` (slot part + open part), server-side apply dry-run per object |
+| `src/render.ts`, `src/cli/render.ts` | Render stage (W5): chart values, `helm template` (slot part + open part), server-side apply dry-run per object |
+| `checkQuota` in `src/render.ts` | Quota × 2 check; Prepare (F04) calls it, a failure is ticket stage `prepare` (case P2), not render |
 | `src/kube.ts` | k3s API client (node:https + cluster CA, 10 s per call, `K8S_TIMEOUT` / `K8S_UNREACHABLE`), splitting the chart output into objects, server-side apply |
 | `src/helm.ts`, `src/exec.ts` | Thin runner for `helm` (no shell) |
 | `../charts/student-app/` | The student app chart; values come only from `renderValues()` |

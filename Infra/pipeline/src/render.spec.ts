@@ -211,13 +211,13 @@ describe('runRender', () => {
     expect(t.dryRun).toHaveBeenCalledTimes(1)
   })
 
-  it('stops at the quota check before rendering', async () => {
+  it('renders even when the quota sum is over (that check is Prepare\'s, with no k3s Status)', async () => {
     const input = built()
     input.spec.services[0].runtime.resources = { cpu: '4', memory: '1Gi' }
+    expect(checkQuota(input)).not.toEqual([])
     const t = tools()
-    const report = await runRender(input, 'a', 'd', t)
-    expect(report).toMatchObject({ ok: false, manifests: { slot: null, open: null }, failure: { kind: 'quota' } })
-    expect(t.helmTemplate).not.toHaveBeenCalled()
+    expect((await runRender(input, 'a', 'd', t)).ok).toBe(true)
+    expect(t.helmTemplate).toHaveBeenCalledTimes(2)
   })
 
   it('reports a helm failure as a chart failure', async () => {
