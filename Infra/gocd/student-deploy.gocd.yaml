@@ -1,7 +1,8 @@
 # GoCD pipeline of every student deploy (docs/design/deploy-workflow.md §1 · §2). Read by GoCD's YAML config plugin from
 # this repo (Infra/gocd/setup.sh registers the config repo). It is started only by the platform server's schedule call
-# (BE/src/deploys/pipeline.client.ts, variable DEPLOY_ID): the material does not poll and the first stage is manual,
-# so a commit never starts a run.
+# (BE/src/deploys/pipeline.client.ts, variable DEPLOY_ID): the first stage needs manual approval, so a new commit never
+# starts a run. The material keeps GoCD's default polling because it is the same repo and branch as the config repo,
+# and GoCD refuses a material whose autoUpdate differs from the config repo's.
 #
 # Stages: Build on the AWS executor (resource aws, calls CodeBuild); Prepare, Render and Apply on the leader executor
 # (resource leader, Infra/executor/agent.yaml). Verify and Switch are not here yet: their CLIs are not written, and a
@@ -23,7 +24,6 @@ pipelines:
       platform:
         git: https://github.com/woowangthon/WOOWANGTHON_TEAM_18.git
         branch: main
-        auto_update: false
         shallow_clone: true
     environment_variables:
       # Set by the schedule call. Declared so the call can override it; empty fails fast in job.sh.
