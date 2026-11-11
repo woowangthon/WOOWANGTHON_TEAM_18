@@ -12,6 +12,8 @@ import { type SecretStatus, secretStatus, serviceDigest, validateSecrets } from 
 /** 비밀값 받기 · 상태 읽기(W3). 계약은 docs/design/api.md "비밀값", 값이 거치는 곳은 docs/design/auth.md "비밀값". */
 @Injectable()
 export class SecretsService {
+  private readonly hashKey: string
+
   constructor(
     private readonly deploys: DeploysService,
     private readonly store: DeploysStore,
@@ -20,8 +22,6 @@ export class SecretsService {
   ) {
     this.hashKey = config.get('SECRET_HASH_KEY', { infer: true })
   }
-
-  private readonly hashKey: string
 
   /** 내 배포의 비밀값 상태. 없는 id · 남의 id는 404다(DeploysService.get과 같다). 리더는 부르지 않는다. */
   async status(user: AuthUser, id: string): Promise<SecretStatus> {

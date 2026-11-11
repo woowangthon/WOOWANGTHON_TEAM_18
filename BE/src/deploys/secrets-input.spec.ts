@@ -10,7 +10,7 @@ const spec = {
   project: { slug: 'my-app', repo: 'student/my-app' },
   services: [svc('fe', []), svc('be', ['DATABASE_URL', 'JWT_SECRET']), svc('ai', ['OPENAI_API_KEY'])],
 } as unknown as Spec
-// 계약의 값: 값 하나는 8,192자까지. 해시 키는 시험용이다(서버는 32자 이상 SECRET_HASH_KEY).
+// 해시 키는 시험용이다(서버는 32자 이상 SECRET_HASH_KEY).
 const KEY = 'secret_hash_key_test_0123456789abcdef'
 const full = { be: { DATABASE_URL: 'postgres://x', JWT_SECRET: 'j' }, ai: { OPENAI_API_KEY: 'sk-1' } }
 
@@ -37,6 +37,7 @@ describe('validateSecrets accepts', () => {
     expect(r).toEqual({ ok: true, values: new Map([['be', be]]) })
   })
 
+  // 계약의 값: 값 하나는 8,192자까지(상수를 가져오지 않고 적어 두어 계약이 바뀌면 시험이 알린다).
   it('a value of exactly the maximum length', () => {
     const be = { DATABASE_URL: 'x'.repeat(8192), JWT_SECRET: 'j' }
     expect(validateSecrets({ be }, spec).ok).toBe(true)
