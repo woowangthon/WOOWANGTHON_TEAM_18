@@ -157,7 +157,7 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 
 **남은 것**
 
-- 지표 알림(Discord, §10).
+- Grafana의 JWT 로그인(운영자 화면에서 다시 로그인하지 않게, §10. 후순위).
 - 배포 실행기 Pod(GoCD Agent) · 자동 등록 키 · 리더 → EC2 GoCD 포트 규칙(구축 09′의 나머지, GoCD 서버가 생긴 뒤), 네임스페이스 라벨 지우기 막기(지금은 서버에 고치기 권한이 없어 필요 없다).
 
 **전체 설계**
@@ -185,19 +185,19 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 - **리더 인터넷 길 끊기(2026-11-10)**: 리더의 기본 경로를 120초 지웠다 다시 붙였다(벽 랜선을 뽑는 것과 같은 효과를 원격으로 낸 것. 노드끼리는 그대로 통한다). 끊긴 동안 방문자는 처음 약 50초 502(Cloudflare가 아직 연결이 있다고 본다), 그다음 530(터널 오프라인)을 받았다. 경로가 돌아오고 Tailscale · SSH는 3초, 터널은 9초 만에 연결 넷이 다시 붙어 11초 뒤 200이 됐다. 사람 손은 들지 않았다. 몇 분 넘게 끊기는 경우와 실제 랜선을 뽑는 경우는 재지 않았다(현장에 갈 때).
 - 터널 클라이언트를 워커 둘로 옮겨(같은 터널에 커넥터 둘) 리더가 꺼져도 열리게 하는 것은 후순위다. Pod라서 워커 방화벽은 고칠 것이 없다.
 
-### 10. 지표 (설치됨 2026-11-11, 알림은 예정)
+### 10. 지표 (설치됨 2026-11-11)
 
 범위는 2026-11-11에 정했고(#130), 같은 날 리더에 설치했다(#136, [`Infra/monitoring/`](../../Infra/monitoring/)).
 
 - **순서**: 처음에는 지표를 쓰는 기능(학생 지표 화면 UC-15, 운영자 화면 UC-17, 비용 추정)이 모두 P1이라 설치를 데모 경로(P0) 뒤로 미뤘다가(#133), 같은 날 구축 담당이 바로 설치하기로 바꿨다: EC2를 기다리는 동안 클러스터 쪽에서 끝낼 수 있는 일이다. 스파이크 판정(메모리 초과 · 재시작 반복)은 플랫폼 서버가 Pod · 이벤트를 watch해서 하므로([배포 워크플로우](deploy-workflow.md) §2) Prometheus에 기대지 않는다.
-- **설치**: 공간 `monitoring`(node-exporter가 호스트를 읽어 보안 등급은 privileged)에 kube-prometheus-stack 93.1.1(Prometheus Operator v0.95.1, Grafana 13.3.0)을 k3s의 Helm 컨트롤러(HelmChart 객체)로 넣는다. k3s가 Traefik을 넣는 방식과 같아 운영자 기기에 helm이나 릴리스 상태가 없다. 차트는 GHCR(`oci://ghcr.io/prometheus-community/charts/…`)에서 받는다: 차트 저장소가 주는 GitHub 릴리스 CDN 주소는 학교망에서 멈춰 첫 설치가 실패했다. Prometheus · Grafana · kube-state-metrics · Operator는 리더에, node-exporter는 세 노드에 하나씩 뜬다. 저장은 `local-path`(Prometheus 30Gi · Grafana 2Gi 요청), 보관 2주에 크기 상한 20GB를 같이 건다(`local-path`는 볼륨 크기를 막지 않는다). k3s가 자기 프로세스 안에서 돌리는 etcd · scheduler · controller-manager · kube-proxy는 긁을 대상이 없어 끄고, Alertmanager(알림은 Grafana가 보낸다)와 Operator의 admission webhook도 두지 않는다. Prometheus의 관리 API는 꺼져 있다.
+- **설치**: 공간 `monitoring`(node-exporter가 호스트를 읽어 보안 등급은 privileged)에 kube-prometheus-stack 93.1.1(Prometheus Operator v0.95.1, Grafana 13.3.0)을 k3s의 Helm 컨트롤러(HelmChart 객체)로 넣는다. k3s가 Traefik을 넣는 방식과 같아 운영자 기기에 helm이나 릴리스 상태가 없다. 차트는 GHCR(`oci://ghcr.io/prometheus-community/charts/…`)에서 받는다: 차트 저장소가 주는 GitHub 릴리스 CDN 주소는 학교망에서 멈춰 첫 설치가 실패했다. Prometheus · Grafana · kube-state-metrics · Operator는 리더에, node-exporter는 세 노드에 하나씩 뜬다. 저장은 `local-path`(Prometheus 30Gi · Grafana 2Gi 요청), 보관 2주에 크기 상한 20GB를 같이 건다(`local-path`는 볼륨 크기를 막지 않는다). k3s가 자기 프로세스 안에서 돌리는 etcd · scheduler · controller-manager · kube-proxy는 긁을 대상이 없어 끄고, Alertmanager(클러스터에서 알림을 보내지 않는다)와 Operator의 admission webhook도 두지 않는다. Prometheus의 관리 API는 꺼져 있다.
 - **수집**: 노드(node-exporter), Pod 사용량(kubelet의 cAdvisor), 재시작 · 배포 상태(kube-state-metrics), API 서버, CoreDNS, Traefik(k3s Traefik이 이미 9100번에 내는 지표), cloudflared(2000번. `cloudflared` 공간의 NetworkPolicy가 Prometheus만 이 포트로 들인다).
 - **조회**: 플랫폼 서버는 사설망으로 리더 API의 서비스 프록시를 거쳐 Prometheus를 조회한다(ADR-006. 포트는 늘지 않는다): `GET /api/v1/namespaces/monitoring/services/monitoring-prometheus:9090/proxy/api/v1/query?query=…`. 권한은 그 Service 이름 하나에 대한 `services/proxy`의 `get`뿐이라 `POST`는 `403`이다(§8). 쿼리를 공간별로 거르는 프록시는 앞에 두지 않는다: 서버 토큰으로 `proj-` 밖(`vllm` · `kube-system` 등)의 지표 수치도 읽히지만, 로그 · Secret · 객체는 여전히 읽히지 않는다. AI 서버는 플랫폼 서버를 거친다.
 - **서버가 묻는 것**: CPU · 메모리 사용량과 재시작 수까지다([api.md](api.md) 운영자 API의 `usage`). Traefik의 요청 수 · 지연 · 에러율은 그것을 보여 줄 화면이 생길 때 더한다.
-- **Grafana**: 운영자용이다. 플랫폼의 운영자 화면이 대시보드를 iframe으로 끼워 넣도록 공개 주소 `grafana.stairnoworks.com`을 둔다(2026-11-12 팀 결정. 그 전에는 사설망으로만 열었다). 길은 학생 주소와 같다(터널 → Traefik → Ingress, §9). `allow_embedding`을 켜 `X-Frame-Options`를 내지 않는다. 익명 접근은 없어서 로그인 없이는 로그인 화면만 보이고 API는 `401`이다. 운영자 화면에서 다시 로그인하지 않게 하는 것(플랫폼 로그인 토큰을 Grafana가 받아들이기)은 아직 넣지 않았다. 관리자 계정은 사설망의 SSH 포트 포워딩으로 쓴다(명령은 [`Infra/monitoring/monitoring.yaml`](../../Infra/monitoring/monitoring.yaml) 머리말). 관리자 비밀번호는 리더에서 만들어 Secret `grafana-admin`에만 둔다(§12). 차트의 기본 대시보드(노드 · Pod · 공간별 자원)가 들어 있다.
+- **Grafana**: 운영자용이다. 플랫폼의 운영자 화면이 대시보드를 iframe으로 끼워 넣도록 공개 주소 `grafana.stairnoworks.com`을 둔다(2026-11-12 팀 결정. 그 전에는 사설망으로만 열었다). 길은 학생 주소와 같다(터널 → Traefik → Ingress, §9). `allow_embedding`을 켜 `X-Frame-Options`를 내지 않는다. 익명 접근은 없어서 로그인 없이는 로그인 화면만 보이고 API는 `401`이다. 그래서 운영자는 iframe 안에서 Grafana에 한 번 로그인한다(브라우저가 세션을 기억한다). 다시 로그인하지 않게 하는 것(플랫폼 로그인 토큰을 Grafana의 JWT 로그인이 받아들이기)은 후순위다(2026-11-12): 토큰을 주소에 실어야 해서 플랫폼 API에도 통하는 토큰이 주소에 남는다. 관리자 계정은 사설망의 SSH 포트 포워딩으로 쓴다(명령은 [`Infra/monitoring/monitoring.yaml`](../../Infra/monitoring/monitoring.yaml) 머리말). 관리자 비밀번호는 리더에서 만들어 Secret `grafana-admin`에만 둔다(§12). 차트의 기본 대시보드(노드 · Pod · 공간별 자원)가 들어 있다.
 - **들어오는 길**: 지표 공간의 NetworkPolicy `same-namespace-only`가 같은 공간의 Pod에서 오는 것만 들인다(리뷰 지적으로 더함, 2026-11-12). 예외는 `grafana-from-traefik` 하나로, Traefik의 Pod가 Grafana의 3000번에 닿는다(공개 주소의 길). Prometheus에는 공개 주소도 이 예외도 없다(API에 로그인이 없다). 없으면 클러스터의 아무 Pod나, 노드를 Pod 대역의 경로로 지정한 학교망 기기(알려진 한계)가 Prometheus API와 Grafana 로그인 화면에 닿는다. 리더 API의 서비스 프록시와 포트 포워딩은 리더 자신에게서 Pod로 가는 통신이라 그대로 된다. node-exporter는 호스트 네트워크라 이 규칙이 아니라 호스트 방화벽(§3)이 막는다.
-- **알림(예정)**: Grafana 규칙(노드 NotReady, 디스크 · 메모리 임계) → Discord. 웹훅 주소가 정해지면 넣는다. Grafana는 Pod라 호스트 방화벽(§3)의 나가는 규칙이 걸리지 않는다.
-- **리더 밖에서 봐야 하는 것**: 리더가 죽거나 리더의 인터넷 길이 끊기면 Grafana도 Discord에 닿지 못한다. 터널 끊김은 Cloudflare의 터널 상태 알림으로 받는다(무료 플랜에서 되는지 설치 때 확인한다. 안 되면 두지 않는다). cloudflared의 연결 수 지표로는 보지 않는다: 리더 인터넷을 끊은 시험에서 그 값이 0으로 떨어지지 않았다(§9). 리더 무응답은 플랫폼 서버가 API 실패로 알아채 운영자 화면에 알린다(`503 CLUSTER_UNREACHABLE`, [api.md](api.md). ADR-006). Discord 같은 바깥 채널로 보내는 것은 이번 범위에 두지 않는다.
+- **알림**: 클러스터에서는 보내지 않는다. Grafana 규칙으로 Discord에 보내려던 것을 2026-11-12 팀 논의에서 플랫폼 쪽으로 넘겼다(지표 이상으로 AI를 부를 때 함께 알리는 방안, 되면 한다).
+- **리더 밖에서 봐야 하는 것**: 리더가 죽거나 리더의 인터넷 길이 끊기면 리더 안의 무엇도 바깥에 알리지 못한다. 터널 끊김은 Cloudflare의 터널 상태 알림으로 받는다(무료 플랜에서 되는지 설치 때 확인한다. 안 되면 두지 않는다). cloudflared의 연결 수 지표로는 보지 않는다: 리더 인터넷을 끊은 시험에서 그 값이 0으로 떨어지지 않았다(§9). 리더 무응답은 플랫폼 서버가 API 실패로 알아채 운영자 화면에 알린다(`503 CLUSTER_UNREACHABLE`, [api.md](api.md). ADR-006). Discord 같은 바깥 채널로 보내는 것은 이번 범위에 두지 않는다.
 - **시험(2026-11-11, [`Infra/monitoring/check.sh`](../../Infra/monitoring/check.sh), 운영자 기기에서 실행, 아무것도 바꾸지 않는다)**: node-exporter · kubelet · cAdvisor가 세 노드에서, kube-state-metrics 하나, Traefik 둘, cloudflared 하나가 모두 수집되고 죽은 대상이 없다. 노드 셋 Ready, 세 노드의 디스크 여유, 시험 앱의 재시작 수가 쿼리로 나온다. 서버 계정으로는 Prometheus 쿼리가 되고, Grafana · Prometheus의 다른 Service · Pod 프록시, 지표 공간의 Service · Pod · Secret 읽기, 다른 공간(`vllm`)의 서비스 프록시는 거절된다. 실제 토큰으로 쿼리 `200`, `POST` `403`, Grafana `403`. 구성요소 넷과 node-exporter 셋이 Ready이고, 다른 공간(`vllm`)의 Pod에서는 Prometheus와 Grafana에 닿지 않는다(규칙을 넣기 전에는 둘 다 `200`이었다). 같은 날 `Infra/platform` · `executor` · `student`의 시험도 다시 돌려 모두 통과했다. 공개 주소(2026-11-12): 로그인 화면 `200`, 로그인 없는 대시보드 주소는 로그인 화면으로 `302`, API와 Grafana를 거친 Prometheus 조회는 `401`, `X-Frame-Options` 없음, `prometheus.stairnoworks.com`은 `404`. 확인하지 않은 것: 운영자 화면의 iframe 안에서 실제로 뜨는 것, Grafana 화면을 사람이 열어 본 것, 2주 보관과 크기 상한이 실제로 지워지는지.
 - **하지 않는 것**: blackbox-exporter(바깥 주소 찔러 보기), 노드 온도 · 디스크 건강, 노드 간 지연 · 손실, GPU · 로컬 모델 지표. 로컬 모델이 팀 일정상 후순위이고(§11) 나머지는 운영자 화면의 부가 항목이다([시스템 정의서 §4.3](../system-definition.md#43-user2-운영자-흐름)).
 
@@ -227,7 +227,6 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 | GHCR 쓰기 토큰(봇 계정) | 빌드 쪽에만 (ADR-003) |
 | Cloudflare 터널 자격 파일 | 리더의 클러스터 Secret(`cloudflared` 공간)만. 터널을 만든 기기에서는 넣은 뒤 지웠고, 계정 로그인 인증서(`cert.pem`)도 남기지 않는다(DNS를 고칠 때 다시 로그인한다) |
 | Grafana 관리자 비밀번호 | 리더의 클러스터 Secret(`monitoring` 공간의 `grafana-admin`)만. 리더에서 만들었고 화면 · 레포에 남기지 않는다 |
-| Discord 웹훅 URL | Grafana 설정 (알림을 넣을 때) |
 | vLLM API 키 | 리더의 클러스터 Secret(`vllm` 공간, 원본). AI 담당에게 전달했고(2026-11-11) AI 서버의 EC2 설정에 넣는다 |
 
 ### 13. 반납
@@ -272,7 +271,7 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 
 - 플랫폼 서버 토큰으로 Prometheus의 지표 수치는 공간을 가리지 않고 읽힌다(§10). 지표 공간에서 나가는 통신은 묶지 않았다.
 - Grafana의 로그인 화면이 공개 주소에 보인다. 막는 것은 리더에서 만든 관리자 비밀번호 하나다(§12).
-- 지표와 Grafana는 리더에만 있다. 리더가 꺼지면 조회가 멈추고, 리더 디스크가 죽으면 지표가 사라진다(ADR-006). 알림은 아직 없다.
+- 지표와 Grafana는 리더에만 있다. 리더가 꺼지면 조회가 멈추고, 리더 디스크가 죽으면 지표가 사라진다(ADR-006). 클러스터가 보내는 알림은 없다.
 - 리더, 스위치, 벽 랜 포트(인터넷 길)가 단일 장애점이다. 스위치 전원이 잠깐 나가면 돌아오는 순간 학생 Pod가 전부 다시 뜬다.
 - 터널이 리더에 있는 동안은 리더가 꺼지면 방문자가 들어오지 못한다.
 - 워커 하나가 꺼지면 그 워커에 있던 학생 주소는 약 80초 동안 열리지 않는다(§9에서 잼). 앱 복제본이 1개라 다른 워커에 다시 뜰 때까지 기다린다.

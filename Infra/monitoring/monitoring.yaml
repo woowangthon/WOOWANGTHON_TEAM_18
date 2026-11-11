@@ -95,7 +95,7 @@ spec:
         kubeProxy: false
         alertmanager: false
 
-    # Alerts go out from Grafana (cluster.md §10), so there is no Alertmanager to run.
+    # The cluster sends no alerts (cluster.md §10), so there is no Alertmanager to run.
     alertmanager: {enabled: false}
 
     prometheusOperator:
