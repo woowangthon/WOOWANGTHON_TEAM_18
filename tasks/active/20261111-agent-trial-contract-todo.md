@@ -13,7 +13,7 @@ User decision (2026-11-11): split F11b and land the contract first, no code. Bot
 - Input `GET /api/pipeline/trials/:id/input` in the same shape as the deploy input; result `POST /api/pipeline/trials/:id/result` `{ stage, result }` with `result` in the tool's shape plus `failure`. The run's state machine is untouched.
 - Gateway: `run_render` · `run_deploy` · `run_verify`, 30 min wait outside the 15 min budget, one trial at a time, build-path patches `PATCH_FORBIDDEN`, `source` `INVALID_ARGUMENT`.
 - Trials live in BE memory (no migration); a restart cuts the waiting call.
-- Who calls Switch after `verified` is left to the next PR; `verified` stays `INVALID_RESULT`.
+- After `verified` (user decision 2026-11-11, second commit set): save the patched spec in the run's `input` (all services `reuse`), set the run back to `running` / `build`, and schedule `student-deploy` again; its Verify is the re-check, then Switch · W7 as usual. `build_cache` moves to build passed. Up to 2 tickets per run, then `failed` (`AGENT_GAVE_UP`). `deploys.spec` stays as the student confirmed it.
 
 ## Todo
 
@@ -24,4 +24,6 @@ User decision (2026-11-11): split F11b and land the contract first, no code. Bot
 ## Done when
 
 - [x] Track A confirms the pipeline side; markdown links resolve
-- [ ] Next PRs: BE trial routes + gateway run tools (F11b-1), switch after `verified` (F11b-2)
+- [x] `verified` re-run contract — files: `docs/design/api.md` (3 · 5), `docs/design/AIagent.md` §1 · §6 · §7, `docs/design/deploy-workflow.md` §6
+- [ ] Track A confirms the re-run part
+- [ ] Next PR: BE implementation (trial routes, gateway run tools, `verified` re-run, build_cache move — #107's owner checks)

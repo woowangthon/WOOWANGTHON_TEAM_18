@@ -213,7 +213,7 @@ GoCD와 리더는 **이미지를 옮기지 않는다.** 이미지 주소만 mani
 3. 플랫폼 문제(CodeBuild API 오류, 이미지 받기 실패, live 슬롯 보호 중단 등)는 코드로 걸러 AI 에이전트를 부르지 않고 보고한다. 코드 집합은 열려 있다: BE는 `^[A-Za-z][A-Za-z0-9_]{2,63}$` 모양이면 플랫폼 문제로 받아 실패로 마감하므로(알 수 없는 코드는 일반 문구), 파이프라인은 새 코드를 BE 수정 없이 추가할 수 있다. 알려진 코드는 `CODEBUILD_API_ERROR` · `AWS_CLI_FAILED` · `BUILD_NOT_FOUND` · `BUILD_WAIT_TIMEOUT` · `NO_IMAGE_DIGEST` · `CHART_RENDER_FAILED` · `SPACE_MISSING` · `EXECUTOR_FORBIDDEN` · `POLICY_REJECTED` · `APPLY_REFUSED` · `IMAGE_PULL_FAILED` · `K8S_TIMEOUT` · `K8S_UNREACHABLE` · `LIVE_SLOT_PROTECTED` · `UNEXPECTED_REFUSAL`(Prepare · Verify가 받은 그 밖의 거절) · `TRAEFIK_UNREACHABLE` · `SWITCH_REFUSED` · `OPEN_MANIFEST_MISSING`.
 4. 그 밖에는 알림을 받은 순간 **문제 티켓**(봉투 + CodeBuild · k3s 출력 원본 + 오류 10분 전부터의 로그)을 만들어 AI 서버에 보낸다. 티켓은 실패 순간의 스냅샷이다(실패한 Pod는 재시작되면 원본이 사라진다). 에이전트는 티켓의 `stage` · `service`로 실패한 단계에서 바로 고치기 시작하고, 그 뒤에 필요한 정보는 관찰 도구로 직접 읽는다. 워크플로우는 티켓 하나(`ticketId`)를 보관하고, 새 티켓이 나오면 덮어쓴다.
 5. AI 에이전트가 MCP 게이트웨이의 도구로 **대상 슬롯에서 직접** Build · Render · Deploy · Verify를 실행하고 결과를 보며 고친다. 실패한 단계부터 다시 하고, 앞 단계는 반복하지 않는다(예: Apply 실패를 `runtime`만 고쳐 다시 배포하면 빌드 입력 해시가 같아 기존 이미지를 쓴다). 에이전트는 사용자 코드를 직접 바꾸지 않는 범위에서 spec · 그 빌드의 CodeBuild 설정 · 대상 슬롯을 조정하고, YAML은 쓰지 않는다.
-6. 에이전트가 **해결 결과**를 돌려준다. `verified`면 플랫폼이 `specPatch`를 검증해 저장하고, 대상 슬롯을 한 번 더 확인한 뒤 **Switch와 W7만** 실행한다(파이프라인을 처음부터 다시 돌리지 않는다). 끝나면 에이전트에 **종료 알림**을 보낸다.
+6. 에이전트가 **해결 결과**를 돌려준다. `verified`면 플랫폼이 `specPatch`를 검증해 실행 기록의 입력에 저장하고, **고친 입력으로 `student-deploy`를 처음부터 다시 실행**한다(같은 대상 슬롯). 빌드 입력 해시가 같으면 이미지를 재사용하므로 Build는 건너뛰고(`build_cache`는 Build가 통과할 때 기록한다), 다시 실행의 Verify가 대상 슬롯 재확인이 되며, 통과하면 Switch와 W7이 평소대로 돈다. 다시 실패하면 새 티켓을 만든다(실행 기록당 2개까지, 넘으면 `failed`). 끝나면 에이전트에 **종료 알림**을 보낸다. 모양은 [API 계약](api.md) "파이프라인 ↔ 플랫폼 서버" 5번이다.
 
 도구, 입력 · 출력 스키마, 행위 범위, 횟수 제한, 장기 메모리는 [AI 에이전트 설계](AIagent.md)에 있다.
 
@@ -221,7 +221,7 @@ GoCD와 리더는 **이미지를 옮기지 않는다.** 이미지 주소만 mani
 
 | 고친 곳 | 반영 |
 |---|---|
-| 배포 설정(spec)만 (예: 포트를 잘못 읽음, 헬스체크 경로) | 에이전트가 대상 슬롯에서 확인한 `specPatch`를 플랫폼이 저장하고 Switch · W7. PR 없음 |
+| 배포 설정(spec)만 (예: 포트를 잘못 읽음, 헬스체크 경로) | 에이전트가 대상 슬롯에서 확인한 `specPatch`를 플랫폼이 저장하고 고친 입력으로 파이프라인을 다시 실행(빌드 재사용) → Switch · W7. PR 없음 |
 | 레포 파일 (예: `vite.config`의 base 경로, Dockerfile, import 경로 대소문자) | ① 봇 계정 fork의 작업 브랜치에 고친 파일을 commit ② 그 commit으로 대상 슬롯에 빌드 · 배포하고 W6까지 확인한다. 전환은 하지 않는다 ③ 통과하면 학생 레포에 **수정 PR**을 올린다. 본문에는 원인, 근거(로그 줄), 바꾼 줄, 확인 결과를 적는다 ④ 해결 결과는 `pr_opened` ⑤ 사용자가 머지하면 새 commit으로 W0부터 돌고, 바뀌지 않은 서비스는 빌드를 건너뛴다 |
 
 PR이 머지되기 전까지 live 슬롯은 그대로 돈다(첫 배포라면 머지를 기다린다). 학생 레포에 직접 push하지 않고, 머지는 항상 사용자가 한다.
