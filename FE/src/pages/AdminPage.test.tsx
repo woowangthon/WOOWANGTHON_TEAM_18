@@ -357,8 +357,9 @@ it('sends the stop once even if the button is pressed again while it is going', 
 it.each([
   [new ApiError(409, 'NOT_RUNNING', 'x'), '이미 꺼져 있어요'],
   [new ApiError(404, 'PROJECT_NOT_FOUND', 'x'), '프로젝트를 찾을 수 없어요'],
-  [new ApiError(503, 'CLUSTER_FORBIDDEN', 'x'), '리더에는 닿았지만 서버 계정에 권한이 없어요'],
+  [new ApiError(503, 'CLUSTER_FORBIDDEN', 'x'), '아직 강제 중지를 쓸 수 없어요'],
   [new ApiError(503, 'CLUSTER_UNREACHABLE', 'x'), '리더 무응답'],
+  [new ApiError(503, 'DATABASE_UNAVAILABLE', 'x'), '중지 기록을 남기지 못했어요'],
   [new ApiError(500, 'INTERNAL', 'x'), '중지하지 못했어요'],
 ])('explains a failed stop (%s) and reads the projects again', async (error, title) => {
   serve({ [stopPath('my-app')]: error })
@@ -368,4 +369,28 @@ it.each([
   expect(within(card('my-app')).getByText(title)).toBeTruthy()
   expect(within(card('my-app')).queryByText('중지했어요')).toBeNull()
   expect(reads(PROJECTS)).toBe(2)
+})
+
+it('says the stop is not available yet and not the operator\'s fault while the server has no scale permission', async () => {
+  serve({ [stopPath('my-app')]: new ApiError(503, 'CLUSTER_FORBIDDEN', 'x') })
+  await show()
+  await press('my-app 강제 중지')
+  await press('my-app 중지하기')
+  const mine = within(card('my-app'))
+  expect(mine.getByText(/운영자 잘못이 아니에요/)).toBeTruthy()
+  expect(mine.queryByText('리더에는 닿았지만 서버 계정에 권한이 없어요')).toBeNull()
+})
+
+it.each([
+  new ApiError(503, 'CLUSTER_UNREACHABLE', 'x'),
+  new ApiError(503, 'DATABASE_UNAVAILABLE', 'x'),
+])('does not claim that a failed stop (%s) is tried again by itself, because a stop is not retried', async (error) => {
+  serve({ [stopPath('my-app')]: error })
+  await show()
+  await press('my-app 강제 중지')
+  await press('my-app 중지하기')
+  expect(within(card('my-app')).queryByText(/자동으로 다시 시도해요/)).toBeNull()
+  expect(reads(stopPath('my-app'))).toBe(1)
+  await advance(30_000)
+  expect(reads(stopPath('my-app'))).toBe(1)
 })
