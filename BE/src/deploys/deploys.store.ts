@@ -228,7 +228,7 @@ export class DeploysStore {
   }
 
   async deleteRun(deployId: string): Promise<void> {
-    await this.call('deploy_runs', 'DELETE', { deploy_id: `eq.${deployId}` })
+    await this.call('deploy_runs', 'DELETE', { deploy_id: `eq.${deployId}`, select: 'deploy_id' })
   }
 
   /** 프로젝트의 live 슬롯을 정한다(첫 전환이면 줄을 만든다). 같은 값으로 다시 불러도 같다. */
@@ -257,7 +257,9 @@ export class DeploysStore {
         // 새 secret key는 JWT가 아니라 Authorization 헤더로 보내면 거부된다. apikey 하나로 보낸다.
         headers: {
           apikey: this.secretKey,
-          ...(body ? { 'Content-Type': 'application/json', Prefer: prefer } : {}),
+          // 쓰는 요청(본문 없는 DELETE 포함)은 Prefer를 보내야 PostgREST가 204 빈 본문 대신 지운 줄을 JSON 배열로 돌려준다.
+          ...(method !== 'GET' ? { Prefer: prefer } : {}),
+          ...(body ? { 'Content-Type': 'application/json' } : {}),
         },
         body: body ? JSON.stringify(body) : undefined,
         signal: AbortSignal.timeout(TIMEOUT_MS),

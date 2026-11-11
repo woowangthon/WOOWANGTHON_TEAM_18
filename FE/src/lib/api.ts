@@ -25,6 +25,9 @@ export class ApiError extends Error {
   }
 }
 
+// body를 싣는 요청의 방법. 지금까지는 POST뿐이었고 비밀값 넣기(PUT)가 더해졌다.
+type HttpWriteMethod = 'POST' | 'PUT'
+
 // 세션이 없거나 못 믿는 토큰이라는 뜻. 어느 API에서든 이 코드가 오면 로그인이 풀린 것으로 다룬다.
 const SESSION_ERROR_CODES = ['AUTH_REQUIRED', 'INVALID_TOKEN']
 
@@ -61,7 +64,7 @@ async function readError(response: Response): Promise<ApiError> {
 const baseUrl = () => (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/+$/, '')
 
 // 요청 한 번. 네트워크 자체가 실패하면 ApiError로 바꿔 던진다.
-async function send(path: string, body: unknown, token: string | undefined): Promise<Response> {
+async function send(path: string, body: unknown, token: string | undefined, method: HttpWriteMethod): Promise<Response> {
   const hasBody = body !== undefined
   const headers: Record<string, string> = {}
   // 세션이 없으면 헤더 없이 보내 BE의 401 AUTH_REQUIRED를 그대로 받는다.
@@ -69,7 +72,7 @@ async function send(path: string, body: unknown, token: string | undefined): Pro
   if (hasBody) headers['Content-Type'] = 'application/json'
   try {
     return await fetch(`${baseUrl()}${path}`, {
-      method: hasBody ? 'POST' : 'GET',
+      method: hasBody ? method : 'GET',
       headers,
       body: hasBody ? JSON.stringify(body) : undefined,
     })
@@ -105,10 +108,10 @@ async function freshToken(sentToken: string): Promise<string | null> {
   return data.session?.access_token ?? null
 }
 
-// body가 있으면 POST, 없으면 GET. 경로는 `/api/...`로 쓰고, VITE_API_BASE_URL이 있으면 그 뒤에 붙는다.
-export async function apiFetch<T>(path: string, body?: unknown): Promise<T> {
+// body가 있으면 POST(`method`로 PUT도 된다), 없으면 GET. 경로는 `/api/...`로 쓰고, VITE_API_BASE_URL이 있으면 그 뒤에 붙는다.
+export async function apiFetch<T>(path: string, body?: unknown, method: HttpWriteMethod = 'POST'): Promise<T> {
   const { data } = await supabase.auth.getSession()
-  let response = await send(path, body, data.session?.access_token)
+  let response = await send(path, body, data.session?.access_token, method)
   if (response.ok) return readBody<T>(response)
 
   let error = await readError(response)
@@ -116,7 +119,7 @@ export async function apiFetch<T>(path: string, body?: unknown): Promise<T> {
     // 로그아웃시키기 전에 한 번만 갱신해 다시 보낸다. 401은 BE 가드에서 나서 처리된 요청이 아니므로 다시 보내도 안전하다.
     const token = data.session ? await freshToken(data.session.access_token) : null
     if (token) {
-      response = await send(path, body, token)
+      response = await send(path, body, token, method)
       if (response.ok) return readBody<T>(response)
       error = await readError(response)
     }

@@ -1,6 +1,8 @@
 # Admission policies for the platform server account and for student Pods (build 09, first part).
 # Design and reasons: docs/design/cluster.md §8.
 #   wanggane-platform-server   the server account writes only in proj- spaces; namespace and Secret rules
+#   wanggane-platform-server-scale     its Deployment scale requests set 0 or 1 replicas (stop, resume)
+#   wanggane-platform-server-restart   its Deployment patches change only the restartedAt annotation
 #   wanggane-space-*           cap, defaults, isolation and the two bindings (server read, executor deploy) are
 #                              created only with the template's name and values
 #   wanggane-student-pods      Pods and Deployments in proj- spaces drop NET_RAW, carry no API token and no
@@ -83,6 +85,94 @@ metadata:
   name: wanggane-platform-server
 spec:
   policyName: wanggane-platform-server
+  validationActions: ["Deny"]
+---
+# The server may stop (0) and resume (1) a service, not resize it. A Scale object leaves spec.replicas
+# out when it is 0.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: wanggane-platform-server-scale
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups: ["apps"]
+      apiVersions: ["*"]
+      operations: ["UPDATE"]
+      resources: ["deployments/scale"]
+  matchConditions:
+  - name: platform-server-account
+    expression: request.userInfo.username == 'system:serviceaccount:platform:platform-server'
+  validations:
+  - expression: "!has(object.spec.replicas) || object.spec.replicas <= 1"
+    message: the platform server may only scale a Deployment to 0 or 1 replicas
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: wanggane-platform-server-scale
+spec:
+  policyName: wanggane-platform-server-scale
+  validationActions: ["Deny"]
+---
+# Restart is kubectl rollout restart: it sets the restartedAt annotation on the Pod template and nothing
+# else. Any other change (image, command, env, volumes, labels, replicas, pausing) would let a leaked
+# server credential run other code in the space or mount its Secrets, so the whole spec must stay as it
+# was. The list below is every field of apps/v1 DeploymentSpec; a field a later Kubernetes adds is not
+# compared. The objects here are the stored ones after defaulting, so replicas, strategy,
+# revisionHistoryLimit and progressDeadlineSeconds are always present.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: wanggane-platform-server-restart
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups: ["apps"]
+      apiVersions: ["*"]
+      operations: ["UPDATE"]
+      resources: ["deployments"]
+  matchConditions:
+  - name: platform-server-account
+    expression: request.userInfo.username == 'system:serviceaccount:platform:platform-server'
+  variables:
+  - name: restartKey
+    expression: "'kubectl.kubernetes.io/restartedAt'"
+  - name: newAnnotations
+    expression: "has(object.spec.template.metadata.annotations) ? object.spec.template.metadata.annotations : {}"
+  - name: oldAnnotations
+    expression: "has(oldObject.spec.template.metadata.annotations) ? oldObject.spec.template.metadata.annotations : {}"
+  validations:
+  - expression: dyn(object.spec.template.spec) == dyn(oldObject.spec.template.spec)
+    message: the platform server may not change a Deployment's Pod spec
+  - expression: >-
+      (has(object.spec.template.metadata.labels) ? dyn(object.spec.template.metadata.labels) : dyn({}))
+      == (has(oldObject.spec.template.metadata.labels) ? dyn(oldObject.spec.template.metadata.labels) : dyn({}))
+    message: the platform server may not change a Deployment's Pod labels
+  - expression: >-
+      variables.newAnnotations.all(k, k == variables.restartKey
+        || (k in variables.oldAnnotations && variables.oldAnnotations[k] == variables.newAnnotations[k]))
+      && variables.oldAnnotations.all(k, k == variables.restartKey || k in variables.newAnnotations)
+    message: the platform server may change only the restartedAt annotation of a Deployment's Pod template
+  - expression: >-
+      dyn(object.spec.selector) == dyn(oldObject.spec.selector)
+      && object.spec.replicas == oldObject.spec.replicas
+      && dyn(object.spec.strategy) == dyn(oldObject.spec.strategy)
+      && object.spec.revisionHistoryLimit == oldObject.spec.revisionHistoryLimit
+      && object.spec.progressDeadlineSeconds == oldObject.spec.progressDeadlineSeconds
+      && (has(object.spec.minReadySeconds) ? object.spec.minReadySeconds : 0)
+         == (has(oldObject.spec.minReadySeconds) ? oldObject.spec.minReadySeconds : 0)
+      && (has(object.spec.paused) && object.spec.paused) == (has(oldObject.spec.paused) && oldObject.spec.paused)
+    message: the platform server may not change a Deployment's replicas, selector, strategy or rollout settings (use the scale subresource to stop or resume)
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: wanggane-platform-server-restart
+spec:
+  policyName: wanggane-platform-server-restart
   validationActions: ["Deny"]
 ---
 apiVersion: admissionregistration.k8s.io/v1

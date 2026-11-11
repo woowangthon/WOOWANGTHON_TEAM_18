@@ -9,6 +9,8 @@ export const TIMEOUT_MIN = 5
 export const TIMEOUT_MAX = 300
 export const MAX_SERVICES = 3
 export const STATIC_PORT = 8080
+// 비밀값 하나의 최대 길이(docs/design/api.md "비밀값").
+export const SECRET_VALUE_MAX = 8192
 // 예약 이름의 정본은 docs/design/cluster.md §9다. 서버의 저장 검사가 최종이다.
 export const RESERVED_SLUGS = [
   ...['app', 'api', 'www', 'admin', 'account', 'auth', 'login', 'platform', 'dashboard', 'status', 'docs', 'blog', 'cdn', 'static', 'grafana'],
