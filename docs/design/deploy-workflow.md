@@ -349,7 +349,7 @@ PR이 머지되기 전까지 live 슬롯은 그대로 돈다(첫 배포라면 �
 
 ## 알려진 한계
 
-- stripPrefix Middleware는 서비스마다 하나를 두 슬롯이 같이 쓴다(인프라 명세). 그래서 `stripPrefix: true`인 서비스의 `ingressPath`를 바꾼 새 커밋(예: `/api` → `/v2`)을 대상 슬롯에 적용하는 순간 live open Ingress가 쓰는 Middleware의 떼기도 새 경로로 바뀐다. 확인(W6) 전에, 또 W6이 실패해도 live 요청이 잘못 전달될 수 있어 "확인 전에는 사용자 요청이 새 커밋으로 가지 않는다"(ADR-011 · FR-055)와 어긋난다. 슬롯별로 나누려면 인프라 명세(cluster.md §8) 변경을 먼저 합의한다.
+- stripPrefix Middleware는 서비스마다 하나를 두 슬롯이 같이 쓴다(인프라 명세). 그래서 `stripPrefix: true`인 서비스의 `ingressPath`를 바꾼 새 커밋(예: `/api` → `/v2`)을 대상 슬롯에 적용하는 순간 live open Ingress가 쓰는 Middleware의 떼기도 새 경로로 바뀐다. 확인(W6) 전에, 또 W6이 실패해도 live 요청이 잘못 전달될 수 있어 "확인 전에는 사용자 요청이 새 커밋으로 가지 않는다"(ADR-011 · FR-055)와 어긋난다. 슬롯별로 나누려면 인프라 명세(cluster.md §8) 변경을 먼저 합의한다(슬롯별 Middleware 이름은 별도 이슈). AI 에이전트의 시험에서는 게이트웨이가 그런 `specPatch`를 `PATCH_FORBIDDEN`으로 막지만([API 계약](api.md) "파이프라인 ↔ 플랫폼 서버" 4번 "live 경로 보호"), 학생이 새 커밋에서 `ingressPath`를 바꾸는 일반 배포에는 같은 위험이 그대로 남는다.
 
 - 전환은 공개 서비스마다 있는 open Ingress들을 한 번의 적용으로 바꾸지만 객체가 여럿이라 동시에 바뀌지 않는다. 아주 짧은 동안(Traefik이 바뀐 Ingress를 읽는 사이) FE는 새 슬롯, BE는 이전 슬롯으로 갈 수 있다. 이전 슬롯은 전환 뒤 W7에서 0개로 줄이므로 그 사이에는 둘 다 떠 있다.
 
