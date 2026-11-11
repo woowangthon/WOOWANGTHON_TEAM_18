@@ -21,6 +21,22 @@ export interface DeployRow {
   created_at: string
 }
 
+/** `deploy_secrets` 테이블의 한 줄(supabase/migrations). 값은 없다: key 이름 · 상태 · 해시뿐이다. */
+export interface SecretRow {
+  service: string
+  keys: string[]
+  status: 'writing' | 'in'
+  digest: string | null
+}
+
+const isSecretRow = (v: unknown): v is SecretRow =>
+  isRecord(v) &&
+  typeof v.service === 'string' &&
+  Array.isArray(v.keys) &&
+  v.keys.every((k) => typeof k === 'string') &&
+  (v.status === 'writing' || v.status === 'in') &&
+  (v.digest === null || typeof v.digest === 'string')
+
 type NewDeploy = Pick<DeployRow, 'user_id' | 'slug' | 'repo' | 'commit_sha' | 'spec'>
 
 const isRow = (v: unknown): v is DeployRow =>
@@ -28,7 +44,7 @@ const isRow = (v: unknown): v is DeployRow =>
   ['id', 'user_id', 'slug', 'repo', 'commit_sha', 'created_at'].every((k) => typeof v[k] === 'string') &&
   isRecord(v.spec)
 
-type Table = 'deploys' | 'projects' | 'build_cache'
+type Table = 'deploys' | 'projects' | 'build_cache' | 'deploy_secrets'
 
 /**
  * `deploys` · `projects` · `build_cache` 테이블 접근. 서버의 secret key로 Supabase PostgREST를 부른다(RLS를 건너뛴다). 그래서 어떤 행을 읽고 쓸지는 이 클래스를 부르는 쪽이
@@ -101,7 +117,25 @@ export class DeploysStore {
     return image
   }
 
-  private async call(table: Table, method: 'GET' | 'POST', query: Record<string, string>, body?: object): Promise<unknown[]> {
+  /** 프로젝트의 서비스별 비밀값 상태. */
+  async secretRows(slug: string): Promise<SecretRow[]> {
+    const rows = await this.call('deploy_secrets', 'GET', { select: 'service,keys,status,digest', slug: `eq.${slug}` })
+    if (!rows.every(isSecretRow)) throw this.unreadable('deploy_secrets', 'GET')
+    return rows
+  }
+
+  /** 서비스의 비밀값 상태를 쓴다(없으면 만들고 있으면 바꾼다). */
+  async setSecretState(slug: string, service: string, state: Omit<SecretRow, 'service'>): Promise<void> {
+    const rows = await this.call('deploy_secrets', 'POST', { on_conflict: 'slug,service' }, { slug, service, ...state, updated_at: new Date().toISOString() })
+    if (rows.length !== 1) throw this.unreadable('deploy_secrets', 'POST')
+  }
+
+  private async call(
+    table: Table,
+    method: 'GET' | 'POST',
+    query: Record<string, string>,
+    body?: object,
+  ): Promise<unknown[]> {
     const qs = new URLSearchParams(query).toString()
     const url = `${this.restUrl}/${table}`
     try {
@@ -110,7 +144,7 @@ export class DeploysStore {
         // 새 secret key는 JWT가 아니라 Authorization 헤더로 보내면 거부된다. apikey 하나로 보낸다.
         headers: {
           apikey: this.secretKey,
-          ...(body ? { 'Content-Type': 'application/json', Prefer: 'return=representation' } : {}),
+          ...(body ? { 'Content-Type': 'application/json', Prefer: `return=representation${query.on_conflict ? ',resolution=merge-duplicates' : ''}` } : {}),
         },
         body: body ? JSON.stringify(body) : undefined,
         signal: AbortSignal.timeout(TIMEOUT_MS),

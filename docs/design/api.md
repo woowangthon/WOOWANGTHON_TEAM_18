@@ -337,6 +337,72 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
 
 오류: `401`(위와 같다), `404 DEPLOY_NOT_FOUND`(없는 `id`이거나 내 것이 아니다. `id`가 UUID 모양이 아니어도 같다. 남의 배포가 있는지 알려 주지 않으려는 것이다), `503 DATABASE_UNAVAILABLE`.
 
+## 비밀값 (이슈 #43 · #82)
+
+확정한 배포 입력(`spec`)의 `runtime.secretKeys`에는 key 이름만 있다. 값은 사용자에게서 받아 플랫폼 서버가 리더의 쿠버네티스 Secret `<서비스 이름>-secrets`(공간 `proj-<slug>`, 서비스마다 하나, 슬롯 A · B가 같이 쓴다. key는 env 이름 그대로)로 쓴다. 값은 DB · 로그 · 오류 응답 · 빌드에 남기지 않고 **응답으로 돌려주지 않는다**. 값이 거치는 곳은 [`auth.md`](auth.md#비밀값)에 있다.
+
+**서비스 하나를 보내면 그 서비스의 Secret 전체를 바꾼다.** 서버는 Secret을 읽을 권한이 없어(쓰기 전용, [cluster.md](cluster.md) §8) 이미 들어간 값과 합칠 수 없다. 그래서 서비스를 보낼 때는 그 서비스의 `secretKeys`를 **모두** 보낸다(일부 key만 보내는 것은 없다). 서비스는 따로따로 보내도 된다: 이미 `in`인 서비스는 다시 보내지 않으면 그대로 있다.
+
+### `PUT /api/deploys/:id/secrets` — 비밀값 넣기 (내 배포만)
+
+요청:
+
+```json
+{
+  "services": {
+    "be": { "DATABASE_URL": "postgres://...", "JWT_SECRET": "..." }
+  }
+}
+```
+
+- `services`: 서비스 이름 → `{ key: 값 }`. 한 개 이상. 서비스마다 그 서비스의 `secretKeys`와 **정확히 같은 key 집합**이어야 한다(빠진 key도, 모르는 key도 안 된다).
+- 값은 문자열이고 **비어 있거나 공백뿐이면 안 된다**(안 채운 것으로 본다). 공백은 다듬지 않는다: 앞뒤 공백이나 줄바꿈이 있는 값은 그대로 들어간다. 값 하나는 8,192자까지이고, 요청 본문은 100KB까지다.
+- `secretKeys`가 비어 있는 서비스를 보내도 key가 없으면(`{}`) 아무 일도 하지 않는다. key가 있으면 `UNKNOWN_KEY`다.
+- 같은 요청을 다시 보내도 된다(덮어쓴다). 공간 `proj-<slug>`가 없으면 서버가 만든다([space.md](space.md)).
+
+응답 `200`: 아래 `GET`과 같은 모양(값은 없다). 서비스가 여럿이면 서비스 하나씩 차례로 쓰므로 중간에 실패하면 앞의 서비스만 들어간 채 오류가 온다. 그때는 `GET`으로 `in`인 서비스를 확인하고 나머지를 다시 보내면 된다.
+
+오류:
+
+- `400 INVALID_SECRETS`: `error.fields`에 `{ path, code }` 목록(`INVALID_SPEC`과 같은 방식, 최대 20개). 경로는 요청 본문의 `services`가 아니라 `secrets.<서비스>.<KEY>`로 쓴다(배포 시작의 `NOT_READY`가 빠진 key를 알리는 모양과 같다). **값은 응답 · 로그에 싣지 않고 key와 서비스 이름만 알린다.**
+
+| `code` | `path` | 뜻 |
+| --- | --- | --- |
+| `REQUIRED` | `secrets` | 서비스가 하나도 없다 |
+| `REQUIRED` | `secrets.<서비스>.<KEY>` | 그 key가 빠졌다, 값이 비었거나 공백뿐이다 |
+| `INVALID_TYPE` | `secrets` · `secrets.<서비스>` · `secrets.<서비스>.<KEY>` | 객체여야 할 곳이 아니거나, 값이 문자열이 아니다 |
+| `OUT_OF_RANGE` | `secrets.<서비스>.<KEY>` | 값이 8,192자를 넘는다 |
+| `UNKNOWN_SERVICE` | `secrets.<서비스>` | 이 배포에 없는 서비스다 |
+| `UNKNOWN_KEY` | `secrets.<서비스>.<KEY>` | 이 서비스의 `secretKeys`에 없는 key다 |
+
+  이름이 서비스 이름 · env 이름 모양이 아니면 그 이름은 응답에 싣지 않고 한 칸 위 경로로 알린다(`secrets` · `secrets.<서비스>`). 한 칸에는 코드가 하나만 남는다.
+- `401 AUTH_REQUIRED` · `401 INVALID_TOKEN`, `404 DEPLOY_NOT_FOUND`(없는 `id` · 남의 배포 · UUID가 아닌 `id`), `413 PAYLOAD_TOO_LARGE`(100KB 초과), `400 BAD_REQUEST`(본문이 JSON 객체가 아니거나 JSON으로 읽을 수 없다 — 파서의 오류 문구는 본문 조각을 담을 수 있어 `Request body is not valid JSON`으로 바꿔 돌려주고, 본문 내용은 응답 · 로그에 싣지 않는다).
+- `503 CLUSTER_UNAVAILABLE`: 리더에 닿지 못했거나, 서버의 클러스터 접속 설정이 없거나, 거절당했다. 사용자 잘못이 아니므로 **입력한 값을 남겨 두고 다시 시도하게 한다.** 쓴 서비스는 `in`이 되지 않는다(이미 `in`이던 서비스를 다시 보내다 실패하면 그 서비스는 `missing`으로 바뀐다. 새 값이 들어갔는지 알 수 없어서이고, 다시 보내면 된다).
+- `503 DATABASE_UNAVAILABLE`: 상태를 저장하지 못했다. 같은 이유로 다시 보내면 된다.
+
+### `GET /api/deploys/:id/secrets` — 비밀값 상태 읽기 · 빌드 준비됨 (내 배포만)
+
+응답 `200` (**값은 없다**. `secretKeys`가 비어 있지 않은 서비스만 나온다):
+
+```json
+{
+  "ready": false,
+  "secretHash": null,
+  "services": [
+    { "name": "be", "status": "in", "keys": [ { "key": "DATABASE_URL", "status": "in" }, { "key": "JWT_SECRET", "status": "in" } ] },
+    { "name": "ai", "status": "missing", "keys": [ { "key": "OPENAI_API_KEY", "status": "missing" } ] }
+  ]
+}
+```
+
+- `status`는 `in`(들어감) 또는 `missing`(빠짐)이다. **서비스 단위로 전부 들어가거나 전부 빠진다**(Secret을 통째로 바꾸므로). 그래서 한 서비스의 key는 모두 서비스와 같은 `status`다. 이 응답은 서버가 쓴 기록이고, 리더의 Secret을 읽어 확인한 것이 아니다(읽기 권한이 없다).
+- `in`이 되려면 지금 `secretKeys`와 **같은 key 집합**으로 쓴 기록이 있어야 한다. 같은 프로젝트(`slug`)의 이전 배포가 이미 넣은 Secret이 key까지 같으면 다시 입력하지 않아도 `in`이다. 새 배포가 key를 바꿨다면 그 서비스는 `missing`이고 전체를 다시 보낸다.
+- `ready`: `secretKeys`가 있는 모든 서비스가 `in`이면 `true`. 그런 서비스가 하나도 없어도 `true`다(비밀값이 필요 없는 배포). **FE의 "빌드 준비됨"은 이 값이다.**
+- `secretHash`: `ready`이고 비밀 env가 하나라도 있으면 `"sha256:" + 64자 hex`, 아니면 `null`. 넣은 값들의 해시이고(아래), W4에 넘기는 `deploy_condition.secretHash`다. 값이 같으면 항상 같은 해시이고, 비밀값이 바뀌면 달라진다.
+- 오류: `401`, `404 DEPLOY_NOT_FOUND`, `503 DATABASE_UNAVAILABLE`(리더는 부르지 않는다).
+
+**`secretHash` 계산**: 서비스마다 `sha256(JSON.stringify([[key, 값], ...]))`(key 순으로 정렬한 쌍, 값은 UTF-8)을 구하고, 서비스 이름 순으로 `[[이름, 서비스 해시], ...]`를 같은 방식으로 한 번 더 해시한다. 값이 DB에 남지 않도록 서비스마다의 해시만 저장하고 전체 해시는 읽을 때 계산한다. 이 해시는 저장된 행을 읽는 쪽(서비스 DB 접근 권한이 있는 곳)에서 값을 추측하는 데 쓰일 수 있어(값이 짧고 흔하면 사전 대입), 그 테이블은 서버 키만 읽는다([auth.md](auth.md#비밀값)). 같은 프로젝트 · 서비스에 거의 동시에 두 번 보내면 기록된 해시가 리더에 마지막으로 들어간 값과 다를 수 있다(드문 경우이고 다시 보내면 맞춰진다).
+
 ## AI 에이전트 (플랫폼 서버 ↔ AI 서버)
 
 배포 실패를 고치는 AI 에이전트와 플랫폼 서버가 주고받는 약속이다. 흐름 · 티켓 · 결과의 뜻은 [AI 에이전트 설계](AIagent.md), 언제 부르는지는 [배포 워크플로우](deploy-workflow.md) §6에 있다. 두 서버는 같은 EC2의 컨테이너이고, 이 API는 **컨테이너 사이 내부 망에서만** 열고 공개 주소(`/api`)에 붙이지 않는다. 로그인 토큰(사용자)이 아니라 아래 서버 사이 토큰을 쓴다.

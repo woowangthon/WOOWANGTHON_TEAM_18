@@ -1,4 +1,4 @@
-import { type ArgumentsHost, BadRequestException, HttpException, Logger, UnauthorizedException } from '@nestjs/common'
+import { type ArgumentsHost, BadRequestException, HttpException, Logger, NotFoundException, UnauthorizedException } from '@nestjs/common'
 import { afterEach, expect, it, vi } from 'vitest'
 import { ApiExceptionFilter } from './api-exception.filter.js'
 
@@ -35,9 +35,9 @@ it('ignores fields that are not a list', () => {
 })
 
 it('falls back to the HTTP status name', () => {
-  expect(run(new BadRequestException('Bad input'))).toEqual({
-    status: 400,
-    body: { error: { code: 'BAD_REQUEST', message: 'Bad input' } },
+  expect(run(new NotFoundException('Missing thing'))).toEqual({
+    status: 404,
+    body: { error: { code: 'NOT_FOUND', message: 'Missing thing' } },
   })
 })
 
@@ -54,4 +54,23 @@ it('hides unexpected errors behind 500 INTERNAL_ERROR and logs them', () => {
     body: { error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } },
   })
   expect(log).toHaveBeenCalledWith(boom)
+})
+
+// Nest는 본문 파서의 SyntaxError를 문구 그대로 BadRequestException(문자열)으로 만든다. 문구가 본문 조각을 담을 수 있어 싣지 않는다.
+it.each([
+  `Unexpected token 'l', "leaky-secret" is not valid JSON`,
+  `Expected ',' or '}' after property value in JSON at position 31 (line 1 column 32)`,
+  'Unexpected end of JSON input',
+  'reworded parser message with leaky-secret',
+])('does not repeat a body parser message that can carry the body: %s', (message) => {
+  expect(run(new BadRequestException(message))).toEqual({
+    status: 400,
+    body: { error: { code: 'BAD_REQUEST', message: 'Request body is not valid JSON' } },
+  })
+})
+
+it('keeps the message of a BadRequestException that our code threw as an object, also when it says JSON', () => {
+  expect(run(new BadRequestException({ code: 'BAD_REQUEST', message: 'Body must be a JSON object' })).body).toEqual({
+    error: { code: 'BAD_REQUEST', message: 'Body must be a JSON object' },
+  })
 })
