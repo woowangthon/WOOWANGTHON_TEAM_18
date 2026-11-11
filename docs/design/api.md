@@ -408,7 +408,7 @@ DB에 배포가 있는 프로젝트(`slug`)마다 공간 `proj-<slug>`를 읽어
 
 공간 `proj-<slug>`의 모든 Deployment를 `replicas: 0`으로 내린다. 공개 주소는 응답할 Pod가 없어 더는 응답하지 않는다(Ingress는 그대로 둔다). 다시 켜기는 MVP 밖이고, 학생이 새로 배포하면 다시 뜬다. 요청 본문은 없다.
 
-응답 `200`: `{ "slug", "scaled": ["fe-a", "be-a"], "failed": [] }`. 하나라도 내렸으면 누가 언제 껐는지 기록한다(`admin_actions`). 일부만 실패해도 `200`이고 `failed`에 이름이 온다(다시 요청하면 이어서 내린다).
+응답 `200`: `{ "slug", "scaled": ["fe-a", "be-a"], "failed": [] }`. 내리기 전에 누가 언제 요청했는지 기록한다(`admin_actions`. 기록하지 못하면 `503 DATABASE_UNAVAILABLE`이고 아무것도 내리지 않는다). 일부만 실패해도 `200`이고 `failed`에 이름이 온다(다시 요청하면 이어서 내린다).
 
 오류: `404 PROJECT_NOT_FOUND`(DB에 없는 slug, slug 모양이 아닌 값 포함), `409 NOT_RUNNING`(공간이 없거나 Deployment가 없다), `403 ADMIN_REQUIRED`, `503 CLUSTER_UNREACHABLE`, `503 CLUSTER_FORBIDDEN`(Deployment scale 권한이 아직 없을 때. 인프라 담당이 [`cluster.md`](cluster.md) §8 "남은 것"의 조치용 권한을 주기 전까지 이 오류다), `503 DATABASE_UNAVAILABLE`.
 
