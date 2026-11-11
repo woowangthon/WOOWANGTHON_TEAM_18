@@ -39,8 +39,8 @@ describe('spaceObjects', () => {
   it('names the space proj-<slug> and puts every other object in it', () => {
     const metas = objects.map((o) => (o.body as { metadata: { name: string; namespace?: string } }).metadata)
     expect(metas[0]).toMatchObject({ name: 'proj-my-app' })
-    expect(metas.slice(1).map((m) => m.namespace)).toEqual(Array<string>(4).fill('proj-my-app'))
-    expect(metas.slice(1).map((m) => m.name)).toEqual(['container-defaults', 'project-cap', 'project-isolation', 'platform-server-read'])
+    expect(metas.slice(1).map((m) => m.namespace)).toEqual(Array<string>(5).fill('proj-my-app'))
+    expect(metas.slice(1).map((m) => m.name)).toEqual(['container-defaults', 'project-cap', 'project-isolation', 'platform-server-read', 'deploy-executor'])
   })
 
   // 양식은 Infra/student/space.yaml이 정본이다(검사 규칙이 같은 값만 통과시킨다). 값이 하나라도 다르거나 빠지거나 늘면 만들 때 422가 난다.
