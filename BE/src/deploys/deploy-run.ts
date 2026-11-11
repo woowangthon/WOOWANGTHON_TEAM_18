@@ -20,7 +20,7 @@ const INTERNAL_CODES = ['BUILD_FAILED', 'DEPLOY_FAILED', 'VERIFY_FAILED', 'SWITC
 type InternalCode = (typeof INTERNAL_CODES)[number]
 
 /** AI를 부르지 않고 "실패"로 마감하는 플랫폼 문제(deploy-workflow.md §6-3). 코드 집합은 열려 있어, 파이프라인이 새 코드를 추가해도 BE를 고치지 않는다(모양만 본다). */
-const PLATFORM_CODE = /^[A-Z][A-Z0-9_]{2,63}$/
+const PLATFORM_CODE = /^[A-Za-z][A-Za-z0-9_]{2,63}$/
 const isPlatformCode = (v: unknown): v is string => typeof v === 'string' && PLATFORM_CODE.test(v) && !(INTERNAL_CODES as readonly string[]).includes(v)
 
 /** AI 에이전트 설계 §5의 티켓 stage는 이 넷뿐이다. */

@@ -163,11 +163,11 @@ describe('validateNotice', () => {
     const base = { deployId: ID, stage: 'verify', result: 'failed' }
     expect(paths(base)).toEqual(['failure:REQUIRED'])
     expect(paths({ ...base, failure: 'x' })).toEqual(['failure:INVALID_TYPE'])
-    expect(paths({ ...base, failure: { message: 'm', code: 'other', service: 'Bad Name' } })).toEqual(['failure.code:INVALID_VALUE', 'failure.service:INVALID_VALUE'])
+    expect(paths({ ...base, failure: { message: 'm', code: 'x', service: 'Bad Name' } })).toEqual(['failure.code:INVALID_VALUE', 'failure.service:INVALID_VALUE'])
     expect(paths({ ...base, failure: {} })).toEqual(['failure.message:REQUIRED'])
   })
 
-  it.each([['K8S_TIMEOUT', []], ['lower_case', ['failure.code:INVALID_VALUE']], ['BUILD_FAILED', ['failure.code:INVALID_VALUE']], ['TIMED_OUT', ['failure.code:INVALID_VALUE']], ['AB', ['failure.code:INVALID_VALUE']], ['A'.repeat(65), ['failure.code:INVALID_VALUE']], ['1ABC', ['failure.code:INVALID_VALUE']], ['A'.repeat(64), []]])('failure.code %s: %j', (code, expected) => {
+  it.each([['K8S_TIMEOUT', []], ['AccountLimitExceededException', []], ['with space', ['failure.code:INVALID_VALUE']], ['9ABC', ['failure.code:INVALID_VALUE']], ['BUILD_FAILED', ['failure.code:INVALID_VALUE']], ['TIMED_OUT', ['failure.code:INVALID_VALUE']], ['AB', ['failure.code:INVALID_VALUE']], ['A'.repeat(65), ['failure.code:INVALID_VALUE']], ['A'.repeat(64), []]])('failure.code %s: %j', (code, expected) => {
     expect(paths({ deployId: ID, stage: 'apply', result: 'failed', failure: { message: 'm', code, service: null } })).toEqual(expected)
   })
 

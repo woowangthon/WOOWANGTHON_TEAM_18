@@ -549,6 +549,7 @@ describe('POST /api/pipeline/notify', () => {
       ['LIVE_SLOT_PROTECTED', 'prepare'],
       ['CHART_RENDER_FAILED', 'render'],
       ['K8S_UNREACHABLE', 'apply'],
+      ['AccountLimitExceededException', 'build'],
     ])('a platform problem (%s) ends as failed and does not call the AI server', async (code, stage) => {
       const id = stage === 'build' ? seedDeploy() : await reach(stage)
       if (stage === 'build') await start(id)
