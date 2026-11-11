@@ -204,7 +204,7 @@
   {
     "caseId": "V2", "stage": "verify", "category": "spec",
     "title": "API 경로 404 (stripPrefix · ingressPath · health.path)",
-    "match": { "path": "errorMessage", "regex": "(?i)(?:/api\\b|health|/ready|/live)\\S*.*\\b404\\b|\\b404\\b.*(?:/api\\b|health|/ready|/live)" },
+    "match": { "path": "errorMessage", "regex": "(?i)/(?:api|healthz?|readyz?|livez?)(?=[/?#\\s]|$)\\S*.*\\b404\\b|\\b404\\b.*/(?:api|healthz?|readyz?|livez?)(?=[/?#\\s]|$)" },
     "playbook": [
       { "tool": "read_pod_logs", "args": { "lines": 100 } },
       { "tool": "read_repo", "when": "앱이 받는 경로(라우터 prefix)를 확인한다", "args": { "path": "." } },

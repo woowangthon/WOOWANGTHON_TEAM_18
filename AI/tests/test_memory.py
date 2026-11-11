@@ -277,6 +277,10 @@ def test_hits_and_solved_count_per_case() -> None:
         ("be: GET /api/health -> 404", "V2"),
         ("be: GET /healthz -> 404", "V2"),
         ("be: GET /api/v1/ready -> 404", "V2"),
+        ("be: GET /status/health -> 404", "V2"),
+        ("fe: GET /healthcare -> 404", None),  # 경로 세그먼트가 health가 아니다
+        ("fe: GET /api-docs -> 404", None),
+        ("fe: GET /lively/page -> 404", None),
         ("be: GET /api/app.js -> 404", "V1"),  # 파일 404가 먼저다
         ("fe: GET / -> 404", None),  # 페이지 자체의 404는 V1 · V2가 아니다
         ("fe: GET /assets/index.js -> 500", None),

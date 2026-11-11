@@ -345,7 +345,7 @@ buildspec · 서비스 역할(IAM) · 환경 변수 override는 받지 않는다
 | `A3` | apply | 메모리 초과 | `OOMKilled` (137) | `runtime.resources.memory` |
 | `A4` | apply | Pod 생성 실패 (쿼터) | ReplicaSet 이벤트 `FailedCreate` + `exceeded quota` | `runtime.resources` |
 | `V1` | verify | 정적 파일 404 | `errorMessage`에 파일 경로(`/assets/` 또는 `.js` · `.css` · 이미지 · 글꼴 확장자)와 `404` | 원인은 Vite `base` · `outputDir` 경로. spec(`build.outputDir`)이면 `specPatch`, 레포 파일(`vite.config`의 `base`)이면 수정 PR(수정 PR 도구 전에는 `needs_user`로 고칠 파일 · 값을 알림) |
-| `V2` | verify | API 경로 404 | `errorMessage`에 `/api` · `health` · `/ready` · `/live` 경로와 `404` | `runtime.stripPrefix` · `ingressPath` · `health.path` |
+| `V2` | verify | API 경로 404 | `errorMessage`에 경로 세그먼트 `/api` · `/health(z)` · `/ready(z)` · `/live(z)`와 `404` (`/healthcare` · `/api-docs`는 아님) | `runtime.stripPrefix` · `ingressPath` · `health.path` |
 
 에이전트를 부르지 않는 플랫폼 문제: CodeBuild API 오류(`AccountLimitExceededException` · `InvalidInputException` · `ResourceNotFoundException`), GHCR push 거부, `ImagePullBackOff` · `ErrImagePull`, `FailedScheduling`(노드 자원 부족), 차트 렌더 실패, 검사 규칙 거부, live 슬롯 보호 중단, 네임스페이스 · Secret 없음.
 

@@ -1,6 +1,9 @@
 import { Logger, ServiceUnavailableException } from '@nestjs/common'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { MAX_FILE_BYTES, RepoReader, repoPath } from './repo-reader.js'
+import { RepoReader, repoPath } from './repo-reader.js'
+
+// api.md `read_repo`: 200KB 넘으면 자른다.
+const SPEC_FILE_BYTES = 200 * 1024
 
 const SHA = 'a'.repeat(40)
 const API = `https://api.github.com/repos/student/app/contents`
@@ -57,10 +60,28 @@ describe('RepoReader', () => {
   it('reads a big file from raw and cuts it at the limit', async () => {
     stub()
     answers.set(`${API}/big.txt?ref=${SHA}`, Response.json({ type: 'file', encoding: 'none', content: '' }))
-    answers.set(`${RAW}/big.txt`, new Response('x'.repeat(MAX_FILE_BYTES + 10)))
+    answers.set(`${RAW}/big.txt`, new Response('x'.repeat(SPEC_FILE_BYTES * 3)))
     const entry = await reader.read('student/app', SHA, 'big.txt')
     expect(entry).toMatchObject({ type: 'file', truncated: true })
-    expect(entry?.type === 'file' && entry.content.length).toBe(MAX_FILE_BYTES)
+    expect(entry?.type === 'file' && entry.content.length).toBe(SPEC_FILE_BYTES)
+  })
+
+  it('stops reading a raw file at the limit instead of taking all of it', async () => {
+    stub()
+    let pulled = 0
+    // 끝나지 않는 파일: 다 읽으려 하면 이 테스트는 끝나지 않는다.
+    const endless = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulled++
+        controller.enqueue(new Uint8Array(64 * 1024).fill(120))
+      },
+    })
+    answers.set(`${API}/huge.bin?ref=${SHA}`, Response.json({ type: 'file', encoding: 'none', content: '' }))
+    answers.set(`${RAW}/huge.bin`, new Response(endless))
+    const entry = await reader.read('student/app', SHA, 'huge.bin')
+    expect(entry).toMatchObject({ type: 'file', truncated: true })
+    expect(entry?.type === 'file' && entry.content.length).toBe(SPEC_FILE_BYTES)
+    expect(pulled).toBeLessThan(10)
   })
 
   it('answers null for a missing path', async () => {

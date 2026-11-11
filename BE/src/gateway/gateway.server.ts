@@ -27,18 +27,24 @@ function bearer(req: IncomingMessage): string | null {
   return scheme?.toLowerCase() === 'bearer' && token ? token : null
 }
 
+/**
+ * 본문. 한도를 넘으면 null이다. 넘은 뒤 들어오는 본문은 모으지 않고 끝까지 받아 버린 다음 답하게 한다.
+ * 소켓을 끊거나 다 받기 전에 닫으면 클라이언트가 413 대신 연결 끊김을 받을 수 있다. 내부 망 전용이라 끝까지 받는 비용은 받아들인다.
+ */
 function readBody(req: IncomingMessage): Promise<Buffer | null> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = []
     let size = 0
+    let over = false
     req.on('data', (chunk: Buffer) => {
+      if (over) return
       size += chunk.length
       if (size > MAX_BODY_BYTES) {
-        resolve(null)
-        req.destroy()
+        over = true
+        chunks.length = 0
       } else chunks.push(chunk)
     })
-    req.on('end', () => resolve(Buffer.concat(chunks)))
+    req.on('end', () => resolve(over ? null : Buffer.concat(chunks)))
     req.on('error', reject)
   })
 }

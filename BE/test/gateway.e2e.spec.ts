@@ -4,7 +4,6 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import type { App } from 'supertest/types.js'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { DeploysStore, type DeployRunRow } from '../src/deploys/deploys.store.js'
-import { TOTAL_CALLS } from '../src/gateway/budget.js'
 import { GatewayServer } from '../src/gateway/gateway.server.js'
 import { RepoReader, type RepoEntry } from '../src/gateway/repo-reader.js'
 import { tokenHash } from '../src/gateway/tickets.js'
@@ -196,7 +195,8 @@ describe('MCP gateway', () => {
     expect(rejected(await call(client, 'read_repo', { path: '.' }))).toBeNull()
     expect(rejected(await call(client, 'read_repo', { path: '.' }))).toBe('REPEATED_CALL')
     // 다른 인자로 바꾸면 다시 된다. 막힌 호출은 세지 않는다.
-    for (let i = 2; i < TOTAL_CALLS; i++) {
+    // 명세의 티켓당 20회(AIagent.md §3).
+    for (let i = 2; i < 20; i++) {
       expect(rejected(await call(client, 'read_repo', { path: i % 2 ? '.' : 'package.json' }))).toBeNull()
     }
     expect(rejected(await call(client, 'get_target_status'))).toBe('TOOL_LIMIT')
@@ -281,5 +281,8 @@ describe('MCP gateway', () => {
     const bad = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: `{"token": "${SECRET}"` })
     expect(bad.status).toBe(400)
     expect(await bad.text()).not.toContain(SECRET)
+    // 1MB를 넘는 본문: 연결을 끊지 않고 413으로 답한다.
+    const big = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: 'x'.repeat(1024 * 1024 + 1) })
+    expect(big.status).toBe(413)
   })
 })
