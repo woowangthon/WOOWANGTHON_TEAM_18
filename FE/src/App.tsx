@@ -1,7 +1,9 @@
 import { Route, Routes } from 'react-router'
+import RequireAdmin from './admin/RequireAdmin.tsx'
 import AuthProvider from './auth/AuthProvider.tsx'
 import RequireAuth from './auth/RequireAuth.tsx'
 import AppLayout from './layout/AppLayout.tsx'
+import AdminPage from './pages/AdminPage.tsx'
 import DashboardPage from './pages/DashboardPage.tsx'
 import DeployNewPage from './pages/DeployNewPage.tsx'
 import LoginPage from './pages/LoginPage.tsx'
@@ -23,6 +25,9 @@ function App() {
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/profile" element={<ProfilePage />} />
             <Route path="/deploy/new" element={<DeployNewPage />} />
+            <Route element={<RequireAdmin />}>
+              <Route path="/admin" element={<AdminPage />} />
+            </Route>
           </Route>
         </Route>
       </Routes>

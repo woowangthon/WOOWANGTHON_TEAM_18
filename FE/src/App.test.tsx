@@ -13,7 +13,7 @@ const auth = vi.hoisted(() => ({
 }))
 vi.mock('./lib/supabase.ts', () => ({ supabase: { auth } }))
 
-const session = { access_token: 'tok', user: { email: 'me@example.com' } }
+const session = { access_token: 'tok', user: { email: 'me@example.com', app_metadata: {} } }
 let emit: (event: string, session: unknown) => void
 
 beforeEach(() => {
