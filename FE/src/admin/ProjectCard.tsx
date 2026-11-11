@@ -123,19 +123,12 @@ function StopProblem({ error }: { error: unknown }) {
   if (error instanceof ApiError && error.code === 'PROJECT_NOT_FOUND') {
     return <Alert title="프로젝트를 찾을 수 없어요">목록에서 사라졌을 수 있어요. 새로 읽으면 보여요.</Alert>
   }
-  // 중지는 POST라서 읽기와 달리 자동으로 다시 시도하지 않는다. 그래서 읽기용 클러스터 안내(자동으로 다시 시도해요)를 쓰지 않는다.
+  // 중지는 POST라서 읽기와 달리 자동으로 다시 시도하지 않는다. 공용 안내에는 retries={false}를 넘겨 "자동으로 다시 시도해요"를 빼고, 이 호출에만 있는 뜻만 따로 둔다.
   if (error instanceof ApiError && error.code === 'CLUSTER_FORBIDDEN') {
     // 서버의 scale 호출이 아직 붙지 않아 지금은 늘 이 오류다(docs/design/api.md "강제 중지"). 운영자가 잘못한 것이 아니다.
     return (
       <Alert variant="warn" title="아직 강제 중지를 쓸 수 없어요">
         운영자 잘못이 아니에요. 서버가 서비스를 내릴 권한이 아직 없어요. 인프라 담당이 권한을 주고 서버에 연결하면 쓸 수 있어요.
-      </Alert>
-    )
-  }
-  if (error instanceof ApiError && error.code === 'CLUSTER_UNREACHABLE') {
-    return (
-      <Alert variant="warn" title="리더 무응답">
-        리더의 쿠버네티스 API에 닿지 못해 중지하지 못했어요. 자동으로 다시 시도하지 않으니 잠시 뒤에 다시 눌러 주세요.
       </Alert>
     )
   }
@@ -146,7 +139,7 @@ function StopProblem({ error }: { error: unknown }) {
       </Alert>
     )
   }
-  return <ClusterProblem error={error} fallback="중지하지 못했어요" />
+  return <ClusterProblem error={error} retries={false} fallback="중지하지 못했어요" />
 }
 
 // 프로젝트 하나. 서비스(Deployment)와 Pod의 상태를 보이고, 확인을 거쳐 강제 중지할 수 있다(FR-084 · FR-094).

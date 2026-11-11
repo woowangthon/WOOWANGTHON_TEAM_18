@@ -384,6 +384,7 @@ it('says the stop is not available yet and not the operator\'s fault while the s
 it.each([
   new ApiError(503, 'CLUSTER_UNREACHABLE', 'x'),
   new ApiError(503, 'DATABASE_UNAVAILABLE', 'x'),
+  new ApiError(503, 'SOMETHING_ELSE', 'x'),
 ])('does not claim that a failed stop (%s) is tried again by itself, because a stop is not retried', async (error) => {
   serve({ [stopPath('my-app')]: error })
   await show()
@@ -393,4 +394,18 @@ it.each([
   expect(reads(stopPath('my-app'))).toBe(1)
   await advance(30_000)
   expect(reads(stopPath('my-app'))).toBe(1)
+})
+
+it('shows the forbidden notice when the stop is refused as not an operator, because the read after it is refused too', async () => {
+  let projectReads = 0
+  api.apiFetch.mockImplementation((path: string) => {
+    if (path === stopPath('my-app')) return Promise.reject(new ApiError(403, 'ADMIN_REQUIRED', 'x'))
+    if (path === PROJECTS) return ++projectReads === 1 ? Promise.resolve(projectsOf()) : Promise.reject(new ApiError(403, 'ADMIN_REQUIRED', 'x'))
+    return Promise.resolve(replies[path])
+  })
+  await show()
+  await press('my-app 강제 중지')
+  await press('my-app 중지하기')
+  expect(screen.queryByRole('button', { name: 'my-app 강제 중지' })).toBeNull()
+  expect(screen.queryByText('중지하지 못했어요')).toBeNull()
 })
