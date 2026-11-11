@@ -26,4 +26,6 @@ User decision (2026-11-11): split F11b and land the contract first, no code. Bot
 - [x] Track A confirms the pipeline side; markdown links resolve
 - [x] `verified` re-run contract — files: `docs/design/api.md` (3 · 5), `docs/design/AIagent.md` §1 · §6 · §7, `docs/design/deploy-workflow.md` §6
 - [x] Track A confirms the re-run part (all-reuse build passes with `images: {}`)
+- [x] Review: ADR-014 (ADR-012 status line only), time contract, leftover trial cancel and ordering, result assembly, known limits — files: `docs/adr/014-agent-trial-pipeline-and-rerun.md`, `docs/adr/012-agent-acts-through-platform-gateway.md`, `docs/design/api.md`, `docs/design/AIagent.md`, `docs/design/deploy-workflow.md`
+- [ ] Track A confirms result assembly and the cancel / ordering part
 - [ ] Next PR: BE implementation (trial routes, gateway run tools, `verified` re-run, without the build_cache move, which the #107 owner does)

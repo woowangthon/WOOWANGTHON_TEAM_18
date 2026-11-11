@@ -1,6 +1,6 @@
 # ADR-012: AI 에이전트는 플랫폼 서버의 MCP 게이트웨이를 거쳐서만 행동하고, 대상 슬롯에서 직접 시험한다
 
-- **상태**: 유효
+- **상태**: 유효 (일부 대체: 시험 실행 방식 · verified 뒤 처리 → 014)
 - **날짜**: 26-11-10
 - **결정자**: 김현식
 - **관련**: [AI 에이전트 설계](../design/AIagent.md), [배포 워크플로우 설계](../design/deploy-workflow.md) §6, [ADR-009](009-deploy-runs-on-leader-gocd-agent.md), [ADR-011](011-deploy-slots-a-b.md), [ADR-002](002-bot-account-for-fix-prs.md), [클러스터 설계](../design/cluster.md) §8
