@@ -7,6 +7,12 @@ export default defineConfig({
       SUPABASE_URL: 'https://test.supabase.co',
       SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_test',
       SUPABASE_SECRET_KEY: 'sb_secret_test',
+      GOCD_URL: 'https://gocd.test',
+      GOCD_TOKEN: 'gocd_token_test',
+      GOCD_PIPELINE: 'student-deploy',
+      PIPELINE_NOTIFY_TOKEN: 'pipeline_notify_test',
+      AI_SERVER_URL: 'https://ai.test',
+      AGENT_API_TOKEN: 'agent_token_test',
     },
   },
 })

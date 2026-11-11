@@ -102,3 +102,43 @@ describe('SUPABASE_URL', () => {
     },
   )
 })
+
+describe('pipeline and AI server settings', () => {
+  const names = ['GOCD_URL', 'GOCD_TOKEN', 'GOCD_PIPELINE', 'PIPELINE_NOTIFY_TOKEN', 'AI_SERVER_URL', 'AGENT_API_TOKEN'] as const
+
+  it('are optional: unset or empty means the feature is off', () => {
+    for (const raw of [base, { ...base, ...Object.fromEntries(names.map((n) => [n, ''])) }]) {
+      const env = validateEnv(raw)
+      for (const n of names) expect(env[n]).toBeUndefined()
+    }
+  })
+
+  it('are passed through when valid', () => {
+    const env = validateEnv({
+      ...base,
+      GOCD_URL: 'https://gocd.example.com',
+      GOCD_TOKEN: 'tok',
+      GOCD_PIPELINE: 'student-deploy',
+      PIPELINE_NOTIFY_TOKEN: 'n',
+      AI_SERVER_URL: 'http://localhost:8000',
+      AGENT_API_TOKEN: 'a',
+    })
+    expect(env).toMatchObject({ GOCD_URL: 'https://gocd.example.com', GOCD_PIPELINE: 'student-deploy', AI_SERVER_URL: 'http://localhost:8000' })
+  })
+
+  it.each([
+    ['GOCD_URL', 'gocd.example.com'],
+    ['GOCD_URL', 'https://gocd.example.com/'],
+    ['AI_SERVER_URL', 'https://ai.example.com/agent'],
+    ['GOCD_TOKEN', 'a b'],
+    ['PIPELINE_NOTIFY_TOKEN', 'a\nb'],
+    ['AGENT_API_TOKEN', ' x'],
+    ['GOCD_PIPELINE', 'a/b'],
+  ])('rejects %s = "%s" at boot', (name, value) => {
+    expect(() => validateEnv({ ...base, [name]: value })).toThrow(new RegExp(name))
+  })
+
+  it('does not put a bad secret in the error message', () => {
+    expect(() => validateEnv({ ...base, GOCD_TOKEN: 'very secret value' })).toThrow(/^(?!.*very secret)/s)
+  })
+})

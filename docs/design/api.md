@@ -356,13 +356,13 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
 
 ### `POST /api/deploys/:id/start` — 배포 시작 (소유자만)
 
-요청 본문 없음. 응답 `202`: `{ "deployId", "status": "running", "stage": "build", "targetSlot": "a" | "b" }`. GoCD 파이프라인을 실행하고 바로 돌려준다(끝나기를 기다리지 않는다). FE는 이어서 `GET /api/deploys/:id/status`를 다시 읽는다.
+요청 본문은 없어도 되고 `{}`(JSON)도 받는다. 응답 `202`: `{ "deployId", "status": "running", "stage": "build", "targetSlot": "a" | "b" }`. GoCD 파이프라인을 실행하고 바로 돌려준다(끝나기를 기다리지 않는다). FE는 이어서 `GET /api/deploys/:id/status`를 다시 읽는다.
 
 서버가 확인하는 것(순서대로): 내 배포인지(`404`) → 준비 상태가 "준비됨"인지(비밀값 · 필수 env, #82) → 배포 입력과 대상 슬롯을 만들고(`prepare`, #93) → 같은 프로젝트(`slug`)의 배포가 진행 중이 아닌지 → 실행 기록 저장 → 파이프라인 실행.
 
 오류:
 - `401` · `404 DEPLOY_NOT_FOUND`: 위와 같다(남의 배포 포함)
-- `409 NOT_READY`: 준비가 안 됐다. `missing`에 빠진 항목(예: 비밀값 key 이름)이 온다
+- `409 NOT_READY`: 준비가 안 됐다. 빠진 항목은 다른 검증 오류처럼 `error.fields`에 칸마다 `{ path: "secrets.<KEY>", code: "REQUIRED" }`로 온다(#82와 맞출 값)
 - `409 DEPLOY_IN_PROGRESS`: 같은 프로젝트의 다른 배포가 `running` · `fixing`이다
 - `409 ALREADY_STARTED`: 이 배포는 이미 시작했다(다시 배포하려면 새로 저장한다)
 - `503 PIPELINE_UNAVAILABLE`: GoCD에 닿지 못했거나 거절했다. 실행 기록은 남기지 않으므로 같은 요청을 다시 보내도 된다
@@ -397,7 +397,7 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
 - `failure`: `status`가 `failed`이거나 `fixing` · `needs_user`면 `{ "code", "stage", "service", "message" }`, 아니면 `null`. `message`는 학생에게 그대로 보여 줘도 되는 고정 문장이고 로그 · 원본 · 비밀값을 담지 않는다. `service`는 모르면 `null`.
 - `failure.code`: `BUILD_FAILED` · `DEPLOY_FAILED`(prepare · render · apply) · `VERIFY_FAILED` · `SWITCH_FAILED` · 플랫폼 문제 `CODEBUILD_API_ERROR` · `IMAGE_PULL_FAILED` · `LIVE_SLOT_PROTECTED`(AI를 부르지 않고 실패로 마감) · `AGENT_UNAVAILABLE`(AI 서버가 티켓을 받지 못함).
 - `url`: `succeeded`면 `https://<slug>.stairnoworks.com`, 아니면 `null`.
-- `warnings`: 보안 검사 경고(#45). 지금은 항상 `[]`.
+- `warnings`: 보안 검사 경고(#45). 지금은 항상 `[]`. 항목 모양은 `{ "code": string, "message": string, "service": string | null }`로 정한다(`message`는 그대로 보여 줘도 되는 문장).
 - **갱신**: FE가 `running` · `fixing`인 동안 3초마다 다시 읽는다(polling). `succeeded` · `failed` · `needs_user`면 멈춘다. 응답은 작게 유지한다(원본 · 로그 없음). SSE · WebSocket은 MVP 밖이다.
 
 오류: `401`, `404 DEPLOY_NOT_FOUND`(없는 id · 남의 id · UUID가 아닌 id 모두), `503 DATABASE_UNAVAILABLE`.
