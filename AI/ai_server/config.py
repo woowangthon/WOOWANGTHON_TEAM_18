@@ -19,8 +19,9 @@ class Settings(BaseSettings):
     # 동시에 도는 에이전트 수. 넘으면 503 AGENT_BUSY(플랫폼이 잠시 뒤 다시 보낸다).
     agent_max_runs: int = Field(default=2, ge=1)
     # 로컬 모델(리더 vLLM, OpenAI 호환 API): LLM 분류 · playbook 실행, 추론 API가 없을 때 planning.
-    local_model_url: AnyHttpUrl
-    local_model_name: str = Field(min_length=1)
+    # 비워 두면 서버는 뜨지만 티켓마다 "모델 설정이 없어 고치지 않았다"는 gave_up을 낸다.
+    local_model_url: AnyHttpUrl | None = None
+    local_model_name: str | None = Field(default=None, min_length=1)
     local_model_api_key: SecretStr | None = None
     # 추론 모델 API(OpenAI 호환): planning. 비워 두면 planning도 로컬 모델이 한다.
     planner_model_url: AnyHttpUrl | None = None
@@ -28,11 +29,15 @@ class Settings(BaseSettings):
     planner_model_api_key: SecretStr | None = None
 
     @model_validator(mode="after")
-    def _planner_url_and_name_together(self) -> Self:
-        if (self.planner_model_url is None) != (self.planner_model_name is None):
-            raise ValueError(
-                "PLANNER_MODEL_URL and PLANNER_MODEL_NAME are set together or not at all"
-            )
+    def _url_and_name_together(self) -> Self:
+        for prefix, url, name in (
+            ("LOCAL", self.local_model_url, self.local_model_name),
+            ("PLANNER", self.planner_model_url, self.planner_model_name),
+        ):
+            if (url is None) != (name is None):
+                raise ValueError(
+                    f"{prefix}_MODEL_URL and {prefix}_MODEL_NAME are set together or not at all"
+                )
         return self
 
 

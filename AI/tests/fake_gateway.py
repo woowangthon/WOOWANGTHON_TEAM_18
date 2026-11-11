@@ -54,9 +54,27 @@ def reject(code: str, message: str = "rejected") -> Json:
     return {"__reject__": {"code": code, "message": message}}
 
 
+class _FakeToolset(GatewayToolset):
+    """전송 오류를 흉내 낸다: `fake.broken[name]`번만큼 그 도구 호출이 전송에서 끊긴다."""
+
+    def __init__(self, client: Any, *, fake: "FakeGateway") -> None:
+        super().__init__(client)
+        self.fake = fake
+
+    async def _raw_call(self, name: str, args: dict[str, Any]) -> Any:
+        if self.fake.broken.get(name, 0) > 0:
+            self.fake.broken[name] -= 1
+            self.fake.lost.append(name)
+            raise ConnectionError(f"connection reset while calling {name}")
+        return await super()._raw_call(name, args)
+
+
 class FakeGateway:
     def __init__(self) -> None:
         self.calls: list[tuple[str, Json]] = []
+        # 도구 이름 → 전송에서 끊길 횟수, 끊긴 호출의 기록
+        self.broken: dict[str, int] = {}
+        self.lost: list[str] = []
         # 도구 이름 → 차례로 돌려줄 결과. 다 쓰면 DEFAULTS. reject(...)는 거절이다.
         self.script: dict[str, list[Json]] = {}
         self.server = FastMCP("fake-gateway")
@@ -70,7 +88,7 @@ class FakeGateway:
         return [name for name, _ in self.calls if name != "submit_result"]
 
     def toolset(self) -> GatewayToolset:
-        return GatewayToolset(self.server)
+        return _FakeToolset(self.server, fake=self)
 
     def _answer(self, name: str, args: Json) -> ToolResult:
         self.calls.append((name, {k: v for k, v in args.items() if v is not None}))

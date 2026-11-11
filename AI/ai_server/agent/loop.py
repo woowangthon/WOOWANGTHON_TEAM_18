@@ -4,23 +4,32 @@
 봉투(ticketId · commitSha · 분류 · 실제 도구 호출)는 모델이 아니라 코드가 채운다.
 """
 
+import asyncio
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
 from pydantic import BaseModel, Field
-from pydantic_ai import Agent
-from pydantic_ai.exceptions import AgentRunError, FallbackExceptionGroup
+from pydantic_ai import Agent, ModelRetry
+from pydantic_ai.exceptions import AgentRunError, FallbackExceptionGroup, UnexpectedModelBehavior
 from pydantic_ai.models import Model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 from ai_server.agent import prompts
-from ai_server.agent.gateway import SUBMIT_TOOL, GatewayStop, GatewayToolset, connect_gateway
+from ai_server.agent.gateway import (
+    SUBMIT_TOOL,
+    GatewayRejected,
+    GatewayStop,
+    GatewayToolset,
+    GatewayUnreachable,
+    connect_gateway,
+)
 from ai_server.agent.memory import Case, CaseMemory
 from ai_server.agent.models import (
+    Action,
     AgentResult,
     Classification,
     ClassifyMethod,
@@ -43,8 +52,7 @@ _STOP_SUMMARY = {
     "TIME_LIMIT": "에이전트 작업 시간 한도를 넘어 멈췄습니다. 시도한 조치는 기록에 남아 있습니다. "
     "배포 설정과 로그를 확인해 고친 뒤 다시 배포해 주세요.",
     "LIVE_SLOT_PROTECTED": "대상 슬롯이 지금 서비스 중인 슬롯과 같아 보여 "
-    "플랫폼이 작업을 멈췄습니다. "
-    "플랫폼 문제라 운영자에게 알렸습니다.",
+    "플랫폼 문제로 멈췄습니다.",
 }
 
 
@@ -66,7 +74,10 @@ def _openai_compatible(url: Any, name: str, key: Any) -> Model:
     return OpenAIChatModel(name, provider=OpenAIProvider(base_url=str(url), api_key=api_key))
 
 
-def models_from_settings(settings: Settings) -> Models:
+def models_from_settings(settings: Settings) -> Models | None:
+    """로컬 모델 설정이 없으면 None(티켓마다 모델 설정 없음을 알리는 gave_up)."""
+    if settings.local_model_url is None or settings.local_model_name is None:
+        return None
     local = _openai_compatible(
         settings.local_model_url, settings.local_model_name, settings.local_model_api_key
     )
@@ -123,58 +134,137 @@ async def _act(model: Model, prompt: str, gateway: GatewayToolset, memory: CaseM
     return (await agent.run(prompt)).output
 
 
-def make_agent_runner(models: Models, gateway_for: Callable[[str], GatewayToolset]) -> Runner:
-    """`gateway_for(token)`이 그 티켓의 게이트웨이 연결을 만든다."""
+# 제출이 전송 오류로 실패하면 이만큼 기다렸다 다시 낸다(초).
+SUBMIT_RETRY_DELAYS = (2.0, 5.0, 10.0)
+
+_GATEWAY_DOWN = (
+    "플랫폼 게이트웨이에 닿지 못해 멈췄습니다. 시도한 조치는 기록에 남아 있습니다. "
+    "잠시 뒤 다시 배포해 주세요."
+)
+_NO_MODEL = (
+    "AI 모델 설정이 없어 문제 해결을 하지 않았습니다. 운영자가 AI 서버의 모델 설정을 넣어야 합니다. "
+    "그 전에는 배포 설정과 로그를 직접 확인해 주세요."
+)
+_RESUBMITTED = "에이전트의 결과가 플랫폼 검사에서 거절되어 결과 없이 멈췄습니다. 배포 설정과 로그를 확인해 주세요."
+
+
+def _last_rejection(actions: list[Action]) -> str | None:
+    """마지막 거절 코드. 기록은 `rejected <code>: <message>`다."""
+    for action in reversed(actions):
+        if not action.ok and action.result and action.result.startswith("rejected "):
+            return action.result.removeprefix("rejected ").split(":", 1)[0]
+    return None
+
+
+def _model_failure(e: Exception, actions: list[Action]) -> str:
+    rejected = _last_rejection(actions)
+    if (
+        isinstance(e, UnexpectedModelBehavior)
+        and isinstance(e.__cause__, ModelRetry)
+        and rejected is not None
+    ):
+        # 게이트웨이 거절이 반복되어 도구 재시도 한도를 넘었다. 모델이 고장 난 것이 아니다.
+        return (
+            f"배포 설정 수정이 플랫폼 검사에서 계속 거절되어 멈췄습니다(마지막 거절: {rejected}). "
+            "시도한 조치는 기록에 남아 있습니다. 배포 설정을 확인해 고친 뒤 다시 배포해 주세요."
+        )
+    return (
+        f"AI 모델 호출이 실패해 원인을 찾지 못했습니다({type(e).__name__}). "
+        "잠시 뒤 다시 배포해 주세요."
+    )
+
+
+async def _submit(gateway: GatewayToolset, result: AgentResult) -> None:
+    """전송 오류면 몇 번 다시 낸다. INVALID_RESULT면 봉투와 사실 요약만 담은 gave_up으로 한 번 더."""
+    delays = [0.0, *SUBMIT_RETRY_DELAYS]
+    minimal_sent = False
+    attempt = 0
+    while attempt < len(delays):
+        await asyncio.sleep(delays[attempt])
+        try:
+            async with gateway:
+                await gateway.submit(result)
+            log.info("ticket %s submitted %s", result.ticket_id, result.status)
+            return
+        except GatewayUnreachable as e:
+            log.warning("ticket %s submit attempt %d: %s", result.ticket_id, attempt + 1, e)
+            attempt += 1
+        except GatewayRejected as e:
+            if e.code != "INVALID_RESULT" or minimal_sent:
+                log.error("ticket %s result not delivered: %s", result.ticket_id, e)
+                return
+            log.warning(
+                "ticket %s result rejected as invalid; sending a minimal gave_up", result.ticket_id
+            )
+            result = AgentResult(
+                ticket_id=result.ticket_id,
+                commit_sha=result.commit_sha,
+                classification=result.classification,
+                actions=result.actions,
+                status="gave_up",
+                summary=_RESUBMITTED,
+            )
+            minimal_sent = True
+    # 연결이 끝내 안 되면 결과를 낼 다른 길이 없다(AIagent.md 알려진 한계).
+    log.error("ticket %s result not delivered: gateway unreachable", result.ticket_id)
+
+
+def make_agent_runner(
+    models: Models | None, gateway_for: Callable[[str], GatewayToolset]
+) -> Runner:
+    """`gateway_for(token)`이 그 티켓의 게이트웨이 연결을 만든다. `models`가 없으면 고치지 않는다."""
 
     async def solve(run: TicketRun, memory: CaseMemory) -> None:
         ticket = run.ticket
         gateway = gateway_for(run.gateway.token)
-        async with gateway:
-            case = memory.classify(ticket)
-            method: ClassifyMethod = "code" if case else "llm"
-            path: ResultPath = "playbook" if case else "plan"
-            try:
-                if case is None:
-                    case = await _llm_classify(run, memory, models.local)
-                    path = "playbook" if case else "plan"
-                run.case_id = case.case_id if case else None
-                if case is None:
-                    outcome = await _act(
-                        models.planner, prompts.plan_prompt(ticket), gateway, memory
-                    )
-                else:
-                    prompt = prompts.playbook_prompt(ticket, case)
-                    outcome = await _act(models.local, prompt, gateway, memory)
-                    if outcome.status == "gave_up":
-                        path = "replan_after_playbook"
-                        prompt = prompts.replan_prompt(
-                            ticket, case, gateway.actions, outcome.summary
-                        )
+        case = memory.classify(ticket)
+        method: ClassifyMethod = "code" if case else "llm"
+        path: ResultPath = "playbook" if case else "plan"
+        run.case_id = case.case_id if case else None
+        try:
+            if models is None:
+                method = "code"
+                outcome = Outcome(status="gave_up", summary=_NO_MODEL)
+            else:
+                async with gateway:
+                    if case is None:
+                        case = await _llm_classify(run, memory, models.local)
+                        path = "playbook" if case else "plan"
+                        run.case_id = case.case_id if case else None
+                    if case is None:
+                        prompt = prompts.plan_prompt(ticket)
                         outcome = await _act(models.planner, prompt, gateway, memory)
-            except GatewayStop as stop:
-                if stop.code == "TICKET_CLOSED":
-                    log.info("ticket %s closed by the gateway; no result", ticket.ticket_id)
-                    return
-                outcome = Outcome(status="gave_up", summary=_STOP_SUMMARY[stop.code])
-            except (AgentRunError, FallbackExceptionGroup) as e:
-                # 모델 호출이 실패했다. 그럴듯한 결과로 꾸미지 않고 해결 못 함으로 알린다(F-1).
-                log.warning("ticket %s model failure: %r", ticket.ticket_id, e)
-                outcome = Outcome(
-                    status="gave_up",
-                    summary=f"AI 모델 호출이 실패해 원인을 찾지 못했습니다({type(e).__name__}). "
-                    "잠시 뒤 다시 배포해 주세요.",
-                )
-            result = AgentResult(
-                **outcome.model_dump(),
-                ticket_id=ticket.ticket_id,
-                commit_sha=ticket.commit_sha,
-                classification=Classification(
-                    method=method, case_id=case.case_id if case else None, path=path
-                ),
-                actions=gateway.actions,
-            )
-            await gateway.submit(result)
-            log.info("ticket %s submitted %s", ticket.ticket_id, result.status)
+                    else:
+                        prompt = prompts.playbook_prompt(ticket, case)
+                        outcome = await _act(models.local, prompt, gateway, memory)
+                        if outcome.status == "gave_up":
+                            path = "replan_after_playbook"
+                            prompt = prompts.replan_prompt(
+                                ticket, case, gateway.actions, outcome.summary
+                            )
+                            outcome = await _act(models.planner, prompt, gateway, memory)
+        except GatewayStop as stop:
+            if stop.code == "TICKET_CLOSED":
+                log.info("ticket %s closed by the gateway; no result", ticket.ticket_id)
+                return
+            outcome = Outcome(status="gave_up", summary=_STOP_SUMMARY[stop.code])
+        except GatewayUnreachable as e:
+            log.warning("ticket %s gateway unreachable: %s", ticket.ticket_id, e)
+            outcome = Outcome(status="gave_up", summary=_GATEWAY_DOWN)
+        except (AgentRunError, FallbackExceptionGroup) as e:
+            # 그럴듯한 결과로 꾸미지 않고 해결 못 함과 그 이유를 알린다(F-1).
+            log.warning("ticket %s model failure: %r", ticket.ticket_id, e)
+            outcome = Outcome(status="gave_up", summary=_model_failure(e, gateway.actions))
+        result = AgentResult(
+            **outcome.model_dump(),
+            ticket_id=ticket.ticket_id,
+            commit_sha=ticket.commit_sha,
+            classification=Classification(
+                method=method, case_id=case.case_id if case else None, path=path
+            ),
+            actions=gateway.actions,
+        )
+        await _submit(gateway, result)
 
     return solve
 

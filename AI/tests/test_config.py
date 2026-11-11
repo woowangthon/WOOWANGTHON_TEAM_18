@@ -68,6 +68,20 @@ def test_planner_url_and_name_go_together(monkeypatch: pytest.MonkeyPatch, name:
         load_settings(env_file=None)
 
 
+def test_local_model_is_optional(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("LOCAL_MODEL_URL")
+    monkeypatch.delenv("LOCAL_MODEL_NAME")
+    s = load_settings(env_file=None)
+    assert (s.local_model_url, s.local_model_name) == (None, None)
+
+
+@pytest.mark.parametrize("name", ["LOCAL_MODEL_URL", "LOCAL_MODEL_NAME"])
+def test_local_url_and_name_go_together(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
+    monkeypatch.delenv(name)
+    with pytest.raises(ConfigError, match="LOCAL_MODEL_URL and LOCAL_MODEL_NAME"):
+        load_settings(env_file=None)
+
+
 def test_planner_key_is_not_shown(monkeypatch: pytest.MonkeyPatch) -> None:
     key = "sk-leaky" + "q" * 20
     monkeypatch.setenv("PLANNER_MODEL_URL", "not a url")
@@ -107,9 +121,7 @@ def test_rejects_bad_port(monkeypatch: pytest.MonkeyPatch, port: str) -> None:
         load_settings(env_file=None)
 
 
-@pytest.mark.parametrize(
-    "name", ["AGENT_API_TOKEN", "GATEWAY_URL", "LOCAL_MODEL_URL", "LOCAL_MODEL_NAME"]
-)
+@pytest.mark.parametrize("name", ["AGENT_API_TOKEN", "GATEWAY_URL"])
 @pytest.mark.parametrize("value", [None, ""])
 def test_required(monkeypatch: pytest.MonkeyPatch, name: str, value: str | None) -> None:
     if value is None:

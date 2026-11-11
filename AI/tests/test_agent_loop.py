@@ -8,7 +8,9 @@ from fastapi.testclient import TestClient
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import ToolReturnPart
 
-from ai_server.agent.loop import Models, make_agent_runner, make_models
+from ai_server.agent import loop
+from ai_server.agent.gateway import connect_gateway
+from ai_server.agent.loop import Models, make_agent_runner, make_models, models_from_settings
 from ai_server.agent.memory import CaseMemory, load_cases
 from ai_server.agent.models import GatewayGrant, Ticket
 from ai_server.agent.prompts import INSTRUCTIONS
@@ -404,3 +406,121 @@ def test_ticket_posted_to_the_api_ends_in_submit_result(settings: Settings) -> N
         )
         a1 = c.app.state.runs.memory.get("A1")  # type: ignore[attr-defined]
         assert (a1.stats.hits, a1.stats.solved) == (1, 1)
+
+
+# ---- 게이트웨이 장애 · 결과 제출 (#110 리뷰) ----
+
+
+@pytest.fixture
+def no_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(loop, "SUBMIT_RETRY_DELAYS", (0.0, 0.0, 0.0))
+
+
+def test_unreachable_gateway_loses_the_result_but_says_so_in_the_log(
+    no_wait: None, caplog: pytest.LogCaptureFixture
+) -> None:
+    local = Script()
+    memory = CaseMemory(load_cases())
+    run = make_run(**SIGNALS["A1"])
+    runner = make_agent_runner(
+        Models(local=local.model, planner=local.model),
+        lambda token: connect_gateway("http://127.0.0.1:9/mcp", token),
+    )
+    asyncio.run(runner(run, memory))
+    assert local.requests == []
+    assert caplog.text.count("submit attempt") == 4
+    assert "ticket t_0013 result not delivered: gateway unreachable" in caplog.text
+
+
+def test_transport_error_during_a_tool_call_is_a_gave_up_with_the_reason(no_wait: None) -> None:
+    gw = FakeGateway()
+    gw.broken["run_render"] = 1
+    local = Script(call("run_render", specPatch=PORT_PATCH))
+    planner = Script()
+    solve(make_run(**SIGNALS["A1"]), gw, local, planner)
+    result = only_result(gw)
+    assert result["status"] == "gave_up"
+    assert result["summary"].startswith("플랫폼 게이트웨이에 닿지 못해 멈췄습니다")
+    assert gw.lost == ["run_render"] and planner.requests == []
+
+
+def test_submit_is_retried_after_transport_errors(no_wait: None) -> None:
+    gw = FakeGateway()
+    gw.broken["submit_result"] = 2
+    local = Script(final(status="verified", specPatch=PORT_PATCH, summary="포트를 고쳤습니다."))
+    solve(make_run(**SIGNALS["A1"]), gw, local)
+    assert gw.lost == ["submit_result", "submit_result"]
+    result = only_result(gw)
+    assert result["status"] == "verified" and result["specPatch"] == PORT_PATCH
+
+
+def test_submit_gives_up_after_the_retries(no_wait: None, caplog: pytest.LogCaptureFixture) -> None:
+    gw = FakeGateway()
+    gw.broken["submit_result"] = 9
+    local = Script(final(status="verified", specPatch=[], summary="통과"))
+    solve(make_run(**SIGNALS["A1"]), gw, local)
+    assert gw.lost == ["submit_result"] * 4 and gw.submitted == []
+    assert "result not delivered: gateway unreachable" in caplog.text
+
+
+def test_invalid_result_is_replaced_by_a_minimal_gave_up_once() -> None:
+    gw = FakeGateway()
+    gw.script["submit_result"] = [reject("INVALID_RESULT", "specPatch[0].path")]
+    local = Script(
+        call("run_verify"),
+        final(
+            status="verified",
+            specPatch=PORT_PATCH,
+            summary="고쳤습니다.",
+            evidence=[{"ref": "a", "text": "b"}],
+        ),
+    )
+    solve(make_run(**SIGNALS["A1"]), gw, local)
+    first, second = gw.submitted
+    assert first["status"] == "verified"
+    assert second["status"] == "gave_up" and "플랫폼 검사에서 거절" in second["summary"]
+    assert "specPatch" not in second and second["evidence"] == []
+    assert second["classification"] == first["classification"]
+    assert second["actions"] == first["actions"] and second["ticketId"] == "t_0013"
+
+
+@pytest.mark.parametrize("code", ["INVALID_RESULT", "TICKET_CLOSED"])
+def test_second_rejection_of_the_result_is_only_logged(
+    code: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    gw = FakeGateway()
+    gw.script["submit_result"] = [reject(code)] * 3
+    local = Script(final(status="gave_up", summary="모름"))
+    planner = Script(final(status="gave_up", summary="모름"))
+    solve(make_run(**SIGNALS["A1"]), gw, local, planner)
+    assert len(gw.submitted) == (2 if code == "INVALID_RESULT" else 1)
+    assert f"result not delivered: submit_result rejected {code}" in caplog.text
+
+
+def test_repeated_rejections_are_not_called_a_model_failure() -> None:
+    gw = FakeGateway()
+    gw.script["run_render"] = [reject("PATCH_FORBIDDEN", "role is not allowed")] * 4
+    bad = [{"op": "replace", "path": "/spec/services/0/role", "value": "fe"}]
+    local = Script(*[call("run_render", specPatch=bad) for _ in range(4)])
+    solve(make_run(**SIGNALS["A1"]), gw, local)
+    result = only_result(gw)
+    assert result["status"] == "gave_up"
+    assert result["summary"].startswith(
+        "배포 설정 수정이 플랫폼 검사에서 계속 거절되어 멈췄습니다(마지막 거절: PATCH_FORBIDDEN)"
+    )
+    assert "AI 모델 호출이 실패" not in result["summary"]
+    assert len(result["actions"]) == 4
+
+
+def test_without_model_settings_each_ticket_gets_a_gave_up_that_says_so(
+    settings: Settings,
+) -> None:
+    settings = settings.model_copy(update={"local_model_url": None, "local_model_name": None})
+    assert models_from_settings(settings) is None
+    gw = FakeGateway()
+    run = make_run(**SIGNALS["A1"])
+    asyncio.run(make_agent_runner(None, lambda token: gw.toolset())(run, CaseMemory(load_cases())))
+    result = only_result(gw)
+    assert result["status"] == "gave_up" and result["summary"].startswith("AI 모델 설정이 없어")
+    assert result["classification"] == {"method": "code", "caseId": "A1", "path": "playbook"}
+    assert gw.tool_calls() == [] and result["actions"] == []
