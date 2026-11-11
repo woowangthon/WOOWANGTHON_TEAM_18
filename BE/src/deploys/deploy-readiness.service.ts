@@ -1,6 +1,7 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common'
 import { type PreparedDeploy, DeployConditionService } from './deploy-condition.service.js'
 import { MAX_ISSUES } from './deploy-input.js'
+import { DeployPreparer } from './deploy-preparer.js'
 import { DeploysStore } from './deploys.store.js'
 import { SecretsService } from './secrets.service.js'
 
@@ -10,12 +11,14 @@ import { SecretsService } from './secrets.service.js'
  * 소유 확인은 부르는 쪽이 한다(이 함수는 사용자를 모른다). 계약은 docs/design/api.md "비밀값".
  */
 @Injectable()
-export class DeployReadinessService {
+export class DeployReadinessService extends DeployPreparer {
   constructor(
     private readonly store: DeploysStore,
     private readonly secrets: SecretsService,
     private readonly condition: DeployConditionService,
-  ) {}
+  ) {
+    super()
+  }
 
   async prepareIfReady(deployId: string): Promise<PreparedDeploy> {
     // spec을 읽으려고 행을 한 번 읽고, prepare가 같은 행을 다시 읽는다(prepare의 시그니처를 바꾸지 않으려는 것, 알려진 한계).

@@ -182,7 +182,7 @@ describe('PUT /api/deploys/:id/secrets', () => {
     await put(id(), send({ be: BE }))
     for (const w of secretWrites) {
       expect(w.apikey).toBe('sb_secret_test')
-      expect(w.prefer).toBe('return=representation,resolution=merge-duplicates')
+      expect(w.prefer).toBe('resolution=merge-duplicates,return=representation')
       expect(w.query).toBe('?on_conflict=slug%2Cservice')
     }
   })

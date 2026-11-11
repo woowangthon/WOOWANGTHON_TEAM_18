@@ -8,6 +8,18 @@ export interface Env {
   SUPABASE_PUBLISHABLE_KEY: string
   /** Supabase의 secret key(service role). 서버만 `deploys`에 쓴다. 비밀이라 로그 · 응답에 남기지 않고 SUPABASE_URL로만 보낸다. */
   SUPABASE_SECRET_KEY: string
+  /** GoCD 서버 origin. 비워 두면 배포 시작이 503 PIPELINE_UNAVAILABLE이다. */
+  GOCD_URL?: string
+  /** GoCD access token(비밀). 파이프라인 실행에만 쓰고 GOCD_URL로만 보낸다. */
+  GOCD_TOKEN?: string
+  /** 배포 파이프라인 이름 */
+  GOCD_PIPELINE?: string
+  /** 파이프라인이 알림 · 배포 입력 읽기에 쓰는 기계용 비밀 토큰. 비워 두면 그 라우트는 모두 401이다. */
+  PIPELINE_NOTIFY_TOKEN?: string
+  /** AI 서버 origin(문제 티켓을 보낸다). 비워 두면 문제 티켓을 보내지 못해 AGENT_UNAVAILABLE로 마감한다. */
+  AI_SERVER_URL?: string
+  /** 플랫폼 → AI 서버 요청의 Bearer 토큰(비밀). AI 서버의 같은 이름 env와 같은 값. */
+  AGENT_API_TOKEN?: string
   /** 리더 쿠버네티스 API의 origin(Tailscale 주소). 셋(K8S_*)이 모두 비면 undefined이고, 클러스터를 쓰는 기능만 503이다. 설계는 docs/design/space.md. */
   K8S_API_URL: string | undefined
   /** 서버 계정(platform-server)의 토큰. 비밀이라 로그 · 응답에 남기지 않고 K8S_API_URL로만 보낸다. */
@@ -25,6 +37,12 @@ export function validateEnv(raw: Record<string, string | undefined>): Env {
     SUPABASE_URL: parseSupabaseUrl(raw.SUPABASE_URL),
     SUPABASE_PUBLISHABLE_KEY: parsePublishableKey(raw.SUPABASE_PUBLISHABLE_KEY),
     SUPABASE_SECRET_KEY: parseSecretKey(raw.SUPABASE_SECRET_KEY),
+    GOCD_URL: parseOptionalOrigin(raw.GOCD_URL, 'GOCD_URL'),
+    GOCD_TOKEN: parseOptionalSecret(raw.GOCD_TOKEN, 'GOCD_TOKEN'),
+    GOCD_PIPELINE: parseOptionalPipeline(raw.GOCD_PIPELINE),
+    PIPELINE_NOTIFY_TOKEN: parseOptionalSecret(raw.PIPELINE_NOTIFY_TOKEN, 'PIPELINE_NOTIFY_TOKEN', 32),
+    AI_SERVER_URL: parseOptionalOrigin(raw.AI_SERVER_URL, 'AI_SERVER_URL'),
+    AGENT_API_TOKEN: parseOptionalSecret(raw.AGENT_API_TOKEN, 'AGENT_API_TOKEN'),
     ...parseCluster(raw),
   }
 }
@@ -72,6 +90,27 @@ function parseSecretKey(value: string | undefined): string {
       'SUPABASE_SECRET_KEY is required and must not contain whitespace (the secret key from Supabase Project Settings → API Keys)',
     )
   }
+  return value
+}
+
+// 비어 있으면 그 기능을 쓰지 않는다(요청이 올 때 503 · 401로 답한다). 값이 있으면 틀린 값은 부팅을 멈춘다.
+function parseOptionalOrigin(value: string | undefined, name: string): string | undefined {
+  if (value === undefined || value === '') return undefined
+  return checkOrigin(value, `${name} "${value}"`)
+}
+
+// 틀린 값이 오류 메시지(로그)에 남지 않도록 값은 메시지에 싣지 않는다.
+function parseOptionalSecret(value: string | undefined, name: string, minLength = 1): string | undefined {
+  if (value === undefined || value === '') return undefined
+  if (!/^\S+$/.test(value)) throw new Error(`${name} must not contain whitespace`)
+  // 이 토큰 하나로 알림을 위조할 수 있는 값은 짧으면 안 된다.
+  if (value.length < minLength) throw new Error(`${name} must be at least ${minLength} characters`)
+  return value
+}
+
+function parseOptionalPipeline(value: string | undefined): string | undefined {
+  if (value === undefined || value === '') return undefined
+  if (!/^[A-Za-z0-9_.-]+$/.test(value)) throw new Error(`GOCD_PIPELINE "${value}" is not a pipeline name`)
   return value
 }
 

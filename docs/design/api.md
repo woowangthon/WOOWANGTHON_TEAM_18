@@ -405,6 +405,115 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
 
 **빌드 준비 확인 (서버 안, 이슈 #82)**: 배포 시작(`POST /api/deploys/:id/start`, #44)이 빌드를 요청하기 전에 `DeployReadinessService.prepareIfReady(deployId)`를 부른다. 위 `GET`의 `ready`와 같은 판단이다(서비스마다 `secretKeys`와 같은 key 집합이 `in`일 때만 준비됨). 준비됐으면 `DeployConditionService.prepare(deployId, secretHash)`의 결과(W4에 넘기는 배포 입력)를 돌려주고, 아니면 `409 NOT_READY`와 함께 빠진 key를 `error.fields`에 `{ "path": "secrets.<서비스>.<KEY>", "code": "REQUIRED" }`로 싣는다(이름만, 값 · 해시는 없다. 최대 20개). 없는 `deployId`는 `404 DEPLOY_NOT_FOUND`. 이 함수는 사용자를 모르므로 소유 확인은 부르는 쪽이 먼저 한다. 사용자가 보는 "빌드 준비됨"은 새 엔드포인트 없이 위 `GET`의 `ready` · `services`다.
 
+## 배포 시작 · 진행 상태 (이슈 #44 · #98)
+
+저장한 배포 입력(`deployId`)으로 GoCD 파이프라인을 한 번 실행하고, 파이프라인이 보내는 단계 알림으로 진행 상태를 기록하고, 학생이 그 상태를 읽는다([배포 워크플로우](deploy-workflow.md) §1 · §6). 배포마다 실행 기록 행 하나(`deploy_runs`)가 생긴다.
+
+**상태 값**
+
+`status`: `not_started`(저장만 했고 시작하지 않음) · `running` · `fixing`(문제 해결 중: 문제 티켓을 AI 서버가 받아 처리하는 중) · `needs_user`(사용자 조치 필요) · `succeeded` · `failed`. `not_started`만 실행 기록 행이 없는 상태다. `needs_user`는 AI 에이전트의 해결 결과를 받는 쪽(별도 이슈)이 정하므로 이 이슈의 코드는 내지 않는다. 배포 대기(FR-054)도 슬롯 대기가 생기면 추가하고 지금은 내지 않는다.
+
+`stage`(지금 도는 파이프라인 스테이지): `build` · `prepare` · `render` · `apply` · `verify` · `switch`. 시작 전이거나 끝난 뒤(`succeeded`)는 `null`이다. 실패하면 실패한 스테이지가 남는다.
+
+`steps`(FR-060 순서, 항상 이 8개): `intake`(접수) · `analysis`(분석) · `config`(배포 설정) · `secrets`(비밀값) · `build`(빌드) · `deploy`(배포) · `verify`(동작 확인) · `done`(완료). 각 `state`는 `done` · `active` · `pending` · `failed`.
+
+- 배포 입력이 저장돼 있으면 `intake` · `analysis` · `config`는 `done`이다.
+- `secrets`는 시작 전에는 `active`, 시작한 뒤에는 `done`이다(시작은 비밀값이 준비된 때만 받는다).
+- `stage`가 `build`면 빌드, `prepare` · `render` · `apply`면 배포, `verify`면 동작 확인, `switch`면 완료 단계가 `active`다(그 앞 단계는 `done`, 뒤는 `pending`). `succeeded`면 모두 `done`.
+- `failed`이면 실패한 스테이지가 속한 단계가 `failed`다. `fixing`이면 그 단계가 `active`로 남는다(해결 중).
+
+### `POST /api/deploys/:id/start` — 배포 시작 (소유자만)
+
+요청 본문은 없어도 되고 `{}`(JSON)도 받는다. 응답 `202`: `{ "deployId", "status": "running", "stage": "build", "targetSlot": "a" | "b" }`. GoCD 파이프라인을 실행하고 바로 돌려준다(끝나기를 기다리지 않는다). FE는 이어서 `GET /api/deploys/:id/status`를 다시 읽는다.
+
+서버가 확인하는 것(순서대로): 내 배포인지(`404`) → 준비 상태가 "준비됨"인지(비밀값 · 필수 env, #82) → 배포 입력과 대상 슬롯을 만들고(`prepare`, #93) → 같은 프로젝트(`slug`)의 배포가 진행 중이 아닌지 → 실행 기록 저장 → 파이프라인 실행.
+
+오류:
+- `401` · `404 DEPLOY_NOT_FOUND`: 위와 같다(남의 배포 포함)
+- `409 NOT_READY`: 준비가 안 됐다. 빠진 항목은 다른 검증 오류처럼 `error.fields`에 칸마다 `{ path: "secrets.<service>.<KEY>", code: "REQUIRED" }`로 온다(#82의 `DeployReadinessService`가 낸다)
+- `409 DEPLOY_IN_PROGRESS`: 같은 프로젝트의 다른 배포가 `running` · `fixing`이다. 그 실행이 1시간 넘게 바뀌지 않았으면 끝난 것으로 보고 `failed`(`TIMED_OUT`)로 마감한 뒤 이 배포를 시작한다(알림이 오지 않거나 `fixing`을 풀 해결 결과 처리가 없어도 프로젝트가 영영 막히지 않게)
+- `409 ALREADY_STARTED`: 이 배포는 이미 시작했다(다시 배포하려면 새로 저장한다)
+- `503 PIPELINE_UNAVAILABLE`: GoCD에 닿지 못했거나 거절했다. 실행 기록은 남기지 않으므로 같은 요청을 다시 보내도 된다
+- `503 DATABASE_UNAVAILABLE`
+
+### `GET /api/deploys/:id/status` — 진행 상태 읽기 (소유자만)
+
+응답 `200`:
+
+```json
+{
+  "deployId": "…",
+  "status": "running",
+  "stage": "apply",
+  "steps": [
+    { "key": "intake", "state": "done" },
+    { "key": "analysis", "state": "done" },
+    { "key": "config", "state": "done" },
+    { "key": "secrets", "state": "done" },
+    { "key": "build", "state": "done" },
+    { "key": "deploy", "state": "active" },
+    { "key": "verify", "state": "pending" },
+    { "key": "done", "state": "pending" }
+  ],
+  "failure": null,
+  "url": null,
+  "warnings": [],
+  "updatedAt": "2026-11-11T01:00:00.000Z"
+}
+```
+
+- `failure`: `status`가 `failed`이거나 `fixing` · `needs_user`면 `{ "code", "stage", "service", "message" }`, 아니면 `null`. `message`는 학생에게 그대로 보여 줘도 되는 고정 문장이고 로그 · 원본 · 비밀값을 담지 않는다. `service`는 모르면 `null`.
+- `failure.code`: `BUILD_FAILED` · `DEPLOY_FAILED`(prepare · render · apply) · `VERIFY_FAILED` · `SWITCH_FAILED` · 플랫폼 문제(코드는 열려 있다: `^[A-Za-z][A-Za-z0-9_]{2,63}$`면 받는다. 예: `CODEBUILD_API_ERROR` · `IMAGE_PULL_FAILED` · `LIVE_SLOT_PROTECTED` · `BUILD_WAIT_TIMEOUT` · `NO_IMAGE_DIGEST` · `CHART_RENDER_FAILED` · `SPACE_MISSING` · `K8S_UNREACHABLE`. AI를 부르지 않고 실패로 마감하며, 모르는 코드는 일반 문구로 보여 준다) · `AGENT_UNAVAILABLE`(AI 서버가 티켓을 받지 못함) · `TIMED_OUT`(진행 중인 실행이 1시간 넘게 아무 알림 없이 멈춰 있어 중단함).
+- `url`: `succeeded`면 `https://<slug>.stairnoworks.com`, 아니면 `null`.
+- `warnings`: 보안 검사 경고(#45). 지금은 항상 `[]`. 항목 모양은 `{ "code": string, "message": string, "service": string | null }`로 정한다(`message`는 그대로 보여 줘도 되는 문장).
+- **갱신**: FE가 `running` · `fixing`인 동안 3초마다 다시 읽는다(polling). `succeeded` · `failed` · `needs_user`면 멈춘다. 응답은 작게 유지한다(원본 · 로그 없음). SSE · WebSocket은 MVP 밖이다.
+
+오류: `401`, `404 DEPLOY_NOT_FOUND`(없는 id · 남의 id · UUID가 아닌 id 모두), `503 DATABASE_UNAVAILABLE`.
+
+### `GET /api/deploys` — 내 배포 목록
+
+내 배포를 최신순(`createdAt` 내림차순)으로 돌려준다. 쿼리 `limit`(1~50, 기본 20). 화면이 새로 고침 뒤에도 진행 중인 배포를 찾게 하려는 것이다.
+
+응답 `200`: `{ "deploys": [{ "id", "repo", "slug", "commit", "createdAt", "status", "stage", "url" }] }`. `status` · `stage` · `url`은 위와 같다.
+
+오류: `401`, `400 INVALID_LIMIT`, `503 DATABASE_UNAVAILABLE`.
+
+### 파이프라인 ↔ 플랫폼 서버 (기계용)
+
+> **현식님 확인 필요**: 아래 세 가지는 파이프라인 쪽(Infra/pipeline, GoCD) 담당과 맞추지 않았다. 가장 단순한 쪽으로 정해 적었다.
+
+사용자 로그인 토큰이 아니라 **기계용 비밀 토큰** `PIPELINE_NOTIFY_TOKEN`(`Authorization: Bearer`)으로 인증한다. 서버 env에 있고 파이프라인의 GoCD secure 변수에 같은 값을 넣는다. 설정이 없거나 틀리면 `401 AUTH_REQUIRED`다. 이 토큰 하나로 배포 완료를 위조할 수 있어 서버는 32자 이상만 받는다. 플랫폼 서버는 GoCD를 주기적으로 조회하지 않는다(§6-1).
+
+**1. 실행**: 서버가 `POST {GOCD_URL}/go/api/pipelines/{GOCD_PIPELINE}/schedule`(헤더 `Accept: application/vnd.go.cd.v1+json` · `X-GoCD-Confirm: true` · `Authorization: Bearer {GOCD_TOKEN}`, GoCD access token)을 부른다. 본문은 `{ "environment_variables": [{ "name": "DEPLOY_ID", "value": "<deployId>" }], "update_materials_before_scheduling": true }`이다. 배포 입력 JSON은 싣지 않고 `deployId`만 넘긴다.
+
+**2. 배포 입력 읽기**: 파이프라인의 첫 task가 `deployId`로 입력을 가져가 JSON 파일로 저장한 뒤 그 경로를 빌드 CLI에 준다.
+
+`GET /api/pipeline/deploys/:deployId/input` → `200 { "deployId", "slot": "a" | "b", "input": { "commitSha", "deploy_condition", "spec" } }`. `input`은 시작할 때 만든 배포 입력이다(`deploy_condition.services`는 채워져 있다). 실행 기록이 없으면 `404 DEPLOY_NOT_FOUND`. 비밀값은 담지 않는다(key 이름만 있다).
+
+**3. 알림**: 각 스테이지가 끝날 때 `POST /api/pipeline/notify`.
+
+```json
+{ "deployId": "…", "stage": "build", "result": "passed", "images": { "fe": "ghcr.io/…/student-apps@sha256:…" } }
+```
+
+```json
+{
+  "deployId": "…", "stage": "apply", "result": "failed",
+  "failure": { "code": null, "service": "be", "message": "deployment \"be-b\" exceeded its progress deadline",
+               "raw": { "codebuild": null, "k8s": { "pod": {}, "events": [], "status": null } },
+               "logs": { "from": "…", "to": "…", "lines": [] } }
+}
+```
+
+- `stage`: `build` · `prepare` · `render` · `apply` · `verify` · `switch`.
+- `images`: `build`가 `passed`일 때만 받고 필수다. 빌드한(`run`) 서비스마다 이미지 digest 주소 하나(`reuse` 서비스는 넣지 않는다).
+- `failure.code`: 플랫폼 문제면 그 코드(`^[A-Za-z][A-Za-z0-9_]{2,63}$`, 집합은 열려 있고 파이프라인이 정한다. 알려진 코드는 위 예), 아니면 `null`. 모양이 틀리면 400 INVALID_VALUE. 플랫폼 문제는 AI를 부르지 않고 실패로 마감한다.
+- `failure.raw` · `failure.logs`: 문제 티켓에 담을 원본과 로그([AI 에이전트 설계](AIagent.md) §5의 `raw` · `logs` 모양). 문제 티켓으로 가는 실패(플랫폼 문제가 아니고 stage가 `build` · `prepare` · `render` · `apply`)에서만 확인한다. `build`는 `raw.codebuild`(객체 필수, `raw.k8s`는 없음), 그 밖은 `raw.k8s`(필수, `pod`는 객체 또는 `null`, `events`는 객체 배열, `status`는 `render`일 때만 객체 필수이고 나머지는 `null`)이다. `logs`는 있으면 `from` · `to`(시간대가 있는 ISO 8601)와 문자열 배열 `lines`(마지막 200줄만 쓴다), 없으면 빈 구간으로 보낸다. 안 맞으면 `400 BAD_REQUEST`와 `fields`(`failure.raw.k8s.status` 등)로 보낸 쪽에 알린다. 서버가 비밀값처럼 보이는 문자열을 가린 뒤(spec의 `secretKeys`는 key 이름 목록이라 그대로 둔다) 티켓에 넣고, 어디에도 저장하지 않는다.
+- `passed`면 다음 스테이지로 넘어간다. `switch`가 `passed`면 완료다: `live_slot`을 대상 슬롯으로 바꾸고, 새로 빌드한 이미지를 `build_cache`에 기록하고, 공개 주소와 함께 `succeeded`로 기록한다.
+- `failed`면 실패 분류에 따라 `failed`로 마감하거나 문제 티켓을 만들어 AI 서버 `POST /agent/tickets`로 보내고 `fixing`으로 둔다(티켓의 `ticketId` 하나만 보관). **`verify` · `switch` 실패는 티켓을 만들지 않고 `failed`로 마감한다**: AI 에이전트 설계의 티켓 `stage`는 `build` · `prepare` · `render` · `apply`뿐이다(결정 필요, PR 본문 참고).
+- 응답 `200 { "ok": true }`. 이미 끝난 배포(`succeeded` · `failed`)나 지금 스테이지가 아닌 `stage`의 알림은 상태를 바꾸지 않고 `200 { "ok": true, "applied": false }`이다(재전송해도 안전하다).
+- 오류: `401 AUTH_REQUIRED`, `400 BAD_REQUEST`(본문 모양이 다름, `fields` 포함), `404 DEPLOY_NOT_FOUND`(실행 기록 없음), `503 DATABASE_UNAVAILABLE`(파이프라인이 다시 보낸다).
+
 ## AI 에이전트 (플랫폼 서버 ↔ AI 서버)
 
 배포 실패를 고치는 AI 에이전트와 플랫폼 서버가 주고받는 약속이다. 흐름 · 티켓 · 결과의 뜻은 [AI 에이전트 설계](AIagent.md), 언제 부르는지는 [배포 워크플로우](deploy-workflow.md) §6에 있다. 두 서버는 같은 EC2의 컨테이너이고, 이 API는 **컨테이너 사이 내부 망에서만** 열고 공개 주소(`/api`)에 붙이지 않는다. 로그인 토큰(사용자)이 아니라 아래 서버 사이 토큰을 쓴다.
