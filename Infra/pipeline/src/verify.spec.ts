@@ -106,6 +106,9 @@ describe('assetPaths', () => {
     const html = Array.from({ length: 12 }, (_, i) => `<script src="/f${i}.js"></script>`).join('')
     expect(assetPaths(html, '/', HOST)).toHaveLength(10)
   })
+  it('reads tags in any letter case', () => {
+    expect(assetPaths('<SCRIPT SRC="/a.js"></SCRIPT><LINK REL="stylesheet" HREF="/s.css">', '/', HOST)).toEqual(['/a.js', '/s.css'])
+  })
   it('takes scripts and stylesheets in the order they appear, before cutting to 10', () => {
     const html = `<link rel="stylesheet" href="/s.css">${Array.from({ length: 11 }, (_, i) => `<script src="/f${i}.js"></script>`).join('')}`
     expect(assetPaths(html, '/', HOST)).toEqual(['/s.css', ...Array.from({ length: 9 }, (_, i) => `/f${i}.js`)])
