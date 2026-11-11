@@ -2,6 +2,9 @@
 # Design: docs/design/platform-hosting.md "GoCD 서버 · AWS 실행기", ADR-009.
 #   docker compose -f Infra/gocd/compose.yaml up -d gocd-server     (then Infra/gocd/setup.sh, then the agents)
 #   docker compose -f Infra/gocd/compose.yaml --profile agents up -d --build
+# Local check: PLATFORM_API_URL is http only on loopback (Infra/pipeline/src/platform-api.ts), so a platform server on the
+# host (host.docker.internal) is not accepted. Run it as another service with `network_mode: "service:aws-agent"` instead:
+# it shares the agent's loopback, and the agents' jobs reach it at http://127.0.0.1:3000.
 # Values come from the shell or `--env-file`; nothing secret is written here. The variables a profile needs are
 # empty by default so the server can start alone; Infra/aws/start-gocd.sh checks the AWS ones before it starts the agent.
 name: wcp-gocd
@@ -42,9 +45,6 @@ services:
       AWS_REGION: ap-northeast-2
       PIPELINE_NOTIFY_TOKEN: ${PIPELINE_NOTIFY_TOKEN:-}
       AWS_EC2_METADATA_DISABLED: "true"
-    # Local check only: reach a platform server running on the host (PLATFORM_API_URL=http://host.docker.internal:3000).
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
 
   # LOCAL TEST ONLY: a stand-in for the leader executor. The real one is Infra/executor/agent.yaml on the leader; do not
   # start this profile on the EC2. It mounts a token file and the cluster CA you provide and calls the leader's API.
@@ -68,8 +68,6 @@ services:
     volumes:
       - ${LEADER_TOKEN_FILE:-/dev/null}:/kube/token:ro
       - ${LEADER_CA_FILE:-/dev/null}:/kube/ca.crt:ro
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
 
 volumes:
   gocd-data:

@@ -10,5 +10,5 @@ USER root
 COPY --from=node /usr/local /opt/node
 COPY --from=helm /usr/bin/helm /usr/local/bin/helm
 ENV PATH=/opt/node/bin:$PATH
-RUN corepack enable
+RUN corepack enable pnpm
 USER go
