@@ -22,6 +22,22 @@ export interface DeployRow {
   created_at: string
 }
 
+/** `deploy_secrets` 테이블의 한 줄(supabase/migrations). 값은 없다: key 이름 · 상태 · 해시뿐이다. */
+export interface SecretRow {
+  service: string
+  keys: string[]
+  status: 'writing' | 'in'
+  digest: string | null
+}
+
+const isSecretRow = (v: unknown): v is SecretRow =>
+  isRecord(v) &&
+  typeof v.service === 'string' &&
+  Array.isArray(v.keys) &&
+  v.keys.every((k) => typeof k === 'string') &&
+  (v.status === 'writing' || v.status === 'in') &&
+  (v.digest === null || typeof v.digest === 'string')
+
 type NewDeploy = Pick<DeployRow, 'user_id' | 'slug' | 'repo' | 'commit_sha' | 'spec'>
 
 const isRow = (v: unknown): v is DeployRow =>
@@ -62,7 +78,7 @@ export class StoreConflict extends Error {
   }
 }
 
-type Table = 'deploys' | 'projects' | 'build_cache' | 'deploy_runs'
+type Table = 'deploys' | 'projects' | 'build_cache' | 'deploy_runs' | 'deploy_secrets'
 
 /**
  * `deploys` · `projects` · `build_cache` 테이블 접근. 서버의 secret key로 Supabase PostgREST를 부른다(RLS를 건너뛴다). 그래서 어떤 행을 읽고 쓸지는 이 클래스를 부르는 쪽이
@@ -135,6 +151,25 @@ export class DeploysStore {
     return image
   }
 
+  /** 프로젝트의 서비스별 비밀값 상태. */
+  async secretRows(slug: string): Promise<SecretRow[]> {
+    const rows = await this.call('deploy_secrets', 'GET', { select: 'service,keys,status,digest', slug: `eq.${slug}` })
+    if (!rows.every(isSecretRow)) throw this.unreadable('deploy_secrets', 'GET')
+    return rows
+  }
+
+  /** 서비스의 비밀값 상태를 쓴다(없으면 만들고 있으면 바꾼다). */
+  async setSecretState(slug: string, service: string, state: Omit<SecretRow, 'service'>): Promise<void> {
+    const rows = await this.call(
+      'deploy_secrets',
+      'POST',
+      { on_conflict: 'slug,service' },
+      { slug, service, ...state, updated_at: new Date().toISOString() },
+      'resolution=merge-duplicates,return=representation',
+    )
+    if (rows.length !== 1) throw this.unreadable('deploy_secrets', 'POST')
+  }
+
   /** 새 실행 기록. 같은 deploy_id가 있거나 같은 프로젝트에 진행 중인 실행이 있으면 StoreConflict. */
   async insertRun(row: NewRun): Promise<DeployRunRow> {
     const rows = await this.call('deploy_runs', 'POST', {}, row)
@@ -185,7 +220,7 @@ export class DeploysStore {
   }
 
   async deleteRun(deployId: string): Promise<void> {
-    await this.call('deploy_runs', 'DELETE', { deploy_id: `eq.${deployId}` })
+    await this.call('deploy_runs', 'DELETE', { deploy_id: `eq.${deployId}`, select: 'deploy_id' })
   }
 
   /** 프로젝트의 live 슬롯을 정한다(첫 전환이면 줄을 만든다). 같은 값으로 다시 불러도 같다. */
@@ -214,7 +249,9 @@ export class DeploysStore {
         // 새 secret key는 JWT가 아니라 Authorization 헤더로 보내면 거부된다. apikey 하나로 보낸다.
         headers: {
           apikey: this.secretKey,
-          ...(body ? { 'Content-Type': 'application/json', Prefer: prefer } : {}),
+          // 쓰는 요청(본문 없는 DELETE 포함)은 Prefer를 보내야 PostgREST가 204 빈 본문 대신 지운 줄을 JSON 배열로 돌려준다.
+          ...(method !== 'GET' ? { Prefer: prefer } : {}),
+          ...(body ? { 'Content-Type': 'application/json' } : {}),
         },
         body: body ? JSON.stringify(body) : undefined,
         signal: AbortSignal.timeout(TIMEOUT_MS),

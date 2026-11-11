@@ -8,6 +8,8 @@ export interface Env {
   SUPABASE_PUBLISHABLE_KEY: string
   /** Supabase의 secret key(service role). 서버만 `deploys`에 쓴다. 비밀이라 로그 · 응답에 남기지 않고 SUPABASE_URL로만 보낸다. */
   SUPABASE_SECRET_KEY: string
+  /** 비밀값 해시(HMAC-SHA256)의 서버 전용 키. 32자 이상, 비밀이라 로그 · 응답에 남기지 않는다. 바꾸면 저장된 해시와 `secretHash`가 달라진다. */
+  SECRET_HASH_KEY: string
   /** GoCD 서버 origin. 비워 두면 배포 시작이 503 PIPELINE_UNAVAILABLE이다. */
   GOCD_URL?: string
   /** GoCD access token(비밀). 파이프라인 실행에만 쓰고 GOCD_URL로만 보낸다. */
@@ -37,6 +39,7 @@ export function validateEnv(raw: Record<string, string | undefined>): Env {
     SUPABASE_URL: parseSupabaseUrl(raw.SUPABASE_URL),
     SUPABASE_PUBLISHABLE_KEY: parsePublishableKey(raw.SUPABASE_PUBLISHABLE_KEY),
     SUPABASE_SECRET_KEY: parseSecretKey(raw.SUPABASE_SECRET_KEY),
+    SECRET_HASH_KEY: parseSecretHashKey(raw.SECRET_HASH_KEY),
     GOCD_URL: parseOptionalOrigin(raw.GOCD_URL, 'GOCD_URL'),
     GOCD_TOKEN: parseOptionalSecret(raw.GOCD_TOKEN, 'GOCD_TOKEN'),
     GOCD_PIPELINE: parseOptionalPipeline(raw.GOCD_PIPELINE),
@@ -88,6 +91,17 @@ function parseSecretKey(value: string | undefined): string {
   if (value === undefined || !/^\S+$/.test(value)) {
     throw new Error(
       'SUPABASE_SECRET_KEY is required and must not contain whitespace (the secret key from Supabase Project Settings → API Keys)',
+    )
+  }
+  return value
+}
+
+// 비밀값의 해시가 값을 짐작하는 데 쓰이지 않게 하는 키다. 짧으면 막는다. 틀린 값이 오류 메시지(로그)에 남지 않도록 값은 메시지에 싣지 않는다.
+const SECRET_HASH_KEY_MIN_LENGTH = 32
+function parseSecretHashKey(value: string | undefined): string {
+  if (value === undefined || !/^\S+$/.test(value) || value.length < SECRET_HASH_KEY_MIN_LENGTH) {
+    throw new Error(
+      `SECRET_HASH_KEY is required: at least ${SECRET_HASH_KEY_MIN_LENGTH} characters, no whitespace (generate one with: openssl rand -hex 32)`,
     )
   }
   return value

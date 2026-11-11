@@ -83,7 +83,7 @@ const FRAMEWORKS = ['vite-react', 'nextjs', 'nest']
 const HEALTH_TYPES = ['http', 'tcp']
 
 // env 이름. `__proto__`는 모양은 맞지만 받지 않는다(받는 쪽이 객체에 그대로 합치면 prototype이 오염된다).
-const isEnvName = (s: string) => ENV_NAME.test(s) && s !== '__proto__'
+export const isEnvName = (s: string) => ENV_NAME.test(s) && s !== '__proto__'
 
 type Obj = Record<string, unknown>
 
