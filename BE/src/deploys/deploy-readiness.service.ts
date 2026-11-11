@@ -18,6 +18,7 @@ export class DeployReadinessService {
   ) {}
 
   async prepareIfReady(deployId: string): Promise<PreparedDeploy> {
+    // spec을 읽으려고 행을 한 번 읽고, prepare가 같은 행을 다시 읽는다(prepare의 시그니처를 바꾸지 않으려는 것, 알려진 한계).
     const row = await this.store.findById(deployId)
     if (!row) throw new NotFoundException({ code: 'DEPLOY_NOT_FOUND', message: 'No such deploy' })
     const status = await this.secrets.statusOf(row.spec)

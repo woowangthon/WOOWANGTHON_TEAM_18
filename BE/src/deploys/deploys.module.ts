@@ -14,6 +14,6 @@ import { SecretsService } from './secrets.service.js'
   controllers: [DeploysController],
   // SecretWriter의 실제 구현은 클러스터 호출 모듈(#111)이 묶는다. 그 전에는 쓰지 못한다고 답한다.
   providers: [DeploysService, DeploysStore, DeployConditionService, SecretsService, DeployReadinessService, { provide: SecretWriter, useClass: UnavailableSecretWriter }],
-  exports: [DeployConditionService, DeployReadinessService],
+  exports: [DeployConditionService],
 })
 export class DeploysModule {}
