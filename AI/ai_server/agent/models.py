@@ -34,37 +34,11 @@ class K8sRaw(Wire):
     status: JsonObject | None
 
 
-class VerifyReady(Wire):
-    service: NonEmpty
-    ready: bool
-    reason: str | None
-
-
-class VerifyRequest(Wire):
-    service: NonEmpty
-    # page: 정적 웹의 ingressPath, asset: 그 HTML이 부르는 같은 호스트의 파일,
-    # health: 서버의 헬스체크
-    kind: Literal["page", "asset", "health"]
-    path: str
-    status: int | None
-    ms: float | None
-    error: str | None
-
-
-class VerifyRaw(Wire):
-    """W6 동작 확인의 결과(deploy-workflow.md §4 "동작 확인과 전환" 검사표 그대로)."""
-
-    ready: list[VerifyReady]
-    requests: list[VerifyRequest]
-
-
 class TicketRaw(Wire):
     # CodeBuild · k3s 출력은 원본 그대로라 안쪽 모양은 고정하지 않는다.
     codebuild: JsonObject | None
     # to_camel은 "k8s"를 "k8S"로 바꾸므로 이름을 직접 준다.
     k8s: K8sRaw | None = Field(alias="k8s")
-    # stage verify일 때만. 다른 stage의 티켓은 이 칸을 빼도 된다.
-    verify: VerifyRaw | None = None
 
 
 class TicketLogs(Wire):
@@ -94,19 +68,9 @@ class Ticket(Wire):
 
     @model_validator(mode="after")
     def _raw_matches_stage(self) -> Self:
-        # build는 CodeBuild 원본만, verify는 동작 확인 결과만, 그 밖의 stage는 k3s 원본만 담는다.
-        # status는 render일 때만 있다.
+        # build는 CodeBuild 원본만, 그 밖의 stage는 k3s 원본만 담는다. status는 render일 때만 있다.
         problems: list[tuple[str, str]] = []
-        if self.stage != "verify" and self.raw.verify is not None:
-            problems.append(("verify", "MUST_BE_NULL"))
-        if self.stage == "verify":
-            if self.raw.codebuild is not None:
-                problems.append(("codebuild", "MUST_BE_NULL"))
-            if self.raw.k8s is not None:
-                problems.append(("k8s", "MUST_BE_NULL"))
-            if self.raw.verify is None:
-                problems.append(("verify", "REQUIRED"))
-        elif self.stage == "build":
+        if self.stage == "build":
             if self.raw.codebuild is None:
                 problems.append(("codebuild", "REQUIRED"))
             if self.raw.k8s is not None:

@@ -338,24 +338,3 @@ def test_close_body_must_be_a_json_object(client: TestClient) -> None:
     )
     assert res.status_code == 400
     assert res.json()["error"]["code"] == "BAD_REQUEST"
-
-
-def test_verify_ticket_is_accepted_and_its_raw_shape_checked(client: TestClient) -> None:
-    verify = {
-        "ready": [],
-        "requests": [
-            {
-                "service": "be",
-                "kind": "health",
-                "path": "/api/health",
-                "status": 404,
-                "ms": 4,
-                "error": None,
-            }
-        ],
-    }
-    ok = post_ticket(client, stage="verify", raw={"codebuild": None, "k8s": None, "verify": verify})
-    assert ok.status_code == 202
-    bad = post_ticket(client, ticketId="t_2", stage="verify", raw={"codebuild": None, "k8s": None})
-    assert bad.status_code == 400
-    assert bad.json()["error"]["fields"] == [{"path": "ticket.raw.verify", "code": "REQUIRED"}]

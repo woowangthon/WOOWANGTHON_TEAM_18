@@ -417,39 +417,3 @@ def test_planner_api_falls_back_to_the_thinking_local_model(settings: Settings) 
     assert isinstance(first, RedactingModel) and first.wrapped.model_name == "reasoner"
     assert isinstance(second, OpenAIChatModel) and second.settings is not None
     assert second.settings.get("max_tokens") == 4096
-
-
-def test_digest_shows_only_failed_verify_checks_once() -> None:
-    reqs = [
-        {"service": "fe", "kind": "page", "path": "/", "status": 200, "ms": 9, "error": None},
-        *[
-            {
-                "service": "fe",
-                "kind": "asset",
-                "path": "/assets/a.js",
-                "status": 404,
-                "ms": 2,
-                "error": None,
-            }
-        ]
-        * 3,
-        {
-            "service": "be",
-            "kind": "health",
-            "path": "/api/health",
-            "status": None,
-            "ms": None,
-            "error": "timeout",
-        },
-    ]
-    ready = [
-        {"service": "be", "ready": False, "reason": "readiness probe failed"},
-        {"service": "fe", "ready": True, "reason": None},
-    ]
-    raw = {"codebuild": None, "k8s": None, "verify": {"ready": ready, "requests": reqs}}
-    text = digest(Ticket.model_validate(ticket(stage="verify", raw=raw)), [])
-    assert "- be: not ready (readiness probe failed)" in text
-    assert text.count("- fe asset GET /assets/a.js: status 404") == 1
-    assert "- be health GET /api/health: error timeout" in text
-    assert "- 1 of 5 requests passed" in text
-    assert "GET /:" not in text and "- fe: not ready" not in text

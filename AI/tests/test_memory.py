@@ -135,23 +135,10 @@ def _render(code: int, message: str, causes: list[dict[str, str]]) -> dict[str, 
     return {"stage": "render", "errorMessage": message, "raw": {"codebuild": None, "k8s": k8s}}
 
 
-def _verify(*requests: tuple[str, str, int | None]) -> dict[str, Any]:
-    """(kind, path, status)로 W6 결과를 만든다."""
-    reqs = [
-        {
-            "service": "fe" if kind != "health" else "be",
-            "kind": kind,
-            "path": path,
-            "status": status,
-            "ms": 5,
-            "error": None,
-        }
-        for kind, path, status in requests
-    ]
-    return {
-        "stage": "verify",
-        "raw": {"codebuild": None, "k8s": None, "verify": {"ready": [], "requests": reqs}},
-    }
+def _verify(message: str) -> dict[str, Any]:
+    """W6 실패 티켓(§5): 통과하지 못한 검사 하나는 errorMessage에, Pod · 이벤트는 raw.k8s에."""
+    k8s = {"pod": {"status": {"phase": "Running"}}, "events": [], "status": None}
+    return {"stage": "verify", "errorMessage": message, "raw": {"codebuild": None, "k8s": k8s}}
 
 
 # 각 case의 신호(§8 표)를 담은 티켓
@@ -206,8 +193,8 @@ SIGNALS: dict[str, dict[str, Any]] = {
         state={"waiting": {"reason": "CrashLoopBackOff"}},
         lastState={"terminated": {"exitCode": 137, "reason": "OOMKilled"}},
     ),
-    "V1": _verify(("page", "/", 200), ("asset", "/assets/index-abc.js", 404)),
-    "V2": _verify(("page", "/", 200), ("health", "/api/health", 404)),
+    "V1": _verify("GET /assets/index-abc.js -> 404"),
+    "V2": _verify("GET /api/health -> 404"),
     "A4": _events(
         {
             "reason": "FailedCreate",
@@ -279,26 +266,29 @@ def test_hits_and_solved_count_per_case() -> None:
     assert sum(c.stats.solved for c in memory.cases) == 1
 
 
-def test_contains_needs_every_field_in_the_same_element() -> None:
-    cond = PathCond.model_validate({"path": "a.b[*]", "contains": {"c": 1}})
-    assert cond.holds(DOC)
-    both = PathCond.model_validate({"path": "a.b[*]", "contains": {"c": 1, "d": 3}})
-    assert not both.holds(DOC)  # c=1과 d=3은 서로 다른 원소에 있다
-    assert not PathCond.model_validate({"path": "a.e", "contains": {"c": 1}}).holds(DOC)
-
-
 @pytest.mark.parametrize(
-    "requests",
+    ("message", "case_id"),
     [
-        (("page", "/", 404), ("asset", "/a.js", 200)),  # 404는 페이지, 파일은 200
-        (("asset", "/a.js", 500),),
-        (("asset", "/a.js", None),),
+        ("GET /assets/index-abc.js -> 404", "V1"),
+        ("GET /static/app.css returned 404 Not Found", "V1"),
+        ("404 for /favicon.svg", "V1"),
+        ("GET /api/health -> 404", "V2"),
+        ("health check GET /healthz returned 404", "V2"),
+        ("GET /api/v1/ready -> 404", "V2"),
+        ("GET /api/app.js -> 404", "V1"),  # 파일 404가 먼저다
+        ("GET / -> 404", None),  # 페이지 자체의 404는 V1 · V2가 아니다
+        ("GET /assets/index.js -> 500", None),
+        ("GET /api/health -> 502", None),
+        ("pod be-b-7d9f is not Ready", None),
+        ("service be has no ready endpoints", None),
     ],
 )
-def test_v1_needs_an_asset_that_is_404(requests: tuple[tuple[str, str, int | None], ...]) -> None:
+def test_verify_cases_read_the_failed_check_in_the_error_message(
+    message: str, case_id: str | None
+) -> None:
     memory = CaseMemory(load_cases())
-    case = memory.classify(Ticket.model_validate(ticket(**_verify(*requests))))
-    assert case is None or case.case_id != "V1"
+    case = memory.classify(Ticket.model_validate(ticket(**_verify(message))))
+    assert (case.case_id if case else None) == case_id
 
 
 def test_verify_cases_only_match_verify_tickets() -> None:

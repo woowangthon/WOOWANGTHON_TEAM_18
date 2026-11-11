@@ -191,7 +191,7 @@
   {
     "caseId": "V1", "stage": "verify", "category": "repo",
     "title": "정적 파일 404 (Vite base · outputDir 경로)",
-    "match": { "path": "raw.verify.requests[*]", "contains": { "kind": "asset", "status": 404 } },
+    "match": { "path": "errorMessage", "regex": "(?i)(?:/assets/|\\.(?:m?js|css|map|png|jpe?g|gif|svg|ico|webp|woff2?|ttf))\\S*.*\\b404\\b|\\b404\\b.*(?:/assets/|\\.(?:m?js|css|map|png|jpe?g|gif|svg|ico|webp|woff2?|ttf)\\b)" },
     "playbook": [
       { "tool": "read_repo", "args": { "path": "." } },
       { "tool": "read_repo", "when": "Vite 프로젝트면 설정 파일을 읽어 base를 본다", "args": { "path": "vite.config.ts" } },
@@ -204,7 +204,7 @@
   {
     "caseId": "V2", "stage": "verify", "category": "spec",
     "title": "API 경로 404 (stripPrefix · ingressPath · health.path)",
-    "match": { "path": "raw.verify.requests[*]", "contains": { "kind": "health", "status": 404 } },
+    "match": { "path": "errorMessage", "regex": "(?i)(?:/api\\b|health|/ready|/live)\\S*.*\\b404\\b|\\b404\\b.*(?:/api\\b|health|/ready|/live)" },
     "playbook": [
       { "tool": "read_pod_logs", "args": { "lines": 100 } },
       { "tool": "read_repo", "when": "앱이 받는 경로(라우터 prefix)를 확인한다", "args": { "path": "." } },

@@ -548,4 +548,6 @@ def test_verify_ticket_runs_the_v2_playbook() -> None:
     assert result["classification"] == {"method": "code", "caseId": "V2", "path": "playbook"}
     assert result["specPatch"] == patch
     first = local.sent(0)
-    assert '"caseId":"V2"' in first and "- be health GET /api/health: status 404" in first
+    # verify 티켓은 통과하지 못한 검사를 errorMessage로, 그 서비스의 Pod를 raw.k8s로 싣는다.
+    assert '"caseId":"V2"' in first and "Error: GET /api/health -> 404" in first
+    assert "stage=verify" in first

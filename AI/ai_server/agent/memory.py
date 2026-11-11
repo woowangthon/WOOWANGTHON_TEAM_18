@@ -38,17 +38,12 @@ class _Cond(BaseModel):
 
 
 class PathCond(_Cond):
-    """경로가 가리키는 값 하나라도 조건에 맞으면 참이다.
-
-    `contains`는 값(객체)이 주어진 칸 · 값을 모두 가질 때 참이다. 한 원소 안의 여러 칸을 같이 볼 때
-    쓴다(`all`로 묶은 조건은 서로 다른 원소에서 맞아도 참이다).
-    """
+    """경로가 가리키는 값 하나라도 조건에 맞으면 참이다."""
 
     path: str
     equals: Any = None
     not_equals: Any = Field(default=None, alias="notEquals")
     regex: str | None = None
-    contains: dict[str, Any] | None = None
 
     @field_validator("path")
     @classmethod
@@ -68,9 +63,7 @@ class PathCond(_Cond):
 
     @model_validator(mode="after")
     def _one_test(self) -> Self:
-        tests = [
-            t for t in ("equals", "not_equals", "regex", "contains") if t in self.model_fields_set
-        ]
+        tests = [t for t in ("equals", "not_equals", "regex") if t in self.model_fields_set]
         if len(tests) != 1:
             raise ValueError(f"condition on {self.path} needs exactly one test, got {tests}")
         return self
@@ -82,10 +75,6 @@ class PathCond(_Cond):
                     return True
             elif "not_equals" in self.model_fields_set:
                 if value != self.not_equals:
-                    return True
-            elif "contains" in self.model_fields_set:
-                expected = self.contains or {}
-                if isinstance(value, dict) and all(value.get(k) == v for k, v in expected.items()):
                     return True
             elif isinstance(value, str) and re.search(self.regex or "", value):
                 return True

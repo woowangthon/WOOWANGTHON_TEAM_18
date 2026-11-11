@@ -10,7 +10,7 @@ from typing import Any
 
 from ai_server.agent import budget
 from ai_server.agent.memory import Case
-from ai_server.agent.models import Action, Ticket, VerifyRaw
+from ai_server.agent.models import Action, Ticket
 
 INSTRUCTIONS = """\
 You fix a failed student deployment on the platform. You act only through the tools you are given;
@@ -91,30 +91,6 @@ def _render_status(status: dict[str, Any]) -> list[str]:
     ]
 
 
-VERIFY_SHOWN = 15
-
-
-def _verify(verify: VerifyRaw) -> list[str]:
-    """준비 안 된 서비스와 실패한 요청만, 같은 줄은 한 번."""
-    lines = [f"- {r.service}: not ready ({r.reason})" for r in verify.ready if not r.ready]
-    for q in verify.requests:
-        if q.status == 200 and q.error is None:
-            continue
-        result = (
-            f"status {q.status}"
-            if q.status is not None
-            else f"error {budget.clip_line(str(q.error), 200)}"
-        )
-        line = f"- {q.service} {q.kind} GET {budget.clip_line(q.path, 200)}: {result}"
-        if line not in lines:
-            lines.append(line)
-    passed = sum(q.status == 200 and q.error is None for q in verify.requests)
-    shown = lines[:VERIFY_SHOWN]
-    if len(lines) > VERIFY_SHOWN:
-        shown.append(f"- … {len(lines) - VERIFY_SHOWN} more failed checks")
-    return [*shown, f"- {passed} of {len(verify.requests)} requests passed"]
-
-
 def _build(build: dict[str, Any]) -> list[str]:
     b = budget.essential_build(build)
     lines = [f"buildStatus={b.get('buildStatus')} currentPhase={b.get('currentPhase')}"]
@@ -149,8 +125,6 @@ def digest(ticket: Ticket, notes: list[str]) -> str:
             parts += ["Pod containers:", *containers]
         if raw.k8s.events:
             parts += ["Events (latest, no repeats):", *_events(raw.k8s.events)]
-    if raw.verify is not None:
-        parts += ["Verify (failed checks only, no repeats):", *_verify(raw.verify)]
     lines = ticket.logs.lines
     shown = budget.excerpt(lines)
     parts.append(
