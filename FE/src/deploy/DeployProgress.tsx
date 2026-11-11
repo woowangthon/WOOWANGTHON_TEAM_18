@@ -1,33 +1,52 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
 import { Alert } from '../components/ui/Alert.tsx'
-import { Badge } from '../components/ui/Badge.tsx'
 import { Button } from '../components/ui/Button.tsx'
 import { ApiError, apiFetch } from '../lib/api.ts'
 import DeployStages from './DeployStages.tsx'
-import { isActive, isPlatformProblem, POLL_MS, stageStatesOf, statusLabel, statusVariant } from './progress.ts'
+import { isActive, isPlatformProblem, POLL_MS, stageStatesOf } from './progress.ts'
 import type { Progress } from './progress.ts'
+import StatusBadge from './StatusBadge.tsx'
 import { STAGES } from './stages.ts'
+import { useCopy } from './useCopy.ts'
 
 type Load = { status: 'loading' } | { status: 'ready'; progress: Progress } | { status: 'not-found' }
-type StartFailure = 'not-ready' | 'in-progress' | 'unavailable' | 'not-found' | 'failed'
+type StartFailureKind = 'not-ready' | 'in-progress' | 'unavailable' | 'not-found' | 'failed'
+// missing: NOT_READY가 알려 준 빠진 항목의 이름(fields의 path). 서버가 알려 주지 않으면 비어 있다.
+type StartFailure = { kind: StartFailureKind; missing: string[] }
+
+// 비밀값은 `secrets.<KEY>`로 오므로 이름만 보이고, 그 밖의 항목은 path를 그대로 보인다.
+const missingName = (path: string) => (path.startsWith('secrets.') ? path.slice('secrets.'.length) : path)
 
 // 이미 시작한 배포(ALREADY_STARTED)는 오류로 보이지 않는다. 곧바로 다시 읽는 상태가 그 사실을 보여 준다.
 function startFailureOf(error: unknown): StartFailure | null {
-  if (!(error instanceof ApiError)) return 'failed'
+  const failure = (kind: StartFailureKind, missing: string[] = []): StartFailure => ({ kind, missing })
+  if (!(error instanceof ApiError)) return failure('failed')
   if (error.code === 'ALREADY_STARTED') return null
-  if (error.code === 'NOT_READY') return 'not-ready'
-  if (error.code === 'DEPLOY_IN_PROGRESS') return 'in-progress'
-  if (error.code === 'DEPLOY_NOT_FOUND') return 'not-found'
-  return error.status === 503 || error.code === 'NETWORK_ERROR' ? 'unavailable' : 'failed'
+  if (error.code === 'NOT_READY') return failure('not-ready', error.fields.map((field) => missingName(field.path)))
+  if (error.code === 'DEPLOY_IN_PROGRESS') return failure('in-progress')
+  if (error.code === 'DEPLOY_NOT_FOUND') return failure('not-found')
+  return failure(error.status === 503 || error.code === 'NETWORK_ERROR' ? 'unavailable' : 'failed')
 }
 
-function StartFailureAlert({ failure }: { failure: StartFailure }) {
-  switch (failure) {
+function StartFailureAlert({ failure: { kind, missing } }: { failure: StartFailure }) {
+  switch (kind) {
     case 'not-ready':
       return (
         <Alert variant="warn" title="아직 시작할 수 없어요">
-          배포 준비가 끝나지 않았어요. 비밀값이 모두 들어갔는지 확인한 뒤 다시 시작해 주세요.
+          <div className="flex flex-col gap-1">
+            <p>배포 준비가 끝나지 않았어요. 비밀값이 모두 들어갔는지 확인한 뒤 다시 시작해 주세요.</p>
+            {missing.length > 0 && (
+              <>
+                <p>빠진 항목</p>
+                <ul className="font-mono">
+                  {missing.map((name) => (
+                    <li key={name}>{name}</li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </div>
         </Alert>
       )
     case 'in-progress':
@@ -50,15 +69,7 @@ function StartFailureAlert({ failure }: { failure: StartFailure }) {
 }
 
 function CopyButton({ text }: { text: string }) {
-  const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle')
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(text)
-      setState('copied')
-    } catch {
-      setState('failed')
-    }
-  }
+  const { state, copy } = useCopy(text)
   return (
     <>
       <Button
@@ -69,7 +80,7 @@ function CopyButton({ text }: { text: string }) {
       >
         주소 복사
       </Button>
-      {state === 'copied' && <span role="status" className="text-sm">복사했어요</span>}
+      {state === 'done' && <span role="status" className="text-sm">복사했어요</span>}
       {state === 'failed' && (
         <span role="status" className="text-sm">
           복사하지 못했어요. 주소를 직접 선택해 복사해 주세요.
@@ -79,13 +90,19 @@ function CopyButton({ text }: { text: string }) {
   )
 }
 
-const stageLabelOf = (key: string) => STAGES.find((stage) => stage.key === key)?.label
+// failure.stage는 파이프라인 스테이지(build · prepare · render · apply · verify · switch)라 단계 이름과 다르다.
+// 계약은 실패한 스테이지가 속한 단계를 failed로 준다고 하므로, 그 단계의 이름을 쓰고 없으면 받은 값을 그대로 보인다.
+const failedStageLabel = ({ steps, failure }: Progress) => {
+  const key = steps.find((step) => step.state === 'failed')?.key
+  return STAGES.find((stage) => stage.key === key)?.label ?? failure?.stage
+}
 
 // 한 배포의 진행 상태. 진행 중일 때만 3초마다 다시 읽고, 화면을 떠나면 멈춘다.
 function DeployProgress({ deployId }: { deployId: string }) {
   const [load, setLoad] = useState<Load>({ status: 'loading' })
-  // 마지막 읽기가 실패했는지. 실패해도 지금 보이는 상태는 지우지 않고 계속 다시 시도한다.
-  const [offline, setOffline] = useState(false)
+  // 마지막 읽기가 실패했는지. 실패해도 지금 보이는 상태는 지우지 않는다.
+  // retrying: 서버 장애나 네트워크 문제라 계속 다시 시도한다. stopped: 다시 시도해도 나아지지 않을 오류라 멈추고 사용자가 다시 읽게 한다.
+  const [offline, setOffline] = useState<'retrying' | 'stopped' | null>(null)
   const [reads, setReads] = useState(0)
   const [starting, setStarting] = useState(false)
   const [startFailure, setStartFailure] = useState<StartFailure | null>(null)
@@ -99,7 +116,7 @@ function DeployProgress({ deployId }: { deployId: string }) {
         const progress = await apiFetch<Progress>(`/api/deploys/${deployId}/status`)
         if (ignore) return
         setLoad({ status: 'ready', progress })
-        setOffline(false)
+        setOffline(null)
         again = isActive(progress.status)
       } catch (error) {
         if (ignore) return
@@ -107,7 +124,9 @@ function DeployProgress({ deployId }: { deployId: string }) {
           setLoad({ status: 'not-found' })
           again = false
         } else {
-          setOffline(true)
+          const retryable = error instanceof ApiError && (error.status === 503 || error.code === 'NETWORK_ERROR')
+          setOffline(retryable ? 'retrying' : 'stopped')
+          again = retryable
         }
       }
       if (again) timer = setTimeout(() => void read(), POLL_MS)
@@ -142,11 +161,28 @@ function DeployProgress({ deployId }: { deployId: string }) {
     )
   }
 
-  const offlineNotice = offline && (
-    <Alert variant="warn" title="서버와 연결하지 못했어요">
-      사용자 잘못이 아니에요. 자동으로 다시 시도하고 있어요.
-    </Alert>
-  )
+  const offlineNotice =
+    offline === 'retrying' ? (
+      <Alert variant="warn" title="서버와 연결하지 못했어요">
+        사용자 잘못이 아니에요. 자동으로 다시 시도하고 있어요.
+      </Alert>
+    ) : offline === 'stopped' ? (
+      <Alert title="진행 상태를 읽지 못했어요">
+        <div className="flex flex-col gap-2">
+          <p>잠시 뒤에 다시 읽어 주세요.</p>
+          <Button
+            variant="outline"
+            className="self-start"
+            onClick={() => {
+              setOffline(null)
+              setReads((count) => count + 1)
+            }}
+          >
+            다시 읽기
+          </Button>
+        </div>
+      </Alert>
+    ) : null
 
   if (load.status === 'loading') {
     return (
@@ -164,7 +200,7 @@ function DeployProgress({ deployId }: { deployId: string }) {
   return (
     <section aria-label="배포 진행 상태" className="flex flex-col gap-4">
       <div className="flex items-center gap-2">
-        <Badge variant={statusVariant(progress.status)}>{statusLabel(progress.status)}</Badge>
+        <StatusBadge status={progress.status} />
         {isActive(progress.status) && <span className="text-sm text-muted">3초마다 새로 읽고 있어요</span>}
       </div>
       {offlineNotice}
@@ -196,7 +232,7 @@ function DeployProgress({ deployId }: { deployId: string }) {
               <>
                 <p>{failure.message}</p>
                 <p className="text-muted">
-                  단계: {stageLabelOf(failure.stage) ?? failure.stage}
+                  단계: {failedStageLabel(progress)}
                   {failure.service ? ` · 서비스: ${failure.service}` : ''}
                 </p>
                 {isPlatformProblem(failure.code) && (
@@ -205,6 +241,20 @@ function DeployProgress({ deployId }: { deployId: string }) {
               </>
             )}
           </div>
+        </Alert>
+      )}
+
+      {progress.warnings.length > 0 && (
+        <Alert variant="warn" title="보안 검사 경고가 있어요">
+          <p>배포를 막지는 않았어요.</p>
+          <ul className="mt-1 list-disc pl-5">
+            {progress.warnings.map((warning, index) => (
+              <li key={`${warning.code}-${index}`}>
+                {warning.message}
+                {warning.service ? ` (서비스: ${warning.service})` : ''}
+              </li>
+            ))}
+          </ul>
         </Alert>
       )}
 

@@ -6,6 +6,8 @@ export type DeployStatus = 'not_started' | 'running' | 'fixing' | 'needs_user' |
 
 export type DeployFailure = { code: string; stage: string; service: string | null; message: string }
 
+export type DeployWarning = { code: string; message: string; service: string | null }
+
 export type Progress = {
   deployId: string
   status: DeployStatus
@@ -13,8 +15,8 @@ export type Progress = {
   steps: { key: string; state: string }[]
   failure: DeployFailure | null
   url: string | null
-  // 보안 검사 경고(#45). 계약은 지금 항상 빈 배열이라고만 하고 항목 모양은 아직 없다.
-  warnings: unknown[]
+  // 보안 검사 경고(#45). 배포를 막지 않는다. message는 그대로 보여 줘도 되는 문장이다. 지금은 항상 빈 배열이다.
+  warnings: DeployWarning[]
   updatedAt: string
 }
 

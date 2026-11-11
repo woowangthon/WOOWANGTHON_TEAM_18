@@ -3,6 +3,7 @@ import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { ApiError } from '../lib/api.ts'
 import DeployProgress from './DeployProgress.tsx'
+import { STAGES } from './stages.ts'
 import type { DeployFailure, DeployStatus, Progress } from './progress.ts'
 
 // 실제 BE를 부르지 않는다. 테스트 전용 대역이라 MOCK 표식은 필요 없다(conventions §6).
@@ -16,12 +17,12 @@ const ID = '0b6f0c1e-4a52-4d8e-9a1b-3f7d2c5e8a90'
 const STATUS = `/api/deploys/${ID}/status`
 const START = `/api/deploys/${ID}/start`
 
-const KEYS = ['intake', 'analysis', 'config', 'secrets', 'build', 'deploy', 'verify', 'done']
+const KEYS = STAGES.map((stage) => stage.key)
 // active 단계 이름과 그 앞은 done, 뒤는 pending. failed면 그 단계를 failed로.
 const stepsAt = (at: string | null, failed = false) =>
   KEYS.map((key, i) => ({
     key,
-    state: at === null ? 'done' : i < KEYS.indexOf(at) ? 'done' : key === at ? (failed ? 'failed' : 'active') : 'pending',
+    state: at === null ? 'done' : i < (KEYS as string[]).indexOf(at) ? 'done' : key === at ? (failed ? 'failed' : 'active') : 'pending',
   }))
 const progressOf = (status: DeployStatus, at: string | null, extra: Partial<Progress> = {}): Progress => ({
   deployId: ID,
@@ -34,7 +35,7 @@ const progressOf = (status: DeployStatus, at: string | null, extra: Partial<Prog
   updatedAt: '2026-11-11T01:00:00.000Z',
   ...extra,
 })
-const failureOf = (code: string, message = '빌드에 실패했어요'): DeployFailure => ({ code, stage: 'build', service: 'be', message })
+const failureWith = (code: string, message = '빌드에 실패했어요'): DeployFailure => ({ code, stage: 'build', service: 'be', message })
 
 beforeEach(() => {
   vi.useFakeTimers()
@@ -59,6 +60,10 @@ const show = async () => {
   return view
 }
 // 단계 이름이 정확히 같은 줄의 글자. "배포"가 "배포 설정"에 걸리지 않게 이름 칸을 따로 본다.
+const clickStart = async () => {
+  fireEvent.click(screen.getByRole('button', { name: '배포 시작' }))
+  await advance(0)
+}
 const stage = (name: string) =>
   screen.getAllByRole('listitem').find((li) => li.firstElementChild?.textContent === name)?.textContent
 
@@ -93,7 +98,7 @@ it('reads again every 3 seconds while running and shows the change', async () =>
 })
 
 it('keeps reading while a problem is being fixed', async () => {
-  api.apiFetch.mockResolvedValue(progressOf('fixing', 'deploy', { failure: failureOf('DEPLOY_FAILED', '문제를 살펴보는 중이에요') }))
+  api.apiFetch.mockResolvedValue(progressOf('fixing', 'deploy', { failure: failureWith('DEPLOY_FAILED', '문제를 살펴보는 중이에요') }))
   await show()
   await advance(3000)
   expect(reads()).toBe(2)
@@ -108,7 +113,7 @@ it.each([
   ['needs_user', 'secrets'],
   ['not_started', 'secrets'],
 ] as const)('stops reading once the status is %s', async (status, at) => {
-  api.apiFetch.mockResolvedValue(progressOf(status, at, { url: 'https://x.stairnoworks.com', failure: failureOf('BUILD_FAILED') }))
+  api.apiFetch.mockResolvedValue(progressOf(status, at, { url: 'https://x.stairnoworks.com', failure: failureWith('BUILD_FAILED') }))
   await show()
   await advance(30_000)
   expect(reads()).toBe(1)
@@ -136,6 +141,24 @@ it('keeps the last state, says it is not the user fault and keeps trying when a 
   expect(stage('배포')).toBe('배포진행 중')
 })
 
+it.each([
+  [new ApiError(500, 'INTERNAL', 'x')],
+  [new ApiError(400, 'BAD_REQUEST', 'x')],
+  [new TypeError('boom')],
+])('stops reading on an error that will not get better (%s) and reads again when asked', async (error) => {
+  api.apiFetch.mockRejectedValueOnce(error).mockResolvedValue(progressOf('running', 'build'))
+  await show()
+  expect(screen.getByText('진행 상태를 읽지 못했어요')).toBeTruthy()
+  expect(screen.queryByText(/사용자 잘못이 아니에요/)).toBeNull()
+  await advance(30_000)
+  expect(reads()).toBe(1)
+  fireEvent.click(screen.getByRole('button', { name: '다시 읽기' }))
+  await advance(0)
+  expect(reads()).toBe(2)
+  expect(screen.queryByText('진행 상태를 읽지 못했어요')).toBeNull()
+  expect(stage('빌드')).toBe('빌드진행 중')
+})
+
 it('says the deploy was not found on 404 and does not keep reading', async () => {
   api.apiFetch.mockRejectedValue(new ApiError(404, 'DEPLOY_NOT_FOUND', 'x'))
   await show()
@@ -152,8 +175,7 @@ it('starts the deploy from the button, then reads the status again and follows i
   })
   await show()
   expect(stage('비밀값')).toBe('비밀값사용자 조치 필요')
-  fireEvent.click(screen.getByRole('button', { name: '배포 시작' }))
-  await advance(0)
+  await clickStart()
   expect(api.apiFetch).toHaveBeenCalledWith(START, {})
   expect(reads()).toBe(2)
   expect(screen.queryByRole('button', { name: '배포 시작' })).toBeNull()
@@ -167,8 +189,7 @@ it('locks the start button while the request is out', async () => {
     path === START ? new Promise(() => undefined) : Promise.resolve(progressOf('not_started', 'secrets')),
   )
   await show()
-  fireEvent.click(screen.getByRole('button', { name: '배포 시작' }))
-  await advance(0)
+  await clickStart()
   expect(screen.getByRole<HTMLButtonElement>('button', { name: '시작하는 중…' }).disabled).toBe(true)
 })
 
@@ -183,8 +204,7 @@ it.each([
     path === START ? Promise.reject(error) : Promise.resolve(progressOf('not_started', 'secrets')),
   )
   await show()
-  fireEvent.click(screen.getByRole('button', { name: '배포 시작' }))
-  await advance(0)
+  await clickStart()
   expect(screen.getByText(title)).toBeTruthy()
   expect(screen.getByRole<HTMLButtonElement>('button', { name: '배포 시작' }).disabled).toBe(false)
   expect(reads()).toBe(2)
@@ -196,10 +216,55 @@ it('does not call an already started deploy an error, it just shows what the ser
     return Promise.resolve(reads() <= 1 ? progressOf('not_started', 'secrets') : progressOf('running', 'build'))
   })
   await show()
-  fireEvent.click(screen.getByRole('button', { name: '배포 시작' }))
-  await advance(0)
+  await clickStart()
   expect(screen.queryByRole('alert')).toBeNull()
   expect(stage('빌드')).toBe('빌드진행 중')
+})
+
+it('lists the missing secret names the server named on NOT_READY, and falls back to the plain text without them', async () => {
+  api.apiFetch.mockImplementation((path: string) =>
+    path === START
+      ? Promise.reject(
+          new ApiError(409, 'NOT_READY', 'x', [
+            { path: 'secrets.DATABASE_URL', code: 'REQUIRED' },
+            { path: 'secrets.JWT_SECRET', code: 'REQUIRED' },
+          ]),
+        )
+      : Promise.resolve(progressOf('not_started', 'secrets')),
+  )
+  await show()
+  await clickStart()
+  const list = within(screen.getByRole('list', { name: '' }))
+  expect(list.getAllByRole('listitem').map((li) => li.textContent)).toEqual(['DATABASE_URL', 'JWT_SECRET'])
+})
+
+it('says only the plain text when NOT_READY names nothing', async () => {
+  api.apiFetch.mockImplementation((path: string) =>
+    path === START ? Promise.reject(new ApiError(409, 'NOT_READY', 'x')) : Promise.resolve(progressOf('not_started', 'secrets')),
+  )
+  await show()
+  await clickStart()
+  expect(screen.getByText('아직 시작할 수 없어요')).toBeTruthy()
+  expect(screen.queryByText('빠진 항목')).toBeNull()
+})
+
+it('shows security warnings without blocking the result', async () => {
+  api.apiFetch.mockResolvedValue(
+    progressOf('succeeded', null, {
+      url: 'https://my-app.stairnoworks.com',
+      warnings: [{ code: 'SECRET_IN_REPO', message: '비밀값처럼 보이는 문자열이 있어요', service: 'be' }],
+    }),
+  )
+  await show()
+  const alert = within(screen.getByText('보안 검사 경고가 있어요').closest('[role="status"]') as HTMLElement)
+  expect(alert.getByText(/비밀값처럼 보이는 문자열이 있어요 \(서비스: be\)/)).toBeTruthy()
+  expect(screen.getByRole('link', { name: 'https://my-app.stairnoworks.com' })).toBeTruthy()
+})
+
+it('shows no warning box when there are none', async () => {
+  api.apiFetch.mockResolvedValue(progressOf('succeeded', null, { url: 'https://my-app.stairnoworks.com' }))
+  await show()
+  expect(screen.queryByText('보안 검사 경고가 있어요')).toBeNull()
 })
 
 it('shows no error for an already started deploy even when the next read still says not started', async () => {
@@ -207,8 +272,7 @@ it('shows no error for an already started deploy even when the next read still s
     path === START ? Promise.reject(new ApiError(409, 'ALREADY_STARTED', 'x')) : Promise.resolve(progressOf('not_started', 'secrets')),
   )
   await show()
-  fireEvent.click(screen.getByRole('button', { name: '배포 시작' }))
-  await advance(0)
+  await clickStart()
   expect(screen.queryByRole('alert')).toBeNull()
   expect(reads()).toBe(2)
 })
@@ -221,16 +285,14 @@ it('drops the old start failure as soon as the user tries again', async () => {
     return starts === 1 ? Promise.reject(new ApiError(409, 'NOT_READY', 'x')) : new Promise(() => undefined)
   })
   await show()
-  fireEvent.click(screen.getByRole('button', { name: '배포 시작' }))
-  await advance(0)
+  await clickStart()
   expect(screen.getByText('아직 시작할 수 없어요')).toBeTruthy()
-  fireEvent.click(screen.getByRole('button', { name: '배포 시작' }))
-  await advance(0)
+  await clickStart()
   expect(screen.queryByText('아직 시작할 수 없어요')).toBeNull()
 })
 
 it('shows the failure the server gave, with the stage and service', async () => {
-  api.apiFetch.mockResolvedValue(progressOf('failed', 'build', { failure: failureOf('BUILD_FAILED', '빌드에 실패했어요') }))
+  api.apiFetch.mockResolvedValue(progressOf('failed', 'build', { failure: failureWith('BUILD_FAILED', '빌드에 실패했어요') }))
   await show()
   const alert = within(screen.getByRole('alert'))
   expect(alert.getByText('배포하지 못했어요')).toBeTruthy()
@@ -240,14 +302,34 @@ it('shows the failure the server gave, with the stage and service', async () => 
   expect(alert.queryByText(/학생 잘못이 아니에요/)).toBeNull()
 })
 
+it('names the stage by the step that failed, not by the pipeline stage word', async () => {
+  api.apiFetch.mockResolvedValue(
+    progressOf('failed', 'deploy', { failure: { code: 'DEPLOY_FAILED', stage: 'apply', service: null, message: '배포에 실패했어요' } }),
+  )
+  await show()
+  expect(screen.getByText(/단계: 배포$/)).toBeTruthy()
+  expect(screen.queryByText(/apply/)).toBeNull()
+})
+
+it('falls back to the stage word the server gave when no step is marked failed', async () => {
+  api.apiFetch.mockResolvedValue(
+    progressOf('failed', 'deploy', {
+      steps: stepsAt('deploy'),
+      failure: { code: 'SWITCH_FAILED', stage: 'switch', service: null, message: '주소를 바꾸지 못했어요' },
+    }),
+  )
+  await show()
+  expect(screen.getByText(/단계: switch$/)).toBeTruthy()
+})
+
 it('says it is not the student fault when the platform is to blame', async () => {
-  api.apiFetch.mockResolvedValue(progressOf('failed', 'build', { failure: failureOf('CODEBUILD_API_ERROR', '빌드 서비스에 닿지 못했어요') }))
+  api.apiFetch.mockResolvedValue(progressOf('failed', 'build', { failure: failureWith('CODEBUILD_API_ERROR', '빌드 서비스에 닿지 못했어요') }))
   await show()
   expect(screen.getByText(/학생 잘못이 아니에요/)).toBeTruthy()
 })
 
 it('asks the user to act when the server says so', async () => {
-  api.apiFetch.mockResolvedValue(progressOf('needs_user', 'deploy', { failure: failureOf('DEPLOY_FAILED', '환경변수를 확인해 주세요') }))
+  api.apiFetch.mockResolvedValue(progressOf('needs_user', 'deploy', { failure: failureWith('DEPLOY_FAILED', '환경변수를 확인해 주세요') }))
   await show()
   expect(screen.getByText('사용자 조치가 필요해요')).toBeTruthy()
   expect(screen.getByText('환경변수를 확인해 주세요')).toBeTruthy()

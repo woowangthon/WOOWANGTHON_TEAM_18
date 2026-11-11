@@ -20,7 +20,9 @@ Decisions without a ruling in the issue or the contract:
 - A public address is linked only when it starts with `https://`.
 - Routes `/deploys` and `/deploys/:id`, menu text `내 배포`.
 
-Gaps to settle with the BE (asked): the place and shape of `missing` on `409 NOT_READY` (so the missing secret names can be listed), the item shape of `warnings` (#45), and whether the start may take no body at all. The server does not produce `needs_user` or "배포 대기" yet; the screen already draws them.
+Answered by the BE (woowangthon-team-18-6c, 2026-11-11), to be written into api.md in its next commit: `NOT_READY` carries `error.fields` as `{ path: "secrets.<KEY>", code: "REQUIRED" }` (there is no `missing`; that part comes from #82's readiness check, and until it lands start answers `503 NOT_IMPLEMENTED`); a warning is `{ code, message, service | null }` with a message that is safe to show; `{}` with JSON content type is accepted as the start body. The server does not produce `needs_user` or "배포 대기" yet; the screen already draws them.
+
+Known limits, left on purpose: the status read and the list read each hand-write the same load / retry state (two callers; a shared hook is not worth it yet); a retryable error is retried every 3 s with no back-off and no pause while the tab is hidden; each poll replaces the state even when `updatedAt` is unchanged (8 rows).
 
 ## Todo
 
@@ -31,8 +33,8 @@ Gaps to settle with the BE (asked): the place and shape of `missing` on `409 NOT
 - [x] Done: public address as a link with a copy button
 - [x] Failure: the server's message with stage and service; "not the student's fault" for platform codes
 - [x] Find an in-progress deploy again after a reload — files: `pages/DeploysPage.tsx`, `pages/DeployProgressPage.tsx`, `App.tsx`, `layout/AppLayout.tsx`, `deploy/DeploySaved.tsx`
-- [ ] Security scan warnings (UC-10): the contract returns `[]` and gives no item shape; nothing is drawn yet
-- [ ] List the missing items of `NOT_READY` once the BE says where they are
+- [x] Security scan warnings (UC-10) shown without blocking; the missing items of `NOT_READY` listed by name
+- [ ] Once `NOT_IMPLEMENTED` is gone: check that start with a real `{}` works end to end
 - [ ] Mutation testing (#67 not introduced; hand mutants on the polling, start and mapping logic were run)
 - [ ] Browser check against the real BE (the endpoints do not exist yet) and screenshots (light and dark, 1440px and 390px) — attached by the user
 

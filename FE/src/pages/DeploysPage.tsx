@@ -1,11 +1,10 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
 import { Alert } from '../components/ui/Alert.tsx'
-import { Badge } from '../components/ui/Badge.tsx'
 import { Button } from '../components/ui/Button.tsx'
 import { Table, Td, Th, THead } from '../components/ui/Table.tsx'
-import { statusLabel, statusVariant } from '../deploy/progress.ts'
 import type { DeployListItem } from '../deploy/progress.ts'
+import StatusBadge from '../deploy/StatusBadge.tsx'
 import { apiFetch } from '../lib/api.ts'
 
 type State = { status: 'loading' } | { status: 'failed' } | { status: 'ready'; deploys: DeployListItem[] }
@@ -55,15 +54,15 @@ function DeploysPage() {
           </div>
         </Alert>
       )}
-      {state.status === 'ready' && state.deploys.length === 0 && (
-        <p>
-          아직 배포가 없어요.{' '}
-          <Link to="/deploy/new" className="underline">
-            새 배포 요청하기
-          </Link>
-        </p>
-      )}
-      {state.status === 'ready' && state.deploys.length > 0 && (
+      {state.status === 'ready' &&
+        (state.deploys.length === 0 ? (
+          <p>
+            아직 배포가 없어요.{' '}
+            <Link to="/deploy/new" className="underline">
+              새 배포 요청하기
+            </Link>
+          </p>
+        ) : (
         <Table aria-label="내 배포 목록">
           <THead>
             <tr>
@@ -82,7 +81,7 @@ function DeploysPage() {
                 <Td className="font-mono">{deploy.slug}</Td>
                 <Td className="font-mono">{deploy.repo}</Td>
                 <Td>
-                  <Badge variant={statusVariant(deploy.status)}>{statusLabel(deploy.status)}</Badge>
+                  <StatusBadge status={deploy.status} />
                 </Td>
                 <Td>{new Date(deploy.createdAt).toLocaleString('ko-KR')}</Td>
                 <Td>
@@ -94,7 +93,7 @@ function DeploysPage() {
             ))}
           </tbody>
         </Table>
-      )}
+        ))}
     </>
   )
 }

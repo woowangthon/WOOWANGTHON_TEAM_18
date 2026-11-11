@@ -10,7 +10,10 @@
 - 2026-11-11: The contract for #44 / #98 arrived (BE commit 03685bb, docs only; endpoints not written). Built the whole issue against it on this branch: server step keys replace my own stage keys, `stageStatesOf`, `DeployProgress` with polling, start and failure views, the my-deploys list, routes and links. `pnpm verify` exit 0 (346 tests).
 - 2026-11-11: Hand mutants on the polling, start and mapping logic: 13 tried, 11 killed at first. The two survivors were real gaps: "already started" shown as an error was hidden only because the next read changed the screen, and an old start failure stayed up while the user retried. Added a test for each; both mutants are now killed.
 - 2026-11-11: Test pitfalls: a mock that counts calls to the same function it is answering sees its own call (use `<= 1` for "first"); a lookup by label prefix finds "배포 설정" before "배포" (match the name cell exactly).
-- 2026-11-11: Not checked: a browser, a real BE, screenshots, mutation tool (#67). The component is not mounted on any route.
+- 2026-11-11: `/code-review low` on the implementation: real — the screen kept the old deploy's state and start button when the id changed (fixed with `key={id}` on the page) and every read error was retried forever with a "not your fault" line (now only 503 and network errors retry; others stop and offer "다시 읽기"). Left: an empty alert body if the server sent `fixing` / `needs_user` without `failure` (the contract says it is never null).
+- 2026-11-11: `/simplify` on the implementation: real — `failure.stage` is a pipeline word (apply, prepare…), not a step name, so the label is now taken from the step marked failed; `useCopy` shared with `CommitRef`; `StatusBadge`; list page conditions merged; test helpers. Left: a shared polling hook, back-off and tab-hidden pause, `updatedAt` comparison, a copy table for the start alerts (see the todo).
+- 2026-11-11: The BE answered the three gaps (see the todo): missing items come as `error.fields`, warnings are `{ code, message, service }`, `{}` is accepted. Added the missing list and the warning box; hand mutants: 7 tried, 6 killed, the survivor (stage word fallback) got a test and is killed.
+- 2026-11-11: Not checked: a browser, the real endpoints (not implemented yet; start answers 503 NOT_IMPLEMENTED until #82 lands), screenshots, mutation tool (#67).
 
 ## Lessons
 
