@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common'
 import type { AuthUser } from '../auth/auth.decorators.js'
 import { isRecord } from '../common/is-record.js'
+import { UUID } from '../common/uuid.js'
 import { redact, redactString } from '../common/redact.js'
 import { AgentClient } from './agent.client.js'
 import type { ServiceConditions } from './deploy-condition.js'
@@ -24,7 +25,6 @@ import {
 import { type DeployRow, type DeployRunRow, DeploysStore, StoreConflict } from './deploys.store.js'
 import { PipelineClient } from './pipeline.client.js'
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const TICKET_MINUTES = 15
 const DEFAULT_LIMIT = 20
 const MAX_LIMIT = 50
@@ -111,8 +111,9 @@ export class DeployRunsService {
   }
 
   async status(user: AuthUser, id: string): Promise<DeployStatusView> {
-    const deploy = await this.owned(user, id)
-    return view(deploy, await this.store.findRun(deploy.id))
+    // 소유 확인과 실행 기록 읽기는 서로 기다리지 않는다. 남의 배포면 읽은 기록은 버리고 404다.
+    const [deploy, run] = await Promise.all([this.owned(user, id), UUID.test(id) ? this.store.findRun(id.toLowerCase()) : undefined])
+    return view(deploy, run)
   }
 
   async list(user: AuthUser, rawLimit: unknown) {

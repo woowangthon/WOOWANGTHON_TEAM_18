@@ -1,4 +1,5 @@
 import { isRecord } from '../common/is-record.js'
+import { UUID } from '../common/uuid.js'
 import { isImageDigest, type ServiceConditions } from './deploy-condition.js'
 import type { Issue, IssueCode } from './deploy-input.js'
 
@@ -99,7 +100,6 @@ export type Notice =
       failure: { platformCode: PlatformCode | null; service: string | null; message: string; raw: Record<string, unknown>; logs: unknown }
     }
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const SERVICE = /^[a-z]([a-z0-9-]{0,50}[a-z0-9])?$/
 const MAX_MESSAGE = 2000
 
