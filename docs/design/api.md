@@ -337,6 +337,81 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
 
 오류: `401`(위와 같다), `404 DEPLOY_NOT_FOUND`(없는 `id`이거나 내 것이 아니다. `id`가 UUID 모양이 아니어도 같다. 남의 배포가 있는지 알려 주지 않으려는 것이다), `503 DATABASE_UNAVAILABLE`.
 
+## 운영자 API (이슈 #100, UC-17)
+
+운영자가 Admin Page에서 클러스터 자원과 실행 중인 학생 서비스를 보고, 서비스를 강제로 끈다(FR-083 · FR-084 · FR-094). 플랫폼 서버가 Tailscale로 리더의 쿠버네티스 API에 붙어 읽고 쓴다([`cluster.md`](cluster.md) §8).
+
+**공통**
+
+- 모두 로그인 토큰이 필요하고, `isAdmin`(`app_metadata.role === 'admin'`, [`auth.md`](auth.md))일 때만 받는다. 아니면 `403 ADMIN_REQUIRED`다. 운영자 계정은 하나다.
+- 리더의 쿠버네티스 API에 닿지 못하면(시간 초과 · 인증서 검증 실패 · 설정 없음) `503 CLUSTER_UNREACHABLE`, 닿았는데 서버 계정에 그 일의 권한이 없으면(401 · 403) `503 CLUSTER_FORBIDDEN`이다. 화면은 앞의 것을 "리더 무응답"으로 보여 준다([`cluster.md`](cluster.md) §10). `503 DATABASE_UNAVAILABLE`도 있다.
+- **사용량 수치는 아직 수집하지 않는다.** 서버 계정에 Prometheus 프록시 읽기나 `metrics.k8s.io` 읽기 권한이 없다([`cluster.md`](cluster.md) §8 "남은 것"). 그래서 `usage`는 `null`이고 응답에 `usageStatus: "not_collected"`를 싣는다. 값을 지어내지 않는다. 권한이 오면 `usage`가 `{ "cpuMillicores", "memoryBytes" }`로 채워지고 `usageStatus`가 `"collected"`가 된다.
+
+### `GET /api/admin/nodes` — 노드 현황
+
+응답 `200`:
+
+```json
+{
+  "usageStatus": "not_collected",
+  "nodes": [
+    {
+      "name": "leader",
+      "ready": true,
+      "role": "leader",
+      "cpu": { "capacityMillicores": 4000, "allocatableMillicores": 3900 },
+      "memory": { "capacityBytes": 16777216000, "allocatableBytes": 16000000000 },
+      "disk": { "capacityBytes": 250000000000, "allocatableBytes": 230000000000 },
+      "usage": null
+    }
+  ]
+}
+```
+
+- `role`: 컨트롤 플레인 라벨(`node-role.kubernetes.io/control-plane` · `master`)이 있으면 `leader`, 아니면 `worker`.
+- `ready`: 노드의 `Ready` 조건이 `True`일 때만 `true`.
+- 수량은 모두 정수다(CPU는 밀리코어, 메모리 · 디스크는 바이트). 읽을 수 없는 칸은 `null`.
+
+### `GET /api/admin/projects` — 실행 중인 서비스
+
+DB에 배포가 있는 프로젝트(`slug`)마다 공간 `proj-<slug>`를 읽어 돌려준다(공간 전체를 한 번에 읽는 권한은 서버 계정에 없다). 가장 최근에 배포를 저장한 프로젝트부터. 공간이 아직 없으면 `services`가 `[]`다.
+
+응답 `200`:
+
+```json
+{
+  "projects": [
+    {
+      "slug": "my-app",
+      "repo": "student/my-app",
+      "ownerId": "11111111-1111-4111-8111-111111111111",
+      "liveSlot": "a",
+      "url": "https://my-app.stairnoworks.com",
+      "lastStop": { "at": "2026-11-11T01:00:00.000Z", "by": "operator@example.com" },
+      "services": [
+        {
+          "name": "fe-a", "slot": "a", "replicas": 1, "readyReplicas": 1,
+          "pods": [{ "name": "fe-a-6d9f-xk2", "phase": "Running", "ready": true, "node": "worker-1", "restarts": 0 }]
+        }
+      ]
+    }
+  ]
+}
+```
+
+- `services[]`는 공간의 Deployment 하나(`<서비스>-<슬롯>`)다. `slot`은 이름 끝의 `a` · `b`(아니면 `null`). `replicas`는 원하는 개수(`spec.replicas`), `readyReplicas`는 준비된 개수.
+- `liveSlot` · `url`: 아직 한 번도 전환하지 않았으면 `null`.
+- `lastStop`: 가장 최근 강제 중지 기록(없으면 `null`). 그 뒤에 다시 배포했는지는 `replicas`로 본다.
+- `ownerId`: 소유자의 사용자 id(이메일은 배포 테이블에 없다).
+
+### `POST /api/admin/projects/:slug/stop` — 강제 중지 (FR-094)
+
+공간 `proj-<slug>`의 모든 Deployment를 `replicas: 0`으로 내린다. 공개 주소는 응답할 Pod가 없어 더는 응답하지 않는다(Ingress는 그대로 둔다). 다시 켜기는 MVP 밖이고, 학생이 새로 배포하면 다시 뜬다. 요청 본문은 없다.
+
+응답 `200`: `{ "slug", "scaled": ["fe-a", "be-a"], "failed": [] }`. 하나라도 내렸으면 누가 언제 껐는지 기록한다(`admin_actions`). 일부만 실패해도 `200`이고 `failed`에 이름이 온다(다시 요청하면 이어서 내린다).
+
+오류: `404 PROJECT_NOT_FOUND`(DB에 없는 slug, slug 모양이 아닌 값 포함), `409 NOT_RUNNING`(공간이 없거나 Deployment가 없다), `403 ADMIN_REQUIRED`, `503 CLUSTER_UNREACHABLE`, `503 CLUSTER_FORBIDDEN`(Deployment scale 권한이 아직 없을 때. 인프라 담당이 [`cluster.md`](cluster.md) §8 "남은 것"의 조치용 권한을 주기 전까지 이 오류다), `503 DATABASE_UNAVAILABLE`.
+
 ## AI 에이전트 (플랫폼 서버 ↔ AI 서버)
 
 배포 실패를 고치는 AI 에이전트와 플랫폼 서버가 주고받는 약속이다. 흐름 · 티켓 · 결과의 뜻은 [AI 에이전트 설계](AIagent.md), 언제 부르는지는 [배포 워크플로우](deploy-workflow.md) §6에 있다. 두 서버는 같은 EC2의 컨테이너이고, 이 API는 **컨테이너 사이 내부 망에서만** 열고 공개 주소(`/api`)에 붙이지 않는다. 로그인 토큰(사용자)이 아니라 아래 서버 사이 토큰을 쓴다.
