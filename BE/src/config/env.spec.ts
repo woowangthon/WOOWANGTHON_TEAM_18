@@ -143,3 +143,58 @@ describe('pipeline and AI server settings', () => {
     expect(() => validateEnv({ ...base, GOCD_TOKEN: 'very secret value' })).toThrow(/^(?!.*very secret)/s)
   })
 })
+
+describe('K8S_*', () => {
+  const pem = '-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----'
+  const b64 = (text: string) => Buffer.from(text).toString('base64')
+  const full = { K8S_API_URL: 'https://100.64.0.1:6443', K8S_TOKEN: 'k8s-token', K8S_CA_CERT: b64(pem) }
+  const none = { K8S_API_URL: undefined, K8S_TOKEN: undefined, K8S_CA_CERT: undefined }
+
+  it('is undefined (cluster features off, server still boots) when all three are unset or empty', () => {
+    expect(validateEnv(base)).toMatchObject(none)
+    expect(validateEnv({ ...base, K8S_API_URL: '', K8S_TOKEN: '', K8S_CA_CERT: '' })).toMatchObject(none)
+  })
+
+  it('passes the address and token through and decodes the CA from base64 to the PEM', () => {
+    expect(validateEnv({ ...base, ...full })).toMatchObject({ K8S_API_URL: full.K8S_API_URL, K8S_TOKEN: 'k8s-token', K8S_CA_CERT: pem })
+  })
+
+  it.each(['K8S_API_URL', 'K8S_TOKEN', 'K8S_CA_CERT'] as const)('stops when only %s is missing', (name) => {
+    expect(() => validateEnv({ ...base, ...full, [name]: '' })).toThrow(new RegExp(`${name} must be set together`))
+  })
+
+  it('names every missing variable', () => {
+    expect(() => validateEnv({ ...base, K8S_API_URL: full.K8S_API_URL })).toThrow(/K8S_TOKEN, K8S_CA_CERT must be set together/)
+  })
+
+  it('allows http only for localhost', () => {
+    expect(validateEnv({ ...base, ...full, K8S_API_URL: 'http://127.0.0.1:6443' }).K8S_API_URL).toBe('http://127.0.0.1:6443')
+    expect(() => validateEnv({ ...base, ...full, K8S_API_URL: 'http://100.64.0.1:6443' })).toThrow(/K8S_API_URL .* must use https/)
+  })
+
+  it.each(['100.64.0.1:6443', 'https://100.64.0.1:6443/', 'https://100.64.0.1:6443/api'])('rejects the address "%s"', (url) => {
+    expect(() => validateEnv({ ...base, ...full, K8S_API_URL: url })).toThrow(/K8S_API_URL .* is not an origin/)
+  })
+
+  it.each([' abc', 'a b', 'abc\n'])('rejects whitespace in the token %j', (token) => {
+    expect(() => validateEnv({ ...base, ...full, K8S_TOKEN: token })).toThrow(/K8S_TOKEN must not contain whitespace/)
+  })
+
+  it.each([
+    ['text that is not base64 of anything useful', 'not a certificate'],
+    ['base64 of text that is not a PEM', b64('hello')],
+    ['the raw PEM instead of its base64', pem],
+    ['base64 of a PEM with no certificate body', b64('-----BEGIN CERTIFICATE-----\n-----END CERTIFICATE-----')],
+  ])('rejects a CA that is %s', (_, value) => {
+    expect(() => validateEnv({ ...base, ...full, K8S_CA_CERT: value })).toThrow(/K8S_CA_CERT must be the base64 of a PEM certificate/)
+  })
+
+  it.each([
+    ['token', { K8S_TOKEN: 'leak-token please' }],
+    ['CA', { K8S_CA_CERT: 'leak-ca' }],
+  ])('does not put the %s in an error message', (_, bad) => {
+    expect(() => validateEnv({ ...base, ...full, ...bad })).toThrow(
+      expect.objectContaining({ message: expect.not.stringContaining('leak') as string }),
+    )
+  })
+})
