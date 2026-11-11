@@ -27,12 +27,16 @@ const nameOf = (obj: Record<string, unknown>) => {
   return typeof name === 'string' ? name : ''
 }
 
-/** `openManifest`는 Render의 open.yaml. 공개 서비스가 없어 open.yaml이 없으면 null이다(open Ingress를 모두 지운다). */
+/** `openManifest`는 Render의 open.yaml. 공개 서비스가 없을 때만 null이다(open Ingress를 모두 지운다). 공개 서비스가 있는데 null이면 아무것도 하지 않고 실패한다. */
 export async function runSwitch(input: DeployInput, slot: Slot, openManifest: string | null, call: KubeCall): Promise<SwitchReport> {
   const namespace = `proj-${input.spec.project.slug}`
   const applied: string[] = []
   const deleted: string[] = []
   const report = (failure: StageFailure | null): SwitchReport => ({ ok: failure === null, slot, applied, deleted, failure })
+  // 공개 서비스가 있는데 open.yaml이 없으면 경로가 틀렸거나 Render 산출물을 잃었다. 그대로 가면 open Ingress를 모두 지워 공개 주소가 끊긴다.
+  if (openManifest === null && input.spec.services.some((s) => s.runtime.ingressPath !== null)) {
+    return report({ kind: 'platform', code: 'OPEN_MANIFEST_MISSING', service: null, message: 'the deploy has public services but no open manifest was given; nothing was changed' })
+  }
   const docs = openManifest === null ? [] : splitManifest(openManifest, namespace)
   for (const doc of docs) {
     if (doc.kind !== 'Ingress' && doc.kind !== 'Middleware') throw new Error(`open manifest has ${doc.kind} ${doc.name}; only Ingress and Middleware switch`)

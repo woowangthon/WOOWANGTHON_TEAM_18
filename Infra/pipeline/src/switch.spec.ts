@@ -93,6 +93,13 @@ describe('runSwitch', () => {
     expect(openBe?.body).toMatch(/name: be-b$/m)
   })
 
+  it('changes nothing when the deploy has public services but no open manifest', async () => {
+    const { call, calls } = cluster()
+    const report = await runSwitch(input(), 'b', null, call)
+    expect(report).toMatchObject({ ok: false, applied: [], deleted: [], failure: { kind: 'platform', code: 'OPEN_MANIFEST_MISSING', service: null } })
+    expect(calls).toEqual([])
+  })
+
   it('refuses an open manifest with app objects in it', () => {
     const bad = `${OPEN}\n---\napiVersion: v1\nkind: Service\nmetadata:\n  name: fe-b\n`
     return expect(runSwitch(input(), 'b', bad, cluster().call)).rejects.toThrow('open manifest has Service fe-b')
