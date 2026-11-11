@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { Link } from 'react-router'
 import { Alert } from '../components/ui/Alert.tsx'
 import { Badge } from '../components/ui/Badge.tsx'
 import { Table, Td, Th, THead } from '../components/ui/Table.tsx'
@@ -69,6 +70,9 @@ function DeploySaved({ saved }: { saved: SavedDeploy }) {
               <li key={secret}>{secret}</li>
             ))}
           </ul>
+          <Link to={`/deploys/${saved.id}/secrets`} className="mt-2 inline-block underline">
+            비밀값 넣으러 가기
+          </Link>
         </Alert>
       )}
     </section>

@@ -7,6 +7,10 @@
 - 2026-11-11: `/code-review low` (second run; the first returned "(none)" after 4 seconds without reading the diff, so it was not trusted). Real: a blocked blank submit left the old 503 notice up — fixed with a test. Not real: a `service/key` id collision (names cannot contain `/`; comment added). Left: no focus move to the first invalid field (matches the other forms; `Field` errors are `role="alert"`); stale `missing` text after a clear is intended.
 - 2026-11-11: `/simplify` (4 angles). Applied: failure classification through `failureOf` (a network error now also reads as "not your fault"), per-key `state` instead of two id Sets, `empty` as an array, error text computed before the JSX, test constants. Skipped: reusing `RepoFailureAlert` (the copy needs the extra "values are kept" sentence), merging the two failure Alerts, folding the leak test into the 503 test.
 - 2026-11-11: Not checked: a browser, a real BE, the real submit and readiness responses (no contract), mutation tool (#67).
+- 2026-11-11: The #83 contract arrived (2cd9432 on `feat/be-secrets`). Rewrote the form per service and added the load/PUT screen, route and link. Decisions: state per service (server reports per service); "값 바꾸기" re-sends every key of that service; whitespace-only values are blocked on the client but sent untouched otherwise; no link to the progress screen yet (#104 may not be merged). Paths in `INVALID_SECRETS` use root `secrets` (same as `NOT_READY`).
+- 2026-11-11: Known limitation: `<input type=password>` strips newlines, so a multi-line value (PEM) cannot be typed or pasted as is.
+- 2026-11-11: Hand mutants (PUT method, re-read after failure, 404 branch, ready notice, empty-services branch, path root, done mapping, per-service grouping) were all killed.
+- 2026-11-11: Not checked: a browser, a real BE round trip (the contract is on an unmerged BE branch), mutation tool (#67).
 
 ## Lessons
 
