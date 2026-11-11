@@ -1,6 +1,6 @@
 # 클러스터 — 설계
 
-- **상태**: 일부 구현됨 (노드 · 네트워크 · 방화벽 2026-11-06, k3s 설치 2026-11-07, 재부팅 시험 2026-11-08, 리더 GPU · 로컬 모델 2026-11-09, 이미지 캐시 · 학생 공간 양식 · 서버 계정 1차 · 공개 진입 2026-11-10). 배포 실행기 권한 · 지표는 초안
+- **상태**: 일부 구현됨 (노드 · 네트워크 · 방화벽 2026-11-06, k3s 설치 2026-11-07, 재부팅 시험 2026-11-08, 리더 GPU · 로컬 모델 2026-11-09, 이미지 캐시 · 학생 공간 양식 · 서버 계정 1차 · 공개 진입 2026-11-10, 지표 수집 2026-11-11). 지표 알림은 초안
 - **관련**: SRS NFR-OPS-01 · NFR-SEC-01 · [ADR-003](../adr/003-registry-ghcr.md) 레지스트리 · [ADR-004](../adr/004-server-cluster-link-tailscale.md) 서버 연결 · [ADR-005](../adr/005-k3s-cluster-on-school-pcs.md) 클러스터 구성 · [ADR-006](../adr/006-metrics-on-leader-prometheus.md) 지표 · [ADR-008](../adr/008-node-network-on-school-wired-lan.md) 노드망 · [ADR-009](../adr/009-deploy-runs-on-leader-gocd-agent.md) 배포 실행기 · [ADR-013](../adr/013-visitor-entry-cloudflare-tunnel.md) 공개 진입 · [시스템 정의서 §5](../system-definition.md#5-인프라) · 구축 task [`20261106-k3s-cluster-build`](../../tasks/active/20261106-k3s-cluster-build-todo.md)
 
 ## 범위
@@ -122,9 +122,9 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 
 - 계정: 운영 공간 `platform`의 ServiceAccount `platform-server`. 토큰은 만료 없는 것 하나(Secret `platform-server-token`)이고, 그 Secret을 지우면 폐기된다.
 - 권한: 네임스페이스 만들기 · 삭제, ResourceQuota · LimitRange · NetworkPolicy 만들기, Secret 만들기 · 통째로 바꾸기(`create` · `update`), 권한 연결(RoleBinding) 만들기(자기 읽기용과 실행기 배포용 둘), 노드 읽기. Secret 읽기와 `patch`는 없다. patch의 응답은 Secret 전체라, 빈 patch 하나로 값을 읽을 수 있기 때문이다. 통째로 바꾸기(PUT)의 응답은 보낸 값뿐이다.
-- 읽기 · 조치: 서버는 `proj-` 공간 안의 Pod · 로그 · Deployment · 이벤트 · Ingress만 읽는다. 이벤트는 배포 뒤 감시와 AI 도구 `get_target_status`가, Ingress는 live 슬롯 확인이 쓴다. 검사 규칙은 쓰기만 걸러서 읽기는 이름으로 좁힐 수 없다. 그래서 읽기 권한을 클러스터 전체에 주지 않고, 읽기 역할 `proj-reader`를 따로 두고 서버가 공간을 만들 때 그 공간에 권한 연결 `platform-server-read`를 같이 만든다(양식의 다섯째 객체). 서버가 연결할 수 있는 역할은 `proj-reader` 하나뿐이다(RBAC `bind`). 연결이 없는 공간과 `kube-system` · `vllm` 등은 읽지 못한다. 노드는 공간에 속하지 않아 클러스터 범위로 읽는다(이름 · 주소 · Ready 상태). 사용량(CPU · 메모리)은 k3s에 들어 있는 metrics-server(v0.9.0)의 `metrics.k8s.io`로 읽는다(#130): 노드 사용량은 클러스터 범위로, Pod 사용량은 같은 역할 `proj-reader`에 넣어 연결이 있는 공간에서만. 수치뿐이고 `watch`는 없다. 디스크 사용량은 이 API에 없어 구축 11(§10)의 일이다. 조치도 같은 역할 `proj-reader`에 넣어, 공간마다 이미 있는 연결이 그대로 가져간다(양식과 서버의 공간 만들기는 바뀌지 않는다). 끄기 · 재개는 Deployment 본체가 아니라 `deployments/scale`의 `get` · `patch`로 하고, 아래 검사 규칙이 0 · 1개만 통과시킨다(재개 전 용량 검사는 서버 몫). 재시작(`kubectl rollout restart`)은 Deployment `patch`가 필요한데, 아래 검사 규칙이 Pod 템플릿의 `restartedAt` 주석 말고는 아무것도 못 바꾸게 한다. Deployment 통째로 바꾸기(PUT)와 삭제는 없다.
+- 읽기 · 조치: 서버는 `proj-` 공간 안의 Pod · 로그 · Deployment · 이벤트 · Ingress만 읽는다. 이벤트는 배포 뒤 감시와 AI 도구 `get_target_status`가, Ingress는 live 슬롯 확인이 쓴다. 검사 규칙은 쓰기만 걸러서 읽기는 이름으로 좁힐 수 없다. 그래서 읽기 권한을 클러스터 전체에 주지 않고, 읽기 역할 `proj-reader`를 따로 두고 서버가 공간을 만들 때 그 공간에 권한 연결 `platform-server-read`를 같이 만든다(양식의 다섯째 객체). 서버가 연결할 수 있는 역할은 `proj-reader` 하나뿐이다(RBAC `bind`). 연결이 없는 공간과 `kube-system` · `vllm` 등은 읽지 못한다. 노드는 공간에 속하지 않아 클러스터 범위로 읽는다(이름 · 주소 · Ready 상태). 사용량(CPU · 메모리)은 k3s에 들어 있는 metrics-server(v0.9.0)의 `metrics.k8s.io`로 읽는다(#130): 노드 사용량은 클러스터 범위로, Pod 사용량은 같은 역할 `proj-reader`에 넣어 연결이 있는 공간에서만. 수치뿐이고 `watch`는 없다. 디스크 사용량은 이 API에 없어 Prometheus(§10)로 본다. Prometheus는 지표 공간의 역할 `prometheus-query`(그 Service 하나의 `services/proxy` `get`)로 조회한다(#136, [`Infra/monitoring/monitoring.yaml`](../../Infra/monitoring/monitoring.yaml)). 조치도 같은 역할 `proj-reader`에 넣어, 공간마다 이미 있는 연결이 그대로 가져간다(양식과 서버의 공간 만들기는 바뀌지 않는다). 끄기 · 재개는 Deployment 본체가 아니라 `deployments/scale`의 `get` · `patch`로 하고, 아래 검사 규칙이 0 · 1개만 통과시킨다(재개 전 용량 검사는 서버 몫). 재시작(`kubectl rollout restart`)은 Deployment `patch`가 필요한데, 아래 검사 규칙이 Pod 템플릿의 `restartedAt` 주석 말고는 아무것도 못 바꾸게 한다. Deployment 통째로 바꾸기(PUT)와 삭제는 없다.
 - 검사 규칙 아홉
-  - `wanggane-platform-server`: 서버 계정의 쓰기 · 삭제는 `proj-`로 시작하는 공간에서만 통과한다. 네임스페이스는 만들기 · 삭제만 되고, 만들 때 라벨이 보안 등급 둘(`enforce=baseline`, `warn=restricted`)뿐이어야 한다. Secret은 타입이 `Opaque`이고 이름이 `<서비스>-secrets`일 때만 통과한다(서비스 계정 토큰 타입 Secret으로 공간 안에서 토큰을 찍어내지 못하게).
+  - `wanggane-platform-server`: 서버 계정의 쓰기 · 삭제는 `proj-`로 시작하는 공간에서만 통과한다. 쿠버네티스는 서비스 프록시 호출을 Pod 안 명령 실행처럼 `CONNECT`로 다루므로 이 규칙에 걸린다. 그래서 지표 공간의 Prometheus Service(`monitoring-prometheus:9090`) 프록시 하나만 예외로 통과시킨다(2026-11-11, #136. 그 밖의 `proj-` 밖 `CONNECT`는 그대로 거절). 네임스페이스는 만들기 · 삭제만 되고, 만들 때 라벨이 보안 등급 둘(`enforce=baseline`, `warn=restricted`)뿐이어야 한다. Secret은 타입이 `Opaque`이고 이름이 `<서비스>-secrets`일 때만 통과한다(서비스 계정 토큰 타입 Secret으로 공간 안에서 토큰을 찍어내지 못하게).
   - `wanggane-platform-server-scale`: 서버 계정의 scale 요청은 레플리카 0이나 1일 때만 통과한다(중지 · 재개만, 늘리기 없음). Scale 객체는 0이면 `spec.replicas`를 비워 보내므로 빈 값도 0으로 본다.
   - `wanggane-platform-server-restart`: 서버 계정의 Deployment 고치기는 Pod 템플릿의 `restartedAt` 주석만 바뀔 때 통과한다. Pod spec(이미지 · 명령 · 환경변수 · 볼륨), Pod 라벨 · 다른 주석, replicas · selector · strategy · 롤아웃 설정이 하나라도 바뀌면 거절한다. 이미지나 볼륨을 바꿀 수 있으면 털린 서버 계정이 공간 안에서 다른 코드를 돌리거나 Secret을 마운트할 수 있기 때문이다. 비교 대상은 apps/v1 DeploymentSpec의 필드 전부이고, 나중 버전이 새 필드를 더하면 그 필드는 비교하지 않는다.
   - `wanggane-space-quota` · `-limits` · `-isolation`: 서버 계정이 만드는 ResourceQuota · LimitRange · NetworkPolicy는 이름과 값이 §6 양식과 같을 때만 통과한다. 양식 값을 규칙에 베끼지 않고, 양식을 그대로 적용해 둔 기준 공간 `student-template`의 객체와 비교한다. 기준 객체가 없으면 그 종류를 만드는 요청이 계정 · 공간을 가리지 않고 모두 거절된다(기준을 계정보다 먼저 찾는다). 기준 공간만은 규칙에서 빼 두어 기준을 언제든 다시 넣을 수 있다. 이름까지 묶는 것은 NetworkPolicy가 여러 개면 허용이 합쳐져, 다른 이름으로 하나 더 만들면 차단이 풀리기 때문이다.
@@ -157,7 +157,7 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 
 **남은 것**
 
-- Prometheus 프록시 읽기(구축 11, 데모 경로 뒤. §10).
+- 지표 알림(Discord, §10).
 - 배포 실행기 Pod(GoCD Agent) · 자동 등록 키 · 리더 → EC2 GoCD 포트 규칙(구축 09′의 나머지, GoCD 서버가 생긴 뒤), 네임스페이스 라벨 지우기 막기(지금은 서버에 고치기 권한이 없어 필요 없다).
 
 **전체 설계**
@@ -175,7 +175,7 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 
 - **도메인**: `stairnoworks.com`(구축 담당 소유, DNS는 Cloudflare). `*.stairnoworks.com`이 터널(`<터널 ID>.cfargotunnel.com`)을 가리키는 프록시 CNAME 하나다. 인증서는 Cloudflare의 무료 인증서(`*.stairnoworks.com` · `stairnoworks.com`)라 한 단계 하위 이름만 HTTPS가 된다.
 - **터널**: `wanggane`, 로컬 관리 방식이라 라우팅 규칙이 레포([`Infra/cloudflared/cloudflared.yaml`](../../Infra/cloudflared/cloudflared.yaml)의 ConfigMap)에 있다. `*.stairnoworks.com`은 전부 Traefik(`traefik.kube-system:80`)으로, 나머지는 404. 학생 주소가 하나 늘 때 DNS · 인증서 · 터널은 그대로고 Ingress 하나만 는다.
-- **cloudflared**: `cloudflare/cloudflared:2026.10.7`, 리더에 하나(공간 `cloudflared`, 보안 등급 restricted, non-root · 읽기 전용 · capability 없음, API 토큰 없음). 들어오는 통신은 NetworkPolicy로 전부 막는다(지표 포트는 구축 11에서 연다). Pod라서 §3의 호스트 규칙이 아니라 FORWARD의 Pod 대역 허용으로 나간다. 그래서 나가는 길은 이 공간의 NetworkPolicy가 좁힌다: 클러스터 DNS, Traefik Pod의 8000번, 사설 대역을 뺀 인터넷의 7844(TCP · UDP) · 443만. 인터넷 쪽 처리가 리더에서 도는 유일한 프로세스라, 뚫려도 k3s API · kubelet · 이미지 캐시 · 노드 주소에 닿지 않게 한다. 첫 실행에서 QUIC(UDP 7844)으로 연결 넷이 서울(icn06 · icn07)에 붙었다. 준비 검사는 `/ready`(연결이 하나라도 있으면 200)다. 생존 검사는 일부러 두지 않는다: 인터넷 길이 돌아오면 cloudflared가 혼자 다시 붙고(아래 시험), 끊긴 동안 생존 검사가 재시작을 거듭하면 kubelet의 재시작 대기(최대 5분)가 쌓여 오히려 늦게 붙는다.
+- **cloudflared**: `cloudflare/cloudflared:2026.10.7`, 리더에 하나(공간 `cloudflared`, 보안 등급 restricted, non-root · 읽기 전용 · capability 없음, API 토큰 없음). 들어오는 통신은 NetworkPolicy가 지표 공간의 Prometheus가 지표 포트(2000)로 오는 것만 들인다(§10). Pod라서 §3의 호스트 규칙이 아니라 FORWARD의 Pod 대역 허용으로 나간다. 그래서 나가는 길은 이 공간의 NetworkPolicy가 좁힌다: 클러스터 DNS, Traefik Pod의 8000번, 사설 대역을 뺀 인터넷의 7844(TCP · UDP) · 443만. 인터넷 쪽 처리가 리더에서 도는 유일한 프로세스라, 뚫려도 k3s API · kubelet · 이미지 캐시 · 노드 주소에 닿지 않게 한다. 첫 실행에서 QUIC(UDP 7844)으로 연결 넷이 서울(icn06 · icn07)에 붙었다. 준비 검사는 `/ready`(연결이 하나라도 있으면 200)다. 생존 검사는 일부러 두지 않는다: 인터넷 길이 돌아오면 cloudflared가 혼자 다시 붙고(아래 시험), 끊긴 동안 생존 검사가 재시작을 거듭하면 kubelet의 재시작 대기(최대 5분)가 쌓여 오히려 늦게 붙는다.
 - **Traefik**: 워커 둘에 하나씩(§4). 터널이 평문 HTTP로 넘기므로 Traefik의 `web` 진입점이 리더 Pod 대역(`10.42.0.0/24`)이 보낸 `X-Forwarded-*`를 믿게 했다. 안 그러면 학생 앱에 `X-Forwarded-Proto: http`가 가서 https로 보내는 앱이 리다이렉트를 반복한다. 확인: 시험 앱이 `X-Forwarded-Proto: https` · `X-Forwarded-Port: 443`을 받는다. 터널을 워커로 옮기면 워커 Pod 대역도 더한다.
 - **학생 주소**: 공간 `proj-<slug>` ↔ 주소 `<slug>.stairnoworks.com`. `slug` 규칙은 서버의 것 그대로다([api.md](api.md)). Ingress는 HTTP만 쓴다(TLS는 Cloudflare에서 끝난다). 예시는 [`Infra/student/app-example.yaml`](../../Infra/student/app-example.yaml)의 `demo.stairnoworks.com`.
 - **예약 이름**(학생 `slug`로 못 쓴다): 플랫폼 `app` · `api` · `www` · `admin` · `account` · `auth` · `login` · `platform` · `dashboard` · `status` · `docs` · `blog` · `cdn` · `static` · `grafana`, 메일 `mail` · `smtp`, 시험 `demo` · `test` · `dev` · `staging`, 쿠버네티스 `default` · `kube-system`. `demo`는 시험 공간 `proj-demo`라 학생이 쓰면 시험 앱과 겹친다. 막는 것은 서버의 저장 검사고, 목록의 정본은 여기다([api.md](api.md)는 이 목록을 가리킨다).
@@ -185,18 +185,20 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 - **리더 인터넷 길 끊기(2026-11-10)**: 리더의 기본 경로를 120초 지웠다 다시 붙였다(벽 랜선을 뽑는 것과 같은 효과를 원격으로 낸 것. 노드끼리는 그대로 통한다). 끊긴 동안 방문자는 처음 약 50초 502(Cloudflare가 아직 연결이 있다고 본다), 그다음 530(터널 오프라인)을 받았다. 경로가 돌아오고 Tailscale · SSH는 3초, 터널은 9초 만에 연결 넷이 다시 붙어 11초 뒤 200이 됐다. 사람 손은 들지 않았다. 몇 분 넘게 끊기는 경우와 실제 랜선을 뽑는 경우는 재지 않았다(현장에 갈 때).
 - 터널 클라이언트를 워커 둘로 옮겨(같은 터널에 커넥터 둘) 리더가 꺼져도 열리게 하는 것은 후순위다. Pod라서 워커 방화벽은 고칠 것이 없다.
 
-### 10. 지표 (예정)
+### 10. 지표 (설치됨 2026-11-11, 알림은 예정)
 
-범위는 2026-11-11에 정했다(#130). Prometheus · Grafana는 아직 설치하지 않았다.
+범위는 2026-11-11에 정했고(#130), 같은 날 리더에 설치했다(#136, [`Infra/monitoring/`](../../Infra/monitoring/)).
 
-- **순서**: 지표를 쓰는 기능(학생 지표 화면 UC-15, 운영자 화면 UC-17, 비용 추정)이 모두 P1이라, Prometheus · Grafana 설치는 데모 경로(P0)가 끝까지 돈 뒤에 한다. 그 전에는 k3s에 들어 있는 metrics-server의 사용량 읽기만 연다(§8). 스파이크 판정(메모리 초과 · 재시작 반복)은 플랫폼 서버가 Pod · 이벤트를 watch해서 하므로([배포 워크플로우](deploy-workflow.md) §2) Prometheus를 기다리지 않는다.
-- **설치**: Prometheus · Grafana를 리더에(저장은 `local-path`, 보관 2주). `local-path`는 볼륨 크기를 막지 않으므로 보관 크기 상한도 같이 건다. 수집: 노드(node-exporter), Pod 사용량(kubelet), 재시작 · 배포 상태(kube-state-metrics), Traefik, cloudflared.
-- **조회**: 플랫폼 서버는 사설망으로 리더 API의 서비스 프록시를 거쳐 Prometheus를 조회한다(ADR-006. 포트는 늘지 않는다). 권한은 지표 공간의 Prometheus Service 하나에 대한 `services/proxy` 읽기다. 쿼리를 공간별로 거르는 프록시는 앞에 두지 않는다: 서버 토큰으로 `proj-` 밖(`vllm` · `kube-system` 등)의 지표 수치도 읽히지만, 로그 · Secret · 객체는 여전히 읽히지 않는다(§8). AI 서버는 플랫폼 서버를 거친다.
+- **순서**: 처음에는 지표를 쓰는 기능(학생 지표 화면 UC-15, 운영자 화면 UC-17, 비용 추정)이 모두 P1이라 설치를 데모 경로(P0) 뒤로 미뤘다가(#133), 같은 날 구축 담당이 바로 설치하기로 바꿨다: EC2를 기다리는 동안 클러스터 쪽에서 끝낼 수 있는 일이다. 스파이크 판정(메모리 초과 · 재시작 반복)은 플랫폼 서버가 Pod · 이벤트를 watch해서 하므로([배포 워크플로우](deploy-workflow.md) §2) Prometheus에 기대지 않는다.
+- **설치**: 공간 `monitoring`(node-exporter가 호스트를 읽어 보안 등급은 privileged)에 kube-prometheus-stack 93.1.1(Prometheus Operator v0.95.1, Grafana 13.3.0)을 k3s의 Helm 컨트롤러(HelmChart 객체)로 넣는다. k3s가 Traefik을 넣는 방식과 같아 운영자 기기에 helm이나 릴리스 상태가 없다. 차트는 GHCR(`oci://ghcr.io/prometheus-community/charts/…`)에서 받는다: 차트 저장소가 주는 GitHub 릴리스 CDN 주소는 학교망에서 멈춰 첫 설치가 실패했다. Prometheus · Grafana · kube-state-metrics · Operator는 리더에, node-exporter는 세 노드에 하나씩 뜬다. 저장은 `local-path`(Prometheus 30Gi · Grafana 2Gi 요청), 보관 2주에 크기 상한 20GB를 같이 건다(`local-path`는 볼륨 크기를 막지 않는다). k3s가 자기 프로세스 안에서 돌리는 etcd · scheduler · controller-manager · kube-proxy는 긁을 대상이 없어 끄고, Alertmanager(알림은 Grafana가 보낸다)와 Operator의 admission webhook도 두지 않는다. Prometheus의 관리 API는 꺼져 있다.
+- **수집**: 노드(node-exporter), Pod 사용량(kubelet의 cAdvisor), 재시작 · 배포 상태(kube-state-metrics), API 서버, CoreDNS, Traefik(k3s Traefik이 이미 9100번에 내는 지표), cloudflared(2000번. `cloudflared` 공간의 NetworkPolicy가 Prometheus만 이 포트로 들인다).
+- **조회**: 플랫폼 서버는 사설망으로 리더 API의 서비스 프록시를 거쳐 Prometheus를 조회한다(ADR-006. 포트는 늘지 않는다): `GET /api/v1/namespaces/monitoring/services/monitoring-prometheus:9090/proxy/api/v1/query?query=…`. 권한은 그 Service 이름 하나에 대한 `services/proxy`의 `get`뿐이라 `POST`는 `403`이다(§8). 쿼리를 공간별로 거르는 프록시는 앞에 두지 않는다: 서버 토큰으로 `proj-` 밖(`vllm` · `kube-system` 등)의 지표 수치도 읽히지만, 로그 · Secret · 객체는 여전히 읽히지 않는다. AI 서버는 플랫폼 서버를 거친다.
 - **서버가 묻는 것**: CPU · 메모리 사용량과 재시작 수까지다([api.md](api.md) 운영자 API의 `usage`). Traefik의 요청 수 · 지연 · 에러율은 그것을 보여 줄 화면이 생길 때 더한다.
-- **Grafana**: 운영자용이고 사설망으로만 연다(SSH 포트 포워딩). 플랫폼 웹에 끼워 넣지 않는다.
-- **알림**: Grafana 규칙(노드 NotReady, 디스크 · 메모리 임계) → Discord. Grafana는 Pod라 호스트 방화벽(§3)의 나가는 규칙이 걸리지 않는다. 지표 공간에 NetworkPolicy를 두면 거기서 443을 연다.
+- **Grafana**: 운영자용이고 사설망으로만 연다(SSH 포트 포워딩, 명령은 [`Infra/monitoring/monitoring.yaml`](../../Infra/monitoring/monitoring.yaml) 머리말). 플랫폼 웹에 끼워 넣지 않는다. 관리자 비밀번호는 리더에서 만들어 Secret `grafana-admin`에만 둔다(§12). 차트의 기본 대시보드(노드 · Pod · 공간별 자원)가 들어 있다.
+- **알림(예정)**: Grafana 규칙(노드 NotReady, 디스크 · 메모리 임계) → Discord. 웹훅 주소가 정해지면 넣는다. Grafana는 Pod라 호스트 방화벽(§3)의 나가는 규칙이 걸리지 않는다.
 - **리더 밖에서 봐야 하는 것**: 리더가 죽거나 리더의 인터넷 길이 끊기면 Grafana도 Discord에 닿지 못한다. 터널 끊김은 Cloudflare의 터널 상태 알림으로 받는다(무료 플랜에서 되는지 설치 때 확인한다. 안 되면 두지 않는다). cloudflared의 연결 수 지표로는 보지 않는다: 리더 인터넷을 끊은 시험에서 그 값이 0으로 떨어지지 않았다(§9). 리더 무응답은 플랫폼 서버가 API 실패로 알아채 운영자 화면에 알린다(`503 CLUSTER_UNREACHABLE`, [api.md](api.md). ADR-006). Discord 같은 바깥 채널로 보내는 것은 이번 범위에 두지 않는다.
-- **하지 않는 것**: blackbox-exporter(바깥 주소 찔러 보기), 노드 온도 · 디스크 건강, 노드 간 지연 · 손실, GPU · 로컬 모델 지표. 로컬 모델이 팀 일정상 후순위이고(§11) 나머지는 운영자 화면의 부가 항목이다([시스템 정의서 §4.3](../system-definition.md#43-user2-운영자-흐름)).
+- **시험(2026-11-11, [`Infra/monitoring/check.sh`](../../Infra/monitoring/check.sh), 운영자 기기에서 실행, 아무것도 바꾸지 않는다)**: node-exporter · kubelet · cAdvisor가 세 노드에서, kube-state-metrics 하나, Traefik 둘, cloudflared 하나가 모두 수집되고 죽은 대상이 없다. 노드 셋 Ready, 세 노드의 디스크 여유, 시험 앱의 재시작 수가 쿼리로 나온다. 서버 계정으로는 Prometheus 쿼리가 되고, Grafana · Prometheus의 다른 Service · Pod 프록시, 지표 공간의 Service · Pod · Secret 읽기, 다른 공간(`vllm`)의 서비스 프록시는 거절된다. 실제 토큰으로 쿼리 `200`, `POST` `403`, Grafana `403`. 같은 날 `Infra/platform` · `executor` · `student`의 시험도 다시 돌려 모두 통과했다. 확인하지 않은 것: Grafana 화면을 사람이 열어 본 것, 2주 보관과 크기 상한이 실제로 지워지는지.
+- **하지 않는 것**: blackbox-exporter(바깥 주소 찔러 보기), 노드 온도 · 디스크 건강, 노드 간 지연 · 손실, GPU · 로컬 모델 지표, 지표 공간의 NetworkPolicy(학생 공간은 자기 차단 규칙으로 클러스터 안 대역에 나가지 못한다, §6). 로컬 모델이 팀 일정상 후순위이고(§11) 나머지는 운영자 화면의 부가 항목이다([시스템 정의서 §4.3](../system-definition.md#43-user2-운영자-흐름)).
 
 ### 11. 리더 GPU · 로컬 모델 (구현됨, 2026-11-09)
 
@@ -223,7 +225,8 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 | 배포 실행기의 GoCD 등록 키 | 리더의 클러스터 Secret (실행기 Pod만 읽는다) |
 | GHCR 쓰기 토큰(봇 계정) | 빌드 쪽에만 (ADR-003) |
 | Cloudflare 터널 자격 파일 | 리더의 클러스터 Secret(`cloudflared` 공간)만. 터널을 만든 기기에서는 넣은 뒤 지웠고, 계정 로그인 인증서(`cert.pem`)도 남기지 않는다(DNS를 고칠 때 다시 로그인한다) |
-| Discord 웹훅 URL | Grafana 설정 |
+| Grafana 관리자 비밀번호 | 리더의 클러스터 Secret(`monitoring` 공간의 `grafana-admin`)만. 리더에서 만들었고 화면 · 레포에 남기지 않는다 |
+| Discord 웹훅 URL | Grafana 설정 (알림을 넣을 때) |
 | vLLM API 키 | 리더의 클러스터 Secret(`vllm` 공간, 원본). AI 담당에게 전달했고(2026-11-11) AI 서버의 EC2 설정에 넣는다 |
 
 ### 13. 반납
@@ -256,7 +259,8 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 | 학생 공간에 NodePort · LoadBalancer Service 0개 (2026-11-10) | 방문자 길을 Traefik 하나로 묶는다. NodePort는 NetworkPolicy · Traefik을 거치지 않고 노드 대역에 앱을 연다 | 노드 대역 제한(§4)만 믿기 |
 | 양식 값은 검사 규칙에 베끼지 않고 기준 공간과 비교 (2026-11-10) | 양식 파일 하나만 고치면 된다. 규칙 안에 값을 다시 적으면 둘이 어긋난다 | 규칙에 값을 직접 적기(상한 11개 · 차단 대역 5개를 두 군데서 관리), 값 검사 없이 권한만(서버 계정이 느슨한 상한을 만들 수 있다) |
 | 서버의 읽기는 공간마다 권한 연결로 (2026-11-10) | 서버 토큰은 클러스터 밖(EC2)에 있다. 새더라도 학생 공간 밖의 Pod · 로그(Traefik 접근 기록, 로컬 모델 요청 등)는 읽히지 않는다 | 클러스터 전체 읽기(서버가 만드는 객체는 하나 줄지만 시스템 공간까지 읽힌다) |
-| 서버의 Prometheus 조회는 거르지 않는 서비스 프록시로 (2026-11-11, 구축 11에서 만든다) | 세우고 시험할 부품이 하나 준다. 새는 것은 지표 수치뿐이고 로그 · Secret · 객체 읽기는 그대로 `proj-` 공간에 묶인다 | 쿼리에 공간 조건을 강제하는 프록시(prom-label-proxy)를 앞에 두기(서버 토큰으로 `proj-` 밖 지표가 안 읽히지만 부품과 시험이 는다) |
+| 서버의 Prometheus 조회는 거르지 않는 서비스 프록시로 (2026-11-11) | 세우고 시험할 부품이 하나 준다. 새는 것은 지표 수치뿐이고 로그 · Secret · 객체 읽기는 그대로 `proj-` 공간에 묶인다 | 쿼리에 공간 조건을 강제하는 프록시(prom-label-proxy)를 앞에 두기(서버 토큰으로 `proj-` 밖 지표가 안 읽히지만 부품과 시험이 는다) |
+| 지표 묶음은 k3s HelmChart로, 차트는 GHCR에서 (2026-11-11) | k3s가 Traefik을 넣는 방식 그대로라 운영자 기기에 helm과 릴리스 상태를 두지 않는다. 대시보드와 수집 설정이 같이 온다. GHCR은 학교망에서 잘 받힌다 | 매니페스트를 손으로 쓰기(대시보드 · 수집 규칙을 직접 관리), 운영자 기기에서 helm 실행(상태가 기기에 묶인다), 차트 저장소 주소 그대로(GitHub 릴리스 CDN이 학교망에서 멈춘다) |
 | 실행기의 권한은 공간마다 권한 연결 하나로, 서버가 공간과 같이 만든다 (2026-11-11) | 실행기는 GoCD 서버가 시키는 명령을 그대로 돌린다. 클러스터 전체 권한이 없으면 GoCD 서버가 털려도 학생 공간 밖은 읽히지도 쓰이지도 않는다. `kubectl apply`가 읽기를 먼저 하므로 쓰기만 따로 넓게 줄 이유가 없다 | 쓰기는 클러스터 전체에 주고 검사 규칙으로 좁히기 + 읽기만 공간마다(연결은 똑같이 필요하고 권한만 넓다), 읽기까지 클러스터 전체(서버가 만드는 객체는 하나 줄지만 시스템 공간의 ConfigMap · Pod가 읽힌다), 실행기가 자기 연결을 만들기(RoleBinding 권한이 실행기에 생긴다) |
 | 실행기에 Traefik Middleware 권한, `stripPrefix`만 (2026-11-11, #72) | 학생 백엔드마다 받는 경로가 달라(`/api/usr` 대 `/usr`) 배포 입력의 `stripPrefix`가 동작해야 하고, Ingress만으로는 안 된다. 종류를 하나로 묶어 리다이렉트 · 인증 가로채기를 막는다 | 권한을 주지 않고 `stripPrefix: true`를 입력 검증에서 거부(학생 앱이 경로를 고쳐야 한다), Middleware 종류 제한 없이 허용 |
 | 서버 계정의 Secret 권한은 만들기와 통째로 바꾸기만 (2026-11-10) | patch 응답이 Secret 전체라 "쓰기만"이 깨진다 | patch 허용(빈 patch로 읽힌다), server-side apply(patch 권한이 필요하다) |
@@ -265,6 +269,8 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 
 ## 알려진 한계
 
+- 플랫폼 서버 토큰으로 Prometheus의 지표 수치는 공간을 가리지 않고 읽힌다(§10). 지표 공간에는 NetworkPolicy가 없다.
+- 지표와 Grafana는 리더에만 있다. 리더가 꺼지면 조회가 멈추고, 리더 디스크가 죽으면 지표가 사라진다(ADR-006). 알림은 아직 없다.
 - 리더, 스위치, 벽 랜 포트(인터넷 길)가 단일 장애점이다. 스위치 전원이 잠깐 나가면 돌아오는 순간 학생 Pod가 전부 다시 뜬다.
 - 터널이 리더에 있는 동안은 리더가 꺼지면 방문자가 들어오지 못한다.
 - 워커 하나가 꺼지면 그 워커에 있던 학생 주소는 약 80초 동안 열리지 않는다(§9에서 잼). 앱 복제본이 1개라 다른 워커에 다시 뜰 때까지 기다린다.

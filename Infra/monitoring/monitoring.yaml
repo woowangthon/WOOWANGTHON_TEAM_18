@@ -122,7 +122,8 @@ spec:
           check_for_plugin_updates: false
       resources:
         requests: {cpu: 50m, memory: 128Mi}
-        limits: {memory: 512Mi}
+        # Grafana with the default dashboards sat at about 450Mi right after the install.
+        limits: {memory: 1Gi}
 
     kube-state-metrics:
       nodeSelector: *leader

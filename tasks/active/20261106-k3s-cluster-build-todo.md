@@ -65,8 +65,10 @@ Priorities: the demo path first. Deferred (후순위): moving cloudflared from t
   - [x] internet path cut on the leader for 120 s (default route removed): see the lessons log for the recovery times
   - [ ] pull the real wall cable once on site (with the stage 06 power-pull test)
   - [ ] deferred: cloudflared on both workers and the leader-off test
-- [ ] 11 Monitoring — Prometheus + Grafana on the leader (local-path), server queries Prometheus, Discord alerts. Scope set 2026-11-11 (cluster.md §10): installed after the P0 demo path works end to end
+- [ ] 11 Monitoring — Prometheus + Grafana on the leader (local-path), server queries Prometheus, Discord alerts. Scope: cluster.md §10
   - [x] first part (2026-11-11, issue #130): the server account reads CPU and memory through `metrics.k8s.io` (the metrics-server k3s ships): nodes cluster-wide, Pods through `proj-reader`
+  - [x] install (2026-11-11, issue #136): kube-prometheus-stack 93.1.1 through a k3s HelmChart, chart from GHCR; all targets up; the server account queries Prometheus through the service proxy (`Infra/monitoring/check.sh`)
+  - [ ] Discord alerts from Grafana (needs the webhook address), Cloudflare tunnel status notification
 - [ ] 12 Return — Clonezilla restore of all three disks, BIOS back to the photos, secrets revoked, and in the Tailscale admin console the teammates' node shares revoked and the `autogroup:shared` ACL rule removed (the disk restore does not touch either)
 
 ## Done when
