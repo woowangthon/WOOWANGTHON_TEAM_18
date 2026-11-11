@@ -2,20 +2,24 @@
 공개 서비스(ingressPath가 있는 서비스)마다 Ingress 하나. part slot이면 test-<서비스>(<slug>.test.internal → 대상 슬롯),
 part open이면 open-<서비스>(<slug>.<도메인> → live로 바꿀 슬롯). 경로 규칙이 같아 test를 통과하면 open도 같다(docs/design/deploy-workflow.md §3 · §4).
 Traefik의 미들웨어는 Ingress 주석이라 그 Ingress의 모든 경로에 걸린다. 서비스마다 Ingress를 나눠 stripPrefix를 그 서비스에만 건다.
-Ingress와 Middleware에는 slot 라벨이 없다: 슬롯을 비울 때 지워지면 live 주소가 끊긴다. live 슬롯 보호는 라벨 wanggane/ingress=open으로 읽는다.
+Ingress에는 slot 라벨이 없다: 슬롯을 비울 때 지워지면 live 주소가 끊긴다. live 슬롯 보호는 라벨 wanggane/ingress=open으로 읽는다.
+Middleware는 슬롯마다 따로 둔다(<서비스>-<슬롯>-strip, slot 라벨): 하나를 같이 쓰면 대상 슬롯에 새 ingressPath를 적용하는 순간 live의 떼기도
+바뀐다. part slot이 대상 슬롯 것을 만들고(슬롯 비우기로 함께 지워진다), 두 part의 Ingress는 values.slot의 것을 가리킨다:
+test는 대상 슬롯, open은 Switch 뒤 live가 될 슬롯이다.
 */ -}}
 {{- $kind := ternary "test" "open" (eq .Values.part "slot") }}
 {{- $host := ternary .Values.hosts.test .Values.hosts.open (eq .Values.part "slot") }}
 {{- range .Values.services }}
 {{- if .ingressPath }}
-{{- if .stripPrefix }}
+{{- if and .stripPrefix (eq $.Values.part "slot") }}
 ---
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:
-  name: {{ .name }}-strip
+  name: {{ .fullName }}-strip
   labels:
     app: {{ .name }}
+    slot: {{ $.Values.slot }}
 spec:
   stripPrefix:
     prefixes:
@@ -31,7 +35,7 @@ metadata:
     app: {{ .name }}
   {{- if .stripPrefix }}
   annotations:
-    traefik.ingress.kubernetes.io/router.middlewares: {{ printf "%s-%s-strip@kubernetescrd" $.Release.Namespace .name | quote }}
+    traefik.ingress.kubernetes.io/router.middlewares: {{ printf "%s-%s-strip@kubernetescrd" $.Release.Namespace .fullName | quote }}
   {{- end }}
 spec:
   ingressClassName: traefik

@@ -299,7 +299,7 @@ metadata:
     wanggane/ingress: test
     app: be
   annotations:
-    traefik.ingress.kubernetes.io/router.middlewares: "proj-my-app-be-strip@kubernetescrd"
+    traefik.ingress.kubernetes.io/router.middlewares: "proj-my-app-be-b-strip@kubernetescrd"
 spec:
   ingressClassName: traefik
   rules:
@@ -318,9 +318,10 @@ spec:
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:
-  name: be-strip
+  name: be-b-strip
   labels:
     app: be
+    slot: b
 spec:
   stripPrefix:
     prefixes:

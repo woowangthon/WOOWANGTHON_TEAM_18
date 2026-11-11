@@ -11,6 +11,8 @@
 
 ## Lessons
 
+- An object shared by both slots (here a Middleware) leaks a target-slot change into live before the check. Anything the target slot needs that can differ per commit belongs to the slot.
+
 - kubectl turns API errors into text; when the raw Status matters, call the API. Server-side apply needs the `patch` verb even to create.
 
 - A throwaway k3s in docker is enough to test admission (quota, Pod Security, ValidatingAdmissionPolicy) without a real cluster: the API answers even when no Pod can run.

@@ -113,7 +113,7 @@ describe('splitManifest', () => {
       '/apis/apps/v1/namespaces/proj-my-app/deployments/ai-b',
       '/apis/networking.k8s.io/v1/namespaces/proj-my-app/ingresses/test-fe',
       '/apis/networking.k8s.io/v1/namespaces/proj-my-app/ingresses/test-be',
-      '/apis/traefik.io/v1alpha1/namespaces/proj-my-app/middlewares/be-strip',
+      '/apis/traefik.io/v1alpha1/namespaces/proj-my-app/middlewares/be-b-strip',
     ])
   })
 

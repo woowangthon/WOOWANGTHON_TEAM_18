@@ -30,7 +30,7 @@ metadata:
     wanggane/ingress: open
     app: be
   annotations:
-    traefik.ingress.kubernetes.io/router.middlewares: "proj-my-app-be-strip@kubernetescrd"
+    traefik.ingress.kubernetes.io/router.middlewares: "proj-my-app-be-b-strip@kubernetescrd"
 spec:
   ingressClassName: traefik
   rules:
@@ -44,15 +44,3 @@ spec:
                 name: be-b
                 port:
                   number: 3000
----
-# Source: student-app/templates/ingress.yaml
-apiVersion: traefik.io/v1alpha1
-kind: Middleware
-metadata:
-  name: be-strip
-  labels:
-    app: be
-spec:
-  stripPrefix:
-    prefixes:
-      - "/api"
