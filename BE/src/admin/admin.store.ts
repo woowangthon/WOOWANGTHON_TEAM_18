@@ -4,8 +4,8 @@ import { isRecord } from '../common/is-record.js'
 import type { Env } from '../config/env.js'
 
 const TIMEOUT_MS = 5000
-// 한 번에 읽는 상한. 이를 넘는 오래된 프로젝트는 목록에서 빠진다(MVP 규모는 수십 개라 넘지 않는다. docs/design/api.md).
-const MAX_DEPLOYS = 500
+// 한 번에 읽는 행 수 상한. 이를 넘는 오래된 프로젝트 · 기록은 빠진다(MVP 규모는 수십 개라 넘지 않는다. docs/design/api.md).
+const MAX_ROWS = 500
 
 const databaseUnavailable = () =>
   new ServiceUnavailableException({ code: 'DATABASE_UNAVAILABLE', message: 'Could not reach the database' })
@@ -41,7 +41,7 @@ export class AdminStore {
 
   /** 배포가 하나라도 있는 프로젝트. 가장 최근에 저장한 배포 순, 프로젝트마다 한 줄(최근 배포의 소유자와 레포). */
   async projects(): Promise<ProjectRecord[]> {
-    const deploys = await this.call('deploys', 'GET', { select: 'slug,repo,user_id', order: 'created_at.desc', limit: String(MAX_DEPLOYS) })
+    const deploys = await this.call('deploys', 'GET', { select: 'slug,repo,user_id', order: 'created_at.desc', limit: String(MAX_ROWS) })
     const lives = new Map<string, 'a' | 'b' | null>()
     for (const row of await this.call('projects', 'GET', { select: 'slug,live_slot' })) {
       if (!isRecord(row) || !str(row.slug) || (row.live_slot !== null && row.live_slot !== 'a' && row.live_slot !== 'b')) throw this.unreadable('projects')
@@ -64,7 +64,7 @@ export class AdminStore {
 
   /** 프로젝트마다 가장 최근의 강제 중지 기록. */
   async lastStops(): Promise<Map<string, StopRecord>> {
-    const rows = await this.call('admin_actions', 'GET', { select: 'slug,actor_email,created_at', action: 'eq.stop', order: 'created_at.desc', limit: '500' })
+    const rows = await this.call('admin_actions', 'GET', { select: 'slug,actor_email,created_at', action: 'eq.stop', order: 'created_at.desc', limit: String(MAX_ROWS) })
     const out = new Map<string, StopRecord>()
     for (const row of rows) {
       if (!isRecord(row) || !str(row.slug) || !str(row.actor_email) || !str(row.created_at)) throw this.unreadable('admin_actions')
