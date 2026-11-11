@@ -9,7 +9,9 @@ import { HealthController } from './health/health.controller.js'
 import { ReposModule } from './repos/repos.module.js'
 
 @Module({
-  imports: [ConfigModule.forRoot({ validate: validateEnv }), AuthModule, ReposModule, DeploysModule, AdminModule, GatewayModule],
+  // skipProcessEnv: 설정은 검증한 값(validateEnv)만 읽는다. 켜지 않으면 검증 결과가 undefined인 키(`KEY=`로 비워 둔 선택 키)를 ConfigService가
+  // process.env의 ''로 다시 읽어 "설정함"이 된다(GATEWAY_PORT=''가 게이트웨이를 열려다 부팅을 죽였다).
+  imports: [ConfigModule.forRoot({ validate: validateEnv, skipProcessEnv: true }), AuthModule, ReposModule, DeploysModule, AdminModule, GatewayModule],
   controllers: [HealthController],
 })
 export class AppModule {}
