@@ -45,7 +45,7 @@
 | 보안 그룹 | 80은 [Cloudflare IP 대역](https://www.cloudflare.com/ips/)만. SSH는 운영자 IP만(또는 Tailscale). GoCD 포트는 인터넷에 열지 않는다(리더 실행기는 Tailscale로 붙는다, [클러스터 §8](cluster.md#8-플랫폼-서버와-배포-실행기의-권한-서버-계정-1차-구현됨-2026-11-10-나머지-예정)) |
 | 설정값 | SSM Parameter Store `/wcp/be/<변수 이름>`(SecureString). 이름은 [`BE/.env.example`](../../BE/.env.example)과 같다. `CORS_ORIGINS=https://app.stairnoworks.com`. 값은 한 줄이어야 한다(PEM은 base64) |
 | 권한 | 인스턴스 역할에 `/wcp/be` 경로의 `ssm:GetParametersByPath`와 `kms:Decrypt`만 |
-| 올리기 | EC2에서 [`Infra/aws/deploy-be.sh`](../../Infra/aws/deploy-be.sh) `[git-ref]`: 이미지 빌드 → SSM에서 설정 파일(본인만 읽기) 생성 → 컨테이너 교체 → `/api/health` 확인. 실패하면 컨테이너 로그 마지막 30줄을 보여 준다 |
+| 올리기 | EC2에서 [`Infra/aws/deploy-be.sh`](../../Infra/aws/deploy-be.sh) `[git-ref]`: 이미지 빌드 → SSM에서 설정 파일(본인만 읽기) 생성 → 컨테이너 교체 → `/api/health` 확인. 실패하면 컨테이너 로그 마지막 30줄을 보여 주고 이전 이미지로 되돌린다(설정 파일은 새것 그대로라, 설정값이 원인이면 되돌린 것도 뜨지 않는다) |
 
 ### 함께 바꿀 바깥 설정
 
