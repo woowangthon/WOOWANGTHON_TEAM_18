@@ -6,6 +6,8 @@ import type { DeploysStore, SecretRow } from './deploys.store.js'
 import { secretStatus, serviceDigest } from './secrets-input.js'
 import type { SecretsService } from './secrets.service.js'
 
+// 해시 키는 시험용이다(서버는 32자 이상 SECRET_HASH_KEY).
+const KEY = 'secret_hash_key_test_0123456789abcdef'
 const DEPLOY_ID = '6f1c0a52-3b7e-4a40-9a6c-2f5d8e1b7c90'
 const svc = (name: string, secretKeys: string[]) => ({ name, runtime: { secretKeys } })
 const SPEC = { project: { slug: 'my-app' }, services: [svc('fe', []), svc('be', ['DATABASE_URL', 'JWT_SECRET']), svc('ai', ['OPENAI_API_KEY'])] }
@@ -15,7 +17,7 @@ const row = (service: string, values: Record<string, string>, over: Partial<Secr
   service,
   keys: Object.keys(values).sort(),
   status: 'in',
-  digest: serviceDigest(values),
+  digest: serviceDigest(values, KEY),
   ...over,
 })
 const PREPARED = { deployId: DEPLOY_ID, slot: 'a' } as unknown as PreparedDeploy
@@ -24,7 +26,7 @@ const failure = async (service: DeployReadinessService) => (await service.prepar
 
 function setup(spec: unknown, rows: SecretRow[], found = true) {
   const findById = vi.fn(() => Promise.resolve(found ? { id: DEPLOY_ID, spec } : undefined))
-  const statusOf = vi.fn((s: Parameters<typeof secretStatus>[0]) => Promise.resolve(secretStatus(s, rows)))
+  const statusOf = vi.fn((s: Parameters<typeof secretStatus>[0]) => Promise.resolve(secretStatus(s, rows, KEY)))
   const prepare = vi.fn(() => Promise.resolve(PREPARED))
   const service = new DeployReadinessService(
     { findById } as unknown as DeploysStore,
@@ -74,7 +76,7 @@ describe('DeployReadinessService.prepareIfReady', () => {
   it('the response names keys only, never a value or a digest', async () => {
     const { service } = setup(SPEC, [row('be', BE, { status: 'writing', digest: null })])
     const text = JSON.stringify((await failure(service)).getResponse())
-    for (const v of [...Object.values(BE), ...Object.values(AI), serviceDigest(BE)]) expect(text).not.toContain(v)
+    for (const v of [...Object.values(BE), ...Object.values(AI), serviceDigest(BE, KEY)]) expect(text).not.toContain(v)
   })
 
   it('an id nobody has: 404 DEPLOY_NOT_FOUND', async () => {

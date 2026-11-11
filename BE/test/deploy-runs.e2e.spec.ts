@@ -10,6 +10,8 @@ import { combineDigests, serviceDigest } from '../src/deploys/secrets-input.js'
 import { errorBody, JWKS_URL, keySet, token } from './auth-helpers.js'
 import { startApp } from './start-app.js'
 
+// vitest.config.ts가 넣은 서버의 해시 키.
+const HASH_KEY = process.env.SECRET_HASH_KEY ?? ''
 const REST = 'https://test.supabase.co/rest/v1/'
 const GOCD_URL = 'https://gocd.test/go/api/pipelines/student-deploy/schedule'
 const AI_URL = 'https://ai.test/agent/tickets'
@@ -321,7 +323,7 @@ describe('POST /api/deploys/:id/start', () => {
 describe('POST /api/deploys/:id/start with the real readiness check', () => {
   const BE = { DATABASE_URL: 'postgres://u:p@h/db', JWT_SECRET: 'jwt-secret-value' }
   const specWith = (secretKeys: string[]) => ({ project: { slug: 'my-app' }, services: [{ name: 'be', runtime: { secretKeys, env: {} } }] })
-  const secretRow = (over: Row = {}) => ({ slug: 'my-app', service: 'be', keys: ['DATABASE_URL', 'JWT_SECRET'], status: 'in', digest: serviceDigest(BE), ...over })
+  const secretRow = (over: Row = {}) => ({ slug: 'my-app', service: 'be', keys: ['DATABASE_URL', 'JWT_SECRET'], status: 'in', digest: serviceDigest(BE, HASH_KEY), ...over })
 
   // DeployPreparer는 그대로 두고(실제 DeployReadinessService) 그 아래의 DeployConditionService.prepare만 가짜로 둔다.
   let preparedWith: (string | null)[]
@@ -368,7 +370,7 @@ describe('POST /api/deploys/:id/start with the real readiness check', () => {
     const id = seedDeploy({ spec: specWith(['DATABASE_URL', 'JWT_SECRET']) })
     const res = await start(id)
     expect(res.status).toBe(202)
-    expect(preparedWith).toEqual([combineDigests([{ name: 'be', digest: serviceDigest(BE) }])])
+    expect(preparedWith).toEqual([combineDigests([{ name: 'be', digest: serviceDigest(BE, HASH_KEY) }], HASH_KEY)])
     expect(callsTo(GOCD_URL)).toHaveLength(1)
   })
 
