@@ -78,11 +78,11 @@ AI 서버 (에이전트) → 플랫폼 서버 MCP 게이트웨이 → GoCD 서�
 | `buildOverrides` 칸 | CodeBuild 값 | 상한 (초기값) |
 |---|---|---|
 | `computeType` | `computeTypeOverride` | 기본보다 한 단계 위까지 |
-| `timeoutMinutes` | `timeoutInMinutesOverride` | 30분 |
-| `image` | `imageOverride` | 플랫폼이 정한 빌드 이미지 허용 목록 |
-| `cache` | `cacheOverride` (켬 · 끔) | - |
+| `timeoutMinutes` | `timeoutInMinutesOverride` | 20분(시험 빌드의 대기 = `timeoutMinutes` + 5분이 시험 대기 30분 안에 들게) |
+| `image` | `imageOverride` | 플랫폼이 정한 빌드 이미지 허용 목록(빌드가 docker로 돌므로 privileged 모드에서 docker가 도는 CodeBuild 표준 이미지만) |
+| `cache` | `cacheOverride`: `false`면 `{ type: NO_CACHE }`, `true`거나 없으면 override 안 함(프로젝트 설정 그대로) | - |
 
-buildspec · 서비스 역할(IAM) · 환경 변수 override는 받지 않는다. 빌드 명령을 바꿀 수 있으면 push 단계의 GHCR 토큰을 빼 갈 수 있다([배포 워크플로우](deploy-workflow.md) §8).
+`computeType` · `image`는 값 그대로 넘기고, 상한 · 허용 목록 검사는 게이트웨이가 한다(밖이면 `OVERRIDE_LIMIT`). buildspec · 서비스 역할(IAM) · 환경 변수 override는 받지 않는다. 빌드 명령을 바꿀 수 있으면 push 단계의 GHCR 토큰을 빼 갈 수 있다([배포 워크플로우](deploy-workflow.md) §8).
 
 **관찰 (읽기만)**
 
