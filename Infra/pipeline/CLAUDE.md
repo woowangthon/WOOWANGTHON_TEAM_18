@@ -2,7 +2,7 @@
 
 The root [`CLAUDE.md`](../../CLAUDE.md) rules apply; this file adds the commands and layout of `Infra/pipeline/`.
 
-The judgement code of the GoCD deploy pipeline ([`docs/design/deploy-workflow.md`](../../docs/design/deploy-workflow.md)). GoCD tasks call `aws` · `helm` themselves; this package only decides (what to start, what to wait for, what counts as failure) and is called as `node dist/cli/<stage>.js`. Render and Apply call the k3s API directly (`src/kube.ts`, server-side apply) instead of kubectl, because kubectl prints only "Error from server" text and the agent ticket needs the raw k3s Status. Connection settings come from env: `KUBE_API_URL` is the API address (`https://<leader>:6443`); `KUBE_TOKEN_FILE` and `KUBE_CA_FILE` are file paths, so the token never sits in an env value. It never runs against real AWS · k3s in tests: every external call goes through an injected runner (`Aws` in `src/aws.ts`, `KubeCall` in `src/kube.ts`) and tests pass fakes (`src/kube-fake.ts`) or a loopback HTTP server.
+The judgement code of the GoCD deploy pipeline ([`docs/design/deploy-workflow.md`](../../docs/design/deploy-workflow.md)). GoCD tasks call `aws` · `helm` themselves; this package only decides (what to start, what to wait for, what counts as failure) and is called as `node dist/cli/<stage>.js`. Render, Prepare, Apply, Verify and Switch call the k3s API directly (`src/kube.ts`, server-side apply) instead of kubectl, because kubectl prints only "Error from server" text and the agent ticket needs the raw k3s Status. Connection settings come from env: `KUBE_API_URL` is the API address (`https://<leader>:6443`); `KUBE_TOKEN_FILE` and `KUBE_CA_FILE` are file paths, so the token never sits in an env value. It never runs against real AWS · k3s in tests: every external call goes through an injected runner (`Aws` in `src/aws.ts`, `KubeCall` in `src/kube.ts`) and tests pass fakes (`src/kube-fake.ts`) or a loopback HTTP server.
 
 ## Commands
 
@@ -28,6 +28,8 @@ Run in `Infra/pipeline/` (Node and pnpm as for BE):
 | `checkQuota` in `src/render.ts` | Quota × 2 check; Prepare (F04) calls it, a failure is ticket stage `prepare` (case P2), not render |
 | `src/prepare.ts`, `src/cli/prepare.ts` | Prepare stage (W5): live slot protection, quota check, clear the target slot by label, drop stale test Ingresses |
 | `src/apply.ts`, `src/cli/apply.ts` | Apply stage (W5): server-side apply AI → BE → FE, Ready wait with fast-fail signals, failed Pod and slot events in the report |
+| `src/verify.ts`, `src/cli/verify.ts` | Verify stage (W6): Pod Ready and EndpointSlices per service, then GET via Traefik with Host `<slug>.test.internal` (`TRAEFIK_URL`); result in the MCP `run_verify` shape |
+| `src/switch.ts`, `src/cli/switch.ts` | Switch: apply `open.yaml`, drop stale open Ingresses and Middlewares, scale the previous slot to 0; safe to rerun |
 | `src/failure.ts` | Stage failure shape: `platform` (a code, no agent) or `student` (ticket `raw.k8s`); which k3s refusals are platform problems |
 | `src/kube.ts` | k3s API client (node:https + cluster CA, 10 s per call, `K8S_TIMEOUT` / `K8S_UNREACHABLE`), splitting the chart output into objects, server-side apply |
 | `src/helm.ts`, `src/exec.ts` | Thin runner for `helm` (no shell) |
