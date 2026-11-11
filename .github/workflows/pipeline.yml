@@ -8,6 +8,7 @@ on:
     paths:
       - 'Infra/pipeline/**'
       - 'Infra/build/**'
+      - 'Infra/charts/**'
       - 'BE/src/deploys/deploy-condition.ts'
       - '.github/workflows/pipeline.yml'
 
