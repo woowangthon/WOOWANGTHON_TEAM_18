@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Link, NavLink, Outlet, useLocation } from 'react-router'
+import { isAdmin } from '../auth/isAdmin.ts'
 import { useAuth } from '../auth/useAuth.ts'
 import { Alert } from '../components/ui/Alert.tsx'
 import { Button } from '../components/ui/Button.tsx'
@@ -41,6 +42,11 @@ function AppLayout() {
           <NavLink to="/deploys" className={navLinkClass}>
             내 배포
           </NavLink>
+          {isAdmin(state.session) && (
+            <NavLink to="/admin" className={navLinkClass}>
+              관리자
+            </NavLink>
+          )}
         </nav>
         <div className="ml-auto flex items-center gap-3">
           <span className="text-sm text-muted">{state.session.user.email}</span>

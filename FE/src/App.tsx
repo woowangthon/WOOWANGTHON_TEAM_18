@@ -1,7 +1,9 @@
 import { Navigate, Route, Routes } from 'react-router'
+import RequireAdmin from './admin/RequireAdmin.tsx'
 import AuthProvider from './auth/AuthProvider.tsx'
 import RequireAuth from './auth/RequireAuth.tsx'
 import AppLayout from './layout/AppLayout.tsx'
+import AdminPage from './pages/AdminPage.tsx'
 import DashboardPage from './pages/DashboardPage.tsx'
 import DeployNewPage from './pages/DeployNewPage.tsx'
 import DeployProgressPage from './pages/DeployProgressPage.tsx'
@@ -30,6 +32,9 @@ function App() {
             <Route path="/deploys" element={<DeploysPage />} />
             <Route path="/deploys/:id" element={<DeployProgressPage />} />
             <Route path="/deploys/:id/secrets" element={<DeploySecretsPage />} />
+            <Route element={<RequireAdmin />}>
+              <Route path="/admin" element={<AdminPage />} />
+            </Route>
           </Route>
         </Route>
       </Routes>
