@@ -43,7 +43,7 @@
 | 실행 | `BE/Dockerfile` 이미지를 컨테이너 `wcp-be`로, 재부팅 뒤에도 다시 뜨게(`--restart unless-stopped`). 호스트 80 → 컨테이너 3000 |
 | HTTPS | Cloudflare에 `api` A 레코드 → Elastic IP, **프록시 켬**(주황 구름). 방문자 ↔ Cloudflare는 HTTPS, Cloudflare ↔ EC2는 HTTP 80. 이 호스트만 SSL 모드를 Flexible로 두는 Configuration Rule을 건다 |
 | 보안 그룹 | 80은 [Cloudflare IP 대역](https://www.cloudflare.com/ips/)만. SSH는 운영자 IP만(또는 Tailscale). GoCD 포트는 인터넷에 열지 않는다(리더 실행기는 Tailscale로 붙는다, [클러스터 §8](cluster.md#8-플랫폼-서버와-배포-실행기의-권한-서버-계정-1차-구현됨-2026-11-10-나머지-예정)) |
-| 설정값 | SSM Parameter Store `/wcp/be/<변수 이름>`(SecureString). 이름은 [`BE/.env.example`](../../BE/.env.example)과 같다. `CORS_ORIGINS=https://app.stairnoworks.com`. 값은 한 줄이어야 한다(여러 줄 값은 스크립트가 거절한다. PEM은 base64로) |
+| 설정값 | SSM Parameter Store `/wcp/be/<변수 이름>`(SecureString). 이름은 [`BE/.env.example`](../../BE/.env.example)과 같다. `CORS_ORIGINS=https://app.stairnoworks.com`. 값은 한 줄이어야 한다(여러 줄 값은 스크립트가 거절한다. PEM은 base64로). **필수 `/wcp/be/SECRET_HASH_KEY`**(비밀값 해시의 HMAC 키, 32자 이상, `openssl rand -hex 32`)가 없으면 BE가 부팅하지 않는다 |
 | 권한 | 인스턴스 역할에 `/wcp/be` 경로의 `ssm:GetParametersByPath`와 `kms:Decrypt`만 |
 | 올리기 | EC2에서 [`Infra/aws/deploy-be.sh`](../../Infra/aws/deploy-be.sh) `[git-ref]`. 새 컨테이너가 `/api/health`에 답하지 않으면 이전 컨테이너(이미지 · 설정 그대로)를 다시 띄운다 |
 
