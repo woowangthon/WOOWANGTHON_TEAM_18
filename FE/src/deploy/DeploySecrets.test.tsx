@@ -71,12 +71,15 @@ it('says build ready when everything is already in, with nothing to type', async
   expect(screen.queryByRole('button', { name: '비밀값 저장' })).toBeNull()
 })
 
-it('skips the step for a deploy with no secret keys, and says it is ready', async () => {
+it('skips the step for a deploy with no secret keys with one notice that holds the way to start', async () => {
   api.apiFetch.mockResolvedValue(NONE)
   show()
   expect(await screen.findByText('비밀값이 필요 없는 배포예요')).toBeTruthy()
-  expect(screen.getByText('빌드 준비됨')).toBeTruthy()
   expect(screen.queryByRole('form')).toBeNull()
+  // 안내는 하나뿐이고(빌드 준비됨은 따로 보이지 않는다) 시작하러 가는 길은 그 안에 있다.
+  expect(screen.queryByText('빌드 준비됨')).toBeNull()
+  expect(screen.getAllByRole('status')).toHaveLength(1)
+  expect(within(screen.getByRole('status')).getByRole('link', { name: '배포 시작하러 가기' }).getAttribute('href')).toBe(`/deploys/${ID}`)
 })
 
 it('links to the progress screen to start the deploy once the server says ready, and not before', async () => {

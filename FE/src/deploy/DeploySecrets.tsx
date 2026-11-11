@@ -80,25 +80,32 @@ function DeploySecrets({ deployId }: { deployId: string }) {
   }
 
   const { secrets } = load
+  // 비밀값이 필요 없는 배포는 안내 하나로 끝낸다("빌드 준비됨"을 또 보이지 않는다). 다음 길은 그 안내 안에 둔다.
+  const noSecrets = secrets.services.length === 0
+  const startLink = (
+    <Link to={`/deploys/${deployId}`} className="mt-2 inline-block underline">
+      배포 시작하러 가기
+    </Link>
+  )
   return (
     <div className="flex flex-col gap-4">
-      {secrets.services.length === 0 ? (
+      {noSecrets ? (
         <Alert variant="info" title="비밀값이 필요 없는 배포예요">
-          이 단계는 건너뛰어요.
+          <p>이 단계는 건너뛰어요.</p>
+          {startLink}
         </Alert>
       ) : (
         <SecretForm services={targetsOf(secrets)} onSubmit={save} />
       )}
-      {secrets.ready ? (
-        <Alert variant="info" title="빌드 준비됨">
-          <p>필요한 비밀값이 모두 들어갔어요. 이제 배포를 시작할 수 있어요.</p>
-          <Link to={`/deploys/${deployId}`} className="mt-2 inline-block underline">
-            배포 시작하러 가기
-          </Link>
-        </Alert>
-      ) : (
-        <p className="text-sm text-muted">모든 서비스의 비밀값이 들어가면 빌드가 준비돼요.</p>
-      )}
+      {!noSecrets &&
+        (secrets.ready ? (
+          <Alert variant="info" title="빌드 준비됨">
+            <p>필요한 비밀값이 모두 들어갔어요. 이제 배포를 시작할 수 있어요.</p>
+            {startLink}
+          </Alert>
+        ) : (
+          <p className="text-sm text-muted">모든 서비스의 비밀값이 들어가면 빌드가 준비돼요.</p>
+        ))}
     </div>
   )
 }
