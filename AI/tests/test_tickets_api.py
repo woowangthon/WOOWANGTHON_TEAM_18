@@ -198,7 +198,7 @@ def test_body_must_be_a_json_object(client: TestClient, body: str) -> None:
 
 
 def test_invalid_ticket_lists_fields(client: TestClient) -> None:
-    body = ticket_request(ticketId="", stage="verify", commitSha="abc", extra=1)
+    body = ticket_request(ticketId="", stage="switch", commitSha="abc", extra=1)
     body["ticket"]["logs"]["to"] = "yesterday"
     del body["ticket"]["errorMessage"]
     body["ticket"]["raw"]["k8s"]["events"] = ["not an object"]

@@ -55,7 +55,7 @@ def test_every_ticket_key_is_required(key: str) -> None:
         {"commitSha": SHA + "0"},
         {"commitSha": " " + SHA},
         {"commitSha": SHA.upper()},
-        {"stage": "verify"},
+        {"stage": "switch"},
         {"targetSlot": "c"},
         {"ticketId": ""},
         {"service": ""},
@@ -94,20 +94,6 @@ def test_previous_status_values(status: str) -> None:
 
 K8S: dict[str, Any] = {"pod": None, "events": [], "status": None}
 STATUS: dict[str, Any] = {"kind": "Status", "code": 422}
-VERIFY: dict[str, Any] = {
-    "ready": [{"service": "fe", "ready": True, "reason": None}],
-    "requests": [
-        {"service": "fe", "kind": "page", "path": "/", "status": 200, "ms": 12, "error": None},
-        {
-            "service": "fe",
-            "kind": "asset",
-            "path": "/assets/a.js",
-            "status": 404,
-            "ms": 3.5,
-            "error": None,
-        },
-    ],
-}
 
 
 @pytest.mark.parametrize(
@@ -128,22 +114,6 @@ VERIFY: dict[str, Any] = {
             {"codebuild": {}, "k8s": None},
             [("raw.codebuild", "MUST_BE_NULL"), ("raw.k8s", "REQUIRED")],
         ),
-        ("verify", {"codebuild": None, "k8s": None}, [("raw.verify", "REQUIRED")]),
-        (
-            "verify",
-            {"codebuild": {}, "k8s": K8S, "verify": VERIFY},
-            [("raw.codebuild", "MUST_BE_NULL"), ("raw.k8s", "MUST_BE_NULL")],
-        ),
-        (
-            "apply",
-            {"codebuild": None, "k8s": K8S, "verify": VERIFY},
-            [("raw.verify", "MUST_BE_NULL")],
-        ),
-        (
-            "build",
-            {"codebuild": {}, "k8s": None, "verify": VERIFY},
-            [("raw.verify", "MUST_BE_NULL")],
-        ),
     ],
 )
 def test_raw_must_fit_the_stage(
@@ -163,8 +133,7 @@ def test_raw_must_fit_the_stage(
         ("prepare", {"codebuild": None, "k8s": K8S}),
         ("render", {"codebuild": None, "k8s": {**K8S, "status": STATUS}}),
         ("apply", {"codebuild": None, "k8s": K8S}),
-        ("apply", {"codebuild": None, "k8s": K8S, "verify": None}),
-        ("verify", {"codebuild": None, "k8s": None, "verify": VERIFY}),
+        ("verify", {"codebuild": None, "k8s": K8S}),
     ],
 )
 def test_raw_shapes_that_fit(stage: str, raw: dict[str, Any]) -> None:
@@ -278,35 +247,3 @@ def test_result_limits_at_the_edge() -> None:
     )
     assert r.build_overrides is not None and r.build_overrides.timeout_minutes == 30
     assert r.pr is not None and r.pr.changed_lines == 50
-
-
-def test_verify_raw_is_parsed() -> None:
-    t = Ticket.model_validate(
-        ticket(stage="verify", raw={"codebuild": None, "k8s": None, "verify": VERIFY})
-    )
-    assert t.raw.verify is not None
-    assert [(q.kind, q.status) for q in t.raw.verify.requests] == [("page", 200), ("asset", 404)]
-    assert t.model_dump(mode="json", by_alias=True)["raw"]["verify"] == VERIFY
-
-
-@pytest.mark.parametrize(
-    "request_",
-    [
-        {"service": "fe", "kind": "script", "path": "/", "status": 200, "ms": 1, "error": None},
-        {"service": "fe", "kind": "page", "path": "/", "status": 200, "ms": 1},
-        {"service": "", "kind": "page", "path": "/", "status": 200, "ms": 1, "error": None},
-        {
-            "service": "fe",
-            "kind": "page",
-            "path": "/",
-            "status": "200",
-            "ms": 1,
-            "error": None,
-            "x": 1,
-        },
-    ],
-)
-def test_verify_raw_rejects(request_: dict[str, Any]) -> None:
-    raw = {"codebuild": None, "k8s": None, "verify": {"ready": [], "requests": [request_]}}
-    with pytest.raises(ValidationError):
-        Ticket.model_validate(ticket(stage="verify", raw=raw))

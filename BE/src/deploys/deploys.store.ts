@@ -4,6 +4,7 @@ import { isRecord } from '../common/is-record.js'
 import type { Env } from '../config/env.js'
 import { isImageDigest, type Slot } from './deploy-condition.js'
 import type { Spec } from './deploy-input.js'
+import type { RunStatus, Stage, StoredFailure } from './deploy-run.js'
 
 const TIMEOUT_MS = 5000
 
@@ -21,6 +22,22 @@ export interface DeployRow {
   created_at: string
 }
 
+/** `deploy_secrets` 테이블의 한 줄(supabase/migrations). 값은 없다: key 이름 · 상태 · 해시뿐이다. */
+export interface SecretRow {
+  service: string
+  keys: string[]
+  status: 'writing' | 'in'
+  digest: string | null
+}
+
+const isSecretRow = (v: unknown): v is SecretRow =>
+  isRecord(v) &&
+  typeof v.service === 'string' &&
+  Array.isArray(v.keys) &&
+  v.keys.every((k) => typeof k === 'string') &&
+  (v.status === 'writing' || v.status === 'in') &&
+  (v.digest === null || typeof v.digest === 'string')
+
 type NewDeploy = Pick<DeployRow, 'user_id' | 'slug' | 'repo' | 'commit_sha' | 'spec'>
 
 const isRow = (v: unknown): v is DeployRow =>
@@ -28,7 +45,40 @@ const isRow = (v: unknown): v is DeployRow =>
   ['id', 'user_id', 'slug', 'repo', 'commit_sha', 'created_at'].every((k) => typeof v[k] === 'string') &&
   isRecord(v.spec)
 
-type Table = 'deploys' | 'projects' | 'build_cache'
+/** `deploy_runs` 테이블의 한 행(supabase/migrations). */
+export interface DeployRunRow {
+  deploy_id: string
+  user_id: string
+  slug: string
+  target_slot: Slot
+  input: Record<string, unknown>
+  status: RunStatus
+  stage: Stage | null
+  failure: StoredFailure | null
+  ticket_id: string | null
+  gateway_token_hash: string | null
+  gateway_expires_at: string | null
+  images: Record<string, string> | null
+  created_at: string
+  updated_at: string
+}
+
+type NewRun = Pick<DeployRunRow, 'deploy_id' | 'user_id' | 'slug' | 'target_slot' | 'input' | 'status' | 'stage'>
+type RunPatch = Partial<Pick<DeployRunRow, 'status' | 'stage' | 'failure' | 'ticket_id' | 'gateway_token_hash' | 'gateway_expires_at' | 'images'>>
+
+const isRunRow = (v: unknown): v is DeployRunRow =>
+  isRecord(v) &&
+  ['deploy_id', 'user_id', 'slug', 'target_slot', 'status', 'created_at', 'updated_at'].every((k) => typeof v[k] === 'string') &&
+  isRecord(v.input)
+
+/** 쓰기가 유일성 제약에 걸렸다(PostgREST 409). `constraint`는 Postgres가 알린 문장이라 어느 제약인지 가른다. */
+export class StoreConflict extends Error {
+  constructor(readonly constraint: string) {
+    super('Supabase write conflicted')
+  }
+}
+
+type Table = 'deploys' | 'projects' | 'build_cache' | 'deploy_runs' | 'deploy_secrets'
 
 /**
  * `deploys` · `projects` · `build_cache` 테이블 접근. 서버의 secret key로 Supabase PostgREST를 부른다(RLS를 건너뛴다). 그래서 어떤 행을 읽고 쓸지는 이 클래스를 부르는 쪽이
@@ -101,7 +151,96 @@ export class DeploysStore {
     return image
   }
 
-  private async call(table: Table, method: 'GET' | 'POST', query: Record<string, string>, body?: object): Promise<unknown[]> {
+  /** 프로젝트의 서비스별 비밀값 상태. */
+  async secretRows(slug: string): Promise<SecretRow[]> {
+    const rows = await this.call('deploy_secrets', 'GET', { select: 'service,keys,status,digest', slug: `eq.${slug}` })
+    if (!rows.every(isSecretRow)) throw this.unreadable('deploy_secrets', 'GET')
+    return rows
+  }
+
+  /** 서비스의 비밀값 상태를 쓴다(없으면 만들고 있으면 바꾼다). */
+  async setSecretState(slug: string, service: string, state: Omit<SecretRow, 'service'>): Promise<void> {
+    const rows = await this.call(
+      'deploy_secrets',
+      'POST',
+      { on_conflict: 'slug,service' },
+      { slug, service, ...state, updated_at: new Date().toISOString() },
+      'resolution=merge-duplicates,return=representation',
+    )
+    if (rows.length !== 1) throw this.unreadable('deploy_secrets', 'POST')
+  }
+
+  /** 새 실행 기록. 같은 deploy_id가 있거나 같은 프로젝트에 진행 중인 실행이 있으면 StoreConflict. */
+  async insertRun(row: NewRun): Promise<DeployRunRow> {
+    const rows = await this.call('deploy_runs', 'POST', {}, row)
+    if (rows.length !== 1 || !isRunRow(rows[0])) throw this.unreadable('deploy_runs', 'POST')
+    return rows[0]
+  }
+
+  async findRun(deployId: string): Promise<DeployRunRow | undefined> {
+    const rows = await this.call('deploy_runs', 'GET', { select: '*', deploy_id: `eq.${deployId}`, limit: '1' })
+    if (rows.length === 0) return undefined
+    if (!isRunRow(rows[0])) throw this.unreadable('deploy_runs', 'GET')
+    return rows[0]
+  }
+
+  /** 이 프로젝트에서 진행 중(running · fixing)인 실행. 없으면 undefined. */
+  async findActiveRun(slug: string): Promise<DeployRunRow | undefined> {
+    const rows = await this.call('deploy_runs', 'GET', { select: '*', slug: `eq.${slug}`, status: 'in.(running,fixing)', limit: '1' })
+    if (rows.length === 0) return undefined
+    if (!isRunRow(rows[0])) throw this.unreadable('deploy_runs', 'GET')
+    return rows[0]
+  }
+
+  /** 사용자의 배포를 최신순으로. */
+  async listOwned(userId: string, limit: number): Promise<DeployRow[]> {
+    const rows = await this.call('deploys', 'GET', { select: '*', user_id: `eq.${userId}`, order: 'created_at.desc', limit: String(limit) })
+    if (!rows.every(isRow)) throw this.unreadable('deploys', 'GET')
+    return rows
+  }
+
+  /** 주어진 배포들의 실행 기록. 시작하지 않은 배포는 없다. */
+  async findRuns(deployIds: string[]): Promise<DeployRunRow[]> {
+    if (deployIds.length === 0) return []
+    const rows = await this.call('deploy_runs', 'GET', { select: '*', deploy_id: `in.(${deployIds.join(',')})` })
+    if (!rows.every(isRunRow)) throw this.unreadable('deploy_runs', 'GET')
+    return rows
+  }
+
+  /**
+   * 조건이 맞는 실행 기록만 바꾼다(읽고 쓰는 사이에 다른 알림이 먼저 바꿨다면 아무것도 바꾸지 않는다). 바꿨으면 true.
+   * `where`의 값은 우리 코드의 상수다.
+   */
+  async updateRun(deployId: string, where: { status?: RunStatus; stage?: Stage }, patch: RunPatch): Promise<boolean> {
+    const query: Record<string, string> = { deploy_id: `eq.${deployId}`, select: 'deploy_id' }
+    if (where.status) query.status = `eq.${where.status}`
+    if (where.stage) query.stage = `eq.${where.stage}`
+    const rows = await this.call('deploy_runs', 'PATCH', query, { ...patch, updated_at: new Date().toISOString() })
+    return rows.length > 0
+  }
+
+  async deleteRun(deployId: string): Promise<void> {
+    await this.call('deploy_runs', 'DELETE', { deploy_id: `eq.${deployId}` })
+  }
+
+  /** 프로젝트의 live 슬롯을 정한다(첫 전환이면 줄을 만든다). 같은 값으로 다시 불러도 같다. */
+  async setLiveSlot(slug: string, slot: Slot): Promise<void> {
+    await this.call('projects', 'POST', { on_conflict: 'slug' }, { slug, live_slot: slot, updated_at: new Date().toISOString() }, 'resolution=merge-duplicates,return=representation')
+  }
+
+  /** 새로 빌드한 이미지를 빌드 캐시에 적는다. 같은 해시를 다시 적어도 같다. */
+  async cacheImages(rows: { slug: string; service: string; build_input_hash: string; image: string }[]): Promise<void> {
+    if (rows.length === 0) return
+    await this.call('build_cache', 'POST', { on_conflict: 'slug,service,build_input_hash' }, rows, 'resolution=merge-duplicates,return=representation')
+  }
+
+  private async call(
+    table: Table,
+    method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+    query: Record<string, string>,
+    body?: object,
+    prefer = 'return=representation',
+  ): Promise<unknown[]> {
     const qs = new URLSearchParams(query).toString()
     const url = `${this.restUrl}/${table}`
     try {
@@ -110,7 +249,7 @@ export class DeploysStore {
         // 새 secret key는 JWT가 아니라 Authorization 헤더로 보내면 거부된다. apikey 하나로 보낸다.
         headers: {
           apikey: this.secretKey,
-          ...(body ? { 'Content-Type': 'application/json', Prefer: 'return=representation' } : {}),
+          ...(body ? { 'Content-Type': 'application/json', Prefer: prefer } : {}),
         },
         body: body ? JSON.stringify(body) : undefined,
         signal: AbortSignal.timeout(TIMEOUT_MS),
@@ -123,13 +262,14 @@ export class DeploysStore {
       } catch {
         parsed = undefined
       }
+      if (res.status === 409) throw new StoreConflict(isRecord(parsed) && typeof parsed.message === 'string' ? parsed.message : '')
       if (!res.ok || !Array.isArray(parsed)) {
         this.logger.error(`Supabase ${method} /rest/v1/${table} answered ${res.status}`)
         throw databaseUnavailable()
       }
       return parsed as unknown[]
     } catch (err) {
-      if (err instanceof ServiceUnavailableException) throw err
+      if (err instanceof ServiceUnavailableException || err instanceof StoreConflict) throw err
       this.logger.error(err)
       throw databaseUnavailable()
     }

@@ -8,6 +8,26 @@ export interface Env {
   SUPABASE_PUBLISHABLE_KEY: string
   /** Supabase의 secret key(service role). 서버만 `deploys`에 쓴다. 비밀이라 로그 · 응답에 남기지 않고 SUPABASE_URL로만 보낸다. */
   SUPABASE_SECRET_KEY: string
+  /** 비밀값 해시(HMAC-SHA256)의 서버 전용 키. 32자 이상, 비밀이라 로그 · 응답에 남기지 않는다. 바꾸면 저장된 해시와 `secretHash`가 달라진다. */
+  SECRET_HASH_KEY: string
+  /** GoCD 서버 origin. 비워 두면 배포 시작이 503 PIPELINE_UNAVAILABLE이다. */
+  GOCD_URL?: string
+  /** GoCD access token(비밀). 파이프라인 실행에만 쓰고 GOCD_URL로만 보낸다. */
+  GOCD_TOKEN?: string
+  /** 배포 파이프라인 이름 */
+  GOCD_PIPELINE?: string
+  /** 파이프라인이 알림 · 배포 입력 읽기에 쓰는 기계용 비밀 토큰. 비워 두면 그 라우트는 모두 401이다. */
+  PIPELINE_NOTIFY_TOKEN?: string
+  /** AI 서버 origin(문제 티켓을 보낸다). 비워 두면 문제 티켓을 보내지 못해 AGENT_UNAVAILABLE로 마감한다. */
+  AI_SERVER_URL?: string
+  /** 플랫폼 → AI 서버 요청의 Bearer 토큰(비밀). AI 서버의 같은 이름 env와 같은 값. */
+  AGENT_API_TOKEN?: string
+  /** 리더 쿠버네티스 API의 origin(Tailscale 주소). 셋(K8S_*)이 모두 비면 undefined이고, 클러스터를 쓰는 기능만 503이다. 설계는 docs/design/space.md. */
+  K8S_API_URL: string | undefined
+  /** 서버 계정(platform-server)의 토큰. 비밀이라 로그 · 응답에 남기지 않고 K8S_API_URL로만 보낸다. */
+  K8S_TOKEN: string | undefined
+  /** 리더 API 인증서를 서명한 CA. 설정에는 PEM의 base64(한 줄)로 적고, 여기에는 풀어 읽은 PEM이 들어 있다. */
+  K8S_CA_CERT: string | undefined
 }
 
 // 값이 틀리면 부팅을 멈춘다. 틀린 설정으로 뜬 서버가 조용히 다르게 동작하지 않게 한다.
@@ -19,6 +39,14 @@ export function validateEnv(raw: Record<string, string | undefined>): Env {
     SUPABASE_URL: parseSupabaseUrl(raw.SUPABASE_URL),
     SUPABASE_PUBLISHABLE_KEY: parsePublishableKey(raw.SUPABASE_PUBLISHABLE_KEY),
     SUPABASE_SECRET_KEY: parseSecretKey(raw.SUPABASE_SECRET_KEY),
+    SECRET_HASH_KEY: parseSecretHashKey(raw.SECRET_HASH_KEY),
+    GOCD_URL: parseOptionalOrigin(raw.GOCD_URL, 'GOCD_URL'),
+    GOCD_TOKEN: parseOptionalSecret(raw.GOCD_TOKEN, 'GOCD_TOKEN'),
+    GOCD_PIPELINE: parseOptionalPipeline(raw.GOCD_PIPELINE),
+    PIPELINE_NOTIFY_TOKEN: parseOptionalSecret(raw.PIPELINE_NOTIFY_TOKEN, 'PIPELINE_NOTIFY_TOKEN', 32),
+    AI_SERVER_URL: parseOptionalOrigin(raw.AI_SERVER_URL, 'AI_SERVER_URL'),
+    AGENT_API_TOKEN: parseOptionalSecret(raw.AGENT_API_TOKEN, 'AGENT_API_TOKEN'),
+    ...parseCluster(raw),
   }
 }
 
@@ -44,13 +72,8 @@ function parseSupabaseUrl(value: string | undefined): string {
   if (value === undefined || value === '') {
     throw new Error('SUPABASE_URL is required, like https://<project>.supabase.co')
   }
-  checkOrigin(value, `SUPABASE_URL "${value}"`)
-  // 공개 키 목록을 여기서 받는다. 평문 HTTP면 중간에서 키를 바꿔 위조 토큰을 통과시킬 수 있어, HTTP는 로컬 Supabase(loopback)만 허용한다.
-  const { protocol, hostname } = new URL(value)
-  if (protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(hostname)) {
-    throw new Error(`SUPABASE_URL "${value}" must use https (http is allowed only for localhost)`)
-  }
-  return value
+  // 공개 키 목록을 여기서 받는다. 평문 HTTP면 중간에서 키를 바꿔 위조 토큰을 통과시킬 수 있다.
+  return checkSecureOrigin(value, 'SUPABASE_URL')
 }
 
 // 키는 헤더 값으로 그대로 나간다. 붙여 넣다 생긴 공백 · 줄바꿈이 있으면 틀린 키로 조용히 요청이 가지 않게 막는다.
@@ -69,6 +92,70 @@ function parseSecretKey(value: string | undefined): string {
     throw new Error(
       'SUPABASE_SECRET_KEY is required and must not contain whitespace (the secret key from Supabase Project Settings → API Keys)',
     )
+  }
+  return value
+}
+
+// 비밀값의 해시가 값을 짐작하는 데 쓰이지 않게 하는 키다. 짧으면 막는다. 틀린 값이 오류 메시지(로그)에 남지 않도록 값은 메시지에 싣지 않는다.
+const SECRET_HASH_KEY_MIN_LENGTH = 32
+function parseSecretHashKey(value: string | undefined): string {
+  if (value === undefined || !/^\S+$/.test(value) || value.length < SECRET_HASH_KEY_MIN_LENGTH) {
+    throw new Error(
+      `SECRET_HASH_KEY is required: at least ${SECRET_HASH_KEY_MIN_LENGTH} characters, no whitespace (generate one with: openssl rand -hex 32)`,
+    )
+  }
+  return value
+}
+
+// 비어 있으면 그 기능을 쓰지 않는다(요청이 올 때 503 · 401로 답한다). 값이 있으면 틀린 값은 부팅을 멈춘다.
+function parseOptionalOrigin(value: string | undefined, name: string): string | undefined {
+  if (value === undefined || value === '') return undefined
+  return checkOrigin(value, `${name} "${value}"`)
+}
+
+// 틀린 값이 오류 메시지(로그)에 남지 않도록 값은 메시지에 싣지 않는다.
+function parseOptionalSecret(value: string | undefined, name: string, minLength = 1): string | undefined {
+  if (value === undefined || value === '') return undefined
+  if (!/^\S+$/.test(value)) throw new Error(`${name} must not contain whitespace`)
+  // 이 토큰 하나로 알림을 위조할 수 있는 값은 짧으면 안 된다.
+  if (value.length < minLength) throw new Error(`${name} must be at least ${minLength} characters`)
+  return value
+}
+
+function parseOptionalPipeline(value: string | undefined): string | undefined {
+  if (value === undefined || value === '') return undefined
+  if (!/^[A-Za-z0-9_.-]+$/.test(value)) throw new Error(`GOCD_PIPELINE "${value}" is not a pipeline name`)
+  return value
+}
+
+// 셋이 모두 비면 클러스터 기능만 끈 채로 뜬다(인프라가 값을 주기 전에도 BE가 떠야 한다). 일부만 채우면 틀린 설정이라 멈춘다.
+// 틀린 값이 오류 메시지(로그)에 남지 않도록 토큰 · CA는 값을 메시지에 싣지 않는다.
+function parseCluster(raw: Record<string, string | undefined>): Pick<Env, 'K8S_API_URL' | 'K8S_TOKEN' | 'K8S_CA_CERT'> {
+  const { K8S_API_URL: url, K8S_TOKEN: token, K8S_CA_CERT: encoded } = raw
+  if (!url && !token && !encoded) return { K8S_API_URL: undefined, K8S_TOKEN: undefined, K8S_CA_CERT: undefined }
+  const missing = Object.entries({ K8S_API_URL: url, K8S_TOKEN: token, K8S_CA_CERT: encoded })
+    .filter(([, v]) => !v)
+    .map(([name]) => name)
+  if (!url || !token || !encoded) {
+    throw new Error(`${missing.join(', ')} must be set together with the other K8S_* values (or leave all of them empty)`)
+  }
+  // 토큰이 이 주소로 나간다. 평문 HTTP면 중간에서 읽힌다.
+  checkSecureOrigin(url, 'K8S_API_URL')
+  if (!/^\S+$/.test(token)) throw new Error('K8S_TOKEN must not contain whitespace')
+  // 배포처가 env 파일에 변수당 한 줄만 허용해서 PEM(여러 줄)을 base64 한 줄로 받는다.
+  const ca = Buffer.from(encoded, 'base64').toString('utf8')
+  if (!/^-----BEGIN CERTIFICATE-----\s*[A-Za-z0-9+/=][A-Za-z0-9+/=\s]*-----END CERTIFICATE-----\s*$/.test(ca)) {
+    throw new Error('K8S_CA_CERT must be the base64 of a PEM certificate, on one line (base64 -w0 ca.crt)')
+  }
+  return { K8S_API_URL: url, K8S_TOKEN: token, K8S_CA_CERT: ca }
+}
+
+// origin이어야 하고, HTTP는 로컬 시험(loopback)만 허용한다.
+function checkSecureOrigin(value: string, name: string): string {
+  checkOrigin(value, `${name} "${value}"`)
+  const { protocol, hostname } = new URL(value)
+  if (protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(hostname)) {
+    throw new Error(`${name} "${value}" must use https (http is allowed only for localhost)`)
   }
   return value
 }

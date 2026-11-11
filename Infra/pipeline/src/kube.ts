@@ -145,3 +145,46 @@ function parseJson(text: string): unknown {
     return undefined
   }
 }
+
+/** k3s가 2xx가 아닌 답을 했다. `status`는 답 본문(Status JSON, 못 읽으면 null)이다. */
+export class KubeRefused extends Error {
+  constructor(
+    readonly httpStatus: number,
+    readonly status: unknown,
+  ) {
+    super(isRecord(status) && typeof status.message === 'string' ? status.message : `API answered ${httpStatus}`)
+  }
+}
+
+/** GET해서 JSON으로. 2xx가 아니면 KubeRefused, 닿지 못하면 KubeError. */
+export async function getJson(call: KubeCall, path: string): Promise<Record<string, unknown>> {
+  const answer = await call('GET', path)
+  const body = parseJson(answer.body)
+  if (answer.status < 200 || answer.status >= 300) throw new KubeRefused(answer.status, body ?? null)
+  if (!isRecord(body)) throw new KubeRefused(answer.status, null)
+  return body
+}
+
+/** 목록 API의 `items`. */
+export async function listItems(call: KubeCall, path: string): Promise<Record<string, unknown>[]> {
+  const body = await getJson(call, path)
+  return Array.isArray(body.items) ? (body.items as unknown[]).filter(isRecord) : []
+}
+
+/** 객체 하나를 지운다. 이미 없으면(404) 지운 것으로 본다. 딸린 객체(ReplicaSet · Pod)는 쿠버네티스가 뒤에서 지운다. */
+export async function deleteObject(call: KubeCall, path: string): Promise<void> {
+  const answer = await call('DELETE', path)
+  if (answer.status === 404 || (answer.status >= 200 && answer.status < 300)) return
+  throw new KubeRefused(answer.status, parseJson(answer.body) ?? null)
+}
+
+/** manifest 문서 하나를 server-side apply한다(저장한다). 거절이면 KubeRefused. */
+export async function applyDoc(call: KubeCall, doc: ManifestDoc): Promise<void> {
+  const answer = await call('PATCH', `${doc.path}${applyQuery(false)}`, doc.text, 'application/apply-patch+yaml')
+  if (answer.status >= 200 && answer.status < 300) return
+  throw new KubeRefused(answer.status, parseJson(answer.body) ?? null)
+}
+
+/** 목록 경로. `labelSelector`는 인코딩해 붙인다. */
+export const listPath = (base: string, plural: string, namespace: string, labelSelector?: string) =>
+  `${base}/namespaces/${namespace}/${plural}${labelSelector ? `?labelSelector=${encodeURIComponent(labelSelector)}` : ''}`
