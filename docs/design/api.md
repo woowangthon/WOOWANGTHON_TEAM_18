@@ -565,7 +565,9 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
 
 ### MCP 게이트웨이 — 도구 (플랫폼 서버)
 
-- 전송: MCP Streamable HTTP, 플랫폼 서버의 내부 포트(`GATEWAY_PORT`, 공개 포트와 다르다) `POST /mcp`.
+- 전송: MCP Streamable HTTP, 플랫폼 서버의 내부 포트(`GATEWAY_PORT`, 공개 포트와 다르다) `POST /mcp`. 상태 없는 서버라 세션 스트림(`GET`) · 세션 끝내기(`DELETE`)는 `405`다. AI 서버의 `GATEWAY_URL`은 `http://<플랫폼 서버>:<GATEWAY_PORT>/mcp`이고, `GATEWAY_PORT`가 비어 있으면 게이트웨이를 열지 않는다.
+- **지금 여는 도구(F11)**: `get_target_status` · `read_pod_logs` · `read_repo` · `submit_result` 넷뿐이다. 실행 도구(`run_*`) · 대상 슬롯 운영 · `read_build_logs`는 파이프라인의 시험 실행이 생기는 F11b에서, `edit_repo_file` · `open_pr`은 F13에서 연다. 목록에 없는 도구를 부르면 `INVALID_ARGUMENT`다. `read_repo`의 `source`도 그때까지 `INVALID_ARGUMENT`다.
+- **F11b 전에는 `verified` 불가**: 대상 슬롯에서 시험한 적이 없으므로 `submit_result`의 `status: "verified"`(와 `specPatch` · `buildOverrides`)는 `INVALID_RESULT`다. 받은 결과로 실행 기록은 `gave_up`이면 `failed`(`AGENT_GAVE_UP`), `pr_opened` · `needs_user`면 `needs_user`가 된다.
 - 도구 목록 · 하는 일 · 티켓당 횟수는 [AI 에이전트 설계](AIagent.md) §3이다. 여기는 인자와 결과의 모양만 고정한다. `read_memory`는 AI 서버 안의 도구라 게이트웨이에 없다(case와 통계를 AI 서버가 갖는다).
 - 결과는 MCP 도구 결과의 `structuredContent`에 아래 JSON으로 담는다. 실행이 실패해도(빌드 실패, Ready 안 됨) 도구 호출은 성공이고 `ok: false`다. 게이트웨이가 거절한 호출만 `isError: true`이고 `structuredContent`는 `{ "code", "message" }`다.
 - `run_*` · `wait_target_ready`는 파이프라인이 끝날 때까지 기다렸다가 답한다(최대 30분). AI 서버의 MCP 클라이언트는 호출 제한 시간을 35분으로 둔다.

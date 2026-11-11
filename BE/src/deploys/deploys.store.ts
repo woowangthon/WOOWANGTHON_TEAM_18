@@ -184,6 +184,14 @@ export class DeploysStore {
     return rows[0]
   }
 
+  /** 게이트웨이 토큰의 해시(sha256 hex)로 실행 기록을 찾는다. 해시는 우리 코드가 만든 hex 문자열이다. */
+  async findRunByGatewayToken(tokenHash: string): Promise<DeployRunRow | undefined> {
+    const rows = await this.call('deploy_runs', 'GET', { select: '*', gateway_token_hash: `eq.${tokenHash}`, limit: '1' })
+    if (rows.length === 0) return undefined
+    if (!isRunRow(rows[0])) throw this.unreadable('deploy_runs', 'GET')
+    return rows[0]
+  }
+
   /** 이 프로젝트에서 진행 중(running · fixing)인 실행. 없으면 undefined. */
   async findActiveRun(slug: string): Promise<DeployRunRow | undefined> {
     const rows = await this.call('deploy_runs', 'GET', { select: '*', slug: `eq.${slug}`, status: 'in.(running,fixing)', limit: '1' })
