@@ -152,11 +152,20 @@ describe('fetch-input and notify CLIs', () => {
       expect(p.seen).toHaveLength(RETRY_WAITS_MS.length + 1)
     })
 
-    it('exit 2 and nothing sent when the report has the wrong shape', async () => {
-      const p = await serve(() => ({ status: 200 }))
-      expect(await notifyCli(['apply', report({ ok: false })], p.env, sleep)).toBe(2)
-      expect(p.seen).toHaveLength(0)
-      expect(out).toContain('apply report: is not ok but has no failure')
+    it.each([
+      ['no ok', { stage: 'apply' }, 'apply report: has no boolean ok'],
+      ['not ok and no failure', { ok: false }, 'apply report: is not ok but has no failure of kind platform or student'],
+    ])('a report with the wrong shape (%s): sends STAGE_NO_REPORT with the reason, so the run does not wait for the timeout', async (_, content, why) => {
+      const p = await serve(() => ({ status: 200, body: { ok: true } }))
+      expect(await notifyCli(['apply', report(content)], p.env, sleep)).toBe(0)
+      expect(sent()).toEqual({ deployId: DEPLOY_ID, stage: 'apply', result: 'failed', failure: { code: 'STAGE_NO_REPORT', service: null, message: `the apply stage left no readable report: ${why}` } })
+      expect(out).toContain(why)
+    })
+
+    it('a passed build report that lacks its input is a wrong shape too', async () => {
+      const p = await serve(() => ({ status: 200, body: { ok: true } }))
+      expect(await notifyCli(['build', report({ ok: true, failures: [] })], p.env, sleep)).toBe(0)
+      expect(sent()).toMatchObject({ stage: 'build', result: 'failed', failure: { code: 'STAGE_NO_REPORT' } })
     })
 
     it.each([[[]], [['deploy', 'x.json']], [['build']]])('exit 2 and a usage line for the arguments %j', async (args) => {

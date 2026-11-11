@@ -249,6 +249,14 @@ describe('noReportNotice', () => {
   })
 })
 
+describe('noReportNotice with a reason', () => {
+  it('appends why the report was not usable', () => {
+    const body = noReportNotice(DEPLOY_ID, 'apply', 'apply report: has no boolean ok')
+    expect(body).toMatchObject({ failure: { code: 'STAGE_NO_REPORT', message: 'the apply stage left no readable report: apply report: has no boolean ok' } })
+    accepted(body)
+  })
+})
+
 describe('sendNotice', () => {
   let platform: Awaited<ReturnType<typeof fakePlatform>> | undefined
   afterEach(async () => {

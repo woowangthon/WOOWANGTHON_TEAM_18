@@ -108,12 +108,15 @@ export function noticeFrom(deployId: string, stage: NotifyStage, report: unknown
   return { ...base, result: 'failed', failure: f.kind === 'platform' ? platformFailure(String(f.code), (f.service as string | null) ?? null, String(f.message)) : k8sFailure(stage, f as Extract<StageFailure, { kind: 'student' }>) }
 }
 
-/** 스테이지 결과 파일이 없거나 JSON이 아닐 때(앞 task가 죽었다)의 알림: 플랫폼 문제 `STAGE_NO_REPORT`로 실패를 알려, 배포가 1시간 시간 초과까지 멈춰 있지 않게 한다. */
-export const noReportNotice = (deployId: string, stage: NotifyStage): NoticeBody => ({
+/**
+ * 스테이지 결과 파일이 없거나 읽을 수 없을 때(앞 task가 죽었거나 결과의 모양이 틀림)의 알림: 플랫폼 문제 `STAGE_NO_REPORT`로 실패를 알려,
+ * 배포가 1시간 시간 초과까지 멈춰 있지 않게 한다. `why`는 결과의 모양이 어디가 틀렸는지(있으면 message에 붙는다).
+ */
+export const noReportNotice = (deployId: string, stage: NotifyStage, why?: string): NoticeBody => ({
   deployId,
   stage,
   result: 'failed',
-  failure: platformFailure('STAGE_NO_REPORT', null, `the ${stage} stage left no readable report`),
+  failure: platformFailure('STAGE_NO_REPORT', null, `the ${stage} stage left no readable report${why === undefined ? '' : `: ${why}`}`),
 })
 
 /** 알림을 보낸다. 서버가 상태를 바꾸지 않았으면(이미 끝난 배포 · 지금 스테이지가 아님) `applied`가 false다. */
