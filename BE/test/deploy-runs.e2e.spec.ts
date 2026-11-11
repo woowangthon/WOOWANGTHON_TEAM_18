@@ -562,12 +562,13 @@ describe('POST /api/pipeline/notify', () => {
       expect((await start(seedDeploy())).status).toBe(202)
     })
 
-    it.each(['verify', 'switch'])('a %s failure ends as failed (the ticket contract has no such stage) and does not call the AI server', async (stage) => {
-      const id = await reach(stage)
-      await notify({ deployId: id, stage, result: 'failed', failure: failure() })
-      expect(run(id)).toMatchObject({ status: 'failed', stage, failure: { code: stage === 'verify' ? 'VERIFY_FAILED' : 'SWITCH_FAILED' } })
+    it('a switch failure ends as failed (the ticket contract has no such stage) and does not call the AI server', async () => {
+      const id = await reach('switch')
+      await notify({ deployId: id, stage: 'switch', result: 'failed', failure: failure() })
+      expect(run(id)).toMatchObject({ status: 'failed', stage: 'switch', failure: { code: 'SWITCH_FAILED' } })
       expect(callsTo(AI_URL)).toHaveLength(0)
     })
+
 
     it('a build failure sends one ticket to the AI server and the run waits as "fixing"', async () => {
       const id = seedDeploy()
@@ -604,11 +605,12 @@ describe('POST /api/pipeline/notify', () => {
       expect(run(id).gateway_token_hash).toMatch(/^[0-9a-f]{64}$/)
     })
 
-    it('puts a k8s-stage failure in the k8s shape, defaulting what the pipeline left out', async () => {
-      const id = await reach('apply')
-      await notify({ deployId: id, stage: 'apply', result: 'failed', failure: { service: 'be', message: 'm', raw: { k8s: { events: [{ reason: 'BackOff' }] } } } })
+    it.each(['apply', 'verify'])('puts a %s failure in the k8s shape, defaulting what the pipeline left out', async (stage) => {
+      const id = await reach(stage)
+      await notify({ deployId: id, stage, result: 'failed', failure: { service: 'be', message: 'm', raw: { k8s: { events: [{ reason: 'BackOff' }] } } } })
       const { ticket } = bodyOf(callsTo(AI_URL)[0])
-      expect(ticket.stage).toBe('apply')
+      expect(ticket.stage).toBe(stage)
+      expect(run(id)).toMatchObject({ status: 'fixing', ticket_id: ticket.ticketId })
       expect(ticket.raw).toEqual({ codebuild: null, k8s: { pod: null, events: [{ reason: 'BackOff' }], status: null } })
       expect(ticket.logs.lines).toEqual([])
     })
