@@ -58,7 +58,8 @@ api() {
   sed -n 's/^[Ee][Tt]ag: *"\{0,1\}\([^"\r]*\)"\{0,1\}\r\{0,1\}$/\1/p' "$work/headers" > "$work/etag"
 }
 must() { echo "$1 failed (HTTP $2)" >&2; sed -n 's/.*"message" *: *"\([^"]*\)".*/\1/p' "$work/out" | head -3 >&2; exit 1; }
-agent_key() { docker exec gocd-server sed -n 's/.*agentAutoRegisterKey="\([^"]*\)".*/\1/p' /godata/config/cruise-config.xml; }
+# An empty answer (no container, no file) is reported below, so a failing docker exec does not stop the script silently.
+agent_key() { docker exec gocd-server sed -n 's/.*agentAutoRegisterKey="\([^"]*\)".*/\1/p' /godata/config/cruise-config.xml || true; }
 
 for _ in $(seq 60); do
   curl -fsS --max-time 5 "$url/go/api/v1/health" > /dev/null 2>&1 && break

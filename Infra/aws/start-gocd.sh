@@ -25,10 +25,9 @@ install -d -m 700 "$state"
 umask 077
 multi=$(ssm 'Parameters[?contains(Value, `"\n"`)].Name')
 [[ -z $multi ]] || { echo "these values under $ssm_path span several lines: $multi" >&2; exit 1; }
-ssm 'Parameters[].[Name,Value]' > "$state/ssm.tsv"
-# The values go into this script's environment, and from there only to the processes that need them.
-while IFS=$'\t' read -r name value; do export "${name##*/}=$value"; done < "$state/ssm.tsv"
-rm -f "$state/ssm.tsv"
+# The values go into this script's environment (no file), and from there only to the processes that need them.
+# A failed read leaves them empty, which the check below reports.
+while IFS=$'\t' read -r name value; do export "${name##*/}=$value"; done < <(ssm 'Parameters[].[Name,Value]')
 for v in ADMIN_PASSWORD PIPELINE_NOTIFY_TOKEN AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY; do
   [[ -n ${!v-} ]] || { echo "no $v under $ssm_path" >&2; exit 1; }
 done

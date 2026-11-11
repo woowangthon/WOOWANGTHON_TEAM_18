@@ -13,7 +13,7 @@ The stage CLIs (`Infra/pipeline`) and the platform server side (`BE/src/deploys/
 - One input per run: only the Build job calls `fetch-input` (the GET input has no images). Build writes `work/` (input, slot, build report, `deploy-input.built.json` = `report.input`) and publishes it; Prepare, Render and Apply fetch it. Apply also fetches Render's `out/slot.yaml`.
 - Secrets are never in the YAML: `PIPELINE_NOTIFY_TOKEN` and the AWS key are the agents' own environment (compose for the AWS agent, the Secret `gocd-agent` for the leader Pod). GoCD cannot give a config-repo pipeline a secure variable (an environment in the server's config may not reference it, 422 on the real server) and its secret-manager plugin is not bundled.
 - `Infra/gocd/compose.yaml` (server `gocd/gocd-server:v26.1.0` with `-Xmx1g`, AWS agent, and a local-test-only leader-role agent behind a profile), `aws-agent.Dockerfile`, `local-leader-agent.Dockerfile`.
-- `Infra/gocd/setup.sh`: file-based auth, config repo, environment with the notify token, BE's access token, the agent auto-register key. Same script locally and on the EC2.
+- `Infra/gocd/setup.sh`: file-based auth, config repo, BE's access token, the agent auto-register key and the leader Secret file. Same script locally and on the EC2.
 - `Infra/aws/start-gocd.sh`: reads `/wcp/gocd/*` from SSM like `deploy-be.sh`, starts the server, runs `setup.sh`, starts the AWS agent.
 - Docs: `platform-hosting.md` (GoCD section, AWS resources the user creates, `/wcp/be/*` additions), `deploy-workflow.md` (§1 sentence, §8 row), `docs/ai-scope.md` GoCD row.
 
