@@ -25,5 +25,5 @@ User decision (2026-11-11): split F11b and land the contract first, no code. Bot
 
 - [x] Track A confirms the pipeline side; markdown links resolve
 - [x] `verified` re-run contract — files: `docs/design/api.md` (3 · 5), `docs/design/AIagent.md` §1 · §6 · §7, `docs/design/deploy-workflow.md` §6
-- [ ] Track A confirms the re-run part
+- [x] Track A confirms the re-run part (all-reuse build passes with `images: {}`)
 - [ ] Next PR: BE implementation (trial routes, gateway run tools, `verified` re-run, build_cache move — #107's owner checks)
