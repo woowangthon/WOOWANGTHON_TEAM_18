@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Button } from '../components/ui/Button.tsx'
 import { Card } from '../components/ui/Card.tsx'
+import { describedBy } from '../components/ui/describedBy.ts'
 import { Field } from '../components/ui/Field.tsx'
 import { Input } from '../components/ui/Input.tsx'
 import { SelectField } from '../components/ui/Select.tsx'
@@ -64,8 +65,9 @@ type RowsProps<T> = {
 
 // 줄을 더하고 지우는 목록. env · secretKeys · links가 같은 모양을 쓴다.
 function Rows<T>({ legend, addLabel, rows, blank, onChange, disabled, error, hint, children }: RowsProps<T>) {
+  const errorId = useId()
   return (
-    <fieldset className="flex flex-col gap-2 sm:col-span-2" disabled={disabled}>
+    <fieldset className="flex flex-col gap-2 sm:col-span-2" disabled={disabled} aria-describedby={describedBy(error ? errorId : undefined)}>
       <legend className="text-sm font-bold">{legend}</legend>
       {hint && <p className="text-xs text-muted">{hint}</p>}
       {rows.map((row, index) => (
@@ -86,7 +88,7 @@ function Rows<T>({ legend, addLabel, rows, blank, onChange, disabled, error, hin
         </div>
       ))}
       {error && (
-        <span role="alert" className="text-sm text-err">
+        <span id={errorId} role="alert" className="text-sm text-err">
           {error}
         </span>
       )}
@@ -106,19 +108,21 @@ function Rows<T>({ legend, addLabel, rows, blank, onChange, disabled, error, hin
 
 // 줄 안의 입력칸. 보이는 라벨 대신 줄 번호가 들어간 이름을 준다.
 function RowInput({ label, value, onChange, error, mono }: { label: string; value: string; onChange: (v: string) => void; error?: string; mono?: boolean }) {
+  const errorId = useId()
   return (
     <div className="flex min-w-40 flex-1 flex-col gap-1">
       <Input
         aria-label={label}
         value={value}
         aria-invalid={error ? true : undefined}
+        aria-describedby={describedBy(error ? errorId : undefined)}
         className={mono ? 'font-mono' : undefined}
         onChange={(event) => {
           onChange(event.target.value)
         }}
       />
       {error && (
-        <span role="alert" className="text-sm text-err">
+        <span id={errorId} role="alert" className="text-sm text-err">
           {error}
         </span>
       )}

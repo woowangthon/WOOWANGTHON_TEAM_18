@@ -252,6 +252,30 @@ it('shows the env row error at the key the server names', async () => {
   expect(await service(1).findByText('다른 칸과 맞지 않아요')).toBeTruthy()
 })
 
+it('ties the row error and the whole-list error to their inputs for assistive technology', async () => {
+  rejectSave(
+    new ApiError(400, 'INVALID_SPEC', 'x', [
+      { path: 'services[0].build.buildEnv.VITE_KEY', code: 'CONFLICT' },
+      { path: 'services[0].build.buildEnv', code: 'DUPLICATE' },
+    ]),
+  )
+  renderConfirm()
+  await ready()
+  fireEvent.click(service(1).getByRole('button', { name: '빌드 환경변수 추가' }))
+  fireEvent.change(service(1).getByRole('textbox', { name: '빌드 환경변수 이름 1' }), { target: { value: 'VITE_KEY' } })
+  fireEvent.click(confirmButton())
+  const row = await service(1).findByText('다른 칸과 맞지 않아요')
+  const input = service(1).getByRole('textbox', { name: '빌드 환경변수 이름 1' })
+  expect(input.getAttribute('aria-describedby')).toBe(row.id)
+  expect(row.id).not.toBe('')
+  const list = service(1).getByRole('group', { name: '빌드 환경변수' })
+  const listError = within(list).getByText('다른 칸과 겹쳐요')
+  expect(list.getAttribute('aria-describedby')).toBe(listError.id)
+  expect(listError.id).not.toBe('')
+  // 오류가 없는 줄에는 설명을 달지 않는다.
+  expect(service(1).getByRole('textbox', { name: '빌드 환경변수 값 1' }).getAttribute('aria-describedby')).toBeNull()
+})
+
 it('clears the server errors when the form is edited', async () => {
   rejectSave(new ApiError(400, 'INVALID_SPEC', 'x', [{ path: 'project.slug', code: 'RESERVED' }]))
   renderConfirm()
