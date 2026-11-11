@@ -1,6 +1,7 @@
 # Admission policies for the platform server account and for student Pods (build 09, first part).
 # Design and reasons: docs/design/cluster.md §8.
 #   wanggane-platform-server   the server account writes only in proj- spaces; namespace and Secret rules
+#   wanggane-platform-server-scale   its Deployment scale requests set 0 replicas only (stop, no resume yet)
 #   wanggane-space-*           cap, defaults, isolation and the two bindings (server read, executor deploy) are
 #                              created only with the template's name and values
 #   wanggane-student-pods      Pods and Deployments in proj- spaces drop NET_RAW, carry no API token and no
@@ -83,6 +84,35 @@ metadata:
   name: wanggane-platform-server
 spec:
   policyName: wanggane-platform-server
+  validationActions: ["Deny"]
+---
+# The server may stop a service, not start one or resize it, until resume exists. A Scale object leaves
+# spec.replicas out when it is 0.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: wanggane-platform-server-scale
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups: ["apps"]
+      apiVersions: ["*"]
+      operations: ["UPDATE"]
+      resources: ["deployments/scale"]
+  matchConditions:
+  - name: platform-server-account
+    expression: request.userInfo.username == 'system:serviceaccount:platform:platform-server'
+  validations:
+  - expression: "!has(object.spec.replicas) || object.spec.replicas == 0"
+    message: the platform server may only scale a Deployment to 0 replicas
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: wanggane-platform-server-scale
+spec:
+  policyName: wanggane-platform-server-scale
   validationActions: ["Deny"]
 ---
 apiVersion: admissionregistration.k8s.io/v1
