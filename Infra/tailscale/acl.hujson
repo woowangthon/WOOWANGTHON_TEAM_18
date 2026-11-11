@@ -1,4 +1,6 @@
-// Tailnet access rules (build 09), in the admin console since 2026-11-10. Design: docs/design/cluster.md §8.
+// Tailnet access rules (build 09). Design: docs/design/cluster.md §8. In the admin console: the operator,
+// platform-server and node rules since 2026-11-10, the teammates' share rule since 2026-11-11; the GoCD
+// rule (build 09') is not pasted yet.
 // Pasted by the tailnet owner into the admin console (Access controls). Replace every <..._IP> with the
 // device's Tailscale address there only; the addresses are not kept in this repo.
 // This replaces the whole policy of the tailnet. Anything not accepted below is denied, so the school
@@ -43,13 +45,15 @@
 		},
 		// Build 09': the leader's deploy executor (GoCD Agent) -> the GoCD server on the EC2 (26.1.0,
 		// port 8153 for agent registration, work and the API alike). The port is not open to the internet.
+		// Not in the admin console yet: paste it once the EC2 has joined.
 		{
 			"action": "accept",
 			"src": ["k3s-leader"],
 			"dst": ["tag:platform-server:8153"],
 		},
 		// Teammates the three nodes are shared with (Machines -> Share), all ports, for the operator's
-		// absence in 2026-11 (cluster.md §8). Removed at the return (stage 12) together with the shares.
+		// absence in 2026-11 (cluster.md §8), in the admin console since 2026-11-11. Removed at the return
+		// (cluster.md §13) together with the shares; restoring the disks does not remove either.
 		// A shared user is named by the autogroup, not by e-mail, because this repo is public.
 		{
 			"action": "accept",
