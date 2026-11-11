@@ -3,4 +3,6 @@
 interface ImportMetaEnv {
   readonly VITE_SUPABASE_URL: string
   readonly VITE_SUPABASE_PUBLISHABLE_KEY: string
+  // 없거나 비어 있으면 상대 경로(/api/...)로 보낸다.
+  readonly VITE_API_BASE_URL?: string
 }
