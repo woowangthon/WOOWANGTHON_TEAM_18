@@ -9,4 +9,3 @@
 export abstract class SecretWriter {
   abstract write(slug: string, service: string, values: Record<string, string>): Promise<void>
 }
-

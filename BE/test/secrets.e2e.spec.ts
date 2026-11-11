@@ -361,7 +361,11 @@ describe('PUT /api/deploys/:id/secrets', () => {
         refuse = undefined
         await app.close()
         const k8s = {
-          create: (path: string) => (refuse ? Promise.reject(refuse) : Promise.resolve(calls.push(`POST ${path}`) && 'created')),
+          create: (path: string) => {
+            if (refuse) return Promise.reject(refuse)
+            calls.push(`POST ${path}`)
+            return Promise.resolve('created')
+          },
           request: (method: string, path: string) => Promise.resolve(calls.push(`${method} ${path}`)),
           onModuleDestroy: () => undefined,
         }
