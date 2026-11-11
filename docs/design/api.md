@@ -367,7 +367,8 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
 ```
 
 - `ticket`: [AI 에이전트 설계](AIagent.md) §5의 티켓 그대로. 플랫폼이 실패 알림을 받은 순간의 스냅샷이고, 외부 전송 필터를 거친 값이다.
-- `ticket.raw`: stage에 따라 두 모양만 받는다. `build`면 `{ "codebuild": <BatchGetBuilds builds[0] 원본>, "k8s": null }`, 그 밖의 stage면 `{ "codebuild": null, "k8s": { "pod": <Pod 원본> | null, "events": [<Event 원본>], "status": <k3s Status 원본> | null } }`. `status`는 `render`일 때 dry-run이 돌려준 Status(필수)이고 그 밖에는 `null`이다. `render`면 `errorMessage`에 Status의 `message`를 그대로 넣는다.
+- `ticket.stage`: `build` · `prepare` · `render` · `apply` · `verify`(W6 동작 확인).
+- `ticket.raw`: stage에 따라 세 모양만 받는다. `build`면 `{ "codebuild": <BatchGetBuilds builds[0] 원본>, "k8s": null }`, `verify`면 `{ "codebuild": null, "k8s": null, "verify": { "ready": [{ "service", "ready", "reason": string | null }], "requests": [{ "service", "kind": "page" | "asset" | "health", "path", "status": number | null, "ms": number | null, "error": string | null }] } }`(W6 결과 그대로, [배포 워크플로우](deploy-workflow.md) §4 "동작 확인과 전환"의 검사표: `page`는 정적 웹의 `ingressPath`, `asset`은 그 HTML이 부르는 같은 호스트의 파일, `health`는 서버의 헬스체크), 그 밖의 stage면 `{ "codebuild": null, "k8s": { "pod": <Pod 원본> | null, "events": [<Event 원본>], "status": <k3s Status 원본> | null } }`. `status`는 `render`일 때 dry-run이 돌려준 Status(필수)이고 그 밖에는 `null`이다. `render`면 `errorMessage`에 Status의 `message`를 그대로 넣는다. `verify` 칸은 stage `verify`일 때만 있고, 다른 stage에서는 빼거나 `null`이다.
 - `ticket.previous.status`: `verified` · `pr_opened` · `needs_user` · `gave_up`(그 티켓의 해결 결과) · `stopped`(결과 없이 끝남) 중 하나.
 - `gateway.token`: 이 티켓에만 쓰는 게이트웨이 토큰.
 - AI 서버는 받은 로그(한 줄 400자, 전체 24KB)와 큰 원본(`raw.*`, 게이트웨이 도구 결과의 Pod · 이벤트 · builds[0] · Status)을 받는 쪽에서 직접 줄여 모델에 준다([AI 에이전트 설계](AIagent.md) §10). 플랫폼은 원본을 그대로 보내면 된다.

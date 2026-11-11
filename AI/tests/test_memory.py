@@ -72,13 +72,15 @@ def test_path_condition(cond: dict[str, Any], holds: bool) -> None:
 # ---- 초기 case 15개 (§8 표) ----
 
 
-def test_initial_cases_are_the_fifteen_in_the_design() -> None:
+def test_initial_cases_are_the_ones_in_the_design() -> None:
     ids = sorted(c.case_id for c in load_cases())
     assert ids == sorted(
         ["B1", "B2", "B3", "B4", "B5", "P1", "P2", "P3", "R1", "R2", "R3", "A1", "A2", "A3", "A4"]
+        + ["V1", "V2"]
     )
+    letter = {"build": "B", "prepare": "P", "render": "R", "apply": "A", "verify": "V"}
     for c in load_cases():
-        assert c.case_id[0] == {"build": "B", "prepare": "P", "render": "R", "apply": "A"}[c.stage]
+        assert c.case_id[0] == letter[c.stage]
         assert (c.stats.hits, c.stats.solved) == (0, 0)
 
 
@@ -133,6 +135,25 @@ def _render(code: int, message: str, causes: list[dict[str, str]]) -> dict[str, 
     return {"stage": "render", "errorMessage": message, "raw": {"codebuild": None, "k8s": k8s}}
 
 
+def _verify(*requests: tuple[str, str, int | None]) -> dict[str, Any]:
+    """(kind, path, status)로 W6 결과를 만든다."""
+    reqs = [
+        {
+            "service": "fe" if kind != "health" else "be",
+            "kind": kind,
+            "path": path,
+            "status": status,
+            "ms": 5,
+            "error": None,
+        }
+        for kind, path, status in requests
+    ]
+    return {
+        "stage": "verify",
+        "raw": {"codebuild": None, "k8s": None, "verify": {"ready": [], "requests": reqs}},
+    }
+
+
 # 각 case의 신호(§8 표)를 담은 티켓
 SIGNALS: dict[str, dict[str, Any]] = {
     "B1": _build(' ERR_PNPM_OUTDATED_LOCKFILE  Cannot install with "frozen-lockfile"'),
@@ -185,6 +206,8 @@ SIGNALS: dict[str, dict[str, Any]] = {
         state={"waiting": {"reason": "CrashLoopBackOff"}},
         lastState={"terminated": {"exitCode": 137, "reason": "OOMKilled"}},
     ),
+    "V1": _verify(("page", "/", 200), ("asset", "/assets/index-abc.js", 404)),
+    "V2": _verify(("page", "/", 200), ("health", "/api/health", 404)),
     "A4": _events(
         {
             "reason": "FailedCreate",
@@ -254,3 +277,32 @@ def test_hits_and_solved_count_per_case() -> None:
     a1 = memory.get("A1")
     assert a1 is not None and (a1.stats.hits, a1.stats.solved) == (2, 1)
     assert sum(c.stats.solved for c in memory.cases) == 1
+
+
+def test_contains_needs_every_field_in_the_same_element() -> None:
+    cond = PathCond.model_validate({"path": "a.b[*]", "contains": {"c": 1}})
+    assert cond.holds(DOC)
+    both = PathCond.model_validate({"path": "a.b[*]", "contains": {"c": 1, "d": 3}})
+    assert not both.holds(DOC)  # c=1과 d=3은 서로 다른 원소에 있다
+    assert not PathCond.model_validate({"path": "a.e", "contains": {"c": 1}}).holds(DOC)
+
+
+@pytest.mark.parametrize(
+    "requests",
+    [
+        (("page", "/", 404), ("asset", "/a.js", 200)),  # 404는 페이지, 파일은 200
+        (("asset", "/a.js", 500),),
+        (("asset", "/a.js", None),),
+    ],
+)
+def test_v1_needs_an_asset_that_is_404(requests: tuple[tuple[str, str, int | None], ...]) -> None:
+    memory = CaseMemory(load_cases())
+    case = memory.classify(Ticket.model_validate(ticket(**_verify(*requests))))
+    assert case is None or case.case_id != "V1"
+
+
+def test_verify_cases_only_match_verify_tickets() -> None:
+    memory = CaseMemory(load_cases())
+    t = ticket(**SIGNALS["A1"])
+    assert memory.classify(Ticket.model_validate(t)) is not None
+    assert all(c.stage == "verify" for c in memory.cases if c.case_id.startswith("V"))

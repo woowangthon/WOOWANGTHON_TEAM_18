@@ -524,3 +524,28 @@ def test_without_model_settings_each_ticket_gets_a_gave_up_that_says_so(
     assert result["status"] == "gave_up" and result["summary"].startswith("AI 모델 설정이 없어")
     assert result["classification"] == {"method": "code", "caseId": "A1", "path": "playbook"}
     assert gw.tool_calls() == [] and result["actions"] == []
+
+
+# ---- W6 동작 확인 실패 (stage verify) ----
+
+
+def test_verify_ticket_runs_the_v2_playbook() -> None:
+    gw = FakeGateway()
+    patch = [{"op": "replace", "path": "/spec/services/0/runtime/stripPrefix", "value": True}]
+    local = Script(
+        call("read_pod_logs", service="be", lines=100),
+        call("run_deploy", specPatch=patch),
+        call("run_verify"),
+        final(
+            status="verified",
+            specPatch=patch,
+            summary="앱이 /api 없이 받아 stripPrefix를 켰습니다.",
+        ),
+    )
+    run = make_run(**SIGNALS["V2"])
+    solve(run, gw, local)
+    result = only_result(gw)
+    assert result["classification"] == {"method": "code", "caseId": "V2", "path": "playbook"}
+    assert result["specPatch"] == patch
+    first = local.sent(0)
+    assert '"caseId":"V2"' in first and "- be health GET /api/health: status 404" in first
