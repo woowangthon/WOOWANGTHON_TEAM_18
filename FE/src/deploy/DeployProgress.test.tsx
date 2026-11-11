@@ -270,6 +270,37 @@ it('says only the plain text when NOT_READY names nothing', async () => {
   expect(screen.queryByText('빠진 항목')).toBeNull()
 })
 
+const secretsLink = () => screen.queryByRole('link', { name: '비밀값 넣으러 가기' })
+
+it('links to the secrets screen before the start button while the deploy is not started', async () => {
+  api.apiFetch.mockResolvedValue(progressOf('not_started', 'secrets'))
+  await show()
+  expect(secretsLink()?.getAttribute('href')).toBe(`/deploys/${ID}/secrets`)
+})
+
+it('keeps the secrets link, next to the missing names, after NOT_READY', async () => {
+  api.apiFetch.mockImplementation((path: string) =>
+    path === START
+      ? Promise.reject(new ApiError(409, 'NOT_READY', 'x', [{ path: 'secrets.be.DATABASE_URL', code: 'REQUIRED' }]))
+      : Promise.resolve(progressOf('not_started', 'secrets')),
+  )
+  await show()
+  await clickStart()
+  expect(screen.getByText('be · DATABASE_URL')).toBeTruthy()
+  expect(secretsLink()?.getAttribute('href')).toBe(`/deploys/${ID}/secrets`)
+})
+
+it.each([
+  ['running', 'build'],
+  ['fixing', 'build'],
+  ['succeeded', null],
+  ['failed', 'build'],
+] as const)('hides the secrets link when the status is %s', async (status, at) => {
+  api.apiFetch.mockResolvedValue(progressOf(status, at, status === 'failed' ? { failure: failureWith('BUILD_FAILED') } : {}))
+  await show()
+  expect(secretsLink()).toBeNull()
+})
+
 it('shows security warnings without blocking the result', async () => {
   api.apiFetch.mockResolvedValue(
     progressOf('succeeded', null, {
