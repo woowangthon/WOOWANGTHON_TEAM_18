@@ -114,7 +114,7 @@ Supabase `GET /auth/v1/user`의 `401`과 `403`은 책임이 다르다(2026-11-09
 **거치는 곳**: 사용자 브라우저(입력칸) → HTTPS → Cloudflare(프록시라 여기서 평문으로 보인다) → 플랫폼 서버 메모리 → Tailscale 사설망 → 리더의 쿠버네티스 API(자체 CA로 검증한 HTTPS) → 클러스터의 Secret(`proj-<slug>`의 `<서비스>-secrets`). GoCD · 빌드(CodeBuild) · 배포 설정 `spec` · Supabase에는 가지 않는다.
 
 **남기지 않는 곳**
-- DB: `deploy_secrets`에는 서비스별 key 이름 · 상태 · 서비스별 해시만 둔다. 값은 없다. 테이블은 RLS를 켜고 정책을 두지 않아 서버의 secret key만 읽고 쓴다.
+- DB: `deploy_secrets`에는 서비스별 key 이름 · 상태 · 서비스별 해시만 둔다. 값은 없다. 해시는 서버 전용 키(`SECRET_HASH_KEY`)로 만든 HMAC-SHA256이라 DB 행만 읽어서는 짧은 값을 사전 대입으로 맞춰 볼 수 없다. 테이블은 RLS를 켜고 정책을 두지 않아 서버의 secret key만 읽고 쓴다.
 - 로그 · 오류 응답: 서버는 요청 본문을 로그에 남기지 않는다. 본문이 JSON이 아닐 때 파서의 오류 문구에 본문 조각이 들어갈 수 있어(`Unexpected token 'l', "<본문 앞부분>" is not valid JSON`), 응답에는 고정 문구(`Request body is not valid JSON`)만 싣는다(`api-exception.filter`, 모든 API에 적용된다). 검증 오류는 key와 서비스 이름만 알린다.
 - 응답: 돌려주지 않는다. 쿠버네티스가 만들기(POST) 응답에 담아 보내는 Secret도 서버는 읽지 않고 버린다(상태 코드와 `reason`만 본다).
 
@@ -131,7 +131,7 @@ Supabase `GET /auth/v1/user`의 `401`과 `403`은 책임이 다르다(2026-11-09
 
 ## 알려진 한계
 
-- `slug` 충돌 확인(`409 SLUG_TAKEN`)은 "읽고 나서 쓰기"라 같은 `slug`를 서로 다른 사용자가 동시에 처음 저장하면 둘 다 통과할 수 있다. DB에서 막으려면 `projects` 테이블(`slug` 유일)이 필요하고, 프로젝트 단위 관리(슬롯 · 삭제)를 만들 때 함께 한다.
+- `slug` 충돌 확인(`409 SLUG_TAKEN`)은 "읽고 나서 쓰기"라 같은 `slug`를 서로 다른 사용자가 동시에 처음 저장하면 둘 다 통과할 수 있다. DB에서 막으려면 `projects` 테이블(`slug` 유일)이 필요하고, 프로젝트 단위 관리(슬롯 · 삭제)를 만들 때 함께 한다. 비밀값 API(#43) 이후에는 서로 다른 두 사용자의 배포가 같은 `proj-<slug>`의 Secret도 서로 덮어쓴다. 고치는 방법은 `projects`에 소유자(owner) 열을 두고 `slug`를 원자적으로 선점하는 것이다.
 - 저장하는 spec의 `build.dockerfile`이 그 commit에 실제로 있는지, `dir`이 있는 폴더인지는 확인하지 않는다(모양만 본다). 빌드(#44)가 읽을 때 드러난다.
 - `slug`는 처음 저장한 레포에 묶인다. 레포 이름을 바꾸거나 옮기면 같은 `slug`가 `409 SLUG_TAKEN`이 된다(풀어 주는 길은 `projects` 테이블과 함께 만든다).
 - 서비스 사이의 `ingressPath` 겹침(같은 경로 둘, `/` 둘)은 검증하지 않는다. 경로 배정은 인프라 담당의 규칙(W5)이다.

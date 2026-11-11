@@ -1,5 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common'
+import { ConfigService } from '@nestjs/config'
 import type { AuthUser } from '../auth/auth.decorators.js'
+import type { Env } from '../config/env.js'
 import { isRecord } from '../common/is-record.js'
 import { DeploysService } from './deploys.service.js'
 import { DeploysStore } from './deploys.store.js'
@@ -14,7 +16,12 @@ export class SecretsService {
     private readonly deploys: DeploysService,
     private readonly store: DeploysStore,
     private readonly writer: SecretWriter,
-  ) {}
+    config: ConfigService<Env, true>,
+  ) {
+    this.hashKey = config.get('SECRET_HASH_KEY', { infer: true })
+  }
+
+  private readonly hashKey: string
 
   /** 내 배포의 비밀값 상태. 없는 id · 남의 id는 404다(DeploysService.get과 같다). 리더는 부르지 않는다. */
   async status(user: AuthUser, id: string): Promise<SecretStatus> {
@@ -24,7 +31,7 @@ export class SecretsService {
 
   /** 소유자 확인 없이 spec의 비밀값 상태를 읽는다(배포 시작 쪽 #82가 이미 소유자를 확인한 뒤 부른다). */
   async statusOf(spec: Spec): Promise<SecretStatus> {
-    return secretStatus(spec, await this.store.secretRows(spec.project.slug))
+    return secretStatus(spec, await this.store.secretRows(spec.project.slug), this.hashKey)
   }
 
   /**
@@ -54,7 +61,7 @@ export class SecretsService {
         const keys = Object.keys(values).sort()
         await this.store.setSecretState(slug, name, { keys, status: 'writing', digest: null })
         await this.writer.write(slug, name, values)
-        await this.store.setSecretState(slug, name, { keys, status: 'in', digest: serviceDigest(values) })
+        await this.store.setSecretState(slug, name, { keys, status: 'in', digest: serviceDigest(values, this.hashKey) })
       }
     }
     return this.statusOf(spec)

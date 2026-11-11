@@ -12,6 +12,8 @@ import { K8sClient } from '../src/k8s/k8s.client.js'
 import { errorBody, JWKS_URL, keySet, token } from './auth-helpers.js'
 import { startApp } from './start-app.js'
 
+// vitest.config.ts가 넣은 서버의 해시 키.
+const HASH_KEY = process.env.SECRET_HASH_KEY ?? ''
 const REST = 'https://test.supabase.co/rest/v1/'
 const USER_ID = '11111111-1111-4111-8111-111111111111'
 const OTHER_USER_ID = '22222222-2222-4222-8222-222222222222'
@@ -177,7 +179,7 @@ describe('PUT /api/deploys/:id/secrets', () => {
     expect(statesAtWrite).toEqual([['be:writing']])
     expect(secretWrites.map((w) => w.status)).toEqual(['writing', 'in'])
     expect(secretRows).toEqual([
-      { slug: 'my-app', service: 'be', keys: ['DATABASE_URL', 'JWT_SECRET'], status: 'in', digest: serviceDigest(BE), updated_at: expect.any(String) as string },
+      { slug: 'my-app', service: 'be', keys: ['DATABASE_URL', 'JWT_SECRET'], status: 'in', digest: serviceDigest(BE, HASH_KEY), updated_at: expect.any(String) as string },
     ])
   })
 
@@ -196,7 +198,7 @@ describe('PUT /api/deploys/:id/secrets', () => {
     expect(res.status).toBe(200)
     expect(res.body).toMatchObject({
       ready: true,
-      secretHash: combineDigests([{ name: 'be', digest: serviceDigest(BE) }, { name: 'ai', digest: serviceDigest(AI) }]),
+      secretHash: combineDigests([{ name: 'be', digest: serviceDigest(BE, HASH_KEY) }, { name: 'ai', digest: serviceDigest(AI, HASH_KEY) }], HASH_KEY),
     })
     // 이미 들어간 be는 다시 쓰지 않는다.
     expect(writes.map((w) => w.service)).toEqual(['be', 'ai'])
@@ -276,10 +278,12 @@ describe('PUT /api/deploys/:id/secrets', () => {
       ['a value without quotes', '{"services":{"be":{"JWT_SECRET": leaky-secret-value}}}'],
       ['a missing comma', '{"services":{"be":{"JWT_SECRET":"leaky-secret-value" "oops"}}}'],
       ['text that is not JSON at all', 'leaky-secret-value'],
-    ])('malformed JSON that contains a secret (%s): 400, and the secret is in neither the response nor the logs', async (_, text) => {
+    ])('malformed JSON that contains a secret (%s): 400 with the fixed message, and the secret is in neither the response nor the logs', async (_, text) => {
       const res = await put(id(), text)
       expect(res.status).toBe(400)
-      expect(JSON.stringify([res.text, logs.map((l) => l.mock.calls)])).not.toContain('leaky-secret-value')
+      expect(res.body).toEqual({ error: { code: 'BAD_REQUEST', message: 'Request body is not valid JSON' } })
+      // 값의 앞부분만 새도 안 된다.
+      expect(JSON.stringify([res.text, logs.map((l) => l.mock.calls)])).not.toContain('leaky-secret')
     })
 
     it('a body over 100KB: 413 PAYLOAD_TOO_LARGE, and the logs have no value', async () => {
@@ -447,7 +451,7 @@ describe('GET /api/deploys/:id/secrets', () => {
   })
 
   it('does not show the state of another project', async () => {
-    secretRows.push({ slug: 'other-app', service: 'be', keys: ['DATABASE_URL', 'JWT_SECRET'], status: 'in', digest: serviceDigest(BE), updated_at: 'x' })
+    secretRows.push({ slug: 'other-app', service: 'be', keys: ['DATABASE_URL', 'JWT_SECRET'], status: 'in', digest: serviceDigest(BE, HASH_KEY), updated_at: 'x' })
     expect(((await get(id())).body as { services: { status: string }[] }).services[0].status).toBe('missing')
   })
 
