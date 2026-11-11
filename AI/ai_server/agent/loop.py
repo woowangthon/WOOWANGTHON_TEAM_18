@@ -142,10 +142,14 @@ _GATEWAY_DOWN = (
     "잠시 뒤 다시 배포해 주세요."
 )
 _NO_MODEL = (
-    "AI 모델 설정이 없어 문제 해결을 하지 않았습니다. 운영자가 AI 서버의 모델 설정을 넣어야 합니다. "
+    "AI 모델 설정이 없어 문제 해결을 하지 않았습니다. "
+    "운영자가 AI 서버의 모델 설정을 넣어야 합니다. "
     "그 전에는 배포 설정과 로그를 직접 확인해 주세요."
 )
-_RESUBMITTED = "에이전트의 결과가 플랫폼 검사에서 거절되어 결과 없이 멈췄습니다. 배포 설정과 로그를 확인해 주세요."
+_RESUBMITTED = (
+    "에이전트의 결과가 플랫폼 검사에서 거절되어 결과 없이 멈췄습니다. "
+    "배포 설정과 로그를 확인해 주세요."
+)
 
 
 def _last_rejection(actions: list[Action]) -> str | None:
@@ -175,7 +179,10 @@ def _model_failure(e: Exception, actions: list[Action]) -> str:
 
 
 async def _submit(gateway: GatewayToolset, result: AgentResult) -> None:
-    """전송 오류면 몇 번 다시 낸다. INVALID_RESULT면 봉투와 사실 요약만 담은 gave_up으로 한 번 더."""
+    """전송 오류면 몇 번 다시 낸다.
+
+    INVALID_RESULT면 봉투와 사실 요약만 담은 gave_up으로 한 번 더 낸다.
+    """
     delays = [0.0, *SUBMIT_RETRY_DELAYS]
     minimal_sent = False
     attempt = 0
@@ -212,7 +219,10 @@ async def _submit(gateway: GatewayToolset, result: AgentResult) -> None:
 def make_agent_runner(
     models: Models | None, gateway_for: Callable[[str], GatewayToolset]
 ) -> Runner:
-    """`gateway_for(token)`이 그 티켓의 게이트웨이 연결을 만든다. `models`가 없으면 고치지 않는다."""
+    """`gateway_for(token)`이 그 티켓의 게이트웨이 연결을 만든다.
+
+    `models`가 없으면 고치지 않고 그 사실만 알린다.
+    """
 
     async def solve(run: TicketRun, memory: CaseMemory) -> None:
         ticket = run.ticket
