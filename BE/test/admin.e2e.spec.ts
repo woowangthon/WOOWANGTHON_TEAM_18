@@ -16,7 +16,7 @@ const USER = '11111111-1111-4111-8111-111111111111'
 type Row = Record<string, unknown>
 let db: Record<string, Row[]>
 let restOverride: ((table: string, method: string) => Response | undefined) | undefined
-// 가짜 클러스터: 공간(slug)마다 Deployment · Pod 목록을 두고(없으면 404 = not_found), clusterError가 있으면 모든 읽기가 그 오류로 실패한다.
+// 가짜 클러스터: 공간(slug)마다 Deployment · Pod 목록을 두고(없으면 리더가 답하듯 403 = forbidden), clusterError가 있으면 모든 읽기가 그 오류로 실패한다.
 // scale은 기록하고 scaleFails에 이름이 있으면 그 오류로 실패한다.
 let nodesData: NodeInfo[]
 let spaces: Record<string, { deployments: DeploymentInfo[]; pods: PodInfo[] }>
@@ -30,7 +30,7 @@ const read = <T>(slug: string | null, pick: (space: (typeof spaces)[string]) => 
   if (clusterError) return Promise.reject(clusterError)
   if (slug === null) return Promise.resolve(nodesData as T[])
   if (slugErrors[slug]) return Promise.reject(slugErrors[slug])
-  return slug in spaces ? Promise.resolve(pick(spaces[slug])) : Promise.reject(new ClusterError('not_found', 404))
+  return slug in spaces ? Promise.resolve(pick(spaces[slug])) : Promise.reject(new ClusterError('forbidden', 403))
 }
 const reader = {
   nodes: () => read<NodeInfo>(null, () => []),
@@ -219,7 +219,7 @@ describe('GET /api/admin/projects', () => {
         { name: 'fe', slot: null, replicas: 2, readyReplicas: 1, pods: [{ name: 'fe-6d9f8c7b5-aaaaa', phase: 'Running', ready: false, node: 'worker-1', restarts: 0 }] },
       ],
     })
-    // 공간이 없는(404) 프로젝트와 아직 전환하지 않은 프로젝트
+    // 공간이 없는(403) 프로젝트와 아직 전환하지 않은 프로젝트
     expect(projects[1]).toMatchObject({ slug: 'old-app', liveSlot: null, url: null, lastStop: null, services: [] })
   })
 
@@ -248,7 +248,7 @@ describe('GET /api/admin/projects', () => {
     seedProject('my-app', USER, 5)
     seedProject('bad-app', USER, 1)
     space('my-app', [deployment('fe-a')])
-    slugErrors['bad-app'] = new ClusterError('forbidden', 403)
+    slugErrors['bad-app'] = new ClusterError('unauthorized', 401)
     const res = await call('get', '/api/admin/projects', undefined)
     expect(res.status).toBe(200)
     const { projects } = res.body as { projects: { slug: string; services: unknown[]; clusterError: string | null }[] }

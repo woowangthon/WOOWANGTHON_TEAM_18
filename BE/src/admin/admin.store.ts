@@ -41,9 +41,12 @@ export class AdminStore {
 
   /** 배포가 하나라도 있는 프로젝트. 가장 최근에 저장한 배포 순, 프로젝트마다 한 줄(최근 배포의 소유자와 레포). */
   async projects(): Promise<ProjectRecord[]> {
-    const deploys = await this.call('deploys', 'GET', { select: 'slug,repo,user_id', order: 'created_at.desc', limit: String(MAX_ROWS) })
+    const [deploys, projects] = await Promise.all([
+      this.call('deploys', 'GET', { select: 'slug,repo,user_id', order: 'created_at.desc', limit: String(MAX_ROWS) }),
+      this.call('projects', 'GET', { select: 'slug,live_slot' }),
+    ])
     const lives = new Map<string, 'a' | 'b' | null>()
-    for (const row of await this.call('projects', 'GET', { select: 'slug,live_slot' })) {
+    for (const row of projects) {
       if (!isRecord(row) || !str(row.slug) || (row.live_slot !== null && row.live_slot !== 'a' && row.live_slot !== 'b')) throw this.unreadable('projects')
       lives.set(row.slug, row.live_slot)
     }

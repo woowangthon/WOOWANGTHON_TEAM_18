@@ -1,6 +1,7 @@
 import { ConflictException, Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common'
 import type { AuthUser } from '../auth/auth.decorators.js'
 import { SLUG } from '../deploys/deploy-input.js'
+import { publicUrl } from '../deploys/deploy-run.js'
 import { ClusterError } from '../k8s/cluster-error.js'
 import { ClusterReader, type NodeInfo, type PodInfo } from '../k8s/cluster-reader.js'
 import { AdminStore, type ProjectRecord } from './admin.store.js'
@@ -13,8 +14,6 @@ const K8S_NAME = /^[a-z0-9]([-a-z0-9]{0,251}[a-z0-9])?$/
 const unreachable = () => new ServiceUnavailableException({ code: 'CLUSTER_UNREACHABLE', message: 'Could not reach the cluster' })
 const forbidden = () =>
   new ServiceUnavailableException({ code: 'CLUSTER_FORBIDDEN', message: 'The server account is not allowed to do this in the cluster' })
-// 학생 공개 주소(docs/design/cluster.md §9).
-const publicUrl = (slug: string) => `https://${slug}.stairnoworks.com`
 const projectNotFound = () => new NotFoundException({ code: 'PROJECT_NOT_FOUND', message: 'No such project' })
 
 /** 클러스터 호출의 실패를 사용자에게 알리는 오류로: 닿았는데 권한이 없으면 FORBIDDEN, 그 밖은 UNREACHABLE. */
@@ -48,12 +47,15 @@ function toNode({ name, ready, roles, capacity, allocatable }: NodeInfo): NodeVi
 
 const toPod = ({ name, phase, ready, node, restarts }: PodInfo) => ({ name, phase, ready, node, restarts })
 
-/** 읽기 결과를 받는다. 실패는 사용자에게 알리는 오류로 바꾸고, `goneIsEmpty`면 없는 공간(404)은 빈 목록이다. */
+/**
+ * 읽기 결과를 받는다. 실패는 사용자에게 알리는 오류로 바꾸고, `goneIsEmpty`면 없는 공간은 빈 목록이다.
+ * 서버가 만들지 않았거나 지운 공간은 403(`forbidden`)으로 답한다(docs/design/cluster-client.md "오류 나누기"). 404도 같이 본다.
+ */
 async function readList<T>(read: Promise<T[]>, goneIsEmpty = false): Promise<T[]> {
   try {
     return await read
   } catch (err) {
-    if (goneIsEmpty && err instanceof ClusterError && err.kind === 'not_found') return []
+    if (goneIsEmpty && err instanceof ClusterError && (err.kind === 'forbidden' || err.kind === 'not_found')) return []
     throw asHttp(err)
   }
 }
@@ -104,9 +106,8 @@ export class AdminService {
   }
 
   private async services(slug: string) {
-    // 공간이 아직 없으면(404) 서비스가 없다.
+    // 공간이 아직 없으면 서비스가 없다.
     const [deployments, pods] = await Promise.all([readList(this.reader.deployments(slug), true), readList(this.reader.pods(slug), true)])
-    const podViews = pods.map(toPod)
     return deployments.map(({ name, replicas, ready }) => {
       // Pod 이름은 `<Deployment>-<ReplicaSet 해시>-<5자>`다. `fe`와 `fe-a`처럼 접두사가 겹치는 이름이 섞이지 않게 모양 전체를 본다.
       const owns = new RegExp(`^${escapeRegExp(name)}-[a-z0-9]+-[a-z0-9]{5}$`)
@@ -115,7 +116,7 @@ export class AdminService {
         slot: /-(a|b)$/.exec(name)?.[1] ?? null,
         replicas,
         readyReplicas: ready,
-        pods: podViews.filter((p) => owns.test(p.name)),
+        pods: pods.filter((p) => owns.test(p.name)).map(toPod),
       }
     })
   }
