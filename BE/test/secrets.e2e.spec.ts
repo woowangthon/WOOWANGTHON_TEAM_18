@@ -4,8 +4,11 @@ import { Logger, ServiceUnavailableException } from '@nestjs/common'
 import request from 'supertest'
 import type { App } from 'supertest/types.js'
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from 'vitest'
+import { ClusterSecretWriter } from '../src/deploys/cluster-secret-writer.js'
 import { SecretWriter } from '../src/deploys/secret-writer.js'
 import { combineDigests, serviceDigest } from '../src/deploys/secrets-input.js'
+import { ClusterError } from '../src/k8s/cluster-error.js'
+import { K8sClient } from '../src/k8s/k8s.client.js'
 import { errorBody, JWKS_URL, keySet, token } from './auth-helpers.js'
 import { startApp } from './start-app.js'
 
@@ -49,7 +52,7 @@ let secretWrites: { status: string; query: string; prefer: string | null; apikey
 let restFail: Partial<Record<'deploys' | 'deploy_secrets', Partial<Record<'GET' | 'POST', () => Response | undefined>>>>
 let logs: MockInstance[]
 
-// SecretWriter의 가짜(실제 구현은 #111): 받은 인자를 적고, 부른 순간 저장소에 적힌 상태를 함께 적는다. fail이 오류를 주면 그것을 던진다.
+// SecretWriter의 가짜(실제 구현은 ClusterSecretWriter): 받은 인자를 적고, 부른 순간 저장소에 적힌 상태를 함께 적는다. fail이 오류를 주면 그것을 던진다.
 let writes: { slug: string; service: string; values: Record<string, string> }[]
 let statesAtWrite: string[][]
 let fail: ((service: string) => Error | undefined) | undefined
@@ -338,15 +341,51 @@ describe('PUT /api/deploys/:id/secrets', () => {
       expectNoValues(res)
     })
 
-    it('no SecretWriter is bound yet: 503 CLUSTER_UNAVAILABLE, nothing is in; GET still works', async () => {
+    it('the module binds the real writer, and with no cluster settings the write is a 503 CLUSTER_UNAVAILABLE: nothing is in; GET still works', async () => {
       await app.close()
       app = await startApp()
+      expect(app.get(SecretWriter)).toBeInstanceOf(ClusterSecretWriter)
       const res = await put(id(), send({ be: BE }))
       expect(res.status).toBe(503)
       expect(res.body).toEqual(errorBody('CLUSTER_UNAVAILABLE'))
       expect(secretRows.map((r) => r.status)).toEqual(['writing'])
       expect((await get(id())).status).toBe(200)
       expect(((await get(id())).body as { ready: boolean }).ready).toBe(false)
+    })
+
+    describe('with the real writer in front of a fake cluster client', () => {
+      let calls: string[]
+      let refuse: ClusterError | undefined
+      beforeEach(async () => {
+        calls = []
+        refuse = undefined
+        await app.close()
+        const k8s = {
+          create: (path: string) => (refuse ? Promise.reject(refuse) : Promise.resolve(calls.push(`POST ${path}`) && 'created')),
+          request: (method: string, path: string) => Promise.resolve(calls.push(`${method} ${path}`)),
+          onModuleDestroy: () => undefined,
+        }
+        app = await startApp([], (b) => b.overrideProvider(K8sClient).useValue(k8s))
+      })
+
+      it('PUT creates the space, then the Secret, then marks the service in', async () => {
+        const res = await put(id(), send({ be: BE }))
+        expect(res.status).toBe(200)
+        expect(calls[0]).toBe('POST /api/v1/namespaces')
+        expect(calls.at(-1)).toBe('POST /api/v1/namespaces/proj-my-app/secrets')
+        expect(calls.filter((c) => c.endsWith('/secrets'))).toHaveLength(1)
+        expect(secretRows.map((r) => [r.service, r.status])).toEqual([['be', 'in']])
+        expectNoValues(res)
+      })
+
+      it('a cluster error from the space is a 503 CLUSTER_UNAVAILABLE and the service is not in', async () => {
+        refuse = new ClusterError('forbidden', 403, 'Forbidden')
+        const res = await put(id(), send({ be: BE }))
+        expect(res.status).toBe(503)
+        expect(res.body).toEqual(errorBody('CLUSTER_UNAVAILABLE'))
+        expect(calls).toEqual([])
+        expect(secretRows.map((r) => r.status)).toEqual(['writing'])
+      })
     })
 
     it('the database refuses the first record: 503 DATABASE_UNAVAILABLE and nothing is written', async () => {
