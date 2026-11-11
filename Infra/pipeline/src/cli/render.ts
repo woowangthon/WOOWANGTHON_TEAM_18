@@ -5,6 +5,7 @@ import { required } from '../config.js'
 import { parseDeployInput, type Slot } from '../deploy-input.js'
 import { helmTemplate } from '../helm.js'
 import { kubeFromEnv, makeKube, makeServerDryRun } from '../kube.js'
+import { describe } from '../failure.js'
 import { runRender } from '../render.js'
 
 // GoCD Render 스테이지의 task: `node dist/cli/render.js <배포 입력 JSON(이미지가 채워진 것)> <a|b> <출력 폴더>`.
@@ -31,7 +32,7 @@ async function main([inputPath, slotArg, outDir]: string[]) {
     if (manifest !== null) writeFileSync(join(outDir, `${part}.yaml`), manifest)
   }
   writeFileSync(join(outDir, 'render-report.json'), `${JSON.stringify(report, null, 2)}\n`)
-  console.log(report.ok ? `rendered slot ${slot}` : `render failed: ${report.failure!.kind}`)
+  console.log(report.ok ? `rendered slot ${slot}` : `render failed: ${describe(report.failure!)}`)
   return report.ok ? 0 : 1
 }
 

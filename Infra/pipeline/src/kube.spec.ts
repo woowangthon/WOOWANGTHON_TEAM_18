@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { applyQuery, KubeError, type KubeCall, kubeFromEnv, makeKube, makeServerDryRun, splitManifest } from './kube.js'
+import { applyDoc, applyQuery, deleteObject, getJson, KubeError, type KubeCall, kubeFromEnv, KubeRefused, listItems, listPath, makeKube, makeServerDryRun, splitManifest } from './kube.js'
 
 const TOKEN = 'eyJhbGciOiJSUzI1NiJ9.fake.token'
 
@@ -179,5 +179,41 @@ describe('makeServerDryRun', () => {
   it('lets a transport error through (the Render reports it as a cluster failure)', async () => {
     const call = vi.fn<KubeCall>(() => Promise.reject(new KubeError('K8S_TIMEOUT', 'slow')))
     await expect(makeServerDryRun(call)(two, 'proj-x')).rejects.toBeInstanceOf(KubeError)
+  })
+})
+
+describe('getJson · listItems · deleteObject · applyDoc', () => {
+  const answer = (status: number, body: unknown) => vi.fn<KubeCall>(() => Promise.resolve({ status, body: typeof body === 'string' ? body : JSON.stringify(body) }))
+
+  it('reads JSON and the items of a list', async () => {
+    expect(await getJson(answer(200, { a: 1 }), '/x')).toEqual({ a: 1 })
+    expect(await listItems(answer(200, { items: [{ a: 1 }, 'junk'] }), '/x')).toEqual([{ a: 1 }])
+    expect(await listItems(answer(200, {}), '/x')).toEqual([])
+  })
+
+  it('throws KubeRefused with the Status on a non-2xx answer, and on a body that is not an object', async () => {
+    const err = await getJson(answer(403, { kind: 'Status', message: 'denied' }), '/x').catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(KubeRefused)
+    expect(err).toMatchObject({ httpStatus: 403, status: { kind: 'Status', message: 'denied' }, message: 'denied' })
+    await expect(getJson(answer(200, '[]'), '/x')).rejects.toMatchObject({ httpStatus: 200, status: null, message: 'API answered 200' })
+  })
+
+  it('deletes, taking an already missing object as deleted', async () => {
+    await expect(deleteObject(answer(200, {}), '/x')).resolves.toBeUndefined()
+    await expect(deleteObject(answer(404, {}), '/x')).resolves.toBeUndefined()
+    await expect(deleteObject(answer(409, { message: 'conflict' }), '/x')).rejects.toMatchObject({ httpStatus: 409, message: 'conflict' })
+  })
+
+  it('applies a document as a forced server-side apply, not a dry run', async () => {
+    const call = answer(200, {})
+    const [doc] = splitManifest(slotManifest, 'proj-my-app')
+    await applyDoc(call, doc)
+    expect(call.mock.calls[0]).toEqual(['PATCH', `${doc.path}?fieldManager=student-app&force=true`, doc.text, 'application/apply-patch+yaml'])
+    await expect(applyDoc(answer(422, { message: 'invalid' }), doc)).rejects.toMatchObject({ httpStatus: 422 })
+  })
+
+  it('builds a list path with an encoded label selector', () => {
+    expect(listPath('/api/v1', 'pods', 'proj-x', 'app=be,slot=a')).toBe('/api/v1/namespaces/proj-x/pods?labelSelector=app%3Dbe%2Cslot%3Da')
+    expect(listPath('/api/v1', 'events', 'proj-x')).toBe('/api/v1/namespaces/proj-x/events')
   })
 })

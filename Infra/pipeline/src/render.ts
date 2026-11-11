@@ -1,5 +1,5 @@
 import type { DeployInput, Service, Slot } from './deploy-input.js'
-import { KubeError } from './kube.js'
+import { clusterFailure, platformRefusal, type StageFailure } from './failure.js'
 
 // Render(W5): 배포 입력 + 이미지 digest + 슬롯 → student-app 차트의 values. 사람도 AI 에이전트도 manifest를 직접 쓰지 않는다.
 // 설계: docs/design/deploy-workflow.md §3 · §4 "슬롯과 라벨" · "헬스체크", docs/design/deploy-handoff.md runtime.
@@ -105,6 +105,14 @@ export function renderValues(input: DeployInput, slot: Slot, part: Part, domain:
   return { part, slot, secretHash: input.deploy_condition.secretHash, hosts: { open: `${slug}.${domain}`, test: `${slug}.test.internal` }, services }
 }
 
+/** 거절된 객체(Status의 `details.name`)가 어느 서비스의 것인가: `<서비스>-<슬롯>`, `test-<서비스>` · `open-<서비스>`, `<서비스>-strip`. 모르면 null. */
+export function serviceOf(status: unknown, input: DeployInput, slot: Slot): string | null {
+  const details = (status as { details?: { name?: unknown } } | null | undefined)?.details
+  const name = typeof details?.name === 'string' ? details.name : null
+  if (name === null) return null
+  return input.spec.services.find((s) => [`${s.name}-${slot}`, `test-${s.name}`, `open-${s.name}`, `${s.name}-strip`].includes(name))?.name ?? null
+}
+
 /** 공개 서비스가 하나라도 있는가. 없으면 test · open Ingress를 만들지 않는다(docs/design/deploy-workflow.md §4). */
 export const hasPublicService = (input: DeployInput) => input.spec.services.some((s) => s.runtime.ingressPath !== null)
 
@@ -158,10 +166,7 @@ export interface RenderTools {
   dryRun: (manifest: string, namespace: string) => Promise<{ ok: true } | { ok: false; status: unknown; message: string }>
 }
 
-export type RenderFailure =
-  | { kind: 'helm'; message: string }
-  | { kind: 'dry-run'; part: Part; status: unknown; errorMessage: string }
-  | { kind: 'cluster'; code: KubeError['code']; message: string }
+export type RenderFailure = StageFailure
 
 export interface RenderReport {
   ok: boolean
@@ -174,8 +179,8 @@ export interface RenderReport {
 /**
  * values → `helm template` → k3s API server-side apply dry-run(객체마다). 앞에서 걸리면 뒤는 하지 않는다.
  * 쿼터 합계 검사(`checkQuota`)는 여기서 하지 않는다: 그 실패는 k3s Status가 없는 prepare 단계 문제다(AIagent.md case P2, 티켓 stage `prepare`).
- * 실패 종류: helm(차트 렌더 실패: 플랫폼 문제), dry-run(k3s가 거절했다. Status 원본을 그대로 남긴다: 티켓 `raw.k8s.status`),
- * cluster(k3s API에 닿지 못했다: 플랫폼 문제).
+ * 실패는 플랫폼 문제(`CHART_RENDER_FAILED` 차트 렌더 실패, `K8S_TIMEOUT` · `K8S_UNREACHABLE` 닿지 못함, `SPACE_MISSING` · `EXECUTOR_FORBIDDEN` ·
+ * `POLICY_REJECTED` 플랫폼 거절)와 학생 문제(k3s가 학생 값 때문에 거절했다. Status 원본을 그대로 남긴다: 티켓 `raw.k8s.status`)로 나눈다.
  */
 export async function runRender(input: DeployInput, slot: Slot, domain: string, tools: RenderTools): Promise<RenderReport> {
   const fail = (failure: RenderFailure, manifests: RenderReport['manifests'] = { slot: null, open: null }): RenderReport => ({ ok: false, slot, manifests, failure })
@@ -185,7 +190,7 @@ export async function runRender(input: DeployInput, slot: Slot, domain: string, 
     manifests.slot = await tools.helmTemplate(renderValues(input, slot, 'slot', domain), namespace)
     if (hasPublicService(input)) manifests.open = await tools.helmTemplate(renderValues(input, slot, 'open', domain), namespace)
   } catch (err) {
-    return fail({ kind: 'helm', message: err instanceof Error ? err.message : String(err) })
+    return fail({ kind: 'platform', code: 'CHART_RENDER_FAILED', service: null, message: err instanceof Error ? err.message : String(err) })
   }
 
   for (const part of ['slot', 'open'] as const) {
@@ -195,10 +200,13 @@ export async function runRender(input: DeployInput, slot: Slot, domain: string, 
     try {
       result = await tools.dryRun(manifest, namespace)
     } catch (err) {
-      if (err instanceof KubeError) return fail({ kind: 'cluster', code: err.code, message: err.message }, manifests)
-      throw err
+      return fail(clusterFailure(err), manifests)
     }
-    if (!result.ok) return fail({ kind: 'dry-run', part, status: result.status, errorMessage: result.message }, manifests)
+    if (result.ok) continue
+    const service = serviceOf(result.status, input, slot)
+    const platform = platformRefusal(result.status)
+    if (platform) return fail({ kind: 'platform', code: platform.code, service, message: result.message, detail: { part, status: result.status } }, manifests)
+    return fail({ kind: 'student', service, errorMessage: result.message, raw: { pod: null, events: [], status: result.status } }, manifests)
   }
   return { ok: true, slot, manifests, failure: null }
 }

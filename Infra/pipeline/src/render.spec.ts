@@ -222,22 +222,30 @@ describe('runRender', () => {
 
   it('reports a helm failure as a chart failure', async () => {
     const t = tools({ helmTemplate: vi.fn<RenderTools['helmTemplate']>(() => Promise.reject(new Error('template: bad'))) })
-    expect(await runRender(built(), 'a', 'd', t)).toEqual({ ok: false, slot: 'a', manifests: { slot: null, open: null }, failure: { kind: 'helm', message: 'template: bad' } })
+    expect(await runRender(built(), 'a', 'd', t)).toEqual({ ok: false, slot: 'a', manifests: { slot: null, open: null }, failure: { kind: 'platform', code: 'CHART_RENDER_FAILED', service: null, message: 'template: bad' } })
   })
 
   it('reports a values failure (no image) as a chart failure too', async () => {
     const t = tools()
     const report = await runRender(deployInput(), 'a', 'd', t)
-    expect(report.failure).toEqual({ kind: 'helm', message: 'service fe has no image digest (build first)' })
+    expect(report.failure).toEqual({ kind: 'platform', code: 'CHART_RENDER_FAILED', service: null, message: 'service fe has no image digest (build first)' })
   })
 
   it('keeps the k3s Status of a dry-run failure as it is, with its message', async () => {
-    const status = { kind: 'Status', apiVersion: 'v1', status: 'Failure', message: 'deployments.apps "fe-a" is forbidden: exceeded quota', reason: 'Forbidden', code: 403 }
+    const status = {
+      kind: 'Status',
+      apiVersion: 'v1',
+      status: 'Failure',
+      message: 'Service "fe-a" is invalid: spec.ports[0].port: Invalid value: 70000',
+      reason: 'Invalid',
+      details: { name: 'fe-a', kind: 'Service' },
+      code: 422,
+    }
     const t = tools({ dryRun: vi.fn<RenderTools['dryRun']>(() => Promise.resolve({ ok: false, status, message: status.message })) })
     const report = await runRender(built(), 'a', 'd', t)
     expect(report.ok).toBe(false)
-    expect(report.failure).toEqual({ kind: 'dry-run', part: 'slot', status, errorMessage: status.message })
-    expect(report.failure?.kind === 'dry-run' && report.failure.status).toBe(status)
+    expect(report.failure).toEqual({ kind: 'student', service: 'fe', errorMessage: status.message, raw: { pod: null, events: [], status } })
+    expect(report.failure?.kind === 'student' && report.failure.raw.status).toBe(status)
     // 실패해도 만든 manifest는 남긴다(티켓 · 에이전트가 본다).
     expect(report.manifests).toEqual({ slot: '# slot a\n', open: '# open a\n' })
     expect(t.dryRun).toHaveBeenCalledTimes(1)
@@ -250,7 +258,7 @@ describe('runRender', () => {
       ok: false,
       slot: 'a',
       manifests: { slot: '# slot a\n', open: '# open a\n' },
-      failure: { kind: 'cluster', code: 'K8S_TIMEOUT', message: 'PATCH /x did not answer in 10s' },
+      failure: { kind: 'platform', code: 'K8S_TIMEOUT', service: null, message: 'PATCH /x did not answer in 10s' },
     })
   })
 
@@ -261,6 +269,25 @@ describe('runRender', () => {
 
   it('reports a dry-run failure of the open part', async () => {
     const t = tools({ dryRun: vi.fn<RenderTools['dryRun']>((m) => Promise.resolve(m.includes('open') ? { ok: false, status: null, message: 'x' } : { ok: true })) })
-    expect((await runRender(built(), 'a', 'd', t)).failure).toEqual({ kind: 'dry-run', part: 'open', status: null, errorMessage: 'x' })
+    expect((await runRender(built(), 'a', 'd', t)).failure).toEqual({ kind: 'student', service: null, errorMessage: 'x', raw: { pod: null, events: [], status: null } })
+  })
+
+  it.each([
+    ['the space is missing', { kind: 'Status', code: 404, reason: 'NotFound', message: 'namespaces "proj-my-app" not found', details: { name: 'proj-my-app', kind: 'namespaces' } }, 'SPACE_MISSING', null],
+    [
+      'the executor has no permission',
+      { kind: 'Status', code: 403, reason: 'Forbidden', message: 'middlewares.traefik.io "be-strip" is forbidden: User "system:serviceaccount:deploy:deploy-executor" cannot patch resource "middlewares"', details: { name: 'be-strip' } },
+      'EXECUTOR_FORBIDDEN',
+      'be',
+    ],
+    [
+      'a platform admission policy refuses the chart',
+      { kind: 'Status', code: 422, reason: 'Invalid', message: "deployments.apps \"be-a\" is forbidden: ValidatingAdmissionPolicy 'wanggane-student-pods' with binding 'wanggane-student-pods' denied request", details: { name: 'be-a' } },
+      'POLICY_REJECTED',
+      'be',
+    ],
+  ])('reports a dry-run refusal as a platform failure when %s', async (_, status, code, service) => {
+    const t = tools({ dryRun: vi.fn<RenderTools['dryRun']>(() => Promise.resolve({ ok: false, status, message: status.message })) })
+    expect((await runRender(built(), 'a', 'd', t)).failure).toEqual({ kind: 'platform', code, service, message: status.message, detail: { part: 'slot', status } })
   })
 })
