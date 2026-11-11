@@ -139,14 +139,15 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
   - 읽기: 위 다섯 종류와 Pod · ReplicaSet · 이벤트 · Endpoints · EndpointSlice(`get` · `list` · `watch`). 롤아웃 대기, 빠른 실패 신호, W6의 Pod Ready · Endpoints 확인, Prepare의 open Ingress 읽기에 쓴다.
   - 없는 것: Secret(읽기 · 쓰기 모두), Pod 로그 · Pod 안 명령 실행, Pod 직접 만들기, 네임스페이스 · ResourceQuota · LimitRange · NetworkPolicy · RoleBinding, Middleware 밖의 Traefik 리소스(IngressRoute 등), 노드.
 - 쓰기와 읽기를 한 연결에 묶은 이유: `kubectl apply`는 쓰기 전에 대상을 읽으므로(`get`) 읽기 연결이 없는 공간에서는 쓰기 권한도 쓸 수 없다. 읽기는 검사 규칙으로 좁힐 수 없어 어차피 공간마다 연결이 필요하니, 쓰기까지 그 연결에 담아 클러스터 전체 권한을 없앴다.
-- 검사 규칙 둘 ([`Infra/executor/policies.yaml`](../../Infra/executor/policies.yaml))
+- 검사 규칙 셋 ([`Infra/executor/policies.yaml`](../../Infra/executor/policies.yaml))
   - `wanggane-deploy-executor`: 실행기 계정의 쓰기 · 삭제는 `proj-`로 시작하는 공간에서만 통과한다. 권한 연결이 다른 공간에 생겨도(기준 공간 `student-template`에는 비교용 연결이 있다) 쓰지 못하게 하는 둘째 겹이다.
   - `wanggane-student-middlewares`: `proj-` 공간의 Middleware는 `spec`에 `stripPrefix` 하나만 든 것만 통과한다. 리다이렉트 · `forwardAuth` · 플러그인 · 머리글 바꾸기 등은 방문자나 요청을 다른 곳으로 보낼 수 있어 거절한다. 운영자를 포함한 모든 계정에 걸린다. `stripPrefix`는 배포 입력의 `runtime.stripPrefix`에 필요하다(#72, 2026-11-11 결정. 학생 백엔드마다 받는 경로가 다르고 프로젝트마다 호스트가 하나다).
+  - `wanggane-student-services`: `proj-` 공간의 Service는 `ClusterIP` 타입이고 `externalIPs`가 없는 것만 통과한다. kube-proxy는 Service의 `externalIPs`로 가는 클러스터 안 통신을 그 Service의 Pod로 보내므로, 학생 Service가 이미지 캐시 주소(`192.168.77.11:5000`)를 적으면 노드의 이미지 요청을 받게 된다(셀프 리뷰에서 찾음, 2026-11-11). `ExternalName`은 아무 이름의 별칭이 된다. 모든 계정에 걸린다.
 - 차트가 내야 할 것([`Infra/student/app-example.yaml`](../../Infra/student/app-example.yaml)): `stripPrefix: true`인 서비스는 Middleware 하나와, 그 서비스로 가는 Ingress의 주석 `traefik.ingress.kubernetes.io/router.middlewares: <공간>-<Middleware 이름>@kubernetescrd`. 주석은 그 Ingress의 모든 경로에 걸린다. 공간 이름에 하이픈이 연달아 있으면(`proj-a--b`. `slug` 규칙이 막지 않는다) Traefik이 Middleware 이름에서 하나로 줄이므로(`proj-a-b-<이름>`) 주석도 그렇게 적어야 한다. 그대로 적으면 Traefik이 Middleware를 찾지 못해 그 Ingress 전체가 404가 된다(2026-11-11 확인, Traefik 3.7.15).
 - 시험(2026-11-11, [`Infra/executor/check.sh`](../../Infra/executor/check.sh), 운영자 기기에서 실행): 양식으로 시험 공간을 하나 만들고(이름이 `slug` 최대 길이 40자보다 길어 학생 공간과 겹치지 않는다) 실행기 계정으로(impersonation) 예시 앱을 실제로 배포한 뒤 지운다.
   - 된다: 예시 앱의 server dry run과 적용(Deployment · Service · Middleware · Ingress · ConfigMap), 롤아웃 대기, Pod · 이벤트 · Endpoints · EndpointSlice · ReplicaSet · Ingress 읽기, Ingress 고치기, Deployment 0개로 줄이기, 라벨로 지우기. Traefik을 거친 요청은 `/readyz` 200, `stripPrefix`가 걸린 `/svc/readyz` 200(앱은 `/readyz`를 받는다), Ingress에서 Middleware를 떼면 같은 경로가 404.
-  - 거절된다(권한): `kube-system` · `vllm`의 Deployment · Middleware 쓰기와 Pod · ConfigMap 읽기, 모든 공간 한꺼번에 읽기, 노드 읽기, Secret 읽기 · 만들기, Pod 로그, Pod 안 명령 실행, Pod 직접 만들기, 네임스페이스 만들기 · 삭제, ResourceQuota 고치기, LimitRange · NetworkPolicy 지우기, NetworkPolicy · RoleBinding 만들기, 자기 권한 연결 지우기, IngressRoute 만들기.
-  - 거절된다(검사 규칙): 기준 공간에 Deployment · Middleware 쓰기, `redirectScheme` · `forwardAuth` · 플러그인 · `stripPrefixRegex` Middleware, `stripPrefix`에 다른 것을 같이 넣은 Middleware, 빈 Middleware(운영자가 만들어도 거절), 리더 taint나 모든 taint를 견디는 toleration을 단 Deployment · Pod, `nodeName`을 적은 Deployment · Pod, API 토큰을 켠 Deployment.
+  - 거절된다(권한): `kube-system` · `vllm`의 Deployment · Middleware 쓰기와 Pod · ConfigMap 읽기, 모든 공간 한꺼번에 읽기, 노드 읽기, Secret 읽기 · 만들기, 자기가 배포한 Pod의 로그 · Pod 안 명령 실행, Pod 직접 만들기, 네임스페이스 만들기 · 삭제, ResourceQuota 고치기, LimitRange · NetworkPolicy 지우기, NetworkPolicy · RoleBinding 만들기, 자기 권한 연결 지우기, IngressRoute 만들기.
+  - 거절된다(검사 규칙): 기준 공간에 Deployment · Middleware 쓰기, `redirectScheme` · `forwardAuth` · 플러그인 · `stripPrefixRegex` Middleware, `stripPrefix`에 다른 것을 같이 넣은 Middleware, 빈 Middleware(운영자가 만들어도 거절), `externalIPs`를 적은 Service(운영자가 만들어도 거절) · `ExternalName` Service, 리더 taint나 모든 taint를 견디는 toleration을 단 Deployment · Pod, `nodeName`을 적은 Deployment · Pod, API 토큰을 켠 Deployment.
   - 같은 날 `Infra/platform/check.sh` · `Infra/student/check.sh`도 다시 돌려 모두 통과했고, `demo.stairnoworks.com`의 시험 앱에도 Middleware를 걸어 두었다(`/` 200, `/svc/readyz` 200).
 
 **남은 것**
@@ -259,7 +260,7 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 - 사설망이 지금 중계(DERP)로 붙어 서버 → 리더 API 응답이 직접 연결보다 느리다.
 - 나가는 443은 목적지를 가리지 않는다. 워커 호스트가 뚫리면 443으로는 어디든 나갈 수 있다.
 - 학생 Pod가 인터넷으로 나가므로 학생 앱이 학교 공인 IP로 바깥에 요청을 보낼 수 있다(남용은 감수한다). 사설 대역 차단이 빠지면 학교망 · 노드 · 사설망에 닿으므로 NetworkPolicy의 예외 대역을 같이 적는다.
-- Secret을 "쓰기만" 줘도 간접 읽기는 막지 못한다. 배포 실행기 계정이 털리면 `proj-` 공간에 그 Secret을 마운트하는 Pod를 띄우고 로그로 값을 읽을 수 있다. 플랫폼 서버 계정도 조치용 Deployment 고치기 권한(구축 09 2차, 아직 없다)을 받으면 같은 길이 생긴다(조치를 scale과 재시작 주석으로만 좁히는 검사 규칙을 그때 본다). 공간에 든 Secret은 그 학생 앱의 접속 정보뿐이라 한 프로젝트 안으로 피해가 묶이고, 다른 공간과 시스템 Secret은 검사 규칙으로 닿지 않는다. 서버 접속 정보를 AWS 비밀 설정에, 실행기 토큰을 리더 안에만 두는 것이 1차 방어다.
+- Secret을 "쓰기만" 줘도 간접 읽기는 막지 못한다. 배포 실행기 계정이 털리면 `proj-` 공간에 그 Secret을 마운트하는 Pod를 띄울 수 있다. 실행기는 Pod 로그를 읽지 못하지만(§8), 그 Pod가 값을 인터넷으로 내보내거나 자기 Ingress 응답에 실으면 읽힌다. 플랫폼 서버 계정도 조치용 Deployment 고치기 권한(구축 09 2차, 아직 없다)을 받으면 같은 길이 생긴다(조치를 scale과 재시작 주석으로만 좁히는 검사 규칙을 그때 본다). 공간에 든 Secret은 그 학생 앱의 접속 정보뿐이라 한 프로젝트 안으로 피해가 묶이고, 다른 공간과 시스템 Secret은 검사 규칙으로 닿지 않는다. 서버 접속 정보를 AWS 비밀 설정에, 실행기 토큰을 리더 안에만 두는 것이 1차 방어다.
 - Pod 대역(`10.42.0.0/16`)으로 가는 패킷은 FORWARD에서 받는다(k3s 기본 flannel 규칙과 같다). 같은 선의 학교망 기기가 노드를 경로로 지정하면 Pod에 닿을 수 있다. 학생 Pod는 NetworkPolicy(§6)의 들어오는 규칙이 막지만, 시스템 Pod(CoreDNS · Traefik 등)는 아직 NetworkPolicy가 없어 이 길로 닿는다. 운영 도구 Pod의 NetworkPolicy(§3)를 넣을 때 들어오는 쪽도 같이 막는다.
 - 터널 대신 AWS 서버를 공개 입구로 두고 Tailscale로 워커 Traefik에 넘기는 대안을 쓰게 되면 ServiceLB가 없어 Traefik으로 가는 길을 따로 연다.
 - 로컬 모델은 리더에 있어 리더가 꺼지면 제어 · 모니터링과 같이 멈춘다. KV 캐시를 FP8로 저장해 fp16보다 정확도가 조금 떨어질 수 있다(시험한 도구 호출 · 로그 요약은 맞았다).

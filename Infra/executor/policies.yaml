@@ -1,6 +1,7 @@
 # Admission policies for the leader deploy executor (build 09′). Design and reasons: docs/design/cluster.md §8.
 #   wanggane-deploy-executor       the executor account writes only in proj- spaces
 #   wanggane-student-middlewares   a Traefik Middleware in a proj- space holds stripPrefix and nothing else
+#   wanggane-student-services      a Service in a proj- space is a plain ClusterIP Service without externalIPs
 # The rules for what a student Pod may look like (no API token, NET_RAW dropped, no toleration, no preset
 # node) are in wanggane-student-pods, and the rule that fixes the executor's RoleBinding is
 # wanggane-space-deployers; both are in Infra/platform/policies.yaml.
@@ -75,4 +76,37 @@ metadata:
   name: wanggane-student-middlewares
 spec:
   policyName: wanggane-student-middlewares
+  validationActions: ["Deny"]
+---
+# Applies to every account, operators included. kube-proxy sends cluster traffic for a Service's
+# externalIPs to its Pods, whoever owns that address: a student Service claiming 192.168.77.11:5000
+# would answer the nodes' image pulls. An ExternalName Service is a DNS alias for any name. The quota
+# (Infra/student/space.yaml) already refuses NodePort and LoadBalancer; this says ClusterIP outright.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: wanggane-student-services
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups: [""]
+      apiVersions: ["v1"]
+      operations: ["CREATE", "UPDATE"]
+      resources: ["services"]
+  matchConditions:
+  - name: student-space
+    expression: request.namespace.startsWith('proj-')
+  validations:
+  - expression: "!has(object.spec.type) || object.spec.type == 'ClusterIP'"
+    message: "a Service in a student space must be of type ClusterIP"
+  - expression: "!has(object.spec.externalIPs) || size(object.spec.externalIPs) == 0"
+    message: "a Service in a student space must not set externalIPs"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: wanggane-student-services
+spec:
+  policyName: wanggane-student-services
   validationActions: ["Deny"]

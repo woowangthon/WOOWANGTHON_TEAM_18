@@ -63,6 +63,9 @@ EOF
 traefik() { # traefik <path> -> HTTP status, asked from the leader with the check host
   ssh k3s-leader "curl -s -o /dev/null -m 6 -w '%{http_code}' -H 'Host: $HOST' http://\$(sudo -n k3s kubectl -n kube-system get svc traefik -o jsonpath='{.spec.clusterIP}')$1"
 }
+service() { # service <spec as flow YAML>
+  printf 'apiVersion: v1\nkind: Service\nmetadata: {name: check, namespace: %s}\nspec: %s\n' $NS "$1"
+}
 status() { # status <want> <label> <path>: retried, Traefik needs a moment to pick up a change
   local got=000 i
   for i in 1 2 3 4 5 6; do got=$(traefik "$3"); [ "$got" = "$1" ] && break; sleep 2; done
@@ -88,6 +91,8 @@ allow "read ReplicaSets" ke -n $NS get replicasets
 allow "read the Ingress (live-slot check)" ke -n $NS get ingress web -o name
 status 200 "Traefik reaches the app at /readyz" /readyz
 status 200 "stripPrefix through Traefik: /svc/readyz" /svc/readyz
+deny rbac "read a Pod log" ke -n $NS logs -l app=web --tail=1
+deny rbac "exec into a Pod" ke -n $NS exec deploy/web -- true
 allow "change the Ingress (take the Middleware off)" ke -n $NS annotate ingress web traefik.ingress.kubernetes.io/router.middlewares-
 status 404 "without the Middleware: /svc/readyz" /svc/readyz
 allow "scale the Deployment to 0" ke -n $NS patch deployment web --type=merge -p "'{\"spec\":{\"replicas\":0}}'"
@@ -112,8 +117,6 @@ deny policy "Middleware in student-template" ke create --dry-run=server -f - < <
 echo "== executor account: inside a space, what it must not touch"
 deny rbac "read Secrets" ke -n $NS get secrets
 deny rbac "create a Secret" ke -n $NS create secret generic be-secrets --from-literal=a=b
-deny rbac "read a Pod log" ke -n proj-demo logs -l app=web --tail=1
-deny rbac "exec into a Pod" ke -n proj-demo exec deploy/web -- true
 deny rbac "create a Pod directly" ke create -f - < <(pod 'terminationGracePeriodSeconds: 1')
 deny rbac "create a namespace" ke create namespace proj-execcheck2
 deny rbac "delete the space" ke delete namespace $NS
@@ -134,6 +137,12 @@ deny policy "stripPrefix together with headers" ke create -f - < <(middleware $N
 deny policy "Middleware with an empty spec" ke create -f - < <(middleware $NS '{}')
 deny policy "redirect Middleware as the operator" k create -f - < <(middleware $NS '{redirectScheme: {scheme: https}}')
 allow "stripPrefix Middleware (dry run)" ke create --dry-run=server -f - < <(middleware $NS '{stripPrefix: {prefixes: ["/svc"]}}')
+
+echo "== Service rule"
+deny policy "Service with externalIPs" ke create --dry-run=server -f - < <(service '{selector: {app: web}, externalIPs: ["192.168.77.11"], ports: [{port: 5000}]}')
+deny policy "ExternalName Service" ke create --dry-run=server -f - < <(service '{type: ExternalName, externalName: kubernetes.default.svc.cluster.local}')
+deny policy "Service with externalIPs as the operator" k create --dry-run=server -f - < <(service '{selector: {app: web}, externalIPs: ["192.168.77.11"], ports: [{port: 5000}]}')
+allow "ClusterIP Service (dry run)" ke create --dry-run=server -f - < <(service '{selector: {app: web}, ports: [{port: 80}]}')
 
 echo "== Pod rules: toleration and nodeName"
 deny policy "Deployment tolerating the leader taint" ke apply --dry-run=server -f - < <(deployment tol "$LEADER")
