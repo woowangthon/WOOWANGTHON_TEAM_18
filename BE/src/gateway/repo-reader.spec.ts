@@ -24,7 +24,7 @@ describe('repoPath', () => {
 describe('RepoReader', () => {
   const answers = new Map<string, Response | Error>()
   const fetchMock = vi.fn<typeof fetch>((input) => {
-    const answer = answers.get(String(input))
+    const answer = answers.get(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url)
     if (answer instanceof Error) return Promise.reject(answer)
     return Promise.resolve(answer ?? new Response('{}', { status: 404 }))
   })

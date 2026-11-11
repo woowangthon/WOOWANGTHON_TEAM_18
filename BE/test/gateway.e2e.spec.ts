@@ -174,7 +174,7 @@ describe('MCP gateway', () => {
     const client = await connect()
     expect((await call(client, 'read_repo', { path: '.' })).structuredContent).toEqual({ type: 'dir', entries: [{ name: 'package.json', type: 'file', size: 20 }] })
     const file = (await call(client, 'read_repo', { path: './package.json' })).structuredContent
-    expect(file).toEqual({ type: 'file', content: '{"token": "[REDACTED]"}', truncated: false })
+    expect(file).toEqual({ type: 'file', content: '{"token": [REDACTED]}', truncated: false })
     expect(repo.calls[0]).toEqual(['student/app', SHA, ''])
     await client.close()
   })

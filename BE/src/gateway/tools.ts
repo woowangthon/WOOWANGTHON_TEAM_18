@@ -77,11 +77,17 @@ function argProblem(def: ToolDef, args: Record<string, unknown>): string | null 
     const ok =
       want === 'string' ? typeof v === 'string' : want === 'boolean' ? typeof v === 'boolean' : want === 'integer' ? Number.isInteger(v) : isRecord(v)
     if (!ok) return `argument ${k} must be ${want === 'object' ? 'an object' : `a ${want}`}`
+    const { minimum, maximum } = properties[k] as { minimum?: number; maximum?: number }
+    if (typeof v === 'number' && ((minimum !== undefined && v < minimum) || (maximum !== undefined && v > maximum))) {
+      return `argument ${k} must be from ${minimum ?? '-'} to ${maximum ?? '-'}`
+    }
   }
   return null
 }
 
 /** 로그 글을 줄로. 마지막 빈 줄은 뺀다. */
+const nameOf = (v: unknown): string => (isRecord(v) && typeof v.name === 'string' ? v.name : '')
+
 const lines = (text: string) => text.split('\n').filter((line, i, all) => !(i === all.length - 1 && line === ''))
 
 @Injectable()
@@ -132,13 +138,13 @@ export class GatewayTools {
       this.cluster.rawObjects(ticket.slug, 'events'),
     ])
     // 이벤트에는 slot 라벨이 없다. 대상 슬롯의 Pod · Deployment(와 그 ReplicaSet)를 가리키는 것만 남긴다.
-    const names = [...pods, ...deployments].map((o) => String((o.metadata as { name?: unknown } | undefined)?.name ?? ''))
+    const names = [...pods, ...deployments].map((o) => nameOf(o.metadata))
     const ours = events.filter((e) => {
-      const target = String((e.involvedObject as { name?: unknown } | undefined)?.name ?? '')
+      const target = nameOf(e.involvedObject)
       return names.some((n) => n !== '' && (target === n || target.startsWith(`${n}-`)))
     })
     const rollouts = deployments.map((d) => {
-      const labels = ((d.metadata as { labels?: Record<string, string> } | undefined)?.labels ?? {}) as Record<string, string>
+      const labels = (d.metadata as { labels?: Record<string, string> } | undefined)?.labels ?? {}
       const status = (d.status ?? {}) as Record<string, unknown>
       return { service: labels.app ?? null, ready: status.readyReplicas ?? 0, updated: status.updatedReplicas ?? 0, available: status.availableReplicas ?? 0 }
     })
