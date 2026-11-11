@@ -121,6 +121,7 @@ deny rbac "create a Middleware in a space" ks create -f - < <(printf 'apiVersion
 echo "== server account: stop a service (scale to 0, through the read binding of each space)"
 SCALE0="'{\"spec\":{\"replicas\":0}}'"
 SCALE1="'{\"spec\":{\"replicas\":1}}'"
+SCALE2="'{\"spec\":{\"replicas\":2}}'"
 allow "operator puts a Deployment in the own space" k create -f - < <(doc Deployment proj-srvcheck ../student/app-example.yaml)
 allow "scale it to 0" ks -n proj-srvcheck patch deployment web --subresource=scale --type=merge -p "$SCALE0"
 replicas=$(k -n proj-srvcheck get deployment web -o "jsonpath='{.spec.replicas}'")
@@ -128,7 +129,7 @@ if [ "$replicas" = 0 ]; then echo "PASS the Deployment is at 0"; else echo "FAIL
 allow "scale it to 0 again (already stopped)" ks -n proj-srvcheck patch deployment web --subresource=scale --type=merge -p "$SCALE0"
 deny policy "scale it back to 1" ks -n proj-srvcheck patch deployment web --subresource=scale --type=merge -p "$SCALE1"
 allow "scale proj-demo to 0 (dry run)" ks -n proj-demo patch deployment web --subresource=scale --type=merge -p "$SCALE0" --dry-run=server
-deny policy "scale proj-demo to 2 (dry run)" ks -n proj-demo patch deployment web --subresource=scale --type=merge -p "'{\"spec\":{\"replicas\":2}}'" --dry-run=server
+deny policy "scale proj-demo to 2 (dry run)" ks -n proj-demo patch deployment web --subresource=scale --type=merge -p "$SCALE2" --dry-run=server
 deny rbac "patch the Deployment itself" ks -n proj-srvcheck patch deployment web --type=merge -p "$SCALE0"
 deny rbac "scale in vllm" ks -n vllm patch deployment vllm --subresource=scale --type=merge -p "$SCALE0" --dry-run=server
 deny rbac "scale in kube-system" ks -n kube-system patch deployment coredns --subresource=scale --type=merge -p "$SCALE0" --dry-run=server
@@ -140,6 +141,7 @@ allow "read Pods in proj-demo" ks -n proj-demo get pods
 allow "read a Pod log in proj-demo" ks -n proj-demo logs -l app=web --tail=1
 allow "read Deployments in proj-demo" ks -n proj-demo get deployments
 allow "read events in proj-demo" ks -n proj-demo get events
+allow "read events in proj-demo (events.k8s.io)" ks -n proj-demo get events.events.k8s.io
 allow "read Ingresses in proj-demo" ks -n proj-demo get ingresses
 deny rbac "read events in kube-system" ks -n kube-system get events
 deny rbac "read Ingresses in vllm" ks -n vllm get ingresses
