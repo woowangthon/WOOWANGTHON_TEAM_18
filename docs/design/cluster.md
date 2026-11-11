@@ -224,7 +224,7 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 | GHCR 쓰기 토큰(봇 계정) | 빌드 쪽에만 (ADR-003) |
 | Cloudflare 터널 자격 파일 | 리더의 클러스터 Secret(`cloudflared` 공간)만. 터널을 만든 기기에서는 넣은 뒤 지웠고, 계정 로그인 인증서(`cert.pem`)도 남기지 않는다(DNS를 고칠 때 다시 로그인한다) |
 | Discord 웹훅 URL | Grafana 설정 |
-| vLLM API 키 | 리더의 클러스터 Secret(`vllm` 공간), 팀 공유 보관함(AI 서버의 EC2 설정에 넣는다) |
+| vLLM API 키 | 리더의 클러스터 Secret(`vllm` 공간, 원본). AI 담당에게 전달했고(2026-11-11) AI 서버의 EC2 설정에 넣는다 |
 
 ### 13. 반납
 
