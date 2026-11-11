@@ -46,6 +46,35 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  vi.unstubAllEnvs()
+})
+
+it('VITE_API_BASE_URL이 없거나 비어 있으면 상대 경로로 보낸다', async () => {
+  fetchMock.mockImplementation(() => Promise.resolve(json(200, {})))
+  await apiFetch('/api/me')
+  vi.stubEnv('VITE_API_BASE_URL', '')
+  await apiFetch('/api/me')
+  expect(fetchMock.mock.calls.map((c) => c[0])).toEqual(['/api/me', '/api/me'])
+})
+
+it('VITE_API_BASE_URL이 있으면 그 뒤에 경로를 붙이고, 끝의 /는 떼어 //가 되지 않게 한다', async () => {
+  fetchMock.mockImplementation(() => Promise.resolve(json(200, {})))
+  vi.stubEnv('VITE_API_BASE_URL', 'https://api.stairnoworks.com')
+  await apiFetch('/api/me')
+  vi.stubEnv('VITE_API_BASE_URL', 'https://api.stairnoworks.com/')
+  await apiFetch('/api/deploys', { a: 1 })
+  expect(fetchMock.mock.calls.map((c) => c[0])).toEqual([
+    'https://api.stairnoworks.com/api/me',
+    'https://api.stairnoworks.com/api/deploys',
+  ])
+})
+
+it('401 뒤에 다시 보낼 때도 같은 주소를 쓴다', async () => {
+  vi.stubEnv('VITE_API_BASE_URL', 'https://api.stairnoworks.com')
+  fetchMock.mockResolvedValueOnce(sessionError('INVALID_TOKEN')).mockResolvedValueOnce(json(200, {}))
+  refreshed('tok-2')
+  await apiFetch('/api/me')
+  expect(fetchMock.mock.calls.map((c) => c[0])).toEqual(['https://api.stairnoworks.com/api/me', 'https://api.stairnoworks.com/api/me'])
 })
 
 it('세션이 있으면 Bearer 토큰을 붙인다', async () => {

@@ -152,9 +152,12 @@ class CaseMemory:
         doc = ticket.model_dump(mode="json", by_alias=True)
         for case in self.cases:
             if case.stage == ticket.stage and case.match.holds(doc):
-                case.stats.hits += 1
+                self.hit(case)
                 return case
         return None
+
+    def hit(self, case: Case) -> None:
+        case.stats.hits += 1
 
     def record_solved(self, case_id: str) -> None:
         case = self._by_id.get(case_id)

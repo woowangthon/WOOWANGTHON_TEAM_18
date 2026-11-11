@@ -59,6 +59,10 @@ async function readError(response: Response): Promise<ApiError> {
   return new ApiError(response.status, code, message, fields)
 }
 
+// BE의 주소. 비워 두면 같은 출처의 상대 경로로 보낸다(개발 서버가 /api를 BE로 넘긴다). 운영 빌드는 BE 주소를 넣는다.
+// 끝의 /는 떼어 `/api/...`와 이어 붙일 때 //가 되지 않게 한다.
+const baseUrl = () => (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/+$/, '')
+
 // 요청 한 번. 네트워크 자체가 실패하면 ApiError로 바꿔 던진다.
 async function send(path: string, body: unknown, token: string | undefined, method: HttpWriteMethod): Promise<Response> {
   const hasBody = body !== undefined
@@ -67,7 +71,7 @@ async function send(path: string, body: unknown, token: string | undefined, meth
   if (token) headers.Authorization = `Bearer ${token}`
   if (hasBody) headers['Content-Type'] = 'application/json'
   try {
-    return await fetch(path, {
+    return await fetch(`${baseUrl()}${path}`, {
       method: hasBody ? method : 'GET',
       headers,
       body: hasBody ? JSON.stringify(body) : undefined,
@@ -104,7 +108,7 @@ async function freshToken(sentToken: string): Promise<string | null> {
   return data.session?.access_token ?? null
 }
 
-// body가 있으면 POST(`method`로 PUT도 된다), 없으면 GET. 경로는 `/api/...` 상대 경로만 쓴다(운영 base URL은 아직 정해지지 않았다).
+// body가 있으면 POST(`method`로 PUT도 된다), 없으면 GET. 경로는 `/api/...`로 쓰고, VITE_API_BASE_URL이 있으면 그 뒤에 붙는다.
 export async function apiFetch<T>(path: string, body?: unknown, method: HttpWriteMethod = 'POST'): Promise<T> {
   const { data } = await supabase.auth.getSession()
   let response = await send(path, body, data.session?.access_token, method)
