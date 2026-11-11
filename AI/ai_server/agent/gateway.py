@@ -7,6 +7,7 @@ from typing import Any
 from pydantic_ai import ModelRetry
 from pydantic_ai.mcp import MCPToolset
 
+from ai_server.agent.budget import trim_tool_result
 from ai_server.agent.models import Action, AgentResult
 
 log = logging.getLogger(__name__)
@@ -104,7 +105,8 @@ class GatewayToolset(MCPToolset[Any]):
             raise ModelRetry(f"gateway rejected {name}: {code}: {message}")
         ok = content.get("ok", True) if isinstance(content, dict) else True
         self.actions.append(Action(tool=name, args=args, ok=bool(ok), result=_short(content)))
-        return content
+        # 모델에는 예산 안으로 줄인 결과를 준다(로그 발췌, 큰 원본은 필요한 칸만).
+        return trim_tool_result(content)
 
     async def submit(self, result: AgentResult) -> None:
         reply = await self._call(SUBMIT_TOOL, {"result": result.to_wire()})
