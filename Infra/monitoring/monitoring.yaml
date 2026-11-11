@@ -9,8 +9,10 @@
 #     sudo k3s kubectl -n monitoring create secret generic grafana-admin --from-literal=admin-user=admin --from-literal=admin-password="$(openssl rand -base64 24)"'
 # Apply (from the operator's machine), then run check.sh:
 #   ssh k3s-leader 'sudo k3s kubectl apply -f -' < Infra/monitoring/monitoring.yaml
-# Grafana is at https://grafana.stairnoworks.com (the operator page of the platform embeds it; nothing
-# opens without a login). The admin account stays for the operator over the tailnet:
+# Grafana is at https://grafana.stairnoworks.com so the operator page of the platform can embed it.
+# Dashboards and the API need a login; the login page, /api/health and static files do not.
+# The page's iframe is used with the view-only account (make-viewer.sh creates it once). The admin
+# account works at the same address too, so use it only for changes; without the tunnel:
 #   ssh -L 3000:localhost:3000 k3s-leader 'sudo k3s kubectl -n monitoring port-forward svc/monitoring-grafana 3000:80'
 apiVersion: v1
 kind: Namespace
@@ -63,6 +65,19 @@ spec:
     ports:
     - port: 3000
       protocol: TCP
+---
+# Only the platform's own page may put Grafana in a frame. allow_embedding (below) drops Grafana's
+# X-Frame-Options: deny, and without this header any site could frame it: a student app on
+# <slug>.stairnoworks.com is the same site as grafana.stairnoworks.com, so the operator's session
+# cookie would be sent inside that frame.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: grafana-frame
+  namespace: monitoring
+spec:
+  headers:
+    contentSecurityPolicy: "frame-ancestors 'self' https://app.stairnoworks.com"
 ---
 apiVersion: helm.cattle.io/v1
 kind: HelmChart
@@ -166,13 +181,26 @@ spec:
         ingressClassName: traefik
         hosts: ["grafana.stairnoworks.com"]
         path: /
+        annotations:
+          # <namespace>-<Middleware name>@kubernetescrd
+          traefik.ingress.kubernetes.io/router.middlewares: monitoring-grafana-frame@kubernetescrd
+      # Grafana serves its own /metrics without a login, and the Ingress would publish it. Nothing here
+      # needs Grafana's own numbers, so the endpoint and its scrape are off.
+      serviceMonitor: {enabled: false}
       grafana.ini:
         server:
           root_url: https://grafana.stairnoworks.com
+        metrics:
+          enabled: false
         security:
           # The operator page (app.stairnoworks.com) shows dashboards in an iframe. This only drops the
-          # X-Frame-Options header; a frame still needs a login.
+          # X-Frame-Options header; the Middleware grafana-frame says who may frame, and a frame still
+          # needs a login.
           allow_embedding: true
+          # The address is HTTPS only (Cloudflare redirects http). Browsers still accept a Secure cookie
+          # on http://localhost, so the port-forward keeps working.
+          cookie_secure: true
+          strict_transport_security: true
         analytics:
           reporting_enabled: false
           check_for_updates: false

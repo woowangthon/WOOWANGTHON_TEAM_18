@@ -93,3 +93,5 @@
 - **A service proxy call is a CONNECT to admission, not a read.** RBAC `get` on `services/proxy` is not enough when a ValidatingAdmissionPolicy matches CONNECT; the refusal comes back as 422 with the policy's message.
 - **Helm chart archives behind GitHub releases can stall where GHCR does not.** Prefer a chart's OCI address on GHCR for installs that run on the nodes.
 - **A new namespace of operator tools needs its ingress NetworkPolicy on day one.** Without one, every Pod in the cluster and anything that can route the Pod range reaches its services; RBAC on the API server's proxy guards only that one path. A blocked call here is refused, not dropped (kube-router rejects).
+- **Putting a tool behind an Ingress publishes every path it serves, not only its pages.** Grafana answered `/metrics` without a login. Probe the unauthenticated surface (`/metrics`, health, API docs) before calling an address "login only".
+- **Sibling subdomains are the same site.** Student apps on `<slug>.stairnoworks.com` share cookies' SameSite scope with every platform host, so dropping `X-Frame-Options` needs a `frame-ancestors` allowlist in its place.

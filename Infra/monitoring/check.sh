@@ -67,14 +67,33 @@ blocked Prometheus http://monitoring-prometheus.monitoring.svc.cluster.local:909
 blocked Grafana http://monitoring-grafana.monitoring.svc.cluster.local/api/health
 
 echo "== public address (Grafana only)"
-# Grafana is reachable through the tunnel so the operator page can embed it; nothing opens without a login.
+# Grafana is reachable through the tunnel so the operator page can embed it. Dashboards and the API
+# need a login; the login page and /api/health do not.
 G=https://grafana.stairnoworks.com
 code() { curl -s -o /dev/null -m 15 -w '%{http_code}' "$1"; }
 status 200 "the login page is served" "$(code $G/login)"
 status 302 "a dashboard address without a login goes to the login page" "$(code $G/d/none)"
 status 401 "the API without a login" "$(code $G/api/search)"
 status 401 "Prometheus through Grafana without a login" "$(code "$G/api/datasources/proxy/1/api/v1/query?query=up")"
-if curl -s -m 15 -D - -o /dev/null $G/login | grep -qi '^x-frame-options'; then echo "FAIL the login page forbids framing (allow_embedding is off)"; fail=1; else echo "PASS pages may be framed (no X-Frame-Options)"; fi
+status 302 "Grafana's own /metrics is not served" "$(code $G/metrics)"
+# Framing: answered at all, no X-Frame-Options (allow_embedding), and only the platform's page may frame.
+head=$(curl -s -m 15 -D - -o /dev/null $G/login | tr -d '\r')
+if ! echo "$head" | grep -q '^HTTP/[0-9.]* 200'; then echo "FAIL framing headers: no answer from $G/login"; fail=1
+elif echo "$head" | grep -qi '^x-frame-options'; then echo "FAIL the login page forbids framing (allow_embedding is off)"; fail=1
+elif ! echo "$head" | grep -qi "^content-security-policy: frame-ancestors 'self' https://app.stairnoworks.com$"; then echo "FAIL any site may frame Grafana (no frame-ancestors header)"; fail=1
+else echo "PASS only the platform's page may frame Grafana"; fi
+# The one way in from outside the namespace: Traefik's Pods to Grafana's web port, nothing wider.
+np=$(k -n monitoring get networkpolicy -o "jsonpath='{range .items[*]}{.metadata.name}:{.spec.podSelector.matchLabels.app\.kubernetes\.io/name}:{.spec.ingress[*].ports[*].port}:{.spec.ingress[*].from[*].podSelector.matchLabels.app\.kubernetes\.io/name} {end}'")
+if [ "$np" = "grafana-from-traefik:grafana:3000:traefik same-namespace-only::: " ]; then echo "PASS only Traefik reaches in, and only Grafana's port 3000"; else echo "FAIL NetworkPolicies of the namespace: '$np'"; fail=1; fi
+# The view-only account of the operator page (make-viewer.sh). Its password goes to curl on stdin.
+viewer() { # viewer <method> <path> [body] -> HTTP status
+  k -n monitoring get secret grafana-viewer -o "jsonpath='{.data.password}'" 2>/dev/null | base64 --decode |
+    { read -r pw || true; printf 'user = "viewer:%s"\n' "$pw"; } |
+    curl -s -K - -o /dev/null -m 15 -w '%{http_code}' -X "$1" ${3:+-H 'Content-Type: application/json' -d "$3"} "$G$2"
+}
+status 200 "the view-only account reads dashboards" "$(viewer GET /api/search)"
+status 403 "the view-only account cannot save a dashboard" "$(viewer POST /api/dashboards/db '{"dashboard":{"title":"check"}}')"
+status 403 "the view-only account cannot read Grafana's settings" "$(viewer GET /api/admin/settings)"
 status 404 "Prometheus has no public address" "$(code https://prometheus.stairnoworks.com/-/ready)"
 
 echo "== what is collected"
