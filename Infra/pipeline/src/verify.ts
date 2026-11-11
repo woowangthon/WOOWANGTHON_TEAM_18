@@ -79,6 +79,19 @@ const arr = (v: unknown): Obj[] => (Array.isArray(v) ? v.filter(isRecord) : [])
 /** Pod의 Ready 조건(readinessProbe 통과)이 True인가. */
 export const podReady = (pod: Obj) => arr(isRecord(pod.status) ? pod.status.conditions : undefined).some((c) => c.type === 'Ready' && c.status === 'True')
 
+/** Ready가 아닌 이유 한 마디: Pod가 없음, 컨테이너의 대기 이유(`CrashLoopBackOff` 등), 아니면 Ready 조건의 reason. */
+export function notReadyReason(pods: Obj[]): string {
+  const pod = pods.find((p) => !podReady(p))
+  if (!pod) return 'no Pod'
+  const status = isRecord(pod.status) ? pod.status : {}
+  for (const c of [...arr(status.initContainerStatuses), ...arr(status.containerStatuses)]) {
+    const reason = isRecord(c.state) && isRecord(c.state.waiting) ? c.state.waiting.reason : undefined
+    if (typeof reason === 'string') return reason
+  }
+  const ready = arr(status.conditions).find((c) => c.type === 'Ready')
+  return typeof ready?.reason === 'string' ? ready.reason : 'Ready is not True'
+}
+
 /** EndpointSlice들에 ready인 주소가 하나라도 있는가. */
 export const hasReadyEndpoint = (slices: Obj[]) =>
   slices.some((s) => arr(s.endpoints).some((e) => (!isRecord(e.conditions) || e.conditions.ready !== false) && Array.isArray(e.addresses) && e.addresses.length > 0))
@@ -154,7 +167,7 @@ export async function runVerify(input: DeployInput, slot: Slot, call: KubeCall, 
     const pods = await podsOf(svc)
     const pod = pods.find((p) => !podReady(p)) ?? pods[0]
     const events = await listItems(call, listPath('/api/v1', 'events', namespace))
-    return { kind: 'student', service: svc.name, errorMessage: `${svc.name}-${slot}: ${why}`, raw: { pod: pod ? stripManaged(pod) : null, events: events.filter(ofSlot(fullNames)).map(stripManaged), status: null } }
+    return { kind: 'student', service: svc.name, errorMessage: `${svc.name}: ${why}`, raw: { pod: pod ? stripManaged(pod) : null, events: events.filter(ofSlot(fullNames)).map(stripManaged), status: null } }
   }
 
   let current: string | null = null
@@ -164,10 +177,11 @@ export async function runVerify(input: DeployInput, slot: Slot, call: KubeCall, 
     for (const svc of services) {
       current = svc.name
       const full = `${svc.name}-${slot}`
-      const podOk = (await podsOf(svc)).some(podReady)
+      const pods = await podsOf(svc)
+      const podOk = pods.some(podReady)
       const endpointOk = podOk && hasReadyEndpoint(await listItems(call, listPath('/apis/discovery.k8s.io/v1', 'endpointslices', namespace, `kubernetes.io/service-name=${full}`)))
       ready.push({ service: svc.name, ready: podOk && endpointOk })
-      notReady ??= !podOk ? { svc, why: 'no Pod is Ready' } : !endpointOk ? { svc, why: `Service ${full} has no ready endpoints` } : null
+      notReady ??= !podOk ? { svc, why: `not ready (${notReadyReason(pods)})` } : !endpointOk ? { svc, why: 'no endpoints' } : null
     }
     if (notReady) {
       current = notReady.svc.name
@@ -217,5 +231,5 @@ export async function runVerify(input: DeployInput, slot: Slot, call: KubeCall, 
   }
 }
 
-/** errorMessage의 검사 부분. 경로와 응답 상태(또는 시간 초과)를 꼭 넣는다: 에이전트의 case가 이 문구로 신호를 잡는다. */
-const failedRequest = (c: RequestCheck) => `GET ${c.path} ${c.status === null ? `did not answer in ${REQUEST_TIMEOUT_MS / 1000}s` : `answered ${c.status}`} (${TRIES} tries)`
+/** errorMessage의 검사 부분 `GET <경로> -> <상태>`(답이 없으면 `-> error: <원인>`). 에이전트의 case(V1 · V2)가 이 문구로 신호를 잡는다. */
+const failedRequest = (c: RequestCheck) => `GET ${c.path} -> ${c.status === null ? `error: ${c.error}` : c.status}`

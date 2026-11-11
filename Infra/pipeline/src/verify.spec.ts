@@ -11,6 +11,7 @@ import {
   type HttpAnswer,
   type HttpGet,
   makeHttpGet,
+  notReadyReason,
   podReady,
   requestPath,
   runVerify,
@@ -33,7 +34,7 @@ function fakeClock() {
 }
 
 const readyPod = (name: string) => ({ metadata: { name, managedFields: [{ manager: 'k3s' }] }, status: { conditions: [{ type: 'Ready', status: 'True' }] } })
-const unreadyPod = (name: string) => ({ metadata: { name }, status: { conditions: [{ type: 'Ready', status: 'False' }] } })
+const unreadyPod = (name: string) => ({ metadata: { name }, status: { conditions: [{ type: 'Ready', status: 'False', reason: 'ContainersNotReady' }] } })
 const slice = (ready = true) => ({ endpoints: [{ addresses: ['10.42.1.5'], conditions: { ready } }] })
 
 const pods = (svc: string) => `GET /api/v1${NS}/pods?labelSelector=app%3D${svc}%2Cslot%3Db`
@@ -107,6 +108,16 @@ describe('assetPaths', () => {
   })
 })
 
+describe('notReadyReason', () => {
+  it('says there is no Pod, the waiting reason of a container, or the Ready reason', () => {
+    expect(notReadyReason([])).toBe('no Pod')
+    expect(notReadyReason([readyPod('a'), { status: { containerStatuses: [{ state: { waiting: { reason: 'CrashLoopBackOff' } } }] } }])).toBe('CrashLoopBackOff')
+    expect(notReadyReason([{ status: { initContainerStatuses: [{ state: { waiting: { reason: 'PodInitializing' } } }] } }])).toBe('PodInitializing')
+    expect(notReadyReason([unreadyPod('a')])).toBe('ContainersNotReady')
+    expect(notReadyReason([{}])).toBe('Ready is not True')
+  })
+})
+
 describe('podReady and hasReadyEndpoint', () => {
   it('wants the Ready condition True', () => {
     expect(podReady(readyPod('p'))).toBe(true)
@@ -164,7 +175,7 @@ describe('runVerify', () => {
     expect(report.failure).toEqual({
       kind: 'student',
       service: 'be',
-      errorMessage: 'be-b: no Pod is Ready',
+      errorMessage: 'be: not ready (ContainersNotReady)',
       raw: { pod: unreadyPod('be-b-x-y'), events: [{ metadata: { name: 'e1' }, involvedObject: slotEvent.involvedObject, reason: 'Unhealthy' }], status: null },
     })
     expect(get).not.toHaveBeenCalled()
@@ -174,13 +185,13 @@ describe('runVerify', () => {
     const { call } = cluster({ [slices('ai')]: list(slice(false)) })
     const report = await runVerify(input(), 'b', call, traefik(), fakeClock())
     expect(report.ready[0]).toEqual({ service: 'ai', ready: false })
-    expect(report.failure).toEqual({ kind: 'student', service: 'ai', errorMessage: 'ai-b: Service ai-b has no ready endpoints', raw: { pod: { metadata: { name: 'ai-b-x-y' }, status: readyPod('x').status }, events: [], status: null } })
+    expect(report.failure).toEqual({ kind: 'student', service: 'ai', errorMessage: 'ai: no endpoints', raw: { pod: { metadata: { name: 'ai-b-x-y' }, status: readyPod('x').status }, events: [], status: null } })
   })
 
   it('names the first service that is not Ready', async () => {
     const { call } = cluster({ [pods('ai')]: list(), [pods('fe')]: list() })
     const report = await runVerify(input(), 'b', call, traefik(), fakeClock())
-    expect(report.failure).toMatchObject({ service: 'ai', errorMessage: 'ai-b: no Pod is Ready', raw: { pod: null } })
+    expect(report.failure).toMatchObject({ service: 'ai', errorMessage: 'ai: not ready (no Pod)', raw: { pod: null } })
   })
 
   it('retries a failing path every 5 seconds, 3 times, and states the path and status (case V1: a static file 404)', async () => {
@@ -191,7 +202,7 @@ describe('runVerify', () => {
     expect(get.mock.calls.filter(([p]) => p === '/assets/index.js')).toHaveLength(3)
     expect(clock.sleep.mock.calls).toEqual([[5000], [5000]])
     expect(report.requests.at(-1)).toEqual({ service: 'fe', path: '/assets/index.js', status: 404, ms: 0, error: null })
-    expect(report.failure).toMatchObject({ kind: 'student', service: 'fe', errorMessage: 'fe-b: GET /assets/index.js answered 404 (3 tries)', raw: { pod: { metadata: { name: 'fe-b-x-y' } }, status: null } })
+    expect(report.failure).toMatchObject({ kind: 'student', service: 'fe', errorMessage: 'fe: GET /assets/index.js -> 404', raw: { pod: { metadata: { name: 'fe-b-x-y' } }, status: null } })
     // 그 뒤 파일은 요청하지 않는다.
     expect(get.mock.calls.some(([p]) => p === '/assets/index.css')).toBe(false)
   })
@@ -210,7 +221,7 @@ describe('runVerify', () => {
     const { call } = cluster()
     const get = traefik({ '/api/health': { status: 404, body: '' } })
     const report = await runVerify(input(), 'b', call, get, fakeClock())
-    expect(report.failure).toMatchObject({ service: 'be', errorMessage: 'be-b: GET /api/health answered 404 (3 tries)' })
+    expect(report.failure).toMatchObject({ service: 'be', errorMessage: 'be: GET /api/health -> 404' })
     expect(get.mock.calls.some(([p]) => p === '/')).toBe(false)
   })
 
@@ -219,7 +230,7 @@ describe('runVerify', () => {
     const get = traefik({ '/': new TraefikError('timeout', 'GET / did not answer in 10s') })
     const report = await runVerify(input(), 'b', call, get, fakeClock())
     expect(report.requests.at(-1)).toEqual({ service: 'fe', path: '/', status: null, ms: null, error: 'timeout' })
-    expect(report.failure).toMatchObject({ kind: 'student', service: 'fe', errorMessage: 'fe-b: GET / did not answer in 10s (3 tries)' })
+    expect(report.failure).toMatchObject({ kind: 'student', service: 'fe', errorMessage: 'fe: GET / -> error: timeout' })
   })
 
   it('reports an unreachable Traefik as a platform problem', async () => {
