@@ -195,8 +195,8 @@ SIGNALS: dict[str, dict[str, Any]] = {
         state={"waiting": {"reason": "CrashLoopBackOff"}},
         lastState={"terminated": {"exitCode": 137, "reason": "OOMKilled"}},
     ),
-    "V1": _verify("GET /assets/index-abc.js -> 404"),
-    "V2": _verify("GET /api/health -> 404"),
+    "V1": _verify("fe: GET /assets/index-abc.js -> 404"),
+    "V2": _verify("be: GET /api/health -> 404"),
     "A4": _events(
         {
             "reason": "FailedCreate",
@@ -271,18 +271,19 @@ def test_hits_and_solved_count_per_case() -> None:
 @pytest.mark.parametrize(
     ("message", "case_id"),
     [
-        ("GET /assets/index-abc.js -> 404", "V1"),
-        ("GET /static/app.css returned 404 Not Found", "V1"),
-        ("404 for /favicon.svg", "V1"),
-        ("GET /api/health -> 404", "V2"),
-        ("health check GET /healthz returned 404", "V2"),
-        ("GET /api/v1/ready -> 404", "V2"),
-        ("GET /api/app.js -> 404", "V1"),  # 파일 404가 먼저다
-        ("GET / -> 404", None),  # 페이지 자체의 404는 V1 · V2가 아니다
-        ("GET /assets/index.js -> 500", None),
-        ("GET /api/health -> 502", None),
-        ("pod be-b-7d9f is not Ready", None),
-        ("service be has no ready endpoints", None),
+        ("fe: GET /assets/index-abc.js -> 404", "V1"),
+        ("fe: GET /static/app.css -> 404", "V1"),
+        ("fe: GET /favicon.svg -> 404", "V1"),
+        ("be: GET /api/health -> 404", "V2"),
+        ("be: GET /healthz -> 404", "V2"),
+        ("be: GET /api/v1/ready -> 404", "V2"),
+        ("be: GET /api/app.js -> 404", "V1"),  # 파일 404가 먼저다
+        ("fe: GET / -> 404", None),  # 페이지 자체의 404는 V1 · V2가 아니다
+        ("fe: GET /assets/index.js -> 500", None),
+        ("be: GET /api/health -> 502", None),
+        ("be: GET /api/health -> error: connection refused", None),
+        ("be: not ready (readiness probe failed)", None),
+        ("be: no endpoints", None),
     ],
 )
 def test_verify_cases_read_the_failed_check_in_the_error_message(

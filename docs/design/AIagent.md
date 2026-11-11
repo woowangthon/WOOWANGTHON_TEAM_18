@@ -391,7 +391,7 @@ PydanticAI에서 두 모델을 OpenAI 호환 provider로 붙이고, 추론 모�
 
 - 학생 DB 자체의 문제(테이블 없음, migration 안 함)는 에이전트가 학생 DB에 닿지 못해 고칠 수 없다. `needs_user`로 넘긴다.
 - 초기 case 목록과 신호는 추정이다. 실패 주입 시험 전이다.
-- `V1` · `V2`는 `errorMessage` 문구로 대조한다. 그 문구는 파이프라인 Verify(F05)가 만든다. 시험에 쓴 모양은 `GET <경로> -> <상태>`이고, F05가 쓰는 실제 문장에 정규식을 맞춰야 한다.
+- `V1` · `V2`는 `errorMessage` 문구로 대조한다. 그 문구는 파이프라인 Verify(F05)가 만든다. 정한 모양은 요청 실패 `<service>: GET <path> -> <status>`(응답 없음은 `-> error: <원인>`), Ready 실패 `<service>: not ready (<reason>)`, 빈 엔드포인트 `<service>: no endpoints`이고 테스트도 이 모양으로 했다. F05가 실제로 이렇게 내는지는 F05 머지 뒤 맞춰 봐야 한다.
 - `render` case(`R1` ~ `R3`)는 `raw.k8s.status`(코드 · `message` · `details.causes`)로 대조한다. `prepare` case(`P1` ~ `P3`)는 Status가 없어 `errorMessage` 문장으로 대조하므로, 플랫폼 서버가 쓰는 실제 문장으로 정규식을 맞춰야 한다.
 - CodeBuild API의 오류 이름 · phase 값은 AWS 문서와 대조하지 않았다.
 - 로컬 8B 모델의 분류 · 도구 호출 품질은 검증하지 않았다. 실제 모델(로컬 · 추론 API)은 아직 한 번도 붙여 돌리지 않았다.
