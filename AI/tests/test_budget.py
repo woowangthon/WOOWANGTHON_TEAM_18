@@ -388,6 +388,7 @@ def test_digest_shows_render_status_and_failed_build_phases() -> None:
 
 def test_local_model_settings_turn_thinking_off_for_tool_calls(settings: Settings) -> None:
     models = models_from_settings(settings)
+    assert models is not None
     assert isinstance(models.local, OpenAIChatModel)
     assert models.local.settings == {
         "max_tokens": 2048,
@@ -410,6 +411,7 @@ def test_planner_api_falls_back_to_the_thinking_local_model(settings: Settings) 
         }
     )
     models = models_from_settings(settings)
+    assert models is not None
     assert isinstance(models.planner, FallbackModel)
     first, second = models.planner.models
     assert isinstance(first, RedactingModel) and first.wrapped.model_name == "reasoner"

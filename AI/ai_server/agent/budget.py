@@ -256,7 +256,12 @@ def compact_history(messages: list[ModelMessage]) -> list[ModelMessage]:
     )
     out: list[ModelMessage] = []
     for i, m in enumerate(messages):
-        if i < last and isinstance(m, ModelRequest):
+        # 도구 결과가 없는 메시지는 그대로 둔다(같은 객체).
+        if (
+            i < last
+            and isinstance(m, ModelRequest)
+            and any(type(p) is ToolReturnPart for p in m.parts)
+        ):
             parts = [
                 # 도구 결과만 바꾼다(ToolReturnPart를 물려받은 PydanticAI 내부 결과는 그대로).
                 dataclasses.replace(
