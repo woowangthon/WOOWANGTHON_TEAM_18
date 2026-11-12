@@ -71,7 +71,7 @@
 | `pods` | `name`, `labels`, `phase`, `node`(놓인 노드), `ready`(컨테이너가 모두 준비됨), `restarts`(컨테이너 재시작 횟수의 합), `waiting`(기다리는 컨테이너 — init 컨테이너 포함 — 의 이유: `CrashLoopBackOff` · `ImagePullBackOff` 등, 없으면 `null`) |
 | `deployments` | `name`, `labels`, `replicas`(원하는 수), `ready`, `updated`, `available` |
 | `nodes` | `name`, `ready`, `roles`(`node-role.kubernetes.io/<역할>` 라벨에서), `capacity` · `allocatable`(`cpu` · `memory` · `ephemeral-storage`, 쿠버네티스 수량 글 그대로) |
-| `nodeUsage` | `name`, `cpu` · `memory`(`metrics.k8s.io`의 노드 사용량, 쿠버네티스 수량 글 그대로). 갓 뜬 노드는 첫 수집 전까지 목록에 없다 |
+| `nodeUsage` | `name`, `usage`(`cpu` · `memory`, `metrics.k8s.io`의 노드 사용량, 쿠버네티스 수량 글 그대로). 갓 뜬 노드는 첫 수집 전까지 목록에 없다 |
 | `logs` | 글. `tailLines` 기본 200(최대 2000), 응답은 256 KiB에서 자른다(요청 하나의 제한 시간 5초 안에 느린 구간으로도 받을 크기). 이어 받기(follow)는 없다 |
 
 - 목록은 한 번에 받는다(쪽 나눔 없음). 공간 하나의 Pod는 상한(ResourceQuota)으로 묶여 있고 노드는 셋이다.

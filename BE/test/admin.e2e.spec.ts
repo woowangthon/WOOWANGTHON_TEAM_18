@@ -179,11 +179,12 @@ describe('GET /api/admin/nodes', () => {
   })
 
   it('fills each node with its own usage, and leaves null when a quantity cannot be read', async () => {
-    nodesData = [node('leader', ['control-plane']), node('worker-1'), node('worker-2')]
+    nodesData = [node('leader', ['control-plane']), node('worker-1'), node('worker-2'), node('worker-3')]
     usageData = [
       { name: 'worker-1', usage: { cpu: '2500m', memory: '1Gi' } },
       { name: 'leader', usage: { cpu: '1', memory: '512Mi' } },
       { name: 'worker-2', usage: { cpu: 'oops', memory: '1Gi' } },
+      { name: 'worker-3', usage: { cpu: '1' } },
       { name: 'not-a-node', usage: { cpu: '1', memory: '1Gi' } },
     ]
     const res = await call('get', '/api/admin/nodes', undefined)
@@ -193,9 +194,10 @@ describe('GET /api/admin/nodes', () => {
         { name: 'leader', usage: { cpuMillicores: 1000, memoryBytes: 512 * 2 ** 20 } },
         { name: 'worker-1', usage: { cpuMillicores: 2500, memoryBytes: 2 ** 30 } },
         { name: 'worker-2', usage: null },
+        { name: 'worker-3', usage: null },
       ],
     })
-    expect((res.body as { nodes: unknown[] }).nodes).toHaveLength(3)
+    expect((res.body as { nodes: unknown[] }).nodes).toHaveLength(4)
   })
 
   it.each([
