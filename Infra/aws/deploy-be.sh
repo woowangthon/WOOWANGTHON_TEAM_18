@@ -32,7 +32,11 @@ grep -q '^SUPABASE_SECRET_KEY=' "$env_file.new" || { echo "no SUPABASE_SECRET_KE
 # Build from the ref itself: the clone this script runs from is not checked out or changed.
 git fetch --quiet origin
 image=wcp-be:$(git rev-parse --short "$ref^{commit}")
-git archive "$ref:BE" | docker build -t "$image" -
+# Unpacked into a folder: a tar on stdin fails on the EC2's docker 25 + buildx 0.17 ("no http response from session").
+src=$(mktemp -d)
+git archive "$ref:BE" | tar -x -C "$src"
+docker build -t "$image" "$src" || { rm -rf "$src"; exit 1; }
+rm -rf "$src"
 mv "$env_file.new" "$env_file"
 
 # A run that stopped half way leaves wcp-be-prev behind. Drop it only if wcp-be is answering; otherwise it is the
