@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { setTimeout } from 'node:timers/promises'
 import { pathToFileURL } from 'node:url'
 import { parseDeployInput } from '../deploy-input.js'
 import { describe } from '../failure.js'
@@ -14,7 +15,7 @@ async function main([inputPath, slotArg, outDir]: string[]) {
   if (!inputPath || !outDir) throw new Error('usage: prepare <deploy-input.json> <a|b> <out-dir>')
   const slot = parseSlot(slotArg)
   const input = parseDeployInput(readFileSync(inputPath, 'utf8'))
-  const report = await runPrepare(input, slot, makeKube(kubeFromEnv(process.env)))
+  const report = await runPrepare(input, slot, makeKube(kubeFromEnv(process.env)), { sleep: (ms) => setTimeout(ms), now: Date.now })
   mkdirSync(outDir, { recursive: true })
   writeFileSync(join(outDir, 'prepare-report.json'), `${JSON.stringify(report, null, 2)}\n`)
   console.log(report.ok ? `prepared slot ${slot} (live: ${report.live ?? 'none'}, deleted ${report.deleted.length})` : `prepare failed: ${describe(report.failure!)}`)
