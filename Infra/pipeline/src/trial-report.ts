@@ -10,8 +10,6 @@ import { callPlatform, type PlatformConn, type Sleep } from './platform-api.js'
 // 도구의 결과 모양 + failure다(docs/design/api.md "파이프라인 ↔ 플랫폼 서버" 4번). 받는 쪽의 검사는 BE의 checkTrialResult(BE/src/gateway/trial-result.ts).
 // failure.message는 배포 알림(notify.ts)과 같은 문장이다: 같은 함수로 만든다.
 
-export const TRIAL_ID = /^tr_[0-9a-f]{12}$/
-
 export type TrialStage = 'build' | 'prepare' | 'render' | 'apply' | 'verify'
 export type TrialTool = 'run_build' | 'run_render' | 'run_deploy' | 'run_verify'
 
@@ -92,6 +90,8 @@ export function trialBodyFrom(trial: Trial, stage: TrialStage, report: unknown, 
   const fail = (what: string) => new Error(`${stage} report: ${what}`)
   if (!trial.stages.includes(stage)) throw fail(`stage ${stage} is not in this trial (${trial.stages.join(',')})`)
   if (!isRecord(report) || typeof report.ok !== 'boolean') throw fail('has no boolean ok')
+  // 통과한 리포트에 실패가 실려 있으면 스테이지 CLI의 버그다. 어느 쪽을 믿을지 모르므로 보내지 않고 모양 오류로 둔다(build 리포트는 failure 칸이 없고 failures 목록으로 본다).
+  if (report.ok && report.failure !== undefined && report.failure !== null) throw fail('is ok but has a failure')
   const last = trial.stages.at(-1) === stage
   if (report.ok && !last) return null
 

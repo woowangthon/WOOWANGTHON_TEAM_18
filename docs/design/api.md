@@ -517,7 +517,7 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
 - 응답 `200 { "ok": true }`. 이미 끝난 배포(`succeeded` · `failed`)나 지금 스테이지가 아닌 `stage`의 알림은 상태를 바꾸지 않고 `200 { "ok": true, "applied": false }`이다(재전송해도 안전하다).
 - 오류: `401 AUTH_REQUIRED`, `400 BAD_REQUEST`(본문 모양이 다름, `fields` 포함), `404 DEPLOY_NOT_FOUND`(실행 기록 없음), `503 DATABASE_UNAVAILABLE`(파이프라인이 다시 보낸다).
 
-**4. 시험 실행 (AI 에이전트의 `run_build` · `run_render` · `run_deploy` · `run_verify`)**: 문제를 고치는 동안 게이트웨이가 대상 슬롯에서 스테이지 일부만 돌린다([AI 에이전트 설계](AIagent.md) §2 · §3). 위 1~3의 모양은 바꾸지 않는다. 시험 실행은 실행 기록의 상태(`status` · `stage`, 3번 알림의 상태 기계)를 바꾸지 않고, `live_slot` · W7도 건드리지 않는다. BE는 `run_render` · `run_deploy` · `run_verify`와 아래 두 경로를 구현했다(F11b-1, `BE/src/gateway/trials.ts`). `run_build`(B3)와 파이프라인 쪽(`student-trial` YAML · `trial-report` · 입력 task의 시험 분기, GoCD · 파이프라인 담당)은 구현 전이다. 결정은 [ADR-014](../adr/014-agent-trial-pipeline-and-rerun.md)(ADR-012 일부 대체)다. 시험은 대상 슬롯에서 고쳐 보는 반복이고(공개 주소 불변), 5번 다시 실행은 확인된 입력으로 한 번 전환하는 것이다.
+**4. 시험 실행 (AI 에이전트의 `run_build` · `run_render` · `run_deploy` · `run_verify`)**: 문제를 고치는 동안 게이트웨이가 대상 슬롯에서 스테이지 일부만 돌린다([AI 에이전트 설계](AIagent.md) §2 · §3). 위 1~3의 모양은 바꾸지 않는다. 시험 실행은 실행 기록의 상태(`status` · `stage`, 3번 알림의 상태 기계)를 바꾸지 않고, `live_slot` · W7도 건드리지 않는다. BE는 `run_render` · `run_deploy` · `run_verify`와 아래 두 경로를 구현했다(F11b-1, `BE/src/gateway/trials.ts`). 파이프라인 쪽의 결과 보내기(`trial-report`)와 입력 task의 시험 분기(`?counter`, `build-overrides.json`)는 구현했다(#158). `run_build`(B3)와 `student-trial` YAML(GoCD 담당)은 구현 전이다. 결정은 [ADR-014](../adr/014-agent-trial-pipeline-and-rerun.md)(ADR-012 일부 대체)다. 시험은 대상 슬롯에서 고쳐 보는 반복이고(공개 주소 불변), 5번 다시 실행은 확인된 입력으로 한 번 전환하는 것이다.
 
 ```
 문제 티켓

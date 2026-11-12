@@ -141,6 +141,13 @@ describe('student-trial CLIs', () => {
       })
     })
 
+    it('a passed report that carries a failure: STAGE_NO_REPORT with the reason, not a pass', async () => {
+      const p = await serve(() => ({ status: 200, body: { ok: true } }))
+      const report = file('apply-report.json', { ok: true, slot: 'b', ready: ['ai', 'be', 'fe'], failure: { kind: 'student', service: 'be', errorMessage: 'x', raw: { pod: null, events: [], status: null } } })
+      expect(await trialReportCli(['apply', report, input()], trialEnv(p), sleep)).toBe(0)
+      expect(sent()).toMatchObject({ stage: 'apply', result: { ok: false, failure: { code: 'STAGE_NO_REPORT', message: 'the apply stage left no readable report: apply report: is ok but has a failure' } } })
+    })
+
     it('a report of the wrong shape: STAGE_NO_REPORT with the reason', async () => {
       const p = await serve(() => ({ status: 200, body: { ok: true } }))
       expect(await trialReportCli(['render', file('r.json', { stage: 'render' }), input()], trialEnv(p, 'render'), sleep)).toBe(0)

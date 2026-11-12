@@ -3,8 +3,8 @@ import { setTimeout } from 'node:timers/promises'
 import { pathToFileURL } from 'node:url'
 import { required } from '../config.js'
 import { type DeployInput, parseDeployInput } from '../deploy-input.js'
-import { exitCodeOf, PlatformError, platformFromEnv, type Sleep } from '../platform-api.js'
-import { noReportBody, parseTrialStage, parseTrialStages, sendTrialResult, type Trial, TRIAL_ID, type TrialBody, type TrialStage, trialBodyFrom } from '../trial-report.js'
+import { exitCodeOf, PlatformError, platformFromEnv, type Sleep, TRIAL_ID } from '../platform-api.js'
+import { noReportBody, parseTrialStage, parseTrialStages, sendTrialResult, type Trial, type TrialBody, type TrialStage, trialBodyFrom } from '../trial-report.js'
 
 // student-trial의 결과 보내기 task: `node dist/cli/trial-report.js <build|prepare|render|apply|verify> <스테이지 결과 JSON> <시험 입력 JSON>`.
 // 범위 안 스테이지 job마다 `run_if: any`로 부른다. 시험 하나에 한 번만 보낸다: 실패했거나(결과가 없으면 STAGE_NO_REPORT) TRIAL_STAGES의 마지막이면

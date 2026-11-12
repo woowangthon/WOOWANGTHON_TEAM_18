@@ -26,6 +26,9 @@ export function platformFromEnv(env: NodeJS.ProcessEnv): PlatformConn {
 
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
+/** 시험 실행(student-trial)의 id. 요청 경로에 들어가는 값이라 이 모양만 받는다(api.md "파이프라인 ↔ 플랫폼 서버" 4번). */
+export const TRIAL_ID = /^tr_[0-9a-f]{12}$/
+
 /** GoCD가 넣는 DEPLOY_ID. 요청 경로에 들어가는 값이라 UUID만 받는다(소문자로 맞춘다). */
 export const deployIdFromEnv = (env: NodeJS.ProcessEnv): string => required(env, 'DEPLOY_ID', UUID, 'a UUID').toLowerCase()
 
