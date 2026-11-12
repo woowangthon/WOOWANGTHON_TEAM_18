@@ -166,6 +166,16 @@ describe('GatewayTrials', () => {
     expect(cancelled).toEqual([9])
   })
 
+  it('waits only for what is left after a slow schedule, not the whole wait again', async () => {
+    // 마감 300ms, 실행 요청 250ms: 남은 50ms만 기다려 약 300ms에 끝난다. 처음 잰 300ms를 다시 기다리면 약 550ms다.
+    runDelayMs = 250
+    const started = Date.now()
+    expect(await trials.run(TICKET, 'run_render', INPUT, soon(300))).toMatchObject({ failure: { code: 'TRIAL_TIMEOUT' } })
+    const elapsed = Date.now() - started
+    expect(elapsed).toBeGreaterThanOrEqual(280)
+    expect(elapsed).toBeLessThan(450)
+  })
+
   it('cancels the waiting trial when the ticket ends', async () => {
     const pending = trials.run(TICKET, 'run_deploy', INPUT, soon(60_000))
     await tick()
