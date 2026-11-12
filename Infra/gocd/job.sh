@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One step of a student-deploy job (Infra/gocd/student-deploy.gocd.yaml). GoCD runs it from the material checkout:
+# One step of a student-deploy or student-trial job (Infra/gocd/student-deploy.gocd.yaml, student-trial.gocd.yaml). GoCD runs it from the material checkout:
 #   bash Infra/gocd/job.sh <step> [stage]
 #   clean <stage>          the job's first task: remove this stage's own result files (see below)
 #   setup                  install and build Infra/pipeline
@@ -9,6 +9,11 @@
 #                          Render's out/slot.yaml, for switch Render's out/open.yaml
 #   notify <stage>         tell the platform server how the stage ended (runs after a pass and after a failure);
 #                          without the built CLI it sends STAGE_NO_REPORT with curl (notify_without_cli)
+# student-trial (Infra/gocd/student-trial.gocd.yaml, the AI agent's trial runs) wraps every step:
+#   trial <stage> <step> [args]   run <step> only when <stage> is in TRIAL_STAGES; otherwise do nothing and pass
+#   trial-fetch-input      the trial's first task: work/deploy-input.json, work/slot and work/build-overrides.json, and the
+#                          input copied as work/deploy-input.built.json (a trial input is already built: every service reuse + digest)
+#   trial-report <stage>   send the trial result (once per trial: at a failed stage, or at the last of TRIAL_STAGES)
 # Every step stops at the first error. Nothing here prints the environment: PIPELINE_NOTIFY_TOKEN and the AWS key
 # are in it, and a job log is readable by everyone who can open GoCD.
 set -euo pipefail
@@ -74,8 +79,11 @@ case ${1:?usage: job.sh <step> [stage]} in
   build)
     # GoCD sets GO_REVISION_<material name>; the buildspec checks out the platform repo at this commit.
     export PLATFORM_COMMIT=${GO_REVISION_PLATFORM:?GO_REVISION_PLATFORM is not set}
+    # A trial build (run_build) passes the StartBuild overrides trial-fetch-input wrote; student-deploy has none.
+    overrides=()
+    if [[ -n ${TRIAL_ID-} ]]; then overrides=(work/build-overrides.json); fi
     status=0
-    cli build work/deploy-input.json work/build-report.json || status=$?
+    cli build work/deploy-input.json work/build-report.json ${overrides[@]+"${overrides[@]}"} || status=$?
     # The report is there for a failed build too, and the notice needs it. Stage CLIs read the built input.
     if [[ -s work/build-report.json ]]; then
       node -e 'const fs=require("fs");const r=JSON.parse(fs.readFileSync("work/build-report.json","utf8"));fs.writeFileSync("work/deploy-input.built.json",JSON.stringify(r.input)+"\n")'
@@ -100,6 +108,43 @@ case ${1:?usage: job.sh <step> [stage]} in
     else
       notify_without_cli "$stage"
     fi
+    ;;
+  trial)
+    stage=${2:?usage: job.sh trial <stage> <step> [args]}
+    [[ $# -ge 3 ]] || { echo "usage: job.sh trial <stage> <step> [args]" >&2; exit 2; }
+    # The four values the gateway sends (api.md 4). Anything else is a wrong schedule: fail rather than skip every stage.
+    case ${TRIAL_STAGES-} in
+      build | render | prepare,render,apply | verify) ;;
+      *) echo "TRIAL_STAGES must be build, render, prepare,render,apply or verify" >&2; exit 2 ;;
+    esac
+    # Render publishes out/ and Apply fetches it, also when Render is skipped (GoCD fails a job whose artifact is missing).
+    mkdir -p out
+    if [[ ,$TRIAL_STAGES, != *,"$stage",* ]]; then
+      [[ -e out/.out-of-scope ]] || { echo "stage $stage is not in this trial ($TRIAL_STAGES): nothing to do" > out/.out-of-scope; cat out/.out-of-scope; }
+      exit 0
+    fi
+    exec bash Infra/gocd/job.sh "${@:3}"
+    ;;
+  trial-fetch-input)
+    : "${DEPLOY_ID:?DEPLOY_ID is empty: this pipeline is started by the platform server (schedule API), not by hand}"
+    : "${TRIAL_ID:?TRIAL_ID is empty: this pipeline is started by the gateway of the platform server, not by hand}"
+    mkdir -p work
+    # GO_PIPELINE_COUNTER goes with the request: the platform server cancels this run by it when the trial ends.
+    cli fetch-input work
+    cp work/deploy-input.json work/deploy-input.built.json
+    ;;
+  trial-report)
+    stage=${2:?usage: job.sh trial-report <stage>}
+    case $stage in
+      build) report=work/build-report.json ;;
+      *) report=out/$stage-report.json ;;
+    esac
+    # Without the built CLI (setup failed) nothing can be sent; the gateway answers TRIAL_TIMEOUT after its wait (api.md 4).
+    if [[ ! -f $pipeline/dist/cli/trial-report.js ]]; then
+      echo "trial-report $stage: the CLI is not built (setup or an earlier task failed); no result is sent" >&2
+      exit 1
+    fi
+    cli trial-report "$stage" "$report" work/deploy-input.json
     ;;
   *)
     echo "unknown step: $1" >&2

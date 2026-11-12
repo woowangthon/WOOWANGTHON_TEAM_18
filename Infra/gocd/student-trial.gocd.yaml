@@ -1,0 +1,194 @@
+# GoCD pipeline of the AI agent's trial runs (docs/design/api.md "파이프라인 ↔ 플랫폼 서버" 4, ADR-014). Read from this repo by
+# the same config repo as student-deploy (Infra/gocd/setup.sh, file pattern Infra/gocd/*.gocd.yaml). It is started only by the
+# platform server's gateway (BE/src/deploys/pipeline.client.ts, env GOCD_TRIAL_PIPELINE) with DEPLOY_ID, TRIAL_ID and
+# TRIAL_STAGES; the first stage needs manual approval, so a new commit never starts a run (as student-deploy).
+#
+# Stages: Build (resource aws) → Prepare → Render → Apply → Verify (resource leader). There is no Switch stage: a trial
+# never changes the public address (the Switch CLI also refuses with TRIAL_ID set). TRIAL_STAGES picks the stages of one tool:
+# build (run_build) · render (run_render) · prepare,render,apply (run_deploy) · verify (run_verify).
+#
+# Every task is `Infra/gocd/job.sh trial <stage> <step>`. A stage outside TRIAL_STAGES does nothing and passes (it reads no
+# input either). An in-scope job: clean, setup, then fetch-input as the first task that talks to anything (it reads the trial
+# input with ?counter=$GO_PIPELINE_COUNTER and writes it as the built input), the stage CLI, and trial-report with run_if any
+# (it sends the result once per trial: at a failed stage, or at the last of TRIAL_STAGES). Each in-scope job reads the input
+# itself, since the first stage differs per trial; Apply fetches Render's out/slot.yaml (a skipped Render publishes an empty out/).
+# notify is not called: a trial does not move the run's state.
+#
+# Secrets are not in this file (as student-deploy): PIPELINE_NOTIFY_TOKEN and the AWS key are the agents' own environment.
+format_version: 10
+pipelines:
+  student-trial:
+    group: wcp
+    label_template: "${COUNT}"
+    lock_behavior: none
+    materials:
+      platform:
+        git: https://github.com/woowangthon/WOOWANGTHON_TEAM_18.git
+        branch: main
+        shallow_clone: true
+    environment_variables:
+      # Set by the schedule call. Declared so the call can override them; empty fails fast in job.sh and the CLIs.
+      DEPLOY_ID: ""
+      TRIAL_ID: ""
+      TRIAL_STAGES: ""
+      PLATFORM_API_URL: https://api.stairnoworks.com
+      BASE_DOMAIN: stairnoworks.com
+      PLATFORM_REPO: woowangthon/WOOWANGTHON_TEAM_18
+      CODEBUILD_PROJECT: student-apps
+      GHCR_TOKEN_SECRET_ID: wcp/codebuild/GHCR_TOKEN
+      # The bot's GitHub account (docs/design/platform-hosting.md).
+      GHCR_USER: wanggane-bot
+      IMAGE_REPO: ghcr.io/wanggane-bot/student-apps
+    stages:
+      - build:
+          approval:
+            type: manual
+          clean_workspace: true
+          jobs:
+            build:
+              timeout: 35
+              resources:
+                - aws
+              tasks:
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, trial, build, clean, build]
+                    run_if: passed
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, trial, build, setup]
+                    run_if: passed
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, trial, build, trial-fetch-input]
+                    run_if: passed
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, trial, build, build]
+                    run_if: passed
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, trial, build, trial-report, build]
+                    run_if: any
+      - prepare:
+          clean_workspace: true
+          jobs:
+            prepare:
+              timeout: 10
+              resources:
+                - leader
+              tasks:
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, trial, prepare, clean, prepare]
+                    run_if: passed
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, trial, prepare, setup]
+                    run_if: passed
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, trial, prepare, trial-fetch-input]
+                    run_if: passed
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, trial, prepare, prepare]
+                    run_if: passed
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, trial, prepare, trial-report, prepare]
+                    run_if: any
+      - render:
+          clean_workspace: true
+          jobs:
+            render:
+              timeout: 10
+              resources:
+                - leader
+              artifacts:
+                - build:
+                    source: out
+                    destination: ""
+              tasks:
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, trial, render, clean, render]
+                    run_if: passed
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, trial, render, setup]
+                    run_if: passed
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, trial, render, trial-fetch-input]
+                    run_if: passed
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, trial, render, render]
+                    run_if: passed
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, trial, render, trial-report, render]
+                    run_if: any
+      - apply:
+          clean_workspace: true
+          jobs:
+            apply:
+              timeout: 20
+              resources:
+                - leader
+              tasks:
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, trial, apply, clean, apply]
+                    run_if: passed
+                - fetch:
+                    stage: render
+                    job: render
+                    source: out
+                    destination: .
+                    run_if: passed
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, trial, apply, setup]
+                    run_if: passed
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, trial, apply, trial-fetch-input]
+                    run_if: passed
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, trial, apply, apply]
+                    run_if: passed
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, trial, apply, trial-report, apply]
+                    run_if: any
+      - verify:
+          clean_workspace: true
+          jobs:
+            verify:
+              timeout: 10
+              resources:
+                - leader
+              tasks:
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, trial, verify, clean, verify]
+                    run_if: passed
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, trial, verify, setup]
+                    run_if: passed
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, trial, verify, trial-fetch-input]
+                    run_if: passed
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, trial, verify, verify]
+                    run_if: passed
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, trial, verify, trial-report, verify]
+                    run_if: any

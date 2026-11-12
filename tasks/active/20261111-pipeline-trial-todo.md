@@ -21,6 +21,8 @@ Contract: `docs/design/api.md` "파이프라인 ↔ 플랫폼 서버" 4 (#147, A
 - [x] A1b: `fetch-input` trial branch (`?counter=$GO_PIPELINE_COUNTER`, `build-overrides.json`) — files: `src/fetch-input.ts`, `src/cli/fetch-input.ts`
 - [x] A1b: BE `checkTrialResult` moved to a Nest-free file so the pipeline test can import it — files: `BE/src/gateway/trial-result.ts`, `BE/src/gateway/trials.ts`
 
+- [x] A2: `student-trial` GoCD pipeline (user decision 2026-11-12: track A writes it) — files: `Infra/gocd/student-trial.gocd.yaml`, `Infra/gocd/job.sh` (`trial` wrapper, `trial-fetch-input`, `trial-report`, build overrides), `Infra/gocd/setup.sh` (waits for both pipelines), test `Infra/pipeline/src/gocd-trial.spec.ts`, docs
+
 ## Done when
 
 - [ ] `pnpm verify` in `Infra/pipeline/` passes — PASS from the test session
