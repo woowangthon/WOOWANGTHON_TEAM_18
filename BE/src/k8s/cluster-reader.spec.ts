@@ -110,6 +110,31 @@ describe('ClusterReader', () => {
     expect(fake.calls).toEqual(['GET /api/v1/nodes'])
   })
 
+  it('reads node usage from metrics.k8s.io: the quantity text as the leader gives it, skipping items without a name', async () => {
+    items('/apis/metrics.k8s.io/v1beta1/nodes', [
+      { metadata: { name: 'leader', labels: { secret: 'no' } }, timestamp: '2026-11-13T00:00:00Z', window: '10s', usage: { cpu: '123018642n', memory: '6838040Ki' } },
+      { metadata: { name: 'worker-1' }, usage: { cpu: 5 } },
+      { metadata: { name: 'worker-2' } },
+      { usage: { cpu: '1', memory: '1Ki' } },
+    ])
+    expect(await reader.nodeUsage()).toEqual([
+      { name: 'leader', usage: { cpu: '123018642n', memory: '6838040Ki' } },
+      // 글이 아닌 칸은 버린다.
+      { name: 'worker-1', usage: {} },
+      { name: 'worker-2', usage: {} },
+    ])
+    expect(fake.calls).toEqual(['GET /apis/metrics.k8s.io/v1beta1/nodes'])
+  })
+
+  it.each([
+    ['not allowed (403)', { status: 403, body: { reason: 'Forbidden' } }, 'forbidden'],
+    ['not served by the cluster (404)', { status: 404, body: { reason: 'NotFound' } }, 'not_found'],
+  ] as const)('node usage that is %s is a ClusterError', async (_, answer, kind) => {
+    vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+    fake.answers.set('/apis/metrics.k8s.io/v1beta1/nodes', answer)
+    await expect(reader.nodeUsage()).rejects.toMatchObject({ kind })
+  })
+
   it('reads the tail of a pod log as text', async () => {
     const path = `${NS}/pods/api-a-7d9f-x1/log?tailLines=200&limitBytes=262144`
     fake.answers.set(path, { status: 200, body: 'line 1\nline 2\n' })

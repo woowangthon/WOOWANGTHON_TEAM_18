@@ -4,7 +4,7 @@ import request from 'supertest'
 import type { App } from 'supertest/types.js'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ClusterError } from '../src/k8s/cluster-error.js'
-import { ClusterReader, type DeploymentInfo, type NodeInfo, type PodInfo } from '../src/k8s/cluster-reader.js'
+import { ClusterReader, type DeploymentInfo, type NodeInfo, type NodeUsageInfo, type PodInfo } from '../src/k8s/cluster-reader.js'
 import { DeploymentScaler } from '../src/k8s/deployment-scaler.js'
 import { errorBody, JWKS_URL, keySet, token } from './auth-helpers.js'
 import { startApp } from './start-app.js'
@@ -19,6 +19,9 @@ let restOverride: ((table: string, method: string) => Response | undefined) | un
 // 가짜 클러스터: 공간(slug)마다 Deployment · Pod 목록을 두고(없으면 리더가 답하듯 403 = forbidden), clusterError가 있으면 모든 읽기가 그 오류로 실패한다.
 // scale은 기록하고 scaleFails에 이름이 있으면 그 오류로 실패한다.
 let nodesData: NodeInfo[]
+// 노드 사용량(metrics.k8s.io). usageError가 있으면 그 오류로 실패한다.
+let usageData: NodeUsageInfo[]
+let usageError: Error | undefined
 let spaces: Record<string, { deployments: DeploymentInfo[]; pods: PodInfo[] }>
 let slugErrors: Record<string, ClusterError>
 let clusterError: ClusterError | undefined
@@ -34,6 +37,7 @@ const read = <T>(slug: string | null, pick: (space: (typeof spaces)[string]) => 
 }
 const reader = {
   nodes: () => read<NodeInfo>(null, () => []),
+  nodeUsage: () => (usageError ? Promise.reject(usageError) : Promise.resolve(usageData)),
   deployments: (slug: string) => read(slug, (space) => space.deployments),
   pods: (slug: string) => read(slug, (space) => space.pods),
 }
@@ -95,6 +99,8 @@ beforeEach(async () => {
   db = {}
   restOverride = undefined
   nodesData = []
+  usageData = []
+  usageError = undefined
   spaces = {}
   slugErrors = {}
   clusterError = undefined
@@ -140,24 +146,26 @@ describe('who may call the admin API', () => {
 })
 
 describe('GET /api/admin/nodes', () => {
-  it('lists nodes with role, readiness and capacity, and does not invent usage', async () => {
+  it('lists nodes with role, readiness and capacity, and never invents usage', async () => {
     nodesData = [
       node('leader', ['control-plane']),
       node('worker-1'),
       node('worker-2', [], { ready: false, capacity: {}, allocatable: { cpu: 'oops' } }),
     ]
+    usageData = [{ name: 'leader', usage: { cpu: '123018642n', memory: '6838040Ki' } }]
     const res = await call('get', '/api/admin/nodes', undefined)
     expect(res.status).toBe(200)
     expect(res.body).toEqual({
-      usageStatus: 'not_collected',
+      usageStatus: 'collected',
       nodes: [
         {
           name: 'leader', ready: true, role: 'leader',
           cpu: { capacityMillicores: 4000, allocatableMillicores: 3800 },
           memory: { capacityBytes: 16 * 2 ** 30, allocatableBytes: 15_000_000 * 1024 },
           disk: { capacityBytes: 250_000_000_000, allocatableBytes: 230_000_000_000 },
-          usage: null,
+          usage: { cpuMillicores: 123, memoryBytes: 6838040 * 1024 },
         },
+        // 사용량 목록에 없는 노드(첫 수집 전)는 null이다.
         expect.objectContaining({ name: 'worker-1', role: 'worker', ready: true, usage: null }),
         {
           name: 'worker-2', ready: false, role: 'worker',
@@ -168,6 +176,50 @@ describe('GET /api/admin/nodes', () => {
         },
       ],
     })
+  })
+
+  it('fills each node with its own usage, and leaves null when a quantity cannot be read', async () => {
+    nodesData = [node('leader', ['control-plane']), node('worker-1'), node('worker-2')]
+    usageData = [
+      { name: 'worker-1', usage: { cpu: '2500m', memory: '1Gi' } },
+      { name: 'leader', usage: { cpu: '1', memory: '512Mi' } },
+      { name: 'worker-2', usage: { cpu: 'oops', memory: '1Gi' } },
+      { name: 'not-a-node', usage: { cpu: '1', memory: '1Gi' } },
+    ]
+    const res = await call('get', '/api/admin/nodes', undefined)
+    expect(res.body).toMatchObject({
+      usageStatus: 'collected',
+      nodes: [
+        { name: 'leader', usage: { cpuMillicores: 1000, memoryBytes: 512 * 2 ** 20 } },
+        { name: 'worker-1', usage: { cpuMillicores: 2500, memoryBytes: 2 ** 30 } },
+        { name: 'worker-2', usage: null },
+      ],
+    })
+    expect((res.body as { nodes: unknown[] }).nodes).toHaveLength(3)
+  })
+
+  it.each([
+    ['the account has no permission', new ClusterError('forbidden', 403)],
+    ['the metrics API is not served', new ClusterError('not_found', 404)],
+    ['the leader does not answer', new ClusterError('unreachable')],
+    ['something unexpected broke', new Error('boom secret-value')],
+  ])('keeps the node list with usage null and not_collected when %s, and logs no message text', async (_, error) => {
+    nodesData = [node('leader', ['control-plane']), node('worker-1')]
+    usageError = error
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+    const res = await call('get', '/api/admin/nodes', undefined)
+    expect(res.status).toBe(200)
+    expect(res.body).toMatchObject({ usageStatus: 'not_collected', nodes: [{ name: 'leader', usage: null }, { name: 'worker-1', usage: null }] })
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect(String(warn.mock.calls[0][0])).toMatch(/^Node usage not read: (forbidden 403|not_found 404|unreachable|error)$/)
+  })
+
+  it('still answers 503 when the node list cannot be read, even if usage could', async () => {
+    clusterError = new ClusterError('forbidden', 403)
+    usageData = [{ name: 'leader', usage: { cpu: '1', memory: '1Gi' } }]
+    const res = await call('get', '/api/admin/nodes', undefined)
+    expect(res.status).toBe(503)
+    expect(res.body).toEqual(errorBody('CLUSTER_FORBIDDEN'))
   })
 
   it('treats the legacy master label as the leader', async () => {

@@ -39,6 +39,13 @@ export interface NodeInfo {
   allocatable: Record<string, string>
 }
 
+/** metrics.k8s.io가 준 노드의 사용량. 쿠버네티스 수량 글 그대로("123018642n", "6838040Ki"). */
+export interface NodeUsageInfo {
+  name: string
+  /** cpu · memory(· ephemeral-storage)의 수량 글. 없는 칸은 빠진다 */
+  usage: Record<string, string>
+}
+
 const POD_NAME = /^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$/
 const CONTAINER_NAME = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/
 const DEFAULT_TAIL = 200
@@ -102,6 +109,16 @@ export class ClusterReader {
         allocatable: quantities(status.allocatable),
       }
     })
+  }
+
+  /**
+   * 노드의 실제 사용량(metrics.k8s.io). 갓 뜬 노드는 첫 수집 전까지 목록에 없다. 이름 없는 항목은 버린다.
+   * 이 API가 없거나 막혀 있으면 다른 읽기처럼 ClusterError다.
+   */
+  async nodeUsage(): Promise<NodeUsageInfo[]> {
+    return (await this.list('/apis/metrics.k8s.io/v1beta1/nodes'))
+      .map((node) => ({ name: text(record(node.metadata).name) ?? '', usage: quantities(node.usage) }))
+      .filter((u) => u.name !== '')
   }
 
   /**
