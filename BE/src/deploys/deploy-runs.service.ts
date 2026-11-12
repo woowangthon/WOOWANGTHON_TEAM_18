@@ -4,8 +4,10 @@ import type { AuthUser } from '../auth/auth.decorators.js'
 import { isRecord } from '../common/is-record.js'
 import { parseUuid } from '../common/uuid.js'
 import { redact, redactString } from '../common/redact.js'
+import { ClusterReader } from '../k8s/cluster-reader.js'
+import { DeploymentScaler } from '../k8s/deployment-scaler.js'
 import { AgentClient } from './agent.client.js'
-import type { ServiceConditions } from './deploy-condition.js'
+import { type ServiceConditions, type Slot, targetSlot } from './deploy-condition.js'
 import { DeployPreparer } from './deploy-preparer.js'
 import {
   buildSteps,
@@ -98,6 +100,8 @@ export class DeployRunsService {
     private readonly preparer: DeployPreparer,
     private readonly pipeline: PipelineClient,
     private readonly agent: AgentClient,
+    private readonly reader: ClusterReader,
+    private readonly scaler: DeploymentScaler,
   ) {}
 
   /** 내 배포 하나. 없는 id · 남의 id · UUID가 아닌 id는 모두 404다. */
@@ -150,7 +154,7 @@ export class DeployRunsService {
     } catch (err) {
       if (!(err instanceof StoreConflict) || err.constraint.includes('deploy_runs_pkey')) throw err
       const active = await this.store.findActiveRun(row.slug)
-      if (active && Date.now() - Date.parse(active.updated_at) < STALE_RUN_MS) throw err
+      if (active && (Date.now() - Date.parse(active.updated_at) < STALE_RUN_MS || isWorkingTicket(active))) throw err
       if (active) {
         const expired = await this.store.updateRun(
           active.deploy_id,
@@ -210,22 +214,43 @@ export class DeployRunsService {
     if (notice.stage === 'build') {
       const issues = checkImages(conditionsOf(run), notice.images!)
       if (issues.length > 0) throw badNotice('Images do not match the services that were built', issues)
+      // 같은 빌드 입력 해시는 같은 이미지라 뒤 스테이지가 실패해도 재사용해도 된다(api.md 3번). 같은 알림을 다시 받아도 같은 결과다.
+      // verified 뒤 다시 실행은 모두 reuse라 images가 {}이고 run.images도 {}로 덮인다. 그 뒤 이미지는 input.deploy_condition.services[*].image에서 읽어야 한다.
+      await this.store.cacheImages(
+        Object.entries(conditionsOf(run)).flatMap(([service, c]) => {
+          // images에는 빌드한(run) 서비스만 있다(위 checkImages가 확인했다).
+          const image = notice.images![service]
+          return image ? [{ slug: run.slug, service, build_input_hash: c.buildInputHash, image }] : []
+        }),
+      )
       return this.store.updateRun(run.deploy_id, where, { stage: 'prepare', images: notice.images })
     }
     const next = nextStage(notice.stage)
     if (next !== null) return this.store.updateRun(run.deploy_id, where, { stage: next })
 
-    // switch까지 성공했다(W7): 빌드 캐시 → live 슬롯 → 완료 순서. 중간에 끊겨도 같은 알림을 다시 받으면 같은 결과다.
-    const conditions = conditionsOf(run)
-    await this.store.cacheImages(
-      Object.entries(conditions).flatMap(([service, c]) => {
-        // images에는 빌드한(run) 서비스만 있다(알림을 받을 때 checkImages가 확인했다).
-        const image = run.images?.[service]
-        return image ? [{ slug: run.slug, service, build_input_hash: c.buildInputHash, image }] : []
-      }),
-    )
+    // switch까지 성공했다(W7): live 슬롯 → 이전 슬롯 내리기 → 완료 순서. 중간에 끊겨도 같은 알림을 다시 받으면 같은 결과다.
+    // 이전 live 슬롯은 live 슬롯을 바꾸기 전에 읽는다(첫 배포는 없다).
+    const hadLive = (await this.store.liveSlot(run.slug)) !== null
     await this.store.setLiveSlot(run.slug, run.target_slot)
+    // 주소는 이미 바뀌었다. 이전 슬롯을 못 내려도 배포는 성공이다.
+    if (hadLive) await this.scaleDownSlot(run.slug, targetSlot(run.target_slot))
     return this.store.updateRun(run.deploy_id, where, { status: 'succeeded', stage: null })
+  }
+
+  /**
+   * W7: 이전 live 슬롯의 Deployment(`<서비스>-<슬롯>`)를 0개로 줄인다. 실패해도 던지지 않는다: 남은 Pod는 자원만 쓰고
+   * 주소는 새 슬롯을 가리킨다(운영자 강제 중지로 내릴 수 있다). 같은 알림을 다시 받아도 같은 결과다(이미 0이어도 0으로 쓴다).
+   */
+  private async scaleDownSlot(slug: string, slot: Slot): Promise<void> {
+    try {
+      const names = (await this.reader.deployments(slug)).map((d) => d.name).filter((name) => name.endsWith(`-${slot}`))
+      const results = await Promise.allSettled(names.map((name) => this.scaler.scaleToZero(slug, name)))
+      results.forEach((r, i) => {
+        if (r.status === 'rejected') this.logger.error(`W7: could not scale ${slug} ${names[i]} to 0: ${r.reason instanceof Error ? r.reason.message : 'unknown'}`)
+      })
+    } catch (err) {
+      this.logger.error(`W7: could not list deployments of ${slug} to scale the old slot down: ${err instanceof Error ? err.message : 'unknown'}`)
+    }
   }
 
   private async failed(run: DeployRunRow, notice: Extract<Notice, { result: 'failed' }>): Promise<boolean> {
@@ -296,6 +321,9 @@ const alreadyStarted = () => new ConflictException({ code: 'ALREADY_STARTED', me
 const inProgress = () => new ConflictException({ code: 'DEPLOY_IN_PROGRESS', message: 'Another deploy of this project is in progress' })
 const badNotice = (message: string, fields: { path: string; code: string }[]) =>
   new BadRequestException({ code: 'BAD_REQUEST', message, fields })
+
+// 에이전트가 시험 실행을 기다리는 티켓은 1시간 넘게 알림이 없어도 멈춘 것이 아니다. 토큰 만료(티켓 전체 상한 60분 안)가 지나면 평소대로 판정한다.
+const isWorkingTicket = (run: DeployRunRow) => run.status === 'fixing' && run.gateway_expires_at !== null && Date.parse(run.gateway_expires_at) > Date.now()
 
 const commitOf = (run: DeployRunRow) => (run.input as { commitSha: string }).commitSha
 

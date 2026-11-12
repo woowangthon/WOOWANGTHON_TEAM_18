@@ -20,6 +20,58 @@ export interface BuildConfig {
   buildspec: string
 }
 
+/**
+ * 그 빌드에만 쓰는 CodeBuild 설정(AI 에이전트의 `run_build`, api.md "파이프라인 ↔ 플랫폼 서버" 4번). 시험 입력 응답의 `buildOverrides`를
+ * 입력 task가 `build-overrides.json`으로 쓴다. 상한 · 허용 목록은 게이트웨이가 검사하고, 여기서는 모양과 시험 대기에 드는 제한 시간만 본다.
+ */
+export interface BuildOverrides {
+  computeType?: string
+  timeoutMinutes?: number
+  image?: string
+  cache?: boolean
+}
+
+/** 시험 빌드의 제한 시간 상한. 빌드 대기(+5분)가 게이트웨이의 시험 대기 30분 안에 들어야 한다. */
+export const MAX_OVERRIDE_TIMEOUT_MINUTES = 20
+/** override로 제한 시간을 줬을 때 빌드 대기 한도 = 제한 시간 + 이만큼(대기열 · 시작 몫) */
+export const QUEUE_ALLOWANCE_MS = 5 * 60_000
+
+/** `build-overrides.json`을 읽는다. 내용이 `null`이면 override가 없다(run_build가 아닌 시험). 모양이 틀리면 무엇이 틀렸는지 담아 던진다. */
+export function parseBuildOverrides(text: string): BuildOverrides | null {
+  const fail = (what: string) => new Error(`build overrides: ${what}`)
+  let raw: unknown
+  try {
+    raw = JSON.parse(text)
+  } catch {
+    throw fail('is not JSON')
+  }
+  if (raw === null) return null
+  if (typeof raw !== 'object' || Array.isArray(raw)) throw fail('must be an object or null')
+  const o = raw as Record<string, unknown>
+  for (const key of Object.keys(o)) if (!['computeType', 'timeoutMinutes', 'image', 'cache'].includes(key)) throw fail(`unknown key ${key}`)
+  const out: BuildOverrides = {}
+  if (o.computeType !== undefined) {
+    if (typeof o.computeType !== 'string' || !/^[A-Z0-9_]{1,64}$/.test(o.computeType)) throw fail('computeType must look like BUILD_GENERAL1_MEDIUM')
+    out.computeType = o.computeType
+  }
+  if (o.timeoutMinutes !== undefined) {
+    if (!Number.isInteger(o.timeoutMinutes) || (o.timeoutMinutes as number) < 1 || (o.timeoutMinutes as number) > MAX_OVERRIDE_TIMEOUT_MINUTES) throw fail(`timeoutMinutes must be an integer from 1 to ${MAX_OVERRIDE_TIMEOUT_MINUTES}`)
+    out.timeoutMinutes = o.timeoutMinutes as number
+  }
+  if (o.image !== undefined) {
+    if (typeof o.image !== 'string' || !/^[^\s]{1,255}$/.test(o.image)) throw fail('image must be a build image name without spaces')
+    out.image = o.image
+  }
+  if (o.cache !== undefined) {
+    if (typeof o.cache !== 'boolean') throw fail('cache must be true or false')
+    out.cache = o.cache
+  }
+  return out
+}
+
+/** 빌드 대기 한도: override로 제한 시간을 줬으면 그 시간 + 5분, 아니면 MAX_WAIT_MS(20분). */
+export const maxWaitMs = (overrides: BuildOverrides | null) => (overrides?.timeoutMinutes === undefined ? MAX_WAIT_MS : overrides.timeoutMinutes * 60_000 + QUEUE_ALLOWANCE_MS)
+
 export interface Clock {
   sleep: (ms: number) => Promise<void>
   now: () => number
@@ -48,7 +100,7 @@ export function appDir(svc: Service): string {
 }
 
 /** `aws codebuild start-build --cli-input-json`에 넘길 요청. 값은 모두 공개 값이다(비밀 env는 빌드에 넘기지 않는다). */
-export function startBuildRequest(input: DeployInput, svc: Service, config: BuildConfig) {
+export function startBuildRequest(input: DeployInput, svc: Service, config: BuildConfig, overrides: BuildOverrides | null = null) {
   const { build } = svc
   const hash = input.deploy_condition.services[svc.name].buildInputHash
   const env: Record<string, string | null> = {
@@ -81,6 +133,11 @@ export function startBuildRequest(input: DeployInput, svc: Service, config: Buil
     environmentVariablesOverride: Object.entries(env)
       .filter((e): e is [string, string] => e[1] !== null)
       .map(([name, value]) => ({ name, value, type: 'PLAINTEXT' })),
+    // run_build의 override. 준 칸만 넣는다. cache: false는 캐시 끄기, true거나 없으면 프로젝트 설정 그대로.
+    ...(overrides?.computeType !== undefined && { computeTypeOverride: overrides.computeType }),
+    ...(overrides?.timeoutMinutes !== undefined && { timeoutInMinutesOverride: overrides.timeoutMinutes }),
+    ...(overrides?.image !== undefined && { imageOverride: overrides.image }),
+    ...(overrides?.cache === false && { cacheOverride: { type: 'NO_CACHE' } }),
   }
 }
 
@@ -103,7 +160,7 @@ export interface BuildReport {
  * run인 서비스의 빌드를 모두 시작하고 끝까지 기다린다. 하나가 실패해도 나머지는 끝까지 기다려 결과를 모두 알린다.
  * 실패는 `platform`(CodeBuild API 오류 · 시간 초과 · digest 없음: AI 에이전트를 부르지 않는다)과 `build`(빌드 자체의 실패)로 나눈다.
  */
-export async function runBuilds(input: DeployInput, config: BuildConfig, aws: Aws, clock: Clock): Promise<BuildReport> {
+export async function runBuilds(input: DeployInput, config: BuildConfig, aws: Aws, clock: Clock, overrides: BuildOverrides | null = null): Promise<BuildReport> {
   const result = structuredClone(input)
   const conditions = result.deploy_condition.services
   const failures: BuildFailure[] = []
@@ -113,7 +170,7 @@ export async function runBuilds(input: DeployInput, config: BuildConfig, aws: Aw
   await Promise.all(
     toRun.map(async (svc) => {
       try {
-        const answer = (await aws(['codebuild', 'start-build', '--cli-input-json', JSON.stringify(startBuildRequest(input, svc, config))])) as { build?: { id?: unknown } }
+        const answer = (await aws(['codebuild', 'start-build', '--cli-input-json', JSON.stringify(startBuildRequest(input, svc, config, overrides))])) as { build?: { id?: unknown } }
         if (typeof answer.build?.id !== 'string') throw new AwsError(null, 'StartBuild answered without a build id')
         builds[svc.name] = answer.build.id
       } catch (err) {
@@ -124,10 +181,11 @@ export async function runBuilds(input: DeployInput, config: BuildConfig, aws: Aw
 
   const pending = new Map(Object.entries(builds).map(([name, id]) => [id, name]))
   const started = clock.now()
+  const maxWait = maxWaitMs(overrides)
   let pollErrors = 0
   while (pending.size > 0) {
-    if (clock.now() - started > MAX_WAIT_MS) {
-      for (const name of pending.values()) failures.push({ service: name, kind: 'platform', code: 'BUILD_WAIT_TIMEOUT', message: `build did not finish in ${MAX_WAIT_MS / 60_000} minutes` })
+    if (clock.now() - started > maxWait) {
+      for (const name of pending.values()) failures.push({ service: name, kind: 'platform', code: 'BUILD_WAIT_TIMEOUT', message: `build did not finish in ${maxWait / 60_000} minutes` })
       break
     }
     await clock.sleep(POLL_MS)

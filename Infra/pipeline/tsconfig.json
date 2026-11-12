@@ -6,6 +6,8 @@
     "module": "nodenext",
     "skipLibCheck": true,
     "outDir": "./dist",
+    // notify.spec.ts가 BE의 validateNotice를 불러 알림 본문을 BE의 검사에 대 본다. 빌드(tsconfig.build.json)는 rootDir를 ./src로 다시 정하고 시험 파일을 뺀다.
+    "rootDir": "../..",
     "isolatedModules": true,
 
     /* Linting (strict is on by default since TypeScript 6) */

@@ -1,0 +1,256 @@
+# GoCD pipeline of every student deploy (docs/design/deploy-workflow.md §1 · §2). Read by GoCD's YAML config plugin from
+# this repo (Infra/gocd/setup.sh registers the config repo). It is started only by the platform server's schedule call
+# (BE/src/deploys/pipeline.client.ts, variable DEPLOY_ID): the first stage needs manual approval, so a new commit never
+# starts a run. The material keeps GoCD's default polling because it is the same repo and branch as the config repo,
+# and GoCD refuses a material whose autoUpdate differs from the config repo's.
+#
+# Stages: Build on the AWS executor (resource aws, calls CodeBuild); Prepare, Render, Apply, Verify and Switch on the leader
+# executor (resource leader, Infra/executor/agent.yaml). Verify sends its test requests through Traefik (the executor's
+# NetworkPolicy allows it); Switch is the only stage that changes the public address. A failed stage stops the run, so
+# Switch never follows a failed Verify.
+#
+# Each job is `Infra/gocd/job.sh` steps: setup, the stage, then notify with run_if any. The Build job fetches the input
+# once; the later stages get it (and the images) from Build's `work/` artifact, so one run uses one input and one slot.
+#
+# Secrets are not in this file. PIPELINE_NOTIFY_TOKEN and the AWS key are the agents' own environment (compose.yaml for the
+# AWS agent, the Secret `gocd-agent` for the leader Pod): GoCD cannot attach a secure variable to a config-repo pipeline.
+# The tools print neither, and job.sh never prints the environment.
+format_version: 10
+pipelines:
+  student-deploy:
+    group: wcp
+    label_template: "${COUNT}"
+    lock_behavior: none
+    materials:
+      platform:
+        git: https://github.com/woowangthon/WOOWANGTHON_TEAM_18.git
+        branch: main
+        shallow_clone: true
+    environment_variables:
+      # Set by the schedule call. Declared so the call can override it; empty fails fast in job.sh.
+      DEPLOY_ID: ""
+      PLATFORM_API_URL: https://api.stairnoworks.com
+      BASE_DOMAIN: stairnoworks.com
+      PLATFORM_REPO: woowangthon/WOOWANGTHON_TEAM_18
+      CODEBUILD_PROJECT: student-apps
+      GHCR_TOKEN_SECRET_ID: wcp/codebuild/GHCR_TOKEN
+      # The bot's GitHub account (docs/design/platform-hosting.md).
+      GHCR_USER: wanggane-bot
+      IMAGE_REPO: ghcr.io/wanggane-bot/student-apps
+    stages:
+      - build:
+          approval:
+            type: manual
+          clean_workspace: true
+          jobs:
+            build:
+              timeout: 30
+              resources:
+                - aws
+              artifacts:
+                - build:
+                    source: work
+                    destination: ""
+              tasks:
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, clean, build]
+                    run_if: passed
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, setup]
+                    run_if: passed
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, fetch-input]
+                    run_if: passed
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, build]
+                    run_if: passed
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, notify, build]
+                    run_if: any
+      - prepare:
+          clean_workspace: true
+          jobs:
+            prepare:
+              timeout: 10
+              resources:
+                - leader
+              artifacts:
+                - build:
+                    source: out
+                    destination: ""
+              tasks:
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, clean, prepare]
+                    run_if: passed
+                - fetch:
+                    stage: build
+                    job: build
+                    source: work
+                    destination: .
+                    run_if: passed
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, setup]
+                    run_if: passed
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, prepare]
+                    run_if: passed
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, notify, prepare]
+                    run_if: any
+      - render:
+          clean_workspace: true
+          jobs:
+            render:
+              timeout: 10
+              resources:
+                - leader
+              artifacts:
+                - build:
+                    source: out
+                    destination: ""
+              tasks:
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, clean, render]
+                    run_if: passed
+                - fetch:
+                    stage: build
+                    job: build
+                    source: work
+                    destination: .
+                    run_if: passed
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, setup]
+                    run_if: passed
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, render]
+                    run_if: passed
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, notify, render]
+                    run_if: any
+      - apply:
+          clean_workspace: true
+          jobs:
+            apply:
+              timeout: 20
+              resources:
+                - leader
+              artifacts:
+                - build:
+                    source: out
+                    destination: ""
+              tasks:
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, clean, apply]
+                    run_if: passed
+                - fetch:
+                    stage: build
+                    job: build
+                    source: work
+                    destination: .
+                    run_if: passed
+                - fetch:
+                    stage: render
+                    job: render
+                    source: out
+                    destination: .
+                    run_if: passed
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, setup]
+                    run_if: passed
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, apply]
+                    run_if: passed
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, notify, apply]
+                    run_if: any
+      - verify:
+          clean_workspace: true
+          jobs:
+            verify:
+              timeout: 10
+              resources:
+                - leader
+              artifacts:
+                - build:
+                    source: out
+                    destination: ""
+              tasks:
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, clean, verify]
+                    run_if: passed
+                - fetch:
+                    stage: build
+                    job: build
+                    source: work
+                    destination: .
+                    run_if: passed
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, setup]
+                    run_if: passed
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, verify]
+                    run_if: passed
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, notify, verify]
+                    run_if: any
+      - switch:
+          clean_workspace: true
+          jobs:
+            switch:
+              timeout: 10
+              resources:
+                - leader
+              artifacts:
+                - build:
+                    source: out
+                    destination: ""
+              tasks:
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, clean, switch]
+                    run_if: passed
+                - fetch:
+                    stage: build
+                    job: build
+                    source: work
+                    destination: .
+                    run_if: passed
+                - fetch:
+                    stage: render
+                    job: render
+                    source: out
+                    destination: .
+                    run_if: passed
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, setup]
+                    run_if: passed
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, switch]
+                    run_if: passed
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, notify, switch]
+                    run_if: any

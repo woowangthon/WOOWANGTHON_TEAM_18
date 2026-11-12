@@ -35,7 +35,7 @@ export class KubeError extends Error {
 // 호출 하나의 상한. dry-run · 적용은 보통 1초 안이다. 사설망이 반쯤 끊겨 멈추면 GoCD job 제한(30분)까지 가지 않게 끊는다.
 export const CALL_TIMEOUT_MS = 10_000
 
-const LOOPBACK = ['localhost', '127.0.0.1', '[::1]']
+export const LOOPBACK = ['localhost', '127.0.0.1', '[::1]']
 
 /**
  * 실행기 env에서 접속 정보를 읽는다: KUBE_API_URL(`https://<리더>:6443`), KUBE_TOKEN_FILE(실행기 ServiceAccount 토큰 파일),

@@ -4,7 +4,7 @@ import type { DeployInput } from './deploy-input.js'
 import { deployInput } from './fixtures.js'
 import { KubeError } from './kube.js'
 import { fakeKube, list, ok, refused, type Route } from './kube-fake.js'
-import { runSwitch } from './switch.js'
+import { runSwitch, trialRefusal } from './switch.js'
 
 const NS = '/namespaces/proj-my-app'
 // 진짜 helm으로 렌더한 open manifest(슬롯 B, open-fe · open-be, BE는 stripPrefix라 Middleware be-strip).
@@ -123,5 +123,21 @@ describe('runSwitch', () => {
     const { call } = cluster({ [openList]: new KubeError('K8S_TIMEOUT', 'GET ingresses did not answer in 10s') })
     const report = await runSwitch(input(), 'b', OPEN, call)
     expect(report.failure).toEqual({ kind: 'platform', code: 'K8S_TIMEOUT', service: null, message: 'GET ingresses did not answer in 10s' })
+  })
+})
+
+describe('trialRefusal', () => {
+  it('lets a run without TRIAL_ID through', () => {
+    expect(trialRefusal({}, 'b')).toBeNull()
+  })
+
+  it.each([['tr_0123456789ab'], ['']])('refuses a trial run (TRIAL_ID=%j) as a platform problem and changes nothing', (trialId) => {
+    expect(trialRefusal({ TRIAL_ID: trialId }, 'b')).toEqual({
+      ok: false,
+      slot: 'b',
+      applied: [],
+      deleted: [],
+      failure: { kind: 'platform', code: 'TRIAL_SWITCH_REFUSED', service: null, message: 'switch was called in a trial run (TRIAL_ID is set); nothing was changed' },
+    })
   })
 })

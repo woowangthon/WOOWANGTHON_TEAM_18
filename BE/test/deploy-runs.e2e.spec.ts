@@ -6,6 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } fr
 import { AgentClient } from '../src/deploys/agent.client.js'
 import { DeployConditionService } from '../src/deploys/deploy-condition.service.js'
 import { DeployPreparer } from '../src/deploys/deploy-preparer.js'
+import { ClusterError } from '../src/k8s/cluster-error.js'
+import { ClusterReader } from '../src/k8s/cluster-reader.js'
+import { DeploymentScaler } from '../src/k8s/deployment-scaler.js'
 import { combineDigests, serviceDigest } from '../src/deploys/secrets-input.js'
 import { errorBody, JWKS_URL, keySet, token } from './auth-helpers.js'
 import { startApp } from './start-app.js'
@@ -35,6 +38,10 @@ let aiAnswer: () => Response
 let restOverride: ((table: string, method: string) => Response | undefined) | undefined
 // 가짜 준비 확인(#82). 기본은 준비됨이고 슬롯은 a다.
 let prepare: (deployId: string) => Promise<unknown>
+// 가짜 클러스터(W7): 공간의 Deployment 이름(또는 읽기 오류)과, 0으로 내린 것 · 내리지 못하는 것.
+let spaceDeployments: string[] | Error
+let scaled: { slug: string; name: string }[]
+let scaleFails: Record<string, Error>
 let app: INestApplication<App>
 let logError: MockInstance<Logger['error']>
 
@@ -168,10 +175,27 @@ beforeEach(async () => {
   aiAnswer = () => Response.json({ ticketId: 't_x' }, { status: 202 })
   prepare = (id) => Promise.resolve(preparedFor(id))
   restOverride = undefined
+  spaceDeployments = []
+  scaled = []
+  scaleFails = {}
   fetchMock.mockClear()
   vi.stubGlobal('fetch', fetchMock)
   logError = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
-  app = await startApp([], (b) => b.overrideProvider(DeployPreparer).useValue({ prepareIfReady: (id: string) => prepare(id) }))
+  app = await startApp([], (b) =>
+    b
+      .overrideProvider(DeployPreparer)
+      .useValue({ prepareIfReady: (id: string) => prepare(id) })
+      .overrideProvider(ClusterReader)
+      .useValue({ deployments: () => (spaceDeployments instanceof Error ? Promise.reject(spaceDeployments) : Promise.resolve(spaceDeployments.map((name) => ({ name })))) })
+      .overrideProvider(DeploymentScaler)
+      .useValue({
+        scaleToZero: (slug: string, name: string) => {
+          if (scaleFails[name]) return Promise.reject(scaleFails[name])
+          scaled.push({ slug, name })
+          return Promise.resolve()
+        },
+      }),
+  )
 })
 
 afterEach(async () => {
@@ -281,6 +305,19 @@ describe('POST /api/deploys/:id/start', () => {
     run(first).updated_at = new Date(Date.now() - 59 * 60_000).toISOString()
     expect((await start(seedDeploy())).body).toEqual(errorBody('DEPLOY_IN_PROGRESS'))
     expect(run(first).status).toBe('running')
+  })
+
+  it('does not free the project while its fixing run has a live gateway token (the agent may be waiting on a trial)', async () => {
+    const first = seedDeploy()
+    await start(first)
+    Object.assign(run(first), { status: 'fixing', ticket_id: 't_trial', gateway_expires_at: new Date(Date.now() + 10 * 60_000).toISOString() })
+    run(first).updated_at = new Date(Date.now() - 61 * 60_000).toISOString()
+    expect((await start(seedDeploy())).body).toEqual(errorBody('DEPLOY_IN_PROGRESS'))
+    expect(run(first).status).toBe('fixing')
+    // 토큰이 끝나면 평소대로 판정한다.
+    run(first).gateway_expires_at = new Date(Date.now() - 1000).toISOString()
+    expect((await start(seedDeploy())).status).toBe(202)
+    expect(run(first)).toMatchObject({ status: 'failed', failure: { code: 'TIMED_OUT' } })
   })
 
   it('logs a failed clean-up instead of swallowing it when GoCD refuses and the run cannot be deleted', async () => {
@@ -614,17 +651,48 @@ describe('POST /api/pipeline/notify', () => {
     expect(run(id).stage).toBe('prepare')
   })
 
-  it('completes after switch: caches the new image, sets the live slot, and shows the address', async () => {
+  it('caches the newly built image as soon as the build passed, and only the services that were built', async () => {
+    const id = seedDeploy()
+    await start(id)
+    expect(db.build_cache ?? []).toEqual([])
+    await notify({ deployId: id, stage: 'build', result: 'passed', images: { fe: IMAGE } })
+    // reuse한 be는 이미 캐시에 있으므로 새로 빌드한 fe만 적는다.
+    expect(db.build_cache).toEqual([{ slug: 'my-app', service: 'fe', build_input_hash: FE_HASH, image: IMAGE }])
+
+    // 같은 알림을 다시 받아도 캐시는 그대로다.
+    await notify({ deployId: id, stage: 'build', result: 'passed', images: { fe: IMAGE } })
+    expect(db.build_cache).toHaveLength(1)
+  })
+
+  it('keeps the cached image when a later stage fails, so the next deploy can skip the build', async () => {
+    const id = seedDeploy()
+    await start(id)
+    await notify({ deployId: id, stage: 'build', result: 'passed', images: { fe: IMAGE } })
+    for (const stage of ['prepare', 'render', 'apply']) await notify({ deployId: id, stage, result: 'passed' })
+    await notify({ deployId: id, stage: 'verify', result: 'failed', failure: { code: 'TRAEFIK_UNREACHABLE', service: 'be', message: 'x' } })
+    expect(run(id)).toMatchObject({ status: 'failed', stage: 'verify' })
+    expect(db.build_cache).toEqual([{ slug: 'my-app', service: 'fe', build_input_hash: FE_HASH, image: IMAGE }])
+  })
+
+  it('does not cache anything for a build notice whose images do not match', async () => {
+    const id = seedDeploy()
+    await start(id)
+    const res = await notify({ deployId: id, stage: 'build', result: 'passed', images: { be: IMAGE } })
+    expect(res.status).toBe(400)
+    expect(db.build_cache ?? []).toEqual([])
+  })
+
+  it('completes after switch: sets the live slot and shows the address (the cache was written at build)', async () => {
     const id = seedDeploy()
     await start(id)
     await notify({ deployId: id, stage: 'build', result: 'passed', images: { fe: IMAGE } })
     for (const stage of ['prepare', 'render', 'apply', 'verify']) await notify({ deployId: id, stage, result: 'passed' })
     expect(db.projects ?? []).toEqual([])
+    const cached = structuredClone(db.build_cache)
     expect((await notify({ deployId: id, stage: 'switch', result: 'passed' })).body).toEqual({ ok: true, applied: true })
 
     expect(db.projects).toEqual([expect.objectContaining({ slug: 'my-app', live_slot: 'a' })])
-    // reuse한 be는 이미 캐시에 있으므로 새로 빌드한 fe만 적는다.
-    expect(db.build_cache).toEqual([{ slug: 'my-app', service: 'fe', build_input_hash: FE_HASH, image: IMAGE }])
+    expect(db.build_cache).toEqual(cached)
     expect(run(id)).toMatchObject({ status: 'succeeded', stage: null })
     expect((await status(id)).body).toMatchObject({ status: 'succeeded', url: 'https://my-app.stairnoworks.com' })
 
@@ -632,6 +700,79 @@ describe('POST /api/pipeline/notify', () => {
     const resend = await notify({ deployId: id, stage: 'switch', result: 'passed' })
     expect(resend.body).toEqual({ ok: true, applied: false })
     expect(db.build_cache).toHaveLength(1)
+  })
+
+  describe('W7: the old live slot is scaled down after the address switched', () => {
+    // 프로젝트는 슬롯 a가 live이고, 이번 배포는 b에 했다.
+    const deployToB = async () => {
+      ;(db.projects ??= []).push({ slug: 'my-app', live_slot: 'a' })
+      prepare = (id) => Promise.resolve(preparedFor(id, 'b'))
+      const id = seedDeploy()
+      await start(id)
+      await notify({ deployId: id, stage: 'build', result: 'passed', images: { fe: IMAGE } })
+      for (const stage of ['prepare', 'render', 'apply', 'verify']) await notify({ deployId: id, stage, result: 'passed' })
+      return id
+    }
+    const names = () => scaled.map((s) => s.name).sort()
+    // 이름이 `-a`로 끝나는 것만 슬롯 a다(`banana`는 a로 끝나지만 슬롯이 아니다).
+    const both = ['fe-a', 'be-a', 'fe-b', 'be-b', 'banana', 'a']
+
+    it('scales only the Deployments of the old slot to 0, after the live slot changed', async () => {
+      spaceDeployments = both
+      const id = await deployToB()
+      expect(scaled).toEqual([])
+      await notify({ deployId: id, stage: 'switch', result: 'passed' })
+      expect(names()).toEqual(['be-a', 'fe-a'])
+      expect(scaled.every((s) => s.slug === 'my-app')).toBe(true)
+      expect(db.projects).toEqual([expect.objectContaining({ slug: 'my-app', live_slot: 'b' })])
+      expect(run(id)).toMatchObject({ status: 'succeeded', stage: null })
+    })
+
+    it('scales down the other slot even when the live slot was already switched by an earlier attempt', async () => {
+      spaceDeployments = both
+      const id = await deployToB()
+      db.projects[0].live_slot = 'b'
+      await notify({ deployId: id, stage: 'switch', result: 'passed' })
+      expect(names()).toEqual(['be-a', 'fe-a'])
+    })
+
+    it('does nothing to the cluster on the first deploy of a project', async () => {
+      spaceDeployments = both
+      const id = seedDeploy()
+      await start(id)
+      await notify({ deployId: id, stage: 'build', result: 'passed', images: { fe: IMAGE } })
+      for (const stage of ['prepare', 'render', 'apply', 'verify', 'switch']) await notify({ deployId: id, stage, result: 'passed' })
+      expect(scaled).toEqual([])
+      expect(run(id)).toMatchObject({ status: 'succeeded' })
+    })
+
+    it('still succeeds when some Deployments cannot be scaled down, and logs which', async () => {
+      spaceDeployments = both
+      scaleFails['be-a'] = new ClusterError('forbidden', 403)
+      const id = await deployToB()
+      expect((await notify({ deployId: id, stage: 'switch', result: 'passed' })).body).toEqual({ ok: true, applied: true })
+      expect(names()).toEqual(['fe-a'])
+      expect(run(id)).toMatchObject({ status: 'succeeded', stage: null })
+      expect(db.projects).toEqual([expect.objectContaining({ live_slot: 'b' })])
+      expect(logError).toHaveBeenCalledWith(expect.stringContaining('W7: could not scale my-app be-a to 0'))
+    })
+
+    it('still succeeds when the Deployments cannot be listed', async () => {
+      spaceDeployments = new ClusterError('unreachable')
+      const id = await deployToB()
+      expect((await notify({ deployId: id, stage: 'switch', result: 'passed' })).body).toEqual({ ok: true, applied: true })
+      expect(scaled).toEqual([])
+      expect(run(id)).toMatchObject({ status: 'succeeded' })
+      expect(logError).toHaveBeenCalledWith(expect.stringContaining('W7: could not list deployments of my-app'))
+    })
+
+    it('does not scale again when the same notice is sent twice', async () => {
+      spaceDeployments = both
+      const id = await deployToB()
+      await notify({ deployId: id, stage: 'switch', result: 'passed' })
+      await notify({ deployId: id, stage: 'switch', result: 'passed' })
+      expect(names()).toEqual(['be-a', 'fe-a'])
+    })
   })
 
   it('the next deploy of the project can start after it completed', async () => {
@@ -676,6 +817,25 @@ describe('POST /api/pipeline/notify', () => {
       expect(callsTo(AI_URL)).toHaveLength(0)
       // 진행 중이 아니므로 같은 프로젝트의 다음 배포를 받는다.
       expect((await start(seedDeploy())).status).toBe(202)
+    })
+
+    it.each([
+      ['UNEXPECTED_REFUSAL', 'prepare', /예상하지 못한 이유/],
+      ['TRAEFIK_UNREACHABLE', 'verify', /Traefik/],
+      ['SWITCH_REFUSED', 'switch', /거절/],
+      ['OPEN_MANIFEST_MISSING', 'switch', /필요한 파일이 없어/],
+      ['STAGE_NO_REPORT', 'render', /결과 보고를 읽지 못해/],
+      ['TRIAL_SWITCH_REFUSED', 'switch', /시험 실행/],
+      ['TRIAL_STILL_RUNNING', 'apply', /이전 시험 실행이 아직/],
+    ])('shows the student a fixed sentence for the platform code %s, not the generic one', async (code, stage, sentence) => {
+      const id = await reach(stage)
+      await notify({ deployId: id, stage, result: 'failed', failure: failure({ code }) })
+      const { failure: shown } = (await status(id)).body as StatusBody
+      expect(shown).toMatchObject({ code, stage })
+      expect(shown?.message).toMatch(sentence)
+      expect(shown?.message).not.toContain('플랫폼 문제로 배포하지 못했습니다')
+      // 로그 · 원본 · 비밀값은 문구에 없다.
+      expect(shown?.message).not.toContain('hunter2pass')
     })
 
     it('a switch failure ends as failed (the ticket contract has no such stage) and does not call the AI server', async () => {

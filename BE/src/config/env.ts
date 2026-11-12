@@ -16,6 +16,8 @@ export interface Env {
   GOCD_TOKEN?: string
   /** 배포 파이프라인 이름 */
   GOCD_PIPELINE?: string
+  /** AI 에이전트의 시험 전용 파이프라인 이름(api.md "파이프라인 ↔ 플랫폼 서버" 4번, 보통 student-trial). 비워 두면 시험 도구는 PIPELINE_UNAVAILABLE이다. */
+  GOCD_TRIAL_PIPELINE?: string
   /** 파이프라인이 알림 · 배포 입력 읽기에 쓰는 기계용 비밀 토큰. 비워 두면 그 라우트는 모두 401이다. */
   PIPELINE_NOTIFY_TOKEN?: string
   /** AI 서버 origin(문제 티켓을 보낸다). 비워 두면 문제 티켓을 보내지 못해 AGENT_UNAVAILABLE로 마감한다. */
@@ -44,7 +46,8 @@ export function validateEnv(raw: Record<string, string | undefined>): Env {
     SECRET_HASH_KEY: parseSecretHashKey(raw.SECRET_HASH_KEY),
     GOCD_URL: parseOptionalOrigin(raw.GOCD_URL, 'GOCD_URL'),
     GOCD_TOKEN: parseOptionalSecret(raw.GOCD_TOKEN, 'GOCD_TOKEN'),
-    GOCD_PIPELINE: parseOptionalPipeline(raw.GOCD_PIPELINE),
+    GOCD_PIPELINE: parseOptionalPipeline(raw.GOCD_PIPELINE, 'GOCD_PIPELINE'),
+    GOCD_TRIAL_PIPELINE: parseOptionalPipeline(raw.GOCD_TRIAL_PIPELINE, 'GOCD_TRIAL_PIPELINE'),
     PIPELINE_NOTIFY_TOKEN: parseOptionalSecret(raw.PIPELINE_NOTIFY_TOKEN, 'PIPELINE_NOTIFY_TOKEN', 32),
     AI_SERVER_URL: parseOptionalOrigin(raw.AI_SERVER_URL, 'AI_SERVER_URL'),
     AGENT_API_TOKEN: parseOptionalSecret(raw.AGENT_API_TOKEN, 'AGENT_API_TOKEN'),
@@ -134,9 +137,9 @@ function parseOptionalSecret(value: string | undefined, name: string, minLength 
   return value
 }
 
-function parseOptionalPipeline(value: string | undefined): string | undefined {
+function parseOptionalPipeline(value: string | undefined, name: string): string | undefined {
   if (value === undefined || value === '') return undefined
-  if (!/^[A-Za-z0-9_.-]+$/.test(value)) throw new Error(`GOCD_PIPELINE "${value}" is not a pipeline name`)
+  if (!/^[A-Za-z0-9_.-]+$/.test(value)) throw new Error(`${name} "${value}" is not a pipeline name`)
   return value
 }
 

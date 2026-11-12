@@ -52,7 +52,7 @@ export interface DeployInput {
   spec: Spec
 }
 
-const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
+export const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 
 const HASH = /^sha256:[0-9a-f]{64}$/
 // BE의 저장 검사와 같은 모양(docs/design/deploy-handoff.md 검증 규칙): slug 1~40자, 서비스 이름 1~30자. 리소스 이름 `<name>-a`가 DNS 이름 한도 안이다.
