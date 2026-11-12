@@ -2,11 +2,12 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { setTimeout } from 'node:timers/promises'
 import { awsCli } from '../aws.js'
-import { type BuildConfig, runBuilds } from '../build.js'
+import { type BuildConfig, parseBuildOverrides, runBuilds } from '../build.js'
 import { required } from '../config.js'
 import { parseDeployInput } from '../deploy-input.js'
 
-// GoCD Build 스테이지의 task: `node dist/cli/build.js <배포 입력 JSON> <결과 JSON>`.
+// GoCD Build 스테이지의 task: `node dist/cli/build.js <배포 입력 JSON> <결과 JSON> [build-overrides.json]`.
+// 셋째 인자는 시험 빌드(student-trial의 run_build)에서만 준다: 입력 task가 쓴 `build-overrides.json`(null 또는 override). student-deploy는 주지 않는다.
 // 결과 파일(BuildReport)은 성공이든 실패든 쓴다. 실패면 코드 1로 끝나 GoCD job이 실패하고 run_if: failed task가 플랫폼 서버에 알린다.
 
 export function configFromEnv(env: NodeJS.ProcessEnv, buildspec: string): BuildConfig {
@@ -21,12 +22,13 @@ export function configFromEnv(env: NodeJS.ProcessEnv, buildspec: string): BuildC
   }
 }
 
-async function main([inputPath, outPath]: string[]) {
-  if (!inputPath || !outPath) throw new Error('usage: build <deploy-input.json> <build-report.json>')
+async function main([inputPath, outPath, overridesPath]: string[]) {
+  if (!inputPath || !outPath) throw new Error('usage: build <deploy-input.json> <build-report.json> [build-overrides.json]')
   const buildspec = readFileSync(new URL('../../../build/buildspec.yml', import.meta.url), 'utf8')
   const config = configFromEnv(process.env, buildspec)
   const input = parseDeployInput(readFileSync(inputPath, 'utf8'))
-  const report = await runBuilds(input, config, awsCli, { sleep: (ms) => setTimeout(ms), now: Date.now })
+  const overrides = overridesPath === undefined ? null : parseBuildOverrides(readFileSync(overridesPath, 'utf8'))
+  const report = await runBuilds(input, config, awsCli, { sleep: (ms) => setTimeout(ms), now: Date.now }, overrides)
   writeFileSync(outPath, `${JSON.stringify(report, null, 2)}\n`)
   for (const svc of input.spec.services) {
     const failure = report.failures.find((f) => f.service === svc.name)
