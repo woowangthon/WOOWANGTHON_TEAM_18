@@ -170,10 +170,15 @@ describe('GatewayTrials', () => {
     // 마감 300ms, 실행 요청 250ms: 남은 50ms만 기다려 약 300ms에 끝난다. 처음 잰 300ms를 다시 기다리면 약 550ms다.
     runDelayMs = 250
     const started = Date.now()
-    expect(await trials.run(TICKET, 'run_render', INPUT, soon(300))).toMatchObject({ failure: { code: 'TRIAL_TIMEOUT' } })
+    const pending = trials.run(TICKET, 'run_render', INPUT, soon(300))
+    // 실행 요청이 끝난 뒤 job이 입력을 읽는다. 남은 시간 뒤 대기 초과로 그 인스턴스를 취소한다.
+    await new Promise((r) => setTimeout(r, 260))
+    await trials.input(scheduled[0].trialId, '8')
+    expect(await pending).toMatchObject({ failure: { code: 'TRIAL_TIMEOUT' } })
     const elapsed = Date.now() - started
     expect(elapsed).toBeGreaterThanOrEqual(280)
     expect(elapsed).toBeLessThan(450)
+    expect(cancelled).toEqual([8])
   })
 
   it('cancels the waiting trial when the ticket ends', async () => {
