@@ -48,7 +48,7 @@ SRS §2 *시스템 구성*은 이 문서를 가리키는 포인터다. 구조 �
 | 메시지 큐 | Apache Kafka, EC2 단일 브로커 (MSK 아님) | 후순위 (EC2 용량이 남으면, 2026-11-09) | **배포 이벤트 기록** — `deploy.requested` · `review.completed` · `deploy.approved` | 아래 "Kafka 범위" 밖의 모든 것 |
 | DB · 인증 | Supabase (PostgreSQL · Auth) | 확정 ([ADR-007](adr/007-login-email-password-github-link.md)) | 이메일 · 비밀번호 로그인, 계정에 연동한 GitHub 정보(레포 소유 확인용), 배포 입력·배포 상태·문제 티켓 저장 (**상태의 기준**) | |
 | 오브젝트 스토리지 | AWS S3 | 확정 (ADR-001) | User Page · Admin Page 정적 파일 | 학생 데이터 보관 (학생 DB는 학생 것, §4.1) |
-| 학생 볼륨 | 없음 (2026-11-07) | 확정 | 학생 DB가 학생 것이라 클러스터에 학생 데이터를 두지 않는다. 저장 클래스는 k3s 기본 local-path(리더의 운영 도구만) | 학생 데이터 |
+| 학생 볼륨 | 없음 (2026-11-07) | 확정 ([ADR-015](adr/015-student-data-in-student-db.md)) | 학생 DB가 학생 것이라 클러스터에 학생 데이터를 두지 않는다. 저장 클래스는 k3s 기본 local-path(리더의 운영 도구만) | 학생 데이터 |
 | 봇 GitHub 계정 | GitHub | 확정 (ADR-002) | AI 에이전트가 대상 슬롯에서 확인한 수정을 학생 레포에 fork → PR로 올린다 | 학생 레포 직접 쓰기 |
 | k3s 클러스터 | k3s (학교 PC 3대) | 확정 ([ADR-005](adr/005-k3s-cluster-on-school-pcs.md)) | 리더 1 + 워커 2. 학생 서비스는 워커에서 실행하고 리더는 제어와 운영 도구(아웃바운드 터널 · 레지스트리 캐시 · 지표 수집)만 맡는다 | 이미지 빌드, 플랫폼 서버 실행 |
 | 사설망 (원격 접속 · 서버 연결) | Tailscale | 확정 ([ADR-004](adr/004-server-cluster-link-tailscale.md) · [ADR-009](adr/009-deploy-runs-on-leader-gocd-agent.md)) | 플랫폼 서버가 이 망으로 리더의 쿠버네티스 API를 불러 학생 비밀값을 Secret으로 넣고, 조치를 지시하고, 상태 · 지표를 읽는다. 리더의 배포 실행기가 이 망으로 EC2의 GoCD 서버에 붙는다. 운영자 기기의 원격 접속도 이 망으로 한다 | 학교로 들어오는 공개 포트 열기 |
