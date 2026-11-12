@@ -14,7 +14,7 @@ export function Meter({ value, max = 100, className = '', ...rest }: MeterProps)
       aria-valuemin={0}
       aria-valuemax={max}
       aria-valuenow={value}
-      className={`h-2 overflow-hidden rounded-sm border border-line bg-surface ${className}`}
+      className={`h-2 overflow-hidden rounded-sm border border-line bg-bg ${className}`}
       {...rest}
     >
       <div className="h-full bg-accent-ui" style={{ width: `${pct}%` }} />
