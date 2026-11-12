@@ -638,17 +638,48 @@ describe('POST /api/pipeline/notify', () => {
     expect(run(id).stage).toBe('prepare')
   })
 
-  it('completes after switch: caches the new image, sets the live slot, and shows the address', async () => {
+  it('caches the newly built image as soon as the build passed, and only the services that were built', async () => {
+    const id = seedDeploy()
+    await start(id)
+    expect(db.build_cache ?? []).toEqual([])
+    await notify({ deployId: id, stage: 'build', result: 'passed', images: { fe: IMAGE } })
+    // reuse한 be는 이미 캐시에 있으므로 새로 빌드한 fe만 적는다.
+    expect(db.build_cache).toEqual([{ slug: 'my-app', service: 'fe', build_input_hash: FE_HASH, image: IMAGE }])
+
+    // 같은 알림을 다시 받아도 캐시는 그대로다.
+    await notify({ deployId: id, stage: 'build', result: 'passed', images: { fe: IMAGE } })
+    expect(db.build_cache).toHaveLength(1)
+  })
+
+  it('keeps the cached image when a later stage fails, so the next deploy can skip the build', async () => {
+    const id = seedDeploy()
+    await start(id)
+    await notify({ deployId: id, stage: 'build', result: 'passed', images: { fe: IMAGE } })
+    for (const stage of ['prepare', 'render', 'apply']) await notify({ deployId: id, stage, result: 'passed' })
+    await notify({ deployId: id, stage: 'verify', result: 'failed', failure: { code: 'TRAEFIK_UNREACHABLE', service: 'be', message: 'x' } })
+    expect(run(id)).toMatchObject({ status: 'failed', stage: 'verify' })
+    expect(db.build_cache).toEqual([{ slug: 'my-app', service: 'fe', build_input_hash: FE_HASH, image: IMAGE }])
+  })
+
+  it('does not cache anything for a build notice whose images do not match', async () => {
+    const id = seedDeploy()
+    await start(id)
+    const res = await notify({ deployId: id, stage: 'build', result: 'passed', images: { be: IMAGE } })
+    expect(res.status).toBe(400)
+    expect(db.build_cache ?? []).toEqual([])
+  })
+
+  it('completes after switch: sets the live slot and shows the address (the cache was written at build)', async () => {
     const id = seedDeploy()
     await start(id)
     await notify({ deployId: id, stage: 'build', result: 'passed', images: { fe: IMAGE } })
     for (const stage of ['prepare', 'render', 'apply', 'verify']) await notify({ deployId: id, stage, result: 'passed' })
     expect(db.projects ?? []).toEqual([])
+    const cached = structuredClone(db.build_cache)
     expect((await notify({ deployId: id, stage: 'switch', result: 'passed' })).body).toEqual({ ok: true, applied: true })
 
     expect(db.projects).toEqual([expect.objectContaining({ slug: 'my-app', live_slot: 'a' })])
-    // reuse한 be는 이미 캐시에 있으므로 새로 빌드한 fe만 적는다.
-    expect(db.build_cache).toEqual([{ slug: 'my-app', service: 'fe', build_input_hash: FE_HASH, image: IMAGE }])
+    expect(db.build_cache).toEqual(cached)
     expect(run(id)).toMatchObject({ status: 'succeeded', stage: null })
     expect((await status(id)).body).toMatchObject({ status: 'succeeded', url: 'https://my-app.stairnoworks.com' })
 
