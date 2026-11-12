@@ -44,6 +44,7 @@ interface Trial {
   finish: (outcome: TrialOutcome) => void
 }
 
+const closedFailure = (): TrialOutcome => ({ failure: { stage: null, code: 'TICKET_CLOSED', message: 'the ticket ended before the trial finished' } })
 const notFound = () => new NotFoundException({ code: 'TRIAL_NOT_FOUND', message: 'No such open trial' })
 const badResult = (message: string, fields: Issue[]) => new BadRequestException({ code: 'BAD_REQUEST', message, fields })
 
@@ -53,19 +54,31 @@ export class GatewayTrials implements OnApplicationBootstrap {
   private readonly trials = new Map<string, Trial>()
   /** 티켓마다 마지막으로 성공한 run_deploy의 입력(run_verify가 쓴다). */
   private readonly lastDeploy = new Map<string, Record<string, unknown>>()
+  /** 끝난 티켓. 시험을 준비하던 호출이 티켓이 끝난 뒤 시험을 등록하지 못하게 한다(티켓 수만큼만 쌓인다). */
+  private readonly closed = new Set<string>()
+  /** BE 시작 때의 남은 시험 취소. 끝나기 전(성공 · 실패 모두)에는 새 시험을 시작하지 않는다. true면 확인됨. */
+  private leftovers: Promise<boolean> = Promise.resolve(true)
 
   constructor(
     private readonly pipeline: PipelineClient,
     private readonly store: DeploysStore,
   ) {}
 
-  /** BE가 시작할 때 남은 시험 인스턴스를 취소한다. 시작을 막지 않는다. */
+  /** BE가 시작할 때 남은 시험 인스턴스를 취소한다. 서버 시작은 막지 않고, 새 시험만 그 뒤로 미룬다. */
   onApplicationBootstrap(): void {
-    void this.pipeline.cancelAllTrials().then(
+    this.leftovers = this.cancelLeftovers()
+  }
+
+  private cancelLeftovers(): Promise<boolean> {
+    return this.pipeline.cancelAllTrials().then(
       (n) => {
         if (n > 0) this.logger.log(`cancelled ${n} leftover trial run(s)`)
+        return true
       },
-      (err: unknown) => this.logger.error(err),
+      (err: unknown) => {
+        this.logger.error(err)
+        return false
+      },
     )
   }
 
@@ -85,15 +98,20 @@ export class GatewayTrials implements OnApplicationBootstrap {
     input: Record<string, unknown>,
     waitMs: number,
   ): Promise<TrialOutcome> {
-    if (!(await this.previousEnded(ticket.slug))) {
+    // 시작 때 취소를 확인하지 못했으면 한 번 더 해 본다.
+    if (!(await this.leftovers)) this.leftovers = this.cancelLeftovers()
+    if (!(await this.leftovers) || !(await this.previousEnded(ticket.slug))) {
       return { failure: { stage: null, code: 'TRIAL_STILL_RUNNING', message: 'an earlier trial of this project could not be confirmed stopped' } }
     }
+    if (this.closed.has(ticket.ticketId)) return closedFailure()
     const id = `tr_${randomBytes(6).toString('hex')}`
     let finish!: (o: TrialOutcome) => void
     const done = new Promise<TrialOutcome>((resolve) => {
       finish = resolve
     })
     const trial: Trial = { id, deployId: ticket.deployId, ticketId: ticket.ticketId, slug: ticket.slug, slot: ticket.targetSlot, tool, input, counter: null, state: 'waiting', finish }
+    // 위의 await 사이에 티켓이 끝났을 수 있다. 등록과 확인 사이에는 await가 없다.
+    if (this.closed.has(ticket.ticketId)) return closedFailure()
     this.trials.set(id, trial)
     try {
       await this.pipeline.runTrial(ticket.deployId, id, STAGES[tool])
@@ -115,11 +133,12 @@ export class GatewayTrials implements OnApplicationBootstrap {
 
   /** 티켓이 끝났다(결과 제출 · 종료). 기다리는 시험이 있으면 취소한다. */
   async endTicket(ticketId: string): Promise<void> {
+    this.closed.add(ticketId)
     this.lastDeploy.delete(ticketId)
     for (const t of [...this.trials.values()]) {
       if (t.ticketId === ticketId && t.state === 'waiting') {
         await this.cancel(t)
-        t.finish({ failure: { stage: null, code: 'TICKET_CLOSED', message: 'the ticket ended while the trial was running' } })
+        t.finish(closedFailure())
       }
     }
   }
@@ -128,31 +147,44 @@ export class GatewayTrials implements OnApplicationBootstrap {
   async input(trialId: string, counterParam: unknown) {
     const trial = TRIAL_ID.test(trialId) ? this.trials.get(trialId) : undefined
     if (!trial || trial.state !== 'waiting') throw notFound()
-    const run = await this.store.findRun(trial.deployId)
-    if (!run || run.status !== 'fixing' || run.ticket_id !== trial.ticketId) throw notFound()
-    if (counterParam !== undefined) {
-      const counter = typeof counterParam === 'string' && /^\d{1,9}$/.test(counterParam) ? Number(counterParam) : NaN
-      if (!Number.isInteger(counter) || counter < 1) throw badResult('counter must be a positive integer', [{ path: 'counter', code: 'INVALID_VALUE' }])
-      if (trial.counter !== null && trial.counter !== counter) throw badResult('another pipeline run already read this trial', [{ path: 'counter', code: 'CONFLICT' }])
-      trial.counter = counter
-    }
+    // 범위 안 job은 ?counter=<GO_PIPELINE_COUNTER>를 꼭 붙인다(취소할 인스턴스를 알아야 한다).
+    if (counterParam === undefined) throw badResult('counter is required', [{ path: 'counter', code: 'REQUIRED' }])
+    const counter = typeof counterParam === 'string' && /^\d{1,9}$/.test(counterParam) ? Number(counterParam) : NaN
+    if (!Number.isInteger(counter) || counter < 1) throw badResult('counter must be a positive integer', [{ path: 'counter', code: 'INVALID_VALUE' }])
+    if (!(await this.isOpen(trial))) throw notFound()
+    if (trial.counter !== null && trial.counter !== counter) throw badResult('another pipeline run already read this trial', [{ path: 'counter', code: 'CONFLICT' }])
+    trial.counter = counter
     return { deployId: trial.deployId, slot: trial.slot, input: trial.input, buildOverrides: null }
   }
 
   /** `POST /api/pipeline/trials/:trialId/result`. 모르는 · 끝난 시험의 결과는 아무것도 바꾸지 않는다(재전송 · 늦은 결과에 안전). */
-  result(trialId: string, body: unknown): { ok: true; applied: boolean } {
+  async result(trialId: string, body: unknown): Promise<{ ok: true; applied: boolean }> {
     const trial = TRIAL_ID.test(trialId) ? this.trials.get(trialId) : undefined
     if (!trial || trial.state !== 'waiting') return { ok: true, applied: false }
     const issues = checkTrialResult(trial.tool, body)
     if (issues.length > 0) throw badResult('Trial result has invalid fields', issues)
+    // 실행 기록이 그 티켓으로 열려 있을 때만 받는다(티켓이 끝났으면 늦은 결과다).
+    if (!(await this.isOpen(trial))) return { ok: true, applied: false }
     trial.state = 'ended'
     trial.finish({ result: (body as { result: Record<string, unknown> }).result })
     return { ok: true, applied: true }
   }
 
+  /** 시험이 아직 기다리고(맵에 같은 객체) 실행 기록이 그 티켓으로 fixing인가. await 뒤에 다시 확인한다. */
+  private async isOpen(trial: Trial): Promise<boolean> {
+    const run = await this.store.findRun(trial.deployId)
+    return Boolean(run && run.status === 'fixing' && run.ticket_id === trial.ticketId) && this.trials.get(trial.id) === trial && trial.state === 'waiting'
+  }
+
   private async cancel(trial: Trial): Promise<void> {
     // 입력을 읽은 job이 없으면 그 인스턴스는 나중에 입력을 읽어도 404라 슬롯을 건드리지 않는다.
-    trial.state = trial.counter === null || (await this.pipeline.cancelTrial(trial.counter)) ? 'ended' : 'stuck'
+    if (trial.counter === null) {
+      trial.state = 'ended'
+      return
+    }
+    // 취소를 부르는 동안 오는 입력 읽기 · 결과는 받지 않는다(waiting이 아니다).
+    trial.state = 'stuck'
+    if (await this.pipeline.cancelTrial(trial.counter)) trial.state = 'ended'
     if (trial.state === 'stuck') this.logger.error(`could not cancel trial ${trial.id}`)
   }
 
@@ -210,6 +242,10 @@ export function checkTrialResult(tool: TrialTool, body: unknown): Issue[] {
   for (const k of Object.keys(r)) if (k !== 'ok' && k !== 'failure' && !(k in shape)) issues.push({ path: `result.${k}`, code: 'UNKNOWN_KEY' })
   if (typeof r.ok !== 'boolean') issues.push({ path: 'result.ok', code: 'INVALID_TYPE' })
   if (!checkFailure(r.failure)) issues.push({ path: 'result.failure', code: 'INVALID_VALUE' })
+  // 통과면 그 도구 스테이지의 마지막에서 failure 없이, 실패면 failure가 있어야 한다.
+  const last = RESULT_STAGES[tool].at(-1)
+  if (r.ok === true && (body.stage !== last || r.failure !== null)) issues.push({ path: r.failure !== null ? 'result.failure' : 'stage', code: 'MISMATCH' })
+  if (r.ok === false && !isRecord(r.failure)) issues.push({ path: 'result.failure', code: 'REQUIRED' })
   for (const [k, ok] of Object.entries(shape)) if (!ok(r[k])) issues.push({ path: `result.${k}`, code: Object.hasOwn(r, k) ? 'INVALID_VALUE' : 'REQUIRED' })
   return issues.slice(0, 20)
 }

@@ -21,6 +21,10 @@ interface Usage {
   perTool: Record<string, number>
   startedAt: number
   waited: number
+  /** 지금 기다리는 시험 대기의 시작. 기다리는 중이 아니면 null. */
+  waitStartedAt: number | null
+  /** 처음 본 토큰 만료. 대기가 끝난 뒤 쓰는 만료는 이보다 앞당기지 않는다(재시작 뒤 보수적인 티켓 시작에서도 토큰이 바로 끝나지 않게). */
+  expiryFloor: number
   lastKey: string | null
   repeats: number
 }
@@ -45,12 +49,23 @@ export class ToolBudget {
 
   /**
    * 부르기 전에 묻는다. 막으면 그 코드, 아니면 null이고 이 호출을 센다. 막은 호출은 세지 않는다.
-   * `ticketStart`는 처음 본 티켓에만 쓴다(그 뒤에는 토큰 만료가 시험 대기로 늘어나 거꾸로 셀 수 없다).
+   * `ticketStart`는 처음 본 티켓에만 쓴다(tickets.ts가 만료에서 센 값). 기다리는 중인 시험 대기도 작업 시간에서 뺀다.
    */
-  take(ticketId: string, tool: string, args: Record<string, unknown>, ticketStart: number): BudgetCode | null {
+  take(ticketId: string, tool: string, args: Record<string, unknown>, ticketStart: number, expiresAt = ticketStart + WORK_MS): BudgetCode | null {
     const now = this.now()
-    const usage = this.usage.get(ticketId) ?? { ticketStart, total: 0, perTool: {}, startedAt: now, waited: 0, lastKey: null, repeats: 0 }
-    if (now - usage.startedAt - usage.waited > WORK_MS || now >= usage.ticketStart + TICKET_MS) return 'TIME_LIMIT'
+    const usage = this.usage.get(ticketId) ?? {
+      ticketStart,
+      expiryFloor: expiresAt,
+      total: 0,
+      perTool: {},
+      startedAt: now,
+      waited: 0,
+      waitStartedAt: null,
+      lastKey: null,
+      repeats: 0,
+    }
+    const waiting = usage.waitStartedAt === null ? 0 : now - usage.waitStartedAt
+    if (now - usage.startedAt - usage.waited - waiting > WORK_MS || now >= usage.ticketStart + TICKET_MS) return 'TIME_LIMIT'
     if (usage.total >= TOTAL_CALLS) return 'TOOL_LIMIT'
     const used = usage.perTool[tool] ?? 0
     if (TOOL_CALLS[tool] !== undefined && used >= TOOL_CALLS[tool]) return 'TOOL_LIMIT'
@@ -67,12 +82,13 @@ export class ToolBudget {
     return Math.max(0, Math.min(trialWaitMs, u.ticketStart + TICKET_MS - this.now()))
   }
 
-  /** 시험 대기를 시작할 때의 토큰 만료: min(티켓 시작 + 60분, 지금 + 남은 15분 예산 + 이번 대기 상한). */
-  expiryAtWaitStart(ticketId: string, cap: number): number {
+  /** 시험 대기를 시작한다. 그때의 토큰 만료 min(티켓 시작 + 60분, 지금 + 남은 15분 예산 + 이번 대기 상한)를 돌려준다. */
+  startWait(ticketId: string, cap: number): number {
     const u = this.usage.get(ticketId)!
     const now = this.now()
+    u.waitStartedAt = now
     const workLeft = Math.max(0, WORK_MS - (now - u.startedAt - u.waited))
-    return Math.min(u.ticketStart + TICKET_MS, now + workLeft + cap)
+    return Math.min(u.ticketStart + TICKET_MS, Math.max(u.expiryFloor, now + workLeft + cap))
   }
 
   /**
@@ -83,7 +99,8 @@ export class ToolBudget {
     const u = this.usage.get(ticketId)
     if (!u) return null
     u.waited += waitedMs
-    return Math.min(u.ticketStart + TICKET_MS, u.ticketStart + WORK_MS + u.waited)
+    u.waitStartedAt = null
+    return Math.min(u.ticketStart + TICKET_MS, Math.max(u.expiryFloor, u.ticketStart + WORK_MS + u.waited))
   }
 
   /** 결과를 받았거나 티켓이 끝났다. */

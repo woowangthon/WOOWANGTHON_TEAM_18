@@ -3,11 +3,11 @@ import { isRecord } from '../common/is-record.js'
 import { redact, redactString } from '../common/redact.js'
 import { DeploysStore } from '../deploys/deploys.store.js'
 import { ClusterReader } from '../k8s/cluster-reader.js'
-import type { Spec } from '../deploys/deploy-input.js'
-import { type BudgetCode, ToolBudget, WORK_MS } from './budget.js'
+import type { Issue, Spec } from '../deploys/deploy-input.js'
+import { type BudgetCode, ToolBudget } from './budget.js'
 import { RepoReader, repoPath } from './repo-reader.js'
 import { checkResult, storedResult } from './result.js'
-import { applySpecPatch } from './spec-patch.js'
+import { applySpecPatch, livePathProblem } from './spec-patch.js'
 import type { GatewayTicket } from './tickets.js'
 import { GatewayTrials, TRIAL_WAIT_MS, type TrialFailure, type TrialTool } from './trials.js'
 
@@ -18,7 +18,7 @@ import { GatewayTrials, TRIAL_WAIT_MS, type TrialFailure, type TrialTool } from 
 
 export type RejectCode = BudgetCode | 'INVALID_ARGUMENT' | 'INVALID_RESULT' | 'TICKET_CLOSED' | 'PATCH_FORBIDDEN' | 'INVALID_SPEC' | 'LIVE_SLOT_PROTECTED'
 
-export type ToolAnswer = { ok: true; content: Record<string, unknown> } | { ok: false; code: RejectCode; message: string }
+export type ToolAnswer = { ok: true; content: Record<string, unknown> } | { ok: false; code: RejectCode; message: string; fields?: Issue[] }
 
 export interface ToolDef {
   name: string
@@ -140,7 +140,7 @@ export class GatewayTools {
     }
     // 횟수 · 시간 제한 뒤에도 결과는 낼 수 있어야 하므로 submit_result는 세지 않는다.
     if (name !== 'submit_result') {
-      const limited = this.budget.take(ticket.ticketId, name, args, ticket.expiresAt - WORK_MS)
+      const limited = this.budget.take(ticket.ticketId, name, args, ticket.ticketStart, ticket.expiresAt)
       if (limited) return reject(limited, limitMessage[limited])
     }
     switch (name) {
@@ -236,30 +236,43 @@ export class GatewayTools {
     if (typeof base === 'string') return reject('INVALID_ARGUMENT', base)
     let input = base
     if (tool === 'run_verify') input = this.trials.lastDeployInput(ticket.ticketId) ?? base
-    else if (args.specPatch !== undefined) {
-      const live = await this.store.findLastSucceededRun(ticket.slug)
-      const patched = applySpecPatch(base, args.specPatch, live ? ((live.input as { spec: Spec }).spec ?? null) : null)
-      if (!patched.ok) return reject(patched.code, patched.fields ? `${patched.message}: ${JSON.stringify(patched.fields)}` : patched.message)
-      input = patched.input
+    else {
+      if (args.specPatch !== undefined) {
+        const patched = applySpecPatch(base, args.specPatch)
+        if (!patched.ok) return { ok: false, code: patched.code, message: patched.message, ...(patched.fields ? { fields: patched.fields } : {}) }
+        input = patched.input
+      }
+      // live 경로 보호는 패치가 없어도 본다: 이 입력을 Apply하면 live가 같이 쓰는 Middleware가 바뀌는지.
+      const live = (await this.store.findLastSucceededRun(ticket.slug))?.input.spec as Spec | undefined
+      const why = live ? livePathProblem((input as { spec: Spec }).spec, live) : null
+      if (why) return reject('PATCH_FORBIDDEN', why)
     }
 
     // 기다리는 동안 같은 티켓의 다른 호출이 TICKET_CLOSED를 받지 않게 토큰 만료를 먼저 늘리고, 끝나면 다시 쓴다(updated_at도 함께 바뀐다).
+    // 늘리지 못했으면(그 사이 티켓이 끝났다) 시험을 실행하지 않는다.
     const cap = this.budget.waitCap(ticket.ticketId, TRIAL_WAIT_MS)
-    await this.setExpiry(ticket, this.budget.expiryAtWaitStart(ticket.ticketId, cap))
+    if (!(await this.setExpiry(ticket, this.budget.startWait(ticket.ticketId, cap)))) {
+      this.budget.endWait(ticket.ticketId, 0)
+      return reject('TICKET_CLOSED', 'the ticket is no longer open')
+    }
     const started = Date.now()
     const outcome = await this.trials.run(ticket, tool, input, cap)
     const expiry = this.budget.endWait(ticket.ticketId, Date.now() - started)
     if (expiry !== null) await this.setExpiry(ticket, expiry)
 
-    if ('failure' in outcome) return { ok: true, content: emptyResult(tool, outcome.failure) }
+    if ('failure' in outcome) {
+      if (outcome.failure.code === 'TICKET_CLOSED') return reject('TICKET_CLOSED', outcome.failure.message)
+      return { ok: true, content: emptyResult(tool, outcome.failure) }
+    }
     const failure = outcome.result.failure as TrialFailure | null
-    if (failure?.code === 'LIVE_SLOT_PROTECTED') return reject('LIVE_SLOT_PROTECTED', failure.message)
+    if (failure?.code === 'LIVE_SLOT_PROTECTED') return reject('LIVE_SLOT_PROTECTED', redactString(failure.message))
     // 파이프라인이 읽은 k3s 원본 · 로그는 외부(AI 서버 · 추론 API)로 나가므로 가린다.
     return { ok: true, content: redact(outcome.result) as Record<string, unknown> }
   }
 
-  private async setExpiry(ticket: GatewayTicket, at: number): Promise<void> {
-    await this.store.updateRun(ticket.deployId, { status: 'fixing' }, { gateway_expires_at: new Date(at).toISOString() })
+  /** 토큰 만료를 쓴다. 실행 기록이 이미 fixing이 아니면(티켓이 끝났다) false. */
+  private setExpiry(ticket: GatewayTicket, at: number): Promise<boolean> {
+    return this.store.updateRun(ticket.deployId, { status: 'fixing' }, { gateway_expires_at: new Date(at).toISOString() })
   }
 
   private async submit(ticket: GatewayTicket, value: unknown): Promise<ToolAnswer> {

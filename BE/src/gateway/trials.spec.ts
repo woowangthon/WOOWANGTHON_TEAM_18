@@ -27,7 +27,7 @@ const pipeline = {
   },
   cancelAllTrials: () => Promise.resolve(0),
 }
-const store = { findRun: () => Promise.resolve(run) }
+const store: { findRun: () => Promise<typeof run> } = { findRun: () => Promise.resolve(run) }
 
 beforeEach(() => {
   scheduled = []
@@ -35,6 +35,7 @@ beforeEach(() => {
   cancelOk = true
   runFails = false
   run = { status: 'fixing', ticket_id: 't_1' }
+  store.findRun = () => Promise.resolve(run)
   trials = new GatewayTrials(pipeline as unknown as PipelineClient, store as unknown as DeploysStore)
 })
 
@@ -49,19 +50,19 @@ describe('GatewayTrials', () => {
     const { trialId } = scheduled[0]
     expect(trials.busy('t_1')).toBe(true)
     expect(await trials.input(trialId, '7')).toEqual({ deployId: 'd1', slot: 'b', input: INPUT, buildOverrides: null })
-    expect(trials.result(trialId, { stage: 'apply', result: deployResult })).toEqual({ ok: true, applied: true })
+    expect(await trials.result(trialId, { stage: 'apply', result: deployResult })).toEqual({ ok: true, applied: true })
     expect(await pending).toEqual({ result: deployResult })
     expect(trials.busy('t_1')).toBe(false)
     // run_verify가 쓸 입력으로 남는다. 같은 결과를 다시 보내도 아무것도 바뀌지 않는다.
     expect(trials.lastDeployInput('t_1')).toBe(INPUT)
-    expect(trials.result(trialId, { stage: 'apply', result: deployResult })).toEqual({ ok: true, applied: false })
+    expect(await trials.result(trialId, { stage: 'apply', result: deployResult })).toEqual({ ok: true, applied: false })
     expect(cancelled).toEqual([])
   })
 
   it('does not keep the input of a failed run_deploy for run_verify', async () => {
     const pending = trials.run(TICKET, 'run_deploy', INPUT, 60_000)
     await tick()
-    trials.result(scheduled[0].trialId, { stage: 'render', result: { ...deployResult, ok: false, services: [], failure: { stage: 'render', code: null, message: 'bad port' } } })
+    await trials.result(scheduled[0].trialId, { stage: 'render', result: { ...deployResult, ok: false, services: [], failure: { stage: 'render', code: null, message: 'bad port' } } })
     await pending
     expect(trials.lastDeployInput('t_1')).toBeUndefined()
   })
@@ -74,7 +75,7 @@ describe('GatewayTrials', () => {
     expect(await pending).toEqual({ failure: { stage: null, code: 'TRIAL_TIMEOUT', message: expect.any(String) as string } })
     expect(cancelled).toEqual([12])
     await expect(trials.input(trialId, '12')).rejects.toBeInstanceOf(NotFoundException)
-    expect(trials.result(trialId, { stage: 'verify', result: { ok: true, ready: [], requests: [], failure: null } })).toEqual({ ok: true, applied: false })
+    expect(await trials.result(trialId, { stage: 'verify', result: { ok: true, ready: [], requests: [], failure: null } })).toEqual({ ok: true, applied: false })
   })
 
   it('does not call GoCD to cancel when no job read the input yet (a later read is 404, so the slot is untouched)', async () => {
@@ -107,6 +108,33 @@ describe('GatewayTrials', () => {
     expect(trials.busy('t_1')).toBe(false)
   })
 
+  it('does not take a result once the run is no longer open for that ticket', async () => {
+    const pending = trials.run(TICKET, 'run_deploy', INPUT, 20)
+    await tick()
+    run = { status: 'needs_user', ticket_id: 't_1' }
+    expect(await trials.result(scheduled[0].trialId, { stage: 'apply', result: deployResult })).toEqual({ ok: true, applied: false })
+    expect(await pending).toMatchObject({ failure: { code: 'TRIAL_TIMEOUT' } })
+  })
+
+  it('does not schedule a trial for a ticket that already ended', async () => {
+    await trials.endTicket('t_1')
+    expect(await trials.run(TICKET, 'run_render', INPUT, 20)).toMatchObject({ failure: { code: 'TICKET_CLOSED' } })
+    expect(scheduled).toEqual([])
+  })
+
+  it('waits for the start-up cancel and answers TRIAL_STILL_RUNNING while it could not be confirmed', async () => {
+    let allOk = false
+    const boot = { ...pipeline, cancelAllTrials: () => (allOk ? Promise.resolve(0) : Promise.reject(new Error('GoCD down'))) }
+    const t = new GatewayTrials(boot as unknown as PipelineClient, store as unknown as DeploysStore)
+    t.onApplicationBootstrap()
+    expect(await t.run(TICKET, 'run_render', INPUT, 20)).toMatchObject({ failure: { code: 'TRIAL_STILL_RUNNING' } })
+    expect(scheduled).toEqual([])
+    // 다음 시험에서 한 번 더 취소해 보고, 되면 시작한다.
+    allOk = true
+    await t.run(TICKET, 'run_render', INPUT, 20)
+    expect(scheduled).toHaveLength(1)
+  })
+
   it('cancels the waiting trial when the ticket ends', async () => {
     const pending = trials.run(TICKET, 'run_deploy', INPUT, 60_000)
     await tick()
@@ -118,7 +146,7 @@ describe('GatewayTrials', () => {
 
   describe('input route', () => {
     it.each([['not a trial id', 'tr_xyz'], ['an unknown trial', 'tr_000000000000']])('is 404 for %s', async (_label, id) => {
-      await expect(trials.input(id, undefined)).rejects.toBeInstanceOf(NotFoundException)
+      await expect(trials.input(id, '1')).rejects.toBeInstanceOf(NotFoundException)
     })
 
     it('is 404 when the trial no longer belongs to the open ticket of its run', async () => {
@@ -129,6 +157,24 @@ describe('GatewayTrials', () => {
       run = { status: 'failed', ticket_id: 't_1' }
       await expect(trials.input(scheduled[0].trialId, '1')).rejects.toBeInstanceOf(NotFoundException)
       await trials.endTicket('t_1')
+    })
+
+    it('requires the counter of the pipeline run', async () => {
+      void trials.run(TICKET, 'run_render', INPUT, 60_000)
+      await tick()
+      await expect(trials.input(scheduled[0].trialId, undefined)).rejects.toBeInstanceOf(BadRequestException)
+      await trials.endTicket('t_1')
+    })
+
+    it('is 404 when the trial ended while the run was being read', async () => {
+      void trials.run(TICKET, 'run_render', INPUT, 60_000)
+      await tick()
+      let release!: () => void
+      store.findRun = () => new Promise((r) => (release = () => r(run)))
+      const reading = trials.input(scheduled[0].trialId, '1')
+      await trials.endTicket('t_1')
+      release()
+      await expect(reading).rejects.toBeInstanceOf(NotFoundException)
     })
 
     it('keeps the same counter, refuses another one and a bad one', async () => {
@@ -158,6 +204,9 @@ describe('checkTrialResult', () => {
     ['a missing field', 'run_deploy', { stage: 'apply', result: { ok: true, services: [], pods: [], failure: null } }, 'result.events'],
     ['a bad platform code', 'run_render', { stage: 'render', result: { ok: false, status: null, failure: { stage: 'render', code: 'x y', message: 'm' } } }, 'result.failure'],
     ['an unknown top key', 'run_render', { stage: 'render', result: { ok: true, status: null, failure: null }, extra: 1 }, 'extra'],
+    ['ok from a stage before the last', 'run_deploy', { stage: 'render', result: { ok: true, services: [], pods: [], events: [], failure: null } }, 'stage'],
+    ['ok with a failure', 'run_verify', { stage: 'verify', result: { ok: true, ready: [], requests: [], failure: { stage: 'verify', code: null, message: 'x' } } }, 'result.failure'],
+    ['a failure without the failure field', 'run_render', { stage: 'render', result: { ok: false, status: null, failure: null } }, 'result.failure'],
   ])('reports %s', (_label, tool, body, path) => {
     expect(checkTrialResult(tool as 'run_render', body).map((i) => i.path)).toContain(path)
   })

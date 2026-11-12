@@ -10,14 +10,18 @@ import { GatewayTools, type ToolAnswer, TOOLS } from './tools.js'
 
 const MAX_BODY_BYTES = 1024 * 1024
 
+// 거절의 structuredContent: { code, message }, INVALID_SPEC이면 칸마다의 fields도.
+const rejection = (answer: Extract<ToolAnswer, { ok: false }>) =>
+  answer.fields ? { code: answer.code, message: answer.message, fields: answer.fields } : { code: answer.code, message: answer.message }
+
 const asResult = (answer: ToolAnswer): CallToolResult =>
   answer.ok
     ? { content: [{ type: 'text', text: JSON.stringify(answer.content) }], structuredContent: answer.content }
     : // 거절: isError와 { code, message } (api.md "게이트웨이가 거절할 때의 code").
       {
         isError: true,
-        content: [{ type: 'text', text: JSON.stringify({ code: answer.code, message: answer.message }) }],
-        structuredContent: { code: answer.code, message: answer.message },
+        content: [{ type: 'text', text: JSON.stringify(rejection(answer)) }],
+        structuredContent: rejection(answer),
       }
 
 /** `Authorization: Bearer <게이트웨이 토큰>`의 토큰. 없으면 null. */

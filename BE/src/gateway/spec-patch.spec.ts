@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { validSpec } from '../../test/spec-fixture.js'
 import type { Spec } from '../deploys/deploy-input.js'
-import { applySpecPatch } from './spec-patch.js'
+import { applySpecPatch, livePathProblem } from './spec-patch.js'
 
 const input = () => ({ commitSha: 'a'.repeat(40), deploy_condition: { services: {} }, spec: validSpec() })
 const services = (i: Record<string, unknown>) => (i.spec as Spec).services
@@ -16,14 +16,13 @@ describe('applySpecPatch', () => {
         { op: 'add', path: '/spec/services/1/runtime/env/LOG_LEVEL', value: 'debug' },
         { op: 'remove', path: '/spec/services/1/runtime/env/NODE_ENV' },
       ],
-      null,
     )
     expect(out.ok).toBe(true)
     if (!out.ok) return
     expect(services(out.input)[1].runtime.port).toBe(8000)
     expect(services(out.input)[1].runtime.env).toEqual({ LOG_LEVEL: 'debug' })
     expect(services(before)[1].runtime.port).toBe(3000)
-    expect(applySpecPatch(before, [], null)).toEqual({ ok: true, input: before })
+    expect(applySpecPatch(before, [])).toEqual({ ok: true, input: before })
   })
 
   it.each([
@@ -33,7 +32,7 @@ describe('applySpecPatch', () => {
     ['anything outside runtime', '/spec/services/0/role', 'only /spec/services/{i}/runtime'],
     ['the commit', '/commitSha', 'only /spec/services/{i}/runtime'],
   ])('refuses %s as PATCH_FORBIDDEN', (_label, path, why) => {
-    const out = applySpecPatch(input(), [{ op: 'replace', path, value: 'x' }], null)
+    const out = applySpecPatch(input(), [{ op: 'replace', path, value: 'x' }])
     expect(out).toMatchObject({ ok: false, code: 'PATCH_FORBIDDEN' })
     if (!out.ok) expect(out.message).toContain(why)
   })
@@ -47,44 +46,33 @@ describe('applySpecPatch', () => {
     ['a prototype key', [{ op: 'add', path: '/spec/services/0/runtime/__proto__/polluted', value: 1 }]],
     ['too many operations', Array.from({ length: 21 }, () => ({ op: 'replace', path: '/spec/services/0/runtime/port', value: 1 }))],
   ])('refuses %s as INVALID_ARGUMENT', (_label, patch) => {
-    expect(applySpecPatch(input(), patch, null)).toMatchObject({ ok: false, code: 'INVALID_ARGUMENT' })
+    expect(applySpecPatch(input(), patch)).toMatchObject({ ok: false, code: 'INVALID_ARGUMENT' })
     expect(({} as Record<string, unknown>).polluted).toBeUndefined()
   })
 
   it('refuses a patch that breaks the deploy input rules as INVALID_SPEC with the fields', () => {
-    const out = applySpecPatch(input(), [{ op: 'replace', path: '/spec/services/1/runtime/port', value: 70000 }], null)
+    const out = applySpecPatch(input(), [{ op: 'replace', path: '/spec/services/1/runtime/port', value: 70000 }])
     expect(out).toMatchObject({ ok: false, code: 'INVALID_SPEC', fields: [{ path: 'services[1].runtime.port', code: 'OUT_OF_RANGE' }] })
   })
 
   describe('live path protection (the stripPrefix Middleware is shared by both slots)', () => {
-    const liveWith = (stripPrefix: boolean, ingressPath = '/api') => {
+    const specWith = (stripPrefix: boolean, ingressPath = '/api') => {
       const spec = validSpec() as unknown as Spec
       Object.assign(spec.services[1].runtime, { stripPrefix, ingressPath })
       return spec
     }
-    const withBe = (stripPrefix: boolean) => {
-      const i = input()
-      Object.assign(services(i)[1].runtime, { stripPrefix })
-      return i
-    }
 
-    it('refuses changing ingressPath of a service that is stripPrefix on live and stays so', () => {
-      const out = applySpecPatch(withBe(true), [{ op: 'replace', path: '/spec/services/1/runtime/ingressPath', value: '/v2' }], liveWith(true))
-      expect(out).toMatchObject({ ok: false, code: 'PATCH_FORBIDDEN' })
-      if (!out.ok) expect(out.message).toContain('Middleware')
+    it('refuses a trial input whose ingressPath differs from live for a service that strips on both', () => {
+      expect(livePathProblem(specWith(true, '/v2'), specWith(true))).toMatch(/differs from the live slot/)
     })
 
     it.each([
-      ['false → true (demo V2)', withBe(false), [{ op: 'replace', path: '/spec/services/1/runtime/stripPrefix', value: true }], liveWith(false)],
-      ['true → false with a new path', withBe(true), [
-        { op: 'replace', path: '/spec/services/1/runtime/stripPrefix', value: false },
-        { op: 'replace', path: '/spec/services/1/runtime/ingressPath', value: '/v2' },
-      ], liveWith(true)],
-      ['a new path when live does not strip', withBe(true), [{ op: 'replace', path: '/spec/services/1/runtime/ingressPath', value: '/v2' }], liveWith(false)],
-      ['the first deploy (no live slot)', withBe(true), [{ op: 'replace', path: '/spec/services/1/runtime/ingressPath', value: '/v2' }], null],
-      ['another runtime field of a stripPrefix service', withBe(true), [{ op: 'replace', path: '/spec/services/1/runtime/port', value: 8000 }], liveWith(true)],
-    ])('accepts %s', (_label, base, patch, live) => {
-      expect(applySpecPatch(base, patch, live)).toMatchObject({ ok: true })
+      ['the same path', specWith(true), specWith(true)],
+      ['false → true (demo V2)', specWith(true), specWith(false)],
+      ['true → false with a new path', specWith(false, '/v2'), specWith(true)],
+      ['a new path when live does not strip', specWith(true, '/v2'), specWith(false)],
+    ])('accepts %s', (_label, spec, live) => {
+      expect(livePathProblem(spec, live)).toBeNull()
     })
   })
 })

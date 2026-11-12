@@ -108,7 +108,8 @@ beforeEach(async () => {
     gateway_expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
     images: { be: BE_IMAGE },
     created_at: '2026-11-11T00:00:00Z',
-    updated_at: '2026-11-11T00:00:00Z',
+    // 이 프로세스가 방금 낸 티켓(티켓 시작 = 만료 - 15분).
+    updated_at: new Date().toISOString(),
   }
   live = undefined
   expiries.length = 0
@@ -183,6 +184,16 @@ describe('MCP gateway trial tools', () => {
     await client.close()
   })
 
+  it('does not extend past the stored expiry for a ticket the previous process handled (BE restarted)', async () => {
+    run.updated_at = '2026-11-11T00:00:00Z'
+    const before = Date.parse(run.gateway_expires_at!)
+    behave = answering('render', { ok: true, status: null, failure: null })
+    const client = await connect()
+    await call(client, 'run_render')
+    expect(expiries.map((e) => Date.parse(e))).toEqual([before, before])
+    await client.close()
+  })
+
   it('checks run_verify with the input of the last successful run_deploy', async () => {
     const client = await connect()
     await call(client, 'run_deploy', { specPatch: port8000 })
@@ -239,6 +250,27 @@ describe('MCP gateway trial tools', () => {
     await client.close()
   })
 
+  it('puts the INVALID_SPEC fields in their own field of the rejection', async () => {
+    const client = await connect()
+    const answer = await call(client, 'run_deploy', { specPatch: [{ op: 'replace', path: '/spec/services/1/runtime/port', value: 0 }] })
+    expect(answer.structuredContent).toEqual({ code: 'INVALID_SPEC', message: expect.not.stringContaining('[') as string, fields: [{ path: 'services[1].runtime.port', code: 'OUT_OF_RANGE' }] })
+    await client.close()
+  })
+
+  it('refuses a trial whose input already has another path than live for a stripPrefix service, even without a patch', async () => {
+    const liveSpec = validSpec() as { services: { runtime: Record<string, unknown> }[] }
+    liveSpec.services[1].runtime.stripPrefix = true
+    live = { ...run, status: 'succeeded', input: { ...run.input, spec: liveSpec } }
+    Object.assign((run.input.spec as typeof liveSpec).services[1].runtime, { stripPrefix: true, ingressPath: '/v2' })
+    const client = await connect()
+    expect(rejected(await call(client, 'run_render'))).toMatchObject({ code: 'PATCH_FORBIDDEN' })
+    // live 경로로 되돌리는 수정안은 받는다.
+    behave = answering('render', { ok: true, status: null, failure: null })
+    expect(rejected(await call(client, 'run_render', { specPatch: [{ op: 'replace', path: '/spec/services/1/runtime/ingressPath', value: '/api' }] }))).toBeNull()
+    expect(scheduled).toHaveLength(1)
+    await client.close()
+  })
+
   it('refuses changing the ingressPath of a service that strips its prefix on live', async () => {
     const liveSpec = validSpec() as { services: { runtime: Record<string, unknown> }[] }
     liveSpec.services[1].runtime.stripPrefix = true
@@ -268,6 +300,20 @@ describe('MCP gateway trial tools', () => {
   })
 
   describe('pipeline routes', () => {
+    it('require the counter of the pipeline run on the input read', async () => {
+      let res: { status: number; body: unknown } | undefined
+      behave = async (trialId) => {
+        const r = await request(app.getHttpServer()).get(`/api/pipeline/trials/${trialId}/input`).set(auth)
+        res = { status: r.status, body: r.body }
+        await readInput(trialId)
+        await postResult(trialId, { stage: 'render', result: { ok: true, status: null, failure: null } })
+      }
+      const client = await connect()
+      await call(client, 'run_render')
+      expect(res).toMatchObject({ status: 400, body: { error: { fields: [{ path: 'counter', code: 'REQUIRED' }] } } })
+      await client.close()
+    })
+
     it('need the pipeline token', async () => {
       expect((await request(app.getHttpServer()).get('/api/pipeline/trials/tr_000000000000/input')).status).toBe(401)
       expect((await request(app.getHttpServer()).post('/api/pipeline/trials/tr_000000000000/result').send({})).status).toBe(401)
@@ -293,7 +339,7 @@ describe('MCP gateway trial tools', () => {
       }
       const client = await connect()
       expect((await call(client, 'run_render')).structuredContent).toEqual({ ok: true, status: null, failure: null })
-      expect(badAnswer).toMatchObject({ status: 400, body: { error: { code: 'BAD_REQUEST', fields: [{ path: 'stage', code: 'INVALID_VALUE' }] } } })
+      expect(badAnswer).toMatchObject({ status: 400, body: { error: { code: 'BAD_REQUEST', fields: expect.arrayContaining([{ path: 'stage', code: 'INVALID_VALUE' }]) as unknown } } })
       await client.close()
     })
   })

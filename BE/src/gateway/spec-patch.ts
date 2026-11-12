@@ -69,31 +69,22 @@ type Service = Spec['services'][number]
 
 /**
  * live 경로 보호: stripPrefix Middleware(`<서비스>-strip`)는 슬롯 라벨이 없어 두 슬롯이 같이 쓰고 Apply가 test Ingress와 함께 적용한다.
- * live에서 `stripPrefix: true`인 서비스의 `ingressPath`를 수정안이 바꾸면(바꾼 뒤에도 true) Switch 전에 live 경로의 떼기가 바뀐다.
- * false → true, true → false는 live에 닿지 않아 받는다.
+ * live에서 `stripPrefix: true`인 서비스를 시험 입력에서도 `stripPrefix: true`로 두면서 `ingressPath`가 live와 다르면, Switch 전에 live 경로의 떼기가 바뀐다.
+ * 수정안이 그 경로를 건드리지 않아도(실행 기록의 입력이 이미 다른 경로여도) 막는다. false → true, true → false는 live에 닿지 않아 받는다.
  */
-function livePathProblem(before: Spec, after: Spec, live: Spec | null): string | null {
-  if (!live) return null
-  for (const svc of after.services) {
-    const old = before.services.find((s) => s.name === svc.name)
+export function livePathProblem(spec: Spec, live: Spec): string | null {
+  for (const svc of spec.services) {
     const onLive = live.services.find((s: Service) => s.name === svc.name)
-    if (!old || !onLive?.runtime.stripPrefix || !svc.runtime.stripPrefix) continue
-    if (svc.runtime.ingressPath !== old.runtime.ingressPath) {
-      return `${svc.name}: changing ingressPath of a stripPrefix service also changes the live slot's Middleware before the switch; keep ingressPath or set stripPrefix false`
+    if (!onLive?.runtime.stripPrefix || !svc.runtime.stripPrefix) continue
+    if (svc.runtime.ingressPath !== onLive.runtime.ingressPath) {
+      return `${svc.name}: ingressPath ${svc.runtime.ingressPath} differs from the live slot's ${onLive.runtime.ingressPath}; with stripPrefix the shared Middleware would change the live path before the switch. Keep the live ingressPath or set stripPrefix false`
     }
   }
   return null
 }
 
-/**
- * 실행 기록의 입력에 수정안을 적용한다. 검사 순서: 모양 → 경로 → 적용 → spec 검증 → live 경로 보호.
- * `live`는 live 슬롯에 떠 있는 배포 입력의 spec(첫 배포면 null).
- */
-export function applySpecPatch(
-  input: Record<string, unknown>,
-  patch: unknown,
-  live: Spec | null,
-): { ok: true; input: Record<string, unknown> } | ({ ok: false } & PatchProblem) {
+/** 실행 기록의 입력에 수정안을 적용한다. 검사 순서: 모양 → 경로 → 적용 → spec 검증. live 경로 보호는 livePathProblem(패치가 없어도 본다). */
+export function applySpecPatch(input: Record<string, unknown>, patch: unknown): { ok: true; input: Record<string, unknown> } | ({ ok: false } & PatchProblem) {
   const ops = parseOps(patch)
   if (typeof ops === 'string') return { ok: false, code: 'INVALID_ARGUMENT', message: ops }
   for (const op of ops) {
@@ -106,9 +97,6 @@ export function applySpecPatch(
     if (why) return { ok: false, code: 'INVALID_ARGUMENT', message: why }
   }
   const checked = validateSpec(next.spec)
-  if (!checked.ok) return { ok: false, code: 'INVALID_SPEC', message: 'the patched spec breaks the deploy input rules', fields: checked.issues }
-  const before = input.spec as Spec
-  const why = livePathProblem(before, checked.spec, live)
-  if (why) return { ok: false, code: 'PATCH_FORBIDDEN', message: why }
+  if (!checked.ok) return { ok: false, code: 'INVALID_SPEC', message: 'the patched spec breaks the deploy input rules (see fields)', fields: checked.issues }
   return { ok: true, input: next }
 }
