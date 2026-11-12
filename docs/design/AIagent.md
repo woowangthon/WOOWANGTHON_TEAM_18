@@ -40,7 +40,7 @@
 |---|---|
 | 감지 (배포 중) | GoCD 스테이지가 한다. Build는 CodeBuild 결과, Apply는 대상 슬롯 Pod · 이벤트 watch(`CrashLoopBackOff` · `OOMKilled` · 쿼터 초과 `FailedCreate`는 제한 시간을 기다리지 않고 바로 실패), Verify는 Traefik 요청 결과 ([배포 워크플로우](deploy-workflow.md) §4 제한 시간) |
 | 감지 (운영 중) | 플랫폼 서버가 리더 k3s API에 Pod · 이벤트 watch 연결을 유지한다. 로그는 계속 받지 않는다 |
-| 알림 | 실패한 GoCD job의 `run_if: failed` task가 그 즉시 플랫폼 서버에 알린다 |
+| 알림 | 각 GoCD job의 마지막 task(`run_if: any`)가 통과 · 실패를 그 즉시 플랫폼 서버에 알린다 |
 | 전달 | 플랫폼 서버가 그 순간의 원본 · 최근 10분 로그를 잡아 비밀값을 가리고 문제 티켓으로 보낸다 |
 | 수집 | 에이전트가 티켓의 `stage` · `service`로 실패한 단계에서 바로 고치기 시작하고, 지금 상태는 관찰 도구(§3)로 그때그때 읽는다 |
 
@@ -115,7 +115,7 @@ AI 서버 (에이전트) → 플랫폼 서버 MCP 게이트웨이 → GoCD 서�
 |---|---|
 | `submit_result` | 해결 결과 제출. 호출하면 에이전트 실행이 끝난다 |
 
-전체 제한: 도구 20회, 에이전트 작업 15분(파이프라인 대기 제외), 같은 도구 · 같은 인자는 연속 2회까지(세 번째 호출 차단). 게이트웨이가 센다. 숫자는 초기값이다.
+전체 제한: 도구 20회, 에이전트 작업 15분(파이프라인 대기 제외)과 티켓 전체 60분(대기 포함), 같은 도구 · 같은 인자는 연속 2회까지(세 번째 호출 차단). 게이트웨이가 센다. 숫자는 초기값이다.
 
 ### 4. 행위 범위
 
@@ -397,7 +397,7 @@ PydanticAI에서 두 모델을 OpenAI 호환 provider로 붙이고, 추론 모�
 - 로컬 8B 모델의 분류 · 도구 호출 품질은 검증하지 않았다. 실제 모델(로컬 · 추론 API)은 아직 한 번도 붙여 돌리지 않았다.
 - 컨텍스트 예산은 글자 수로 어림했다(가장 큰 시험 티켓 · 도구 결과로 로컬 모델 입력이 도구 정의까지 합쳐 30,000자 이하). 실제 토큰 수는 vLLM에 붙인 뒤 응답의 `usage.prompt_tokens`로 재야 한다. 한글은 글자당 토큰이 더 많아 어림이 빗나갈 수 있다.
 - 요약본과 발췌는 정보를 버린다. 오류 표시 단어가 없는 원인 줄은 발췌에서 빠질 수 있고, 지난 도구 결과는 한 줄만 남는다. 에이전트가 필요하면 관찰 도구로 다시 읽는다.
-- 에이전트가 낸 `verified`가 정말 `run_verify` 통과 뒤인지 AI 서버는 따로 확인하지 않는다. 플랫폼이 다시 실행의 Verify로 대상 슬롯을 다시 확인한다(§1).
+- 에이전트가 낸 `verified`가 정말 `run_verify` 통과 뒤인지 AI 서버는 따로 확인하지 않는다. 게이트웨이가 이 티켓의 시험 기록(같은 `specPatch`로 `run_deploy` → `run_verify` 통과)과 맞춰 보고(B2), 다시 실행의 Verify가 대상 슬롯을 한 번 더 확인한다(§1).
 - 가림 필터는 정해진 모양만 가린다. 이름 없이 나온 임의의 비밀 문자열은 못 가린다.
 - 게이트웨이가 지금 여는 도구는 일곱 개다: 관찰 셋(`get_target_status` · `read_pod_logs` · `read_repo`), 시험 셋(`run_render` · `run_deploy` · `run_verify`, F11b-1), `submit_result`. `run_build`는 B3, 대상 슬롯 운영 · `read_build_logs`는 그 뒤, `edit_repo_file` · `open_pr`은 F13이다. `verified`는 이 티켓에서 같은 `specPatch`로 `run_deploy` → `run_verify`를 통과했을 때만 받는다(B2). 그래서 지금 에이전트가 낼 수 있는 결과는 `verified` · `needs_user` · `gave_up`(과 F13 뒤 `pr_opened`)이다.
 - 시험 실행은 게이트웨이 쪽(F11b-1: `run_render` · `run_deploy` · `run_verify`, `BE/src/gateway/trials.ts`)과 파이프라인 쪽의 Switch CLI `TRIAL_ID` 가드 · Build CLI `buildOverrides` 받기를 구현했다. 결과를 모아 보내는 `trial-report`와 입력 task의 시험 분기(`?counter`, `build-overrides.json`)도 구현했지만, `student-trial` YAML은 구현 전이라 실제 GoCD로 돌려 보지 않았다. 시험 기록과 기다림은 플랫폼 서버 메모리에 있어, 서버가 다시 뜨면 기다리던 `run_*` 호출은 끊긴다(에이전트는 게이트웨이에 닿지 못한 것으로 본다). 빌드에 닿는 `specPatch`는 `run_build`가 열릴 때까지(B3), `name` · `slug`는 슬롯 · Secret 이름이 따라 바뀌어 시험할 수 없어 `PATCH_FORBIDDEN`이다. `verified` 뒤에는 고친 입력으로 배포 파이프라인을 처음부터 다시 실행한다(B2, 가짜 GoCD로만 자동 테스트했다).

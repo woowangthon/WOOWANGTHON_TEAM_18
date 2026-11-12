@@ -209,7 +209,7 @@ GoCD와 리더는 **이미지를 옮기지 않는다.** 이미지 주소만 mani
 
 ### 6. 문제가 생기면: 문제 티켓과 AI 에이전트
 
-1. 실패한 GoCD job은 실패할 때만 도는 task(`run_if: failed`)로 그 즉시 플랫폼 서버에 알린다. 플랫폼 서버가 GoCD API를 주기적으로 조회하지 않으므로 알기까지 기다림이 없다. 워크플로우는 그 단계에서 **멈추고** 상태를 저장한다(스레드가 기다리지 않는다).
+1. GoCD job은 마지막 task(`run_if: any`, 통과 · 실패 모두)로 그 즉시 플랫폼 서버에 알린다. 플랫폼 서버가 GoCD API를 주기적으로 조회하지 않으므로 알기까지 기다림이 없다. 워크플로우는 그 단계에서 **멈추고** 상태를 저장한다(스레드가 기다리지 않는다).
 2. 실패는 대상 슬롯에서만 난다. live 슬롯은 그대로 서비스하므로 되돌릴 것이 없다.
 3. 플랫폼 문제(CodeBuild API 오류, 이미지 받기 실패, live 슬롯 보호 중단 등)는 코드로 걸러 AI 에이전트를 부르지 않고 보고한다. 코드 집합은 열려 있다: BE는 `^[A-Za-z][A-Za-z0-9_]{2,63}$` 모양이면 플랫폼 문제로 받아 실패로 마감하므로(알 수 없는 코드는 일반 문구), 파이프라인은 새 코드를 BE 수정 없이 추가할 수 있다. 알려진 코드는 `CODEBUILD_API_ERROR` · `AWS_CLI_FAILED` · `BUILD_NOT_FOUND` · `BUILD_WAIT_TIMEOUT` · `NO_IMAGE_DIGEST` · `CHART_RENDER_FAILED` · `SPACE_MISSING` · `EXECUTOR_FORBIDDEN` · `POLICY_REJECTED` · `APPLY_REFUSED` · `IMAGE_PULL_FAILED` · `K8S_TIMEOUT` · `K8S_UNREACHABLE` · `LIVE_SLOT_PROTECTED` · `UNEXPECTED_REFUSAL`(Prepare · Verify가 받은 그 밖의 거절) · `TRAEFIK_UNREACHABLE` · `SWITCH_REFUSED` · `OPEN_MANIFEST_MISSING` · `SLOT_PODS_LINGERING`(Prepare 뒤 대상 슬롯 Pod가 90초 안에 사라지지 않음). AI 에이전트의 시험 실행(`student-trial`)에서만 나는 것: `TRIAL_SWITCH_REFUSED`(시험 env로 Switch가 불림) · `TRIAL_INPUT_INVALID`(`run_build` 입력에 빌드할 서비스가 하나가 아님. BE는 그 서비스가 `reuse`면 시험을 돌리지 않고 바로 답한다).
 4. 그 밖에는 알림을 받은 순간 **문제 티켓**(봉투 + CodeBuild · k3s 출력 원본 + 오류 10분 전부터의 로그)을 만들어 AI 서버에 보낸다. 티켓은 실패 순간의 스냅샷이다(실패한 Pod는 재시작되면 원본이 사라진다). 에이전트는 티켓의 `stage` · `service`로 실패한 단계에서 바로 고치기 시작하고, 그 뒤에 필요한 정보는 관찰 도구로 직접 읽는다. 워크플로우는 티켓 하나(`ticketId`)를 보관하고, 새 티켓이 나오면 덮어쓴다.
