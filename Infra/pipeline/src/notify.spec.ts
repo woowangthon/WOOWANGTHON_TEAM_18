@@ -3,11 +3,12 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { checkImages, validateNotice } from '../../../BE/src/deploys/deploy-run.js'
 import type { BuildFailure, BuildReport } from './build.js'
 import { builtDeployInput, deployInput, digest } from './fixtures.js'
-import { BE_OWN_CODES, FALLBACK_CODE, NOTIFY_STAGES, noReportNotice, noticeFrom, type NoticeBody, parseStage, pickFailure, sendNotice } from './notify.js'
+import { AWARE_DATETIME, BE_OWN_CODES, FALLBACK_CODE, NOTIFY_STAGES, noReportNotice, noticeFrom, type NoticeBody, parseStage, PLATFORM_CODE, pickFailure, refusal, SERVICE, sendNotice } from './notify.js'
 import { DEPLOY_ID, fakePlatform, TOKEN } from './platform-fake.js'
 
 const NOW = Date.parse('2026-11-11T05:00:00Z')
 const now = () => NOW
+type NotifyStageName = (typeof NOTIFY_STAGES)[number]
 
 // BE가 이 본문을 받아 주는가: 매퍼가 만든 모든 본문은 BE의 검사를 통과해야 한다.
 const accepted = (body: NoticeBody) => {
@@ -148,6 +149,15 @@ describe('platform failure codes', () => {
     expect([...list.matchAll(/'([A-Z_]+)'/g)].map((m) => m[1])).toEqual(BE_OWN_CODES)
   })
 
+  it.each([
+    ['SERVICE', SERVICE],
+    ['PLATFORM_CODE', PLATFORM_CODE],
+    ['AWARE_DATETIME', AWARE_DATETIME],
+  ])("%s is BE's (a rule BE changes must break this test, not send a body BE answers 400 to)", (name, pattern) => {
+    const source = readFileSync(new URL('../../../BE/src/deploys/deploy-run.ts', import.meta.url), 'utf8')
+    expect(new RegExp(`const ${name} = /(.*)/\\n`).exec(source)?.[1]).toBe(pattern.source)
+  })
+
   const codeOf = (code: string) => {
     const body = noticeFrom(DEPLOY_ID, 'build', failedBuild(platformFailed('fe', code)), now)
     return body.result === 'failed' ? body.failure : null
@@ -251,18 +261,97 @@ describe('failure fields BE would refuse (so the sender sees it as an unusable r
   it.each([
     ['a service that is a number', { ok: false, failure: { kind: 'platform', code: 'K8S_TIMEOUT', service: 7, message: 'm' } }, 'failure.service is not a string'],
     ['a student failure whose service is an object', student({ service: {} }), 'failure.service is not a string'],
-    ['events with an item that is not an object', student({ raw: { pod: null, events: [{ reason: 'x' }, 'text'], status: null } }), 'failure.raw.events has an item that is not an object'],
+    ['events with an item that is not an object', student({ raw: { pod: null, events: [{ reason: 'x' }, 'text'], status: null } }), 'failure.raw.k8s.events is not a list of objects'],
+    ['a student service that is not a service name', student({ service: 'Bad_Name' }), 'failure.service is not a service name'],
+    ['a platform service that is not a service name', { ok: false, failure: { kind: 'platform', code: 'K8S_TIMEOUT', service: 'a'.repeat(53), message: 'm' } }, 'failure.service is not a service name'],
+    ['an errorMessage that is not a string', student({ errorMessage: 5 }), 'failure.message is not a string'],
   ])('apply report with %s', (_, report, why) => {
     expect(() => noticeFrom(DEPLOY_ID, 'apply', report, now)).toThrow(`apply report: ${why}`)
   })
 
-  it('a build failure whose service is not a string', () => {
-    expect(() => noticeFrom(DEPLOY_ID, 'build', { ok: false, failures: [{ kind: 'platform', service: 3, code: 'X_CODE', message: 'm' }] }, now)).toThrow('build report: has a failure that is neither platform nor build')
+  it.each([
+    ['a service that is not a string', buildFailed('fe', { service: 3 as never }), 'failure.service is not a string'],
+    ['a service that is not a service name', buildFailed('Bad_Name'), 'failure.service is not a service name'],
+    ['a logTail with an item that is not a string', buildFailed('fe', { logTail: ['ok', 3 as never] }), 'failure.logs.lines is not a list of strings'],
+  ])('a build failure with %s', (_, failure, why) => {
+    expect(() => noticeFrom(DEPLOY_ID, 'build', failedBuild(failure), now)).toThrow(`build report: ${why}`)
   })
 
   it('a missing service stays null (a platform problem of no one service)', () => {
     const body = noticeFrom(DEPLOY_ID, 'apply', { ok: false, failure: { kind: 'platform', code: 'K8S_TIMEOUT', message: 'm' } }, now)
     expect(body).toMatchObject({ failure: { service: null } })
+  })
+})
+
+// `refusal`(보내기 전의 검사)과 BE의 `validateNotice`가 같은 본문에 같은 답을 하는가. 한쪽이 거절할 본문을 다른 쪽이 통과시키면 안 된다:
+// BE가 400으로 거절하면 다시 보내지지 않아 배포가 시간 초과까지 멈춘다.
+describe('refusal answers like BE validateNotice', () => {
+  const k8s = (over: Record<string, unknown> = {}) => ({ pod: null, events: [], status: null, ...over })
+  const student = (over: Record<string, unknown> = {}) => ({ code: null, service: 'be', message: 'm', raw: { codebuild: null, k8s: k8s() }, ...over })
+  const inBuild = (over: Record<string, unknown> = {}) => ({ code: null, service: 'fe', message: 'm', raw: { codebuild: { id: 'cb:1' }, k8s: null }, ...over })
+  const logs = (over: Record<string, unknown> = {}) => ({ from: '2026-11-11T01:00:00Z', to: '2026-11-11T01:10:00Z', lines: ['a'], ...over })
+  const raw = (over: Record<string, unknown>) => ({ raw: { codebuild: null, k8s: k8s(), ...over } })
+  const k8sRaw = (over: Record<string, unknown>) => ({ raw: { codebuild: null, k8s: k8s(over) } })
+
+  const cases: [string, NotifyStageName, Record<string, unknown>, boolean][] = [
+    ['a student failure', 'apply', student(), true],
+    ['with valid logs', 'apply', student({ logs: logs() }), true],
+    ['with null logs', 'apply', student({ logs: null }), true],
+    ['with logs of more than 200 lines', 'apply', student({ logs: logs({ lines: Array.from({ length: 300 }, () => 'x') }) }), true],
+    ['logs with an offset time', 'verify', student({ logs: logs({ from: '2026-11-11T10:00:00.123+09:00' }) }), true],
+    ['a render failure with its status', 'render', student(k8sRaw({ status: { message: 'x' } })), true],
+    ['a build failure with the build', 'build', inBuild(), true],
+    ['a build failure with logs', 'build', inBuild({ logs: logs() }), true],
+    ['a platform failure', 'apply', { code: 'K8S_TIMEOUT', service: 'be', message: 'm' }, true],
+    ['a platform failure whose evidence is junk (BE does not read it)', 'apply', { code: 'K8S_TIMEOUT', service: 'be', message: 'm', raw: 'junk', logs: 7 }, true],
+    ['a switch failure without evidence (no ticket for switch)', 'switch', { code: null, service: null, message: 'm' }, true],
+    ['no service', 'prepare', student({ service: null }), true],
+    ['a service left out (JSON drops undefined)', 'prepare', student({ service: undefined }), true],
+    ['a code left out (JSON drops undefined)', 'apply', student({ code: undefined }), true],
+    ['the longest service name', 'apply', student({ service: `a${'b'.repeat(50)}c` }), true],
+    ['a service name that is too long', 'apply', student({ service: `a${'b'.repeat(51)}c` }), false],
+    ['an upper-case service name', 'apply', student({ service: 'Bad_Name' }), false],
+    ['a service name ending with a dash', 'apply', student({ service: 'be-' }), false],
+    ['a service name starting with a digit', 'apply', student({ service: '1be' }), false],
+    ['a service that is a number', 'apply', student({ service: 7 }), false],
+    ['a service that is an object', 'apply', { code: 'K8S_TIMEOUT', service: {}, message: 'm' }, false],
+    ['a message that is a number', 'apply', student({ message: 5 }), false],
+    ['no message', 'apply', student({ message: undefined }), false],
+    ['a code BE keeps for itself', 'apply', { code: 'BUILD_FAILED', service: 'be', message: 'm' }, false],
+    ['a code that is too short', 'apply', { code: 'ab', service: 'be', message: 'm' }, false],
+    ['a build failure without the build', 'build', inBuild({ raw: { codebuild: null, k8s: null } }), false],
+    ['a build failure with a k8s part', 'build', inBuild({ raw: { codebuild: { id: 'cb:1' }, k8s: k8s() } }), false],
+    ['a k8s failure with a codebuild part', 'apply', student(raw({ codebuild: { id: 'x' } })), false],
+    ['a k8s failure without the k8s part', 'apply', student({ raw: { codebuild: null, k8s: null } }), false],
+    ['raw that is a string', 'apply', student({ raw: 'x' }), false],
+    ['a pod that is a string', 'apply', student(k8sRaw({ pod: 'x' })), false],
+    ['events that are not a list', 'apply', student(k8sRaw({ events: 'x' })), false],
+    ['an event that is not an object', 'apply', student(k8sRaw({ events: [{ a: 1 }, 'x'] })), false],
+    ['a render failure without a status', 'render', student(), false],
+    ['a status on apply', 'apply', student(k8sRaw({ status: { message: 'x' } })), false],
+    ['a status that is a string', 'render', student(k8sRaw({ status: 'x' })), false],
+    ['logs that are a string', 'apply', student({ logs: 'x' }), false],
+    ['logs lines with a number', 'apply', student({ logs: logs({ lines: ['a', 3] }) }), false],
+    ['logs lines that are not a list', 'apply', student({ logs: logs({ lines: 'a' }) }), false],
+    ['logs without lines', 'apply', student({ logs: { from: logs().from, to: logs().to } }), false],
+    ['a log start without a time zone', 'apply', student({ logs: logs({ from: '2026-11-11T10:00:00' }) }), false],
+    ['a log end that is not a date', 'apply', student({ logs: logs({ to: '2026-13-45T00:00:00Z' }) }), false],
+    ['a log end that is missing', 'apply', student({ logs: { from: logs().from, lines: [] } }), false],
+  ]
+  it.each(cases)('%s (%s)', (_name, stage, failure, ok) => {
+    const body = { deployId: DEPLOY_ID, stage, result: 'failed', failure } as unknown as NoticeBody
+    expect(validateNotice(JSON.parse(JSON.stringify(body))).ok, 'BE validateNotice').toBe(ok)
+    expect(refusal(body) === null, `refusal: ${refusal(body)}`).toBe(ok)
+  })
+
+  const images = (value: Record<string, unknown>) => ({ deployId: DEPLOY_ID, stage: 'build', result: 'passed', images: value }) as unknown as NoticeBody
+  it.each([
+    ['images of services', { fe: digest('a') }, true],
+    ['an image of a name that is not a service', { Bad_Name: digest('a') }, false],
+    ['an image that is not a digest', { fe: 'ghcr.io/x/y:latest' }, false],
+  ])('a passed build with %s', (_name, value, ok) => {
+    expect(validateNotice(JSON.parse(JSON.stringify(images(value)))).ok, 'BE validateNotice').toBe(ok)
+    expect(refusal(images(value)) === null, `refusal: ${refusal(images(value))}`).toBe(ok)
   })
 })
 
