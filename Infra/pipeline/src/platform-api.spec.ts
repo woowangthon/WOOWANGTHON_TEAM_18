@@ -1,3 +1,4 @@
+import http from 'node:http'
 import net from 'node:net'
 import { afterEach, describe, expect, it } from 'vitest'
 import { callPlatform, deployIdFromEnv, exitCodeOf, PlatformError, platformFromEnv, RETRY_WAITS_MS } from './platform-api.js'
@@ -125,6 +126,28 @@ describe('callPlatform', () => {
     const err = await callPlatform(conn(), 'GET', '/p', undefined, sleep).catch((e: unknown) => e)
     expect(err).toMatchObject({ status: 502, message: 'GET /p answered 502' })
     expect(platform.seen).toHaveLength(1)
+  })
+
+  it('a body that breaks off after a 200 header is a failed try (it is tried again), not a 200 with no body', async () => {
+    const server = http.createServer((req, res) => {
+      req.resume()
+      if (broken++ === 0) {
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': '100' })
+        res.write('{"ok"')
+        setTimeout(() => res.destroy(), 10)
+      } else res.writeHead(200, { 'Content-Type': 'application/json' }).end('{"ok":true}')
+    })
+    let broken = 0
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const url = `http://127.0.0.1:${(server.address() as net.AddressInfo).port}`
+    try {
+      expect(await callPlatform({ url: new URL(url), token: TOKEN }, 'POST', '/p', {}, sleep)).toEqual({ ok: true })
+      expect(broken).toBe(2)
+      expect(waits).toEqual([1_000])
+    } finally {
+      server.closeAllConnections()
+      await new Promise((resolve) => server.close(resolve))
+    }
   })
 
   it('fails on a 200 that is not JSON', async () => {

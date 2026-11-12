@@ -145,6 +145,26 @@ describe('pipeline and AI server settings', () => {
   })
 })
 
+describe('GATEWAY_PORT', () => {
+  it('is undefined (gateway closed) when unset or empty', () => {
+    expect(validateEnv(base).GATEWAY_PORT).toBeUndefined()
+    expect(validateEnv({ ...base, GATEWAY_PORT: '' }).GATEWAY_PORT).toBeUndefined()
+  })
+
+  it('parses an integer in range', () => {
+    expect(validateEnv({ ...base, GATEWAY_PORT: '3100' }).GATEWAY_PORT).toBe(3100)
+  })
+
+  it.each(['0', '65536', '31.5', 'abc', '-1'])('rejects "%s" at boot', (value) => {
+    expect(() => validateEnv({ ...base, GATEWAY_PORT: value })).toThrow(/GATEWAY_PORT/)
+  })
+
+  it('must differ from the public PORT, including its default', () => {
+    expect(() => validateEnv({ ...base, PORT: '4000', GATEWAY_PORT: '4000' })).toThrow('GATEWAY_PORT must differ from PORT')
+    expect(() => validateEnv({ ...base, GATEWAY_PORT: '3000' })).toThrow('GATEWAY_PORT must differ from PORT')
+  })
+})
+
 describe('K8S_*', () => {
   const pem = '-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----'
   const b64 = (text: string) => Buffer.from(text).toString('base64')

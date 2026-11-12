@@ -96,8 +96,9 @@ export async function callPlatform(
     try {
       // 다른 곳으로 넘어가는 답은 따라가지 않는다(헤더의 토큰이 따라가지 않게).
       const res = await fetch(url, { method, headers, body: payload, redirect: 'error', signal: AbortSignal.timeout(timeoutMs) })
-      status = res.status
+      // 본문을 끝까지 읽은 뒤에 상태를 정한다: 헤더만 오고 본문이 끊기면 "본문 없는 200"이 아니라 닿지 못한 시도로 다시 한다.
       text = await res.text()
+      status = res.status
     } catch (err) {
       reason = transportReason(err)
     }

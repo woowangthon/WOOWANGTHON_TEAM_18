@@ -175,4 +175,33 @@ describe('ClusterReader', () => {
     items(`${NS}/pods`, [])
     await expect(reader.pods('my-app')).resolves.toEqual([])
   })
+  it('reads raw objects for the gateway without managedFields and the last-applied annotation', async () => {
+    const original = {
+      metadata: {
+        name: 'be-b-1',
+        managedFields: [{ manager: 'kubectl' }],
+        annotations: { 'kubectl.kubernetes.io/last-applied-configuration': '{}', keep: 'yes' },
+      },
+      spec: { containers: [{ name: 'be' }] },
+    }
+    items(`${NS}/pods?labelSelector=${encodeURIComponent('app=be,slot=b')}`, [original, { kind: 'NoMetadata' }])
+    const pods = await reader.rawObjects('my-app', 'pods', 'app=be,slot=b')
+    expect(fake.paths).toEqual([`${NS}/pods?labelSelector=app%3Dbe%2Cslot%3Db`])
+    expect(pods).toEqual([{ metadata: { name: 'be-b-1', annotations: { keep: 'yes' } }, spec: { containers: [{ name: 'be' }] } }, { kind: 'NoMetadata' }])
+    // 원본은 바꾸지 않는다.
+    expect(original.metadata.managedFields).toHaveLength(1)
+  })
+
+  it('reads raw deployments from apps/v1 and events without a selector', async () => {
+    items('/apis/apps/v1/namespaces/proj-my-app/deployments', [])
+    items(`${NS}/events`, [])
+    await reader.rawObjects('my-app', 'deployments')
+    await reader.rawObjects('my-app', 'events')
+    expect(fake.paths).toEqual(['/apis/apps/v1/namespaces/proj-my-app/deployments', `${NS}/events`])
+  })
+
+  it('asks for the previous container logs when told to', async () => {
+    await reader.logs('my-app', 'p', { container: 'be', tailLines: 5, previous: true })
+    expect(fake.paths).toEqual([`${NS}/pods/p/log?tailLines=5&limitBytes=262144&container=be&previous=true`])
+  })
 })
