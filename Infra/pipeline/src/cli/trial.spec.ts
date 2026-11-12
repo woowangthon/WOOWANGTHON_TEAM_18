@@ -166,6 +166,19 @@ describe('student-trial CLIs', () => {
       expect(p.seen).toHaveLength(2)
     })
 
+    it('a result that already is STAGE_NO_REPORT is not sent again on a 400', async () => {
+      const p = await serve(() => ({ status: 400, body: refused }))
+      expect(await trialReportCli(['apply', join(dir, 'missing.json'), input()], trialEnv(p), sleep)).toBe(1)
+      expect(p.seen).toHaveLength(1)
+    })
+
+    it.each([401, 404])('exit 1 on %i, and nothing is sent again', async (status) => {
+      const p = await serve(() => ({ status, body: { error: { code: 'X' } } }))
+      const report = file('apply-report.json', { ok: true, slot: 'b', ready: ['ai', 'be', 'fe'], failure: null })
+      expect(await trialReportCli(['apply', report, input()], trialEnv(p), sleep)).toBe(1)
+      expect(p.seen).toHaveLength(1)
+    })
+
     it('exit 0 and a note for a late result (applied: false)', async () => {
       const p = await serve(() => ({ status: 200, body: { ok: true, applied: false } }))
       expect(await trialReportCli(['verify', file('v.json', { ok: true, ready: [], requests: [], failure: null }), input()], trialEnv(p, 'verify'), sleep)).toBe(0)
