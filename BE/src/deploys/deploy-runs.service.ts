@@ -5,6 +5,8 @@ import { isRecord } from '../common/is-record.js'
 import { parseUuid } from '../common/uuid.js'
 import { redact, redactString } from '../common/redact.js'
 import { ClusterReader } from '../k8s/cluster-reader.js'
+import type { DeployWarning } from '../security/findings.js'
+import { SecurityScanService } from '../security/security-scan.service.js'
 import { DeploymentScaler } from '../k8s/deployment-scaler.js'
 import { AgentClient } from './agent.client.js'
 import { type ServiceConditions, type Slot, targetSlot } from './deploy-condition.js'
@@ -45,7 +47,7 @@ export interface DeployStatusView {
   failure: Failure | null
   agent: AgentView | null
   url: string | null
-  warnings: string[]
+  warnings: DeployWarning[]
   updatedAt: string
 }
 
@@ -76,7 +78,7 @@ function toAgent(stored: Record<string, unknown>): AgentView {
 const iso = (t: string) => new Date(t).toISOString()
 
 /** 실행 기록(없을 수 있다)에서 읽기 응답을 만든다. 원본 · 로그 · 비밀값은 저장하지 않으므로 여기 올 수 없다. */
-function view(deploy: DeployRow, run: DeployRunRow | undefined): DeployStatusView {
+function view(deploy: DeployRow, run: DeployRunRow | undefined, warnings: DeployWarning[] = []): DeployStatusView {
   const status: DeployStatus = run?.status ?? 'not_started'
   const stage = run?.stage ?? null
   return {
@@ -87,8 +89,8 @@ function view(deploy: DeployRow, run: DeployRunRow | undefined): DeployStatusVie
     failure: run?.failure ? toFailure(run.failure) : null,
     agent: run?.agent_result ? toAgent(run.agent_result) : null,
     url: status === 'succeeded' ? publicUrl(deploy.slug) : null,
-    // 보안 검사 경고(#45)는 아직 없다.
-    warnings: [],
+    // 보안 검사 경고(#45). 목록은 이 칸을 쓰지 않아 비워 둔다.
+    warnings,
     updatedAt: iso(run?.updated_at ?? deploy.created_at),
   }
 }
@@ -104,6 +106,7 @@ export class DeployRunsService {
     private readonly agent: AgentClient,
     private readonly reader: ClusterReader,
     private readonly scaler: DeploymentScaler,
+    private readonly scans: SecurityScanService,
   ) {}
 
   /** 내 배포 하나. 없는 id · 남의 id · UUID가 아닌 id는 모두 404다. */
@@ -176,7 +179,7 @@ export class DeployRunsService {
     // 소유 확인과 실행 기록 읽기는 서로 기다리지 않는다. 남의 배포면 읽은 기록은 버리고 404다.
     const uuid = parseUuid(id)
     const [deploy, run] = await Promise.all([this.owned(user, id), uuid ? this.store.findRun(uuid) : undefined])
-    return view(deploy, run)
+    return view(deploy, run, await this.scans.warningsFor(deploy))
   }
 
   async list(user: AuthUser, rawLimit: unknown) {

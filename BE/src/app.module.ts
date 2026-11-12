@@ -9,7 +9,8 @@ import { HealthController } from './health/health.controller.js'
 import { ReposModule } from './repos/repos.module.js'
 
 @Module({
-  imports: [ConfigModule.forRoot({ validate: validateEnv }), AuthModule, ReposModule, DeploysModule, AdminModule, GatewayModule],
+  // skipProcessEnv: 검증한 값(validateEnv)만 읽는다. 켜지 않으면 `KEY=`로 비운 선택 키를 process.env의 ''로 다시 읽어 "설정함"이 된다.
+  imports: [ConfigModule.forRoot({ validate: validateEnv, skipProcessEnv: true }), AuthModule, ReposModule, DeploysModule, AdminModule, GatewayModule],
   controllers: [HealthController],
 })
 export class AppModule {}

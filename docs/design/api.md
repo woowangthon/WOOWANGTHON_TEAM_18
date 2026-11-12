@@ -468,7 +468,11 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
 - `failure.code`에 `AGENT_GAVE_UP`(AI 에이전트가 해결하지 못하고 결과를 냄)도 있다.
 - `agent`: AI 에이전트가 이 실행에 해결 결과(`submit_result`)를 냈으면 `{ "status", "summary", "userRequest": { "message", "secretKeys" } | null, "prUrl": string | null, "evidence": [{ "ref", "text" }] }`, 아니면 `null`. `status`는 `verified` · `pr_opened` · `needs_user` · `gave_up`이다. 학생에게 무엇을 했고(`summary`) 무엇을 해 달라는지(`userRequest`) 보여 주려는 것이다. 외부 전송 필터를 한 번 더 거친 값이고 도구 호출 원본 · 로그는 담지 않는다. `secretKeys`는 다시 넣어야 할 비밀값 key 이름(값 아님)이고 없으면 `[]`, `evidence`는 없으면 `[]`, `ref` · `text`는 없으면 `null`.
 - `url`: `succeeded`면 `https://<slug>.stairnoworks.com`, 아니면 `null`.
-- `warnings`: 보안 검사 경고(#45). 지금은 항상 `[]`. 항목 모양은 `{ "code": string, "message": string, "service": string | null }`로 정한다(`message`는 그대로 보여 줘도 되는 문장).
+- `warnings`: 보안 검사(UC-10, #45) 경고. 항목은 `{ "code": string, "message": string, "service": string | null }`이고 `message`는 그대로 보여 줘도 되는 문장이다(비밀값 자체는 싣지 않는다). 배포를 막지 않는다. `service`는 파일이 든 서비스 폴더(spec `dir` 중 가장 긴 접두어)이고 모르면 `null`이다.
+  - 검사: 배포 입력을 저장하면(`POST /api/deploys`) 서버가 기다리지 않고 그 레포 · commit을 검사한다. gitleaks(비밀값)와 Trivy(의존성 취약점, HIGH · CRITICAL)를 쓰고, 같은 레포 · commit은 한 번만 검사한다(`security_scans` 표). 동시에 하나만 돈다.
+  - 코드: `SECRET_FOUND`(파일 · 줄 · gitleaks 규칙), `ENV_FILE_COMMITTED`(커밋된 `.env` · `.env.*`. 예시 파일 `.example` · `.sample` · `.template` · `.dist`는 뺀다. 빌드에서 빼지는 않는다), `VULNERABLE_DEPENDENCY`(락 파일 · 패키지 · 버전마다 한 줄, 취약점 수 · 가장 높은 심각도 · ID 최대 3개 · 고친 버전), `MORE_FINDINGS`(20줄을 넘으면 마지막 줄이 남은 수), `SCAN_RUNNING`(검사 중. 진행 상태 polling이 멈춘 뒤라면 새로 고침해야 보인다), `SCAN_FAILED`(검사가 끝나지 못했거나 기록을 읽지 못함. "문제 없음"이 아니다), `SCAN_UNAVAILABLE`(서버에 검사가 설정되지 않음, `TRIVY_CACHE_DIR`).
+  - 순서: 비밀값 → `.env` → 취약한 패키지(CRITICAL이 있는 것 먼저). 깨끗한 레포는 `[]`다.
+  - 검사 기록이 없는 배포(이 기능 전에 저장한 배포)는 읽을 때 검사를 시작하고 `SCAN_RUNNING`을 돌려준다. 15분 넘게 `running`인 기록은 서버가 멈춘 것으로 보고 다시 검사한다.
 - **갱신**: FE가 `running` · `fixing`인 동안 3초마다 다시 읽는다(polling). `succeeded` · `failed` · `needs_user`면 멈춘다. 응답은 작게 유지한다(원본 · 로그 없음). SSE · WebSocket은 MVP 밖이다.
 
 오류: `401`, `404 DEPLOY_NOT_FOUND`(없는 id · 남의 id · UUID가 아닌 id 모두), `503 DATABASE_UNAVAILABLE`.

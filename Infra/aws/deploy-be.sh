@@ -32,8 +32,20 @@ grep -q '^SUPABASE_SECRET_KEY=' "$env_file.new" || { echo "no SUPABASE_SECRET_KE
 # Build from the ref itself: the clone this script runs from is not checked out or changed.
 git fetch --quiet origin
 image=wcp-be:$(git rev-parse --short "$ref^{commit}")
-git archive "$ref:BE" | docker build -t "$image" -
+# Unpacked into a folder: a tar on stdin fails on the EC2's docker 25 + buildx 0.17 ("no http response from session").
+src=$(mktemp -d)
+git archive "$ref:BE" | tar -x -C "$src"
+docker build -t "$image" "$src" || { rm -rf "$src"; exit 1; }
+rm -rf "$src"
 mv "$env_file.new" "$env_file"
+
+# Trivy vulnerability DB for the security scan (UC-10): refreshed at deploy time with the new image's trivy, so no
+# request downloads it. The server mounts it read-only. A failed refresh keeps the DB it has (no DB: the scan fails).
+trivy_dir=${TRIVY_DIR:-$HOME/.cache/wcp/trivy}
+install -d "$trivy_dir"
+docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp --entrypoint trivy -v "$trivy_dir:/trivy" "$image" \
+  fs --download-db-only --cache-dir /trivy --quiet --skip-version-check --disable-telemetry ||
+  echo "could not refresh the Trivy DB in $trivy_dir; the security scan uses the one it has" >&2
 
 # A run that stopped half way leaves wcp-be-prev behind. Drop it only if wcp-be is answering; otherwise it is the
 # last good container, so it becomes wcp-be again.
@@ -47,7 +59,8 @@ fi
 had_previous=false
 if docker stop wcp-be >/dev/null 2>&1; then docker rename wcp-be wcp-be-prev; had_previous=true; fi
 
-if docker run -d --name wcp-be --restart unless-stopped -p 127.0.0.1:3000:3000 --env-file "$env_file" -e PORT=3000 "$image" >/dev/null && healthy; then
+if docker run -d --name wcp-be --restart unless-stopped -p 127.0.0.1:3000:3000 --env-file "$env_file" -e PORT=3000 \
+  -v "$trivy_dir:/var/cache/trivy:ro" -e TRIVY_CACHE_DIR=/var/cache/trivy "$image" >/dev/null && healthy; then
   docker rm wcp-be-prev >/dev/null 2>&1 || true
   docker images wcp-be --format '{{.Repository}}:{{.Tag}}' | grep -vx "$image" | xargs -r docker rmi >/dev/null 2>&1 || true
   echo "$image is up"

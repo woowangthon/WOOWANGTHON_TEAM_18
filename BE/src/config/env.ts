@@ -32,6 +32,8 @@ export interface Env {
   K8S_TOKEN: string | undefined
   /** 리더 API 인증서를 서명한 CA. 설정에는 PEM의 base64(한 줄)로 적고, 여기에는 풀어 읽은 PEM이 들어 있다. */
   K8S_CA_CERT: string | undefined
+  /** Trivy 취약점 DB 폴더(절대 경로). 비어 있으면 보안 검사(UC-10)를 돌리지 않고, 진행 상태에 SCAN_UNAVAILABLE을 보인다. 운영은 Infra/aws/deploy-be.sh가 넣는다. */
+  TRIVY_CACHE_DIR: string | undefined
 }
 
 // 값이 틀리면 부팅을 멈춘다. 틀린 설정으로 뜬 서버가 조용히 다르게 동작하지 않게 한다.
@@ -53,6 +55,7 @@ export function validateEnv(raw: Record<string, string | undefined>): Env {
     AGENT_API_TOKEN: parseOptionalSecret(raw.AGENT_API_TOKEN, 'AGENT_API_TOKEN'),
     GATEWAY_PORT: parseGatewayPort(raw.GATEWAY_PORT, raw.PORT),
     ...parseCluster(raw),
+    TRIVY_CACHE_DIR: parseOptionalDir(raw.TRIVY_CACHE_DIR, 'TRIVY_CACHE_DIR'),
   }
 }
 
@@ -134,6 +137,12 @@ function parseOptionalSecret(value: string | undefined, name: string, minLength 
   if (!/^\S+$/.test(value)) throw new Error(`${name} must not contain whitespace`)
   // 이 토큰 하나로 알림을 위조할 수 있는 값은 짧으면 안 된다.
   if (value.length < minLength) throw new Error(`${name} must be at least ${minLength} characters`)
+  return value
+}
+
+function parseOptionalDir(value: string | undefined, name: string): string | undefined {
+  if (value === undefined || value === '') return undefined
+  if (!value.startsWith('/') || /[\0\r\n]/.test(value)) throw new Error(`${name} "${value}" must be an absolute path`)
   return value
 }
 

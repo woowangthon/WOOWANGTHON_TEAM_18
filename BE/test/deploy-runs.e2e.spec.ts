@@ -458,8 +458,59 @@ describe('GET /api/deploys/:id/status', () => {
       failure: null,
       agent: null,
       url: null,
-      warnings: [],
+      // 시험 서버에는 TRIVY_CACHE_DIR이 없어 보안 검사를 돌리지 않는다. 그 사실을 경고로 알린다("문제 없음"이 아니다).
+      warnings: [{ code: 'SCAN_UNAVAILABLE', message: '이 서버에는 보안 검사가 설정되어 있지 않아 검사하지 못했어요.', service: null }],
       updatedAt: '2026-11-11T01:00:00.000Z',
+    })
+  })
+
+  describe('security scan warnings (UC-10)', () => {
+    const warningsOf = async (id: string) => ((await status(id)).body as { warnings: unknown[] }).warnings
+    const scanOf = (over: Row) => (db.security_scans ??= []).push({ repo: 'Student/My-App', commit_sha: SHA, status: 'done', findings: [], error: null, started_at: new Date().toISOString(), finished_at: null, ...over })
+    const spec = { project: { slug: 'my-app', repo: 'student/my-app' }, services: [{ name: 'be', dir: 'backend' }, { name: 'fe', dir: 'frontend' }] }
+
+    it('shows the stored findings of the deploy commit, with the service from the spec', async () => {
+      const id = seedDeploy({ spec })
+      scanOf({
+        findings: [
+          { kind: 'secret', file: 'backend/config.js', line: 3, rule: 'aws-access-token' },
+          { kind: 'vuln', target: 'frontend/package-lock.json', pkg: 'axios', version: '0.21.0', id: 'CVE-2021-3749', severity: 'HIGH', fixed: '0.21.2' },
+        ],
+      })
+      // 다른 commit의 기록은 이 배포에 붙지 않는다.
+      scanOf({ commit_sha: 'f'.repeat(40), findings: [{ kind: 'env_file', file: '.env' }] })
+      const res = await status(id)
+      expect(res.status).toBe(200)
+      expect((res.body as { warnings: unknown[] }).warnings).toEqual([
+        {
+          code: 'SECRET_FOUND',
+          message: 'backend/config.js 3번째 줄에 비밀값으로 보이는 값이 있어요(규칙 aws-access-token). 레포에서 지우고, 진짜 키라면 새로 발급받으세요.',
+          service: 'be',
+        },
+        {
+          code: 'VULNERABLE_DEPENDENCY',
+          message: 'frontend/package-lock.json의 axios 0.21.0에 알려진 취약점이 1개 있어요(가장 높은 심각도 HIGH: CVE-2021-3749). 고친 버전: 0.21.2.',
+          service: 'fe',
+        },
+      ])
+    })
+
+    it('shows nothing for a clean repo, and a running or failed scan as such', async () => {
+      const id = seedDeploy({ spec })
+      scanOf({})
+      expect(await warningsOf(id)).toEqual([])
+      db.security_scans[0].status = 'running'
+      expect(await warningsOf(id)).toEqual([expect.objectContaining({ code: 'SCAN_RUNNING' })])
+      Object.assign(db.security_scans[0], { status: 'failed', error: 'TRIVY_FAILED' })
+      expect(await warningsOf(id)).toEqual([{ code: 'SCAN_FAILED', message: '보안 검사를 끝내지 못했어요. 문제가 없다는 뜻은 아니에요.', service: null }])
+    })
+
+    it('still answers the status when the scan record cannot be read, and says the scan failed', async () => {
+      const id = seedDeploy({ spec })
+      restOverride = (table) => (table === 'security_scans' ? new Response('{}', { status: 500 }) : undefined)
+      const res = await status(id)
+      expect(res.status).toBe(200)
+      expect(res.body as { status: string; warnings: unknown[] }).toMatchObject({ status: 'not_started', warnings: [expect.objectContaining({ code: 'SCAN_FAILED' })] })
     })
   })
 

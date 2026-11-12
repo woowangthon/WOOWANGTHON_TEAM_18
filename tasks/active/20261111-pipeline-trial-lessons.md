@@ -5,6 +5,7 @@
 - 2026-11-11: Design sent as option B (trial-only pipeline without a Switch stage); the user chose it and track B wrote the contract (#147). Reviewed the contract drafts from the pipeline side: `run_verify` input, `STAGE_NO_REPORT`, per-job input reads, `failedPhase` as a string, the 20-minute build timeout cap, `cache` meaning.
 - 2026-11-11: Split A1/A2: the trial result messages must match #142's notify messages, so `trial-report` waits for #142 instead of copying its client and message rules.
 - 2026-11-11: Open question sent to coordination: a `run_build` whose service turns out `reuse` has no `run` service in the input, so the pipeline cannot tell which image to report; proposed that BE answers it without scheduling.
+- 2026-11-12: A1 merged (#148). A1b on team main 2feae58 (#142 · #141 · #150 merged). BE's `checkTrialResult` lived in `trials.ts` next to Nest imports, which the pipeline package cannot resolve, so it moved to `trial-result.ts` (same code, re-exported) and `trial-report.spec.ts` checks every body against it. run_build is not in BE yet (B3): its bodies are checked against the api.md tool table only.
 
 ## Lessons
 

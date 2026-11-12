@@ -1,9 +1,10 @@
+import type { Clock } from './build.js'
 import type { DeployInput, Slot } from './deploy-input.js'
 import { clusterFailure, platformRefusal, type StageFailure } from './failure.js'
 import { deleteObject, type KubeCall, KubeRefused, listItems, listPath } from './kube.js'
 import { checkQuota, type QuotaIssue } from './render.js'
 
-// Prepare(W5 첫 스테이지, 리더 실행기): live 슬롯 보호 → 자원 합계 검사 → 대상 슬롯 비우기 → 남은 test Ingress 정리.
+// Prepare(W5 첫 스테이지, 리더 실행기): live 슬롯 보호 → 자원 합계 검사 → 대상 슬롯 비우기 → 남은 test Ingress 정리 → 대상 슬롯 Pod가 모두 사라질 때까지 기다리기.
 // 설계: docs/design/deploy-workflow.md §2 W5 · §4 "흐름" · "남은 Ingress 정리". 실행기 권한(proj-deployer)은 목록 · 지우기만 쓴다.
 // 필수 Secret key는 실행기가 Secret을 읽지 못해 여기서 보지 않는다(BE가 배포 시작 때 확인한다).
 
@@ -58,13 +59,19 @@ const SLOT_KINDS = [
 ]
 const INGRESSES = { base: '/apis/networking.k8s.io/v1', plural: 'ingresses' }
 
+// 지운 Deployment의 Pod는 쿠버네티스가 뒤에서 지우고, 지워지는 동안(유예 30초)에도 ResourceQuota를 쓴다. 곧바로 Apply가 새 Pod를 만들면
+// 셋째 서비스쯤에서 쿼터가 모자라 FailedCreate가 난다(#117). 그래서 대상 슬롯의 Pod가 하나도 남지 않을 때까지 기다린다.
+export const PODS_GONE_POLL_MS = 2000
+// 기본 유예 30초 + kubelet이 멈추고 API에서 지우는 몫. 넘으면 노드가 응답하지 않는 등 학생 값으로 고칠 수 없는 상태다.
+export const PODS_GONE_MAX_MS = 90_000
+
 const nameOf = (obj: Record<string, unknown>) => {
   const name = (obj.metadata as { name?: unknown } | undefined)?.name
   return typeof name === 'string' ? name : ''
 }
 
 /** 대상 슬롯에 배포할 준비를 한다. 앞에서 걸리면 뒤는 하지 않는다(보호에 걸리면 아무것도 지우지 않는다). */
-export async function runPrepare(input: DeployInput, slot: Slot, call: KubeCall): Promise<PrepareReport> {
+export async function runPrepare(input: DeployInput, slot: Slot, call: KubeCall, clock: Clock): Promise<PrepareReport> {
   const namespace = `proj-${input.spec.project.slug}`
   const deleted: string[] = []
   let live: Slot | null = null
@@ -101,6 +108,18 @@ export async function runPrepare(input: DeployInput, slot: Slot, call: KubeCall)
       if (keep.has(nameOf(ing))) continue
       await deleteObject(call, `${INGRESSES.base}/namespaces/${namespace}/${INGRESSES.plural}/${nameOf(ing)}`)
       deleted.push(`Ingress/${nameOf(ing)}`)
+    }
+
+    // 5. 대상 슬롯의 Pod가 모두 사라질 때까지(종료 중인 Pod도 쿼터를 쓴다). 지운 것이 없어도 본다: 끊긴 이전 시험이 남긴 Pod가 있을 수 있다.
+    const podsPath = listPath('/api/v1', 'pods', namespace, `slot=${slot}`)
+    const started = clock.now()
+    for (;;) {
+      const left = (await listItems(call, podsPath)).map(nameOf)
+      if (left.length === 0) break
+      if (clock.now() - started >= PODS_GONE_MAX_MS) {
+        return fail({ kind: 'platform', code: 'SLOT_PODS_LINGERING', service: null, message: `pods of slot ${slot} were still there ${PODS_GONE_MAX_MS / 1000}s after clearing it: ${left.slice(0, 10).join(', ')}` })
+      }
+      await clock.sleep(PODS_GONE_POLL_MS)
     }
   } catch (err) {
     if (err instanceof KubeRefused) {

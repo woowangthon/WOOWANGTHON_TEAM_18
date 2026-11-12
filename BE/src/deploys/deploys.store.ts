@@ -73,6 +73,24 @@ const isRunRow = (v: unknown): v is DeployRunRow =>
   ['deploy_id', 'user_id', 'slug', 'target_slot', 'status', 'created_at', 'updated_at'].every((k) => typeof v[k] === 'string') &&
   isRecord(v.input)
 
+/** `security_scans` 테이블의 한 행(supabase/migrations). 레포 · commit마다 하나다(UC-10, #45). `error`는 내부 코드뿐이다. */
+export interface ScanRow {
+  repo: string
+  commit_sha: string
+  status: 'running' | 'done' | 'failed'
+  findings: unknown
+  error: string | null
+  started_at: string
+  finished_at: string | null
+}
+
+const isScanRow = (v: unknown): v is ScanRow =>
+  isRecord(v) &&
+  ['repo', 'commit_sha', 'started_at'].every((k) => typeof v[k] === 'string') &&
+  (v.status === 'running' || v.status === 'done' || v.status === 'failed') &&
+  (v.error === null || typeof v.error === 'string') &&
+  (v.finished_at === null || typeof v.finished_at === 'string')
+
 /** 쓰기가 유일성 제약에 걸렸다(PostgREST 409). `constraint`는 Postgres가 알린 문장이라 어느 제약인지 가른다. */
 export class StoreConflict extends Error {
   constructor(readonly constraint: string) {
@@ -80,7 +98,7 @@ export class StoreConflict extends Error {
   }
 }
 
-type Table = 'deploys' | 'projects' | 'build_cache' | 'deploy_runs' | 'deploy_secrets'
+type Table = 'deploys' | 'projects' | 'build_cache' | 'deploy_runs' | 'deploy_secrets' | 'security_scans'
 
 /**
  * `deploys` · `projects` · `build_cache` 테이블 접근. 서버의 secret key로 Supabase PostgREST를 부른다(RLS를 건너뛴다). 그래서 어떤 행을 읽고 쓸지는 이 클래스를 부르는 쪽이
@@ -250,6 +268,19 @@ export class DeploysStore {
   async cacheImages(rows: { slug: string; service: string; build_input_hash: string; image: string }[]): Promise<void> {
     if (rows.length === 0) return
     await this.call('build_cache', 'POST', { on_conflict: 'slug,service,build_input_hash' }, rows, 'resolution=merge-duplicates,return=representation')
+  }
+
+  /** 이 레포 · commit의 보안 검사 기록. 없으면 undefined. */
+  async findScan(repo: string, commit: string): Promise<ScanRow | undefined> {
+    const rows = await this.call('security_scans', 'GET', { select: '*', repo: `eq.${repo}`, commit_sha: `eq.${commit}`, limit: '1' })
+    if (rows.length === 0) return undefined
+    if (!isScanRow(rows[0])) throw this.unreadable('security_scans', 'GET')
+    return rows[0]
+  }
+
+  /** 보안 검사 기록을 쓴다(없으면 만들고 있으면 바꾼다). */
+  async saveScan(row: ScanRow): Promise<void> {
+    await this.call('security_scans', 'POST', { on_conflict: 'repo,commit_sha' }, row, 'resolution=merge-duplicates,return=representation')
   }
 
   private async call(
