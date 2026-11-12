@@ -1,6 +1,6 @@
 // Tailnet access rules (build 09). Design: docs/design/cluster.md §8. In the admin console: the operator,
-// platform-server and node rules since 2026-11-10, the teammates' share rule since 2026-11-11; the GoCD
-// rule (build 09') is not pasted yet.
+// platform-server and node rules since 2026-11-10, the teammates' share rule since 2026-11-11, the GoCD
+// rule (build 09') since 2026-11-12, when the EC2 joined.
 // Pasted by the tailnet owner into the admin console (Access controls). Replace every <..._IP> with the
 // device's Tailscale address there only; the addresses are not kept in this repo.
 // This replaces the whole policy of the tailnet. Anything not accepted below is denied, so the school
@@ -13,7 +13,7 @@
 // is refused instead of applied.
 {
 	"tagOwners": {
-		// The EC2 joins with a one-time auth key that carries this tag.
+		// The EC2 joins with this tag: a one-time auth key that carries it, or a login approved by an admin.
 		"tag:platform-server": ["autogroup:admin"],
 	},
 	"hosts": {
@@ -45,7 +45,7 @@
 		},
 		// Build 09': the leader's deploy executor (GoCD Agent) -> the GoCD server on the EC2 (26.1.0,
 		// port 8153 for agent registration, work and the API alike). The port is not open to the internet.
-		// Not in the admin console yet: paste it once the EC2 has joined.
+		// In the admin console since 2026-11-12.
 		{
 			"action": "accept",
 			"src": ["k3s-leader"],
