@@ -8,6 +8,14 @@ export const IMAGE_REPO = 'ghcr.io/woowang-bot/student-apps'
 export const digest = (c: string) => `${IMAGE_REPO}@sha256:${c.repeat(64)}`
 export const COMMIT = 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2'
 
+/** 빌드가 끝난 뒤의 입력: 빌드한(`run`) fe · be에 이미지가 채워져 있다. */
+export const builtDeployInput = (): DeployInput => {
+  const input = deployInput()
+  input.deploy_condition.services.fe.image = digest('1')
+  input.deploy_condition.services.be.image = digest('2')
+  return input
+}
+
 export const deployInput = (): DeployInput => ({
   commitSha: COMMIT,
   deploy_condition: {
