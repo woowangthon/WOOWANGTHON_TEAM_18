@@ -36,7 +36,7 @@ export const BE_OWN_CODES = ['BUILD_FAILED', 'DEPLOY_FAILED', 'VERIFY_FAILED', '
 /** 쓸 수 없는 코드의 대신. `null`로 보내면 학생 문제로 읽혀 AI 에이전트에 넘어가므로 플랫폼 문제로 남겨 둔다(원래 코드는 message에 있다). */
 export const FALLBACK_CODE = 'PIPELINE_FAILED'
 
-function platformFailure(code: string, service: string | null, message: string): FailureBody {
+export function platformFailure(code: string, service: string | null, message: string): FailureBody {
   const usable = PLATFORM_CODE.test(code) && !BE_OWN_CODES.includes(code)
   return { code: usable ? code : FALLBACK_CODE, service, message: usable ? message : `${code}: ${message}` }
 }
@@ -53,7 +53,7 @@ function isoTime(v: unknown): string | null {
   return Number.isFinite(ms) ? new Date(ms).toISOString() : null
 }
 
-function buildFailure(f: BuildFailure, now: () => number): FailureBody {
+export function buildFailure(f: BuildFailure, now: () => number): FailureBody {
   if (f.kind === 'platform') return platformFailure(f.code, f.service, f.message)
   const phase = isRecord(f.failedPhase) ? f.failedPhase : null
   const context = phase !== null && Array.isArray(phase.contexts) ? (phase.contexts as unknown[])[0] : undefined
