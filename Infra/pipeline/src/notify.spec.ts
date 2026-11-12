@@ -344,14 +344,19 @@ describe('refusal answers like BE validateNotice', () => {
     expect(refusal(body) === null, `refusal: ${refusal(body)}`).toBe(ok)
   })
 
-  const images = (value: Record<string, unknown>) => ({ deployId: DEPLOY_ID, stage: 'build', result: 'passed', images: value }) as unknown as NoticeBody
+  const passed = (over: Record<string, unknown>) => ({ deployId: DEPLOY_ID, stage: 'build', result: 'passed', ...over }) as unknown as NoticeBody
   it.each([
-    ['images of services', { fe: digest('a') }, true],
-    ['an image of a name that is not a service', { Bad_Name: digest('a') }, false],
-    ['an image that is not a digest', { fe: 'ghcr.io/x/y:latest' }, false],
-  ])('a passed build with %s', (_name, value, ok) => {
-    expect(validateNotice(JSON.parse(JSON.stringify(images(value)))).ok, 'BE validateNotice').toBe(ok)
-    expect(refusal(images(value)) === null, `refusal: ${refusal(images(value))}`).toBe(ok)
+    ['a build with images of services', passed({ images: { fe: digest('a') } }), true],
+    ['a build with an image of a name that is not a service', passed({ images: { Bad_Name: digest('a') } }), false],
+    ['a build with an image that is not a digest', passed({ images: { fe: 'ghcr.io/x/y:latest' } }), false],
+    ['a build without images', passed({}), false],
+    ['images on a stage that is not build', passed({ stage: 'apply', images: { fe: digest('a') } }), false],
+    ['an apply without images', passed({ stage: 'apply' }), true],
+    ['a deploy id that is not a UUID', passed({ deployId: 'not-a-uuid', images: {} }), false],
+    ['a deploy id in upper case', passed({ deployId: DEPLOY_ID.toUpperCase(), images: {} }), true],
+  ])('a passed notice: %s', (_name, body, ok) => {
+    expect(validateNotice(JSON.parse(JSON.stringify(body))).ok, 'BE validateNotice').toBe(ok)
+    expect(refusal(body) === null, `refusal: ${refusal(body)}`).toBe(ok)
   })
 })
 

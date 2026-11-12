@@ -1,7 +1,7 @@
 import type { BuildFailure } from './build.js'
 import { isImageDigest, isRecord, parseDeployInput } from './deploy-input.js'
 import type { StageFailure } from './failure.js'
-import { callPlatform, type PlatformConn, type Sleep } from './platform-api.js'
+import { callPlatform, type PlatformConn, type Sleep, UUID } from './platform-api.js'
 
 // 스테이지가 끝났다고 플랫폼 서버에 알린다(`POST /api/pipeline/notify`). 스테이지 CLI가 쓴 결과 JSON을 알림 본문으로 바꾼다.
 // 본문의 계약은 docs/design/api.md "파이프라인 ↔ 플랫폼 서버", 받는 쪽의 검사는 BE의 `validateNotice`(BE/src/deploys/deploy-run.ts)다.
@@ -107,7 +107,10 @@ function evidenceProblem(stage: NotifyStage, f: Record<string, unknown>): string
  * 같은 본문에 BE와 같은 답을 하는지는 시험이 대 본다(정규식은 BE와 같은지도 본다).
  */
 export function refusal(body: NoticeBody): string | null {
+  if (!UUID.test(body.deployId)) return 'deployId is not a UUID'
   if (body.result === 'passed') {
+    // build만 images를 싣는다(BE는 build가 아닌 stage의 images를 UNKNOWN_KEY로 거절한다).
+    if ((body.stage === 'build') !== (body.images !== undefined)) return 'images belong to a build notice and only to it'
     for (const [name, image] of Object.entries(body.images ?? {})) {
       if (!SERVICE.test(name)) return `images.${name} is not a service name`
       if (!isImageDigest(image)) return `images.${name} is not an image digest`
