@@ -1,14 +1,14 @@
 # 디자인 시스템 — 설계
 
-- **상태**: 구현됨 (2026-11-01). 스타일 가이드 페이지는 2026-11-03에 삭제했다
+- **상태**: 구현됨 (2026-11-01). 스타일 가이드 페이지는 2026-11-03에 삭제했다. 2026-11-13에 포인트 색(주황)과 컴포넌트 6종, 새 상단 바를 더했다(#170, D0)
 - **관련**: FR 없는 기반 작업 · [NFR-USA-01~03, NFR-PER-02](../SRS.md#5-비기능-요구사항) · [ADR-001](../adr/001-stack-and-deployment.md) · task `tasks/archive/20261101-fe-design-system-todo.md`
 
 ## 범위
 
-FE가 화면을 만들기 전에 쓸 **토큰과 기본 컴포넌트 9종**(`Button`, `Input`, `Field`, `Alert`, `Badge`, `Table`, `Card`, `LogBlock`, `SelectField`)을 정한다. `Field`와 `Alert`는 로그인 화면(#51)에서, `SelectField`(`<select>`에 보이는 라벨 · 오류 문구 · aria 연결을 붙인 것. `Field`와 같은 규칙)는 배포 설정 화면(#71)에서 추가했다. 코드는 `FE/src/styles/`, `FE/src/components/ui/`에 있다.
+FE가 화면을 만들기 전에 쓸 **토큰과 기본 컴포넌트 15종**(`Button`, `Input`, `Field`, `Alert`, `Badge`, `Table`, `Card`, `LogBlock`, `SelectField`와, 2026-11-13에 더한 `Tabs`, `Spinner`, `Skeleton`, `Banner`, `Steps`, `Meter`)을 정한다. `Field`와 `Alert`는 로그인 화면(#51)에서, `SelectField`(`<select>`에 보이는 라벨 · 오류 문구 · aria 연결을 붙인 것. `Field`와 같은 규칙)는 배포 설정 화면(#71)에서 추가했다. 코드는 `FE/src/styles/`, `FE/src/components/ui/`에 있다.
 
-- 하는 것: 흑백 미니멀(Vercel식), 정보 밀도 높게, 한글과 영문이 한 줄에 섞이는 화면(`nginx:1.27`, `Running 2/3`)을 기준으로 한다. 다크 모드는 OS 설정(`prefers-color-scheme`)을 따른다.
-- 하지 않는 것: 수동 다크 모드 토글, 라우터, 실제 화면, 위 8종 밖의 컴포넌트, 변종 라이브러리, 기성 컴포넌트 키트(shadcn/ui 등).
+- 하는 것: 흑백 미니멀(Vercel식)에 **주황 포인트 색 하나**(`#F7941D`, 2026-11-13 사용자가 A안으로 확정)를 얹는다. 정보 밀도 높게, 한글과 영문이 한 줄에 섞이는 화면(`nginx:1.27`, `Running 2/3`)을 기준으로 한다. 다크 모드는 OS 설정(`prefers-color-scheme`)을 따른다.
+- 하지 않는 것: 수동 다크 모드 토글, 라우터, 실제 화면, 위 15종 밖의 컴포넌트, 변종 라이브러리, 기성 컴포넌트 키트(shadcn/ui 등).
 - 컴포넌트를 눈으로 확인하려고 임시 스타일 가이드 페이지를 두었다가 삭제했다. 컴포넌트와 토큰만 남기고, 화면은 PR에 첨부한 스크린샷(라이트 · 다크, 1440px · 390px)으로 남긴다.
 
 ## 설계
@@ -31,6 +31,14 @@ FE가 화면을 만들기 전에 쓸 **토큰과 기본 컴포넌트 9종**(`But
 | `warn` | `#a15c00` | `#f5a524` | Pending 등 주의 |
 | `err` | `#c4210f` | `#ff6166` | Failed 등 오류 |
 | `info` | `#0059c8` | `#52a8ff` | Updating 등 진행 중 |
+| `raise` | `#ffffff` | `#0a0a0a` | 배너 · 선택 행처럼 `bg` 위로 올라온 면 |
+| `accent` | `#f7941d` | `#f7941d` | 기본 버튼 배경, 완료 단계 점. 글씨를 얹지 않는다 |
+| `accent-fg` | `#0a0a0a` | `#0a0a0a` | `accent` 위의 글씨 (두 모드 모두 검정) |
+| `accent-text` | `#b45309` | `#f7941d` | 링크처럼 `bg` · `surface` 위에 놓는 주황 글씨 |
+| `accent-ui` | `#d97706` | `#f7941d` | 활성 탭 · 메뉴 밑줄, 미터 막대, 스피너, 포커스 링 (비글씨 3:1) |
+| `accent-soft` | `#fff1de` | `#2b1a06` | 선택된 행의 배경 |
+
+포인트 색은 기본 버튼 · 링크 · 활성 탭과 메뉴 밑줄 · 미터 · 완료 단계 · 포커스 링에만 쓴다. 상태 색(`ok` · `warn` · `err` · `info`)과 겹치지 않게 상태는 글자나 기호로도 구분한다. `accent-ui`는 `bg` · `raise` 위에서 3:1 이상이지만 라이트 `surface` 위에서는 2.90:1이라 거기에는 올리지 않는다. 선택된 행의 테두리(`accent-ui`)는 `accent-soft` 바탕이 아니라 주변 `bg`와의 대비로 본다(바탕과는 2.87:1).
 
 텍스트 대비는 `FE/src/styles/theme.test.ts`가 `theme.css`에서 읽어 계산한다. 글씨로 쓰는 쌍은 `bg`와 `surface` 위에서 모두 4.5:1 이상(라이트 최저 4.72:1, `warn` on `surface`. 다크 최저 6.28:1), 경계선 `line-strong`은 `bg` 위에서 3:1 이상(라이트 3.23:1)이다. `line-strong`을 `surface` 위에 올리면 라이트에서 2.94:1이라 3:1에 못 미치므로, 조작 요소의 경계는 `bg` 위에 둔다. 상태는 색만으로 전달하지 않고 배지 안의 글자(`Running`, `Failed`)로도 전달한다.
 
@@ -47,8 +55,25 @@ FE가 화면을 만들기 전에 쓸 **토큰과 기본 컴포넌트 9종**(`But
 | 숫자 | 본문에 `font-variant-numeric: tabular-nums`를 두지만 나눔스퀘어 네오에서는 효과가 없다(측정: `1111` 24px, `0000` 40px). 표의 숫자 열은 우측 정렬 + 고정폭 글꼴(`font-mono`)로 자릿수를 맞춘다 |
 | 줄바꿈 | `word-break: keep-all`로 한글을 공백에서만 끊는다. 표 셀은 줄바꿈 없이 가로 스크롤하고, 배지도 줄바꿈하지 않는다 |
 | 로그 레벨 | `LogBlock`은 문자열 children(문자열 조각 포함)의 `INFO`(`muted`), `WARN`(`warn`), `ERROR`(`err`) 단어에만 색을 입힌다. 글자는 그대로라 색만으로 전달하지 않는다 |
-| 포커스 | 2px 실선 `fg`, 오프셋 2px (키보드 포커스만) |
+| 포커스 | 2px 실선 `accent-ui`, 오프셋 2px (키보드 포커스만) |
 | 비활성 | `opacity`를 쓰지 않는다. 불투명도는 배경과 글씨를 함께 옅게 해서 글씨 대비가 1.55:1까지 떨어졌다. 대신 `surface` 배경 + `line` 테두리 + `muted` 글씨(`surface` 위에서 4.5:1 이상, 테스트가 확인)로 그린다 |
+
+### 새 컴포넌트 (2026-11-13)
+
+| 컴포넌트 | 쓰임 | 규칙 |
+| --- | --- | --- |
+| `Tabs` · `Tab` | 같은 화면 안의 보기 전환 | 활성은 `active` prop → `aria-current`, 굵은 글씨, `accent-ui` 밑줄. 어느 탭이 활성인지는 화면이 정한다 |
+| `Spinner` | 버튼 처리 중 · 1~10초 대기 | `role="status"`와 이름. 모션을 줄이면 멈추지 않고 천천히 돈다(0.8초 → 2.4초) |
+| `Skeleton` | 모양을 아는 콘텐츠의 첫 로딩 | `aria-hidden`. 반짝임 1.4초, 모션을 줄이면 단색 |
+| `Banner` | 제목 없는 한 줄 안내 4종(info · ok · warn · err) | 기호(`i` `✓` `!`)를 함께 둔다. `err`만 `role="alert"` |
+| `Steps` | 세로 단계(완료 · 진행 · 대기 · 실패 · 예정) | 상태는 글자(스크린 리더용)와 점 모양으로도 전한다. 진행 중 단계는 `aria-current="step"` |
+| `Meter` | 개수를 아는 진행 · 사용량 | `role="progressbar"`, 0~100%로 자른다 |
+
+로딩 선택: 목록 · 카드 첫 로딩은 `Skeleton`, 버튼 처리 중과 단계 진행은 `Spinner` + 문구, 개수를 아는 진행은 `Meter`, 300ms 안에 끝나는 일은 표시하지 않는다. 키프레임과 색 섞기가 필요한 `Skeleton` · `Spinner`는 임의값 클래스가 막혀 있어서 `theme.css`의 `@utility`(`skeleton`, `spinner`)로 둔다.
+
+### 상단 바
+
+`FE/src/layout/AppLayout.tsx`. 로고(`public/logo.png`) · 주 메뉴 · 이메일 · 로그아웃. 활성 메뉴는 굵은 글씨와 `accent-ui` 밑줄이다. 로고 PNG는 흰 배경이라 다크에서는 밝은 칩(`bg-fg`) 위에 올린다(투명 배경 로고가 생기면 칩을 뺀다). 본문 폭은 이번에 바꾸지 않았다(D1 · D2에서 화면과 함께 정한다).
 
 ## 결정과 대안
 
@@ -72,7 +97,7 @@ FE가 화면을 만들기 전에 쓸 **토큰과 기본 컴포넌트 9종**(`But
 - 나눔스퀘어 네오 숫자는 `tabular-nums`를 켜도 고정 폭이 아니다(측정으로 확인). 그래서 표 숫자 열만 고정폭 글꼴을 쓴다. 표 밖의 숫자(본문, 카드 안의 수치)는 여전히 자릿수가 맞지 않는다.
 - 다크 모드는 화면 캡처로 눈으로만 확인했다. 대비는 스크립트로 계산했지만 실제 기기 · 모니터에서의 가독성은 확인하지 않았다.
 - 글꼴 라이선스 전문(OFL)은 직접 읽지 않았다. 근거와 확인 범위는 [`ai-scope.md`](../ai-scope.md) §4.
-- `Input`은 보이는 라벨을 만들지 않는다. 쓰는 쪽이 이름을 줘야 하고 타입이 `aria-label` 또는 `aria-labelledby` 중 하나를 강제한다. `<label htmlFor>`로만 이름을 주는 방식은 타입을 통과하지 못한다. 보이는 라벨이 필요한 폼은 `Field`를 쓴다. `Field`는 `<label>`과 오류 문구를 만들고 `aria-labelledby` · `aria-invalid` · `aria-describedby`를 이어 주며(`id`와 aria는 prop으로 받지 않는다), 입력칸 오른쪽에 붙는 버튼은 `trailing`으로 받는다. 그래서 `Input`의 타입은 고치지 않았다. 오류 테두리는 `className`이 아니라 `Input`의 `aria-invalid:border-err`로 그린다. `Alert`는 `err` · `warn` · `info` 세 가지이고 제목 글자가 필수다(색만으로 전달하지 않는다). `err`는 `role="alert"`, 나머지는 `role="status"`다. 스피너는 만들지 않았다(`rounded-full` · 그림자 토큰이 없다). 제출 중은 버튼 글자와 `aria-busy`로 알린다. `Table`과 `LogBlock`은 스크롤 영역이라 이름(`aria-label`)을 필수 prop으로 받는다.
+- `Input`은 보이는 라벨을 만들지 않는다. 쓰는 쪽이 이름을 줘야 하고 타입이 `aria-label` 또는 `aria-labelledby` 중 하나를 강제한다. `<label htmlFor>`로만 이름을 주는 방식은 타입을 통과하지 못한다. 보이는 라벨이 필요한 폼은 `Field`를 쓴다. `Field`는 `<label>`과 오류 문구를 만들고 `aria-labelledby` · `aria-invalid` · `aria-describedby`를 이어 주며(`id`와 aria는 prop으로 받지 않는다), 입력칸 오른쪽에 붙는 버튼은 `trailing`으로 받는다. 그래서 `Input`의 타입은 고치지 않았다. 오류 테두리는 `className`이 아니라 `Input`의 `aria-invalid:border-err`로 그린다. `Alert`는 `err` · `warn` · `info` 세 가지이고 제목 글자가 필수다(색만으로 전달하지 않는다). `err`는 `role="alert"`, 나머지는 `role="status"`다. 제출 중은 버튼 글자와 `aria-busy`로 알리고, 눈에 보이는 대기 표시가 필요하면 `Spinner`를 쓴다. `Table`과 `LogBlock`은 스크롤 영역이라 이름(`aria-label`)을 필수 prop으로 받는다.
 - 컨트롤 · 표 본문 · 표 머리글 · 로그는 13px(`text-sm`), 본문은 14px, 배지만 12px다. 표 머리글과 로그는 12px일 때 한글 획이 얇아 읽기 어려워 13px로 올렸다(밀도는 조금 줄어든다). 배지는 높이 18px를 지키려고 12px로 둔다. 1px 차이는 위계로 읽히지 않고 밀도를 위한 값이다.
 - 표 안의 고정폭 글꼴(이미지 태그, 숫자)도 13px다. 12px였을 때 같은 행의 `shop-api`(나눔스퀘어 13px)보다 눈에 띄게 작고 가벼웠다.
 - 컨트롤 높이 32px는 WCAG 2.5.8 최소(24px)는 넘지만 모바일 터치 권장(44px)에는 못 미친다. 모바일 화면을 만들 때 다시 본다.

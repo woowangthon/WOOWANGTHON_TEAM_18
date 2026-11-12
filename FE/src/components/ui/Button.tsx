@@ -3,7 +3,7 @@ import type { ButtonHTMLAttributes } from 'react'
 // 비활성은 opacity가 아니라 토큰으로 그린다. opacity는 배경과 글씨를 함께 옅게 해서 글씨가 안 읽힌다.
 const variants = {
   primary:
-    'border border-transparent bg-fg text-bg hover:opacity-85 disabled:border-line disabled:bg-surface disabled:text-muted',
+    'border border-transparent bg-accent text-accent-fg hover:brightness-95 disabled:border-line disabled:bg-surface disabled:text-muted',
   outline:
     'border border-line-strong text-fg hover:border-fg disabled:border-line disabled:text-muted',
 }
