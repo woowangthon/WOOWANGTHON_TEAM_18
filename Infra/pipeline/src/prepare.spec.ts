@@ -190,6 +190,7 @@ describe('runPrepare', () => {
   })
 
   it('fails as platform problem SLOT_PODS_LINGERING when Pods stay past the limit, naming them', async () => {
+    let reads = 0
     const { call, calls } = fakeKube({
       [OPEN]: list(),
       ...slotList('a'),
@@ -197,9 +198,11 @@ describe('runPrepare', () => {
       [`DELETE /apis/apps/v1${NS}/deployments/fe-a`]: ok(),
       [`DELETE /apis/apps/v1${NS}/deployments/be-a`]: ok(),
       [`DELETE /api/v1${NS}/services/fe-a`]: ok(),
-      [pods('a')]: list({ metadata: { name: 'fe-a-1' } }, { metadata: { name: 'be-a-2' } }),
+      // 시간이 흐르지 않는 버그(sleep이 시계를 넘기지 않음)에서도 끝없이 돌지 않게, 200번째 읽기부터는 닿지 못한 것으로 답한다.
+      [pods('a')]: () => (++reads > 200 ? new KubeError('K8S_TIMEOUT', 'too many reads') : list({ metadata: { name: 'fe-a-1' } }, { metadata: { name: 'be-a-2' } })),
     })
-    const report = await runPrepare(built(), 'a', call, fakeClock())
+    const clock = fakeClock()
+    const report = await runPrepare(built(), 'a', call, clock)
     expect(report).toMatchObject({
       ok: false,
       deleted: ['Deployment/fe-a', 'Deployment/be-a', 'Service/fe-a'],
@@ -207,6 +210,7 @@ describe('runPrepare', () => {
     })
     // 2초마다 90초까지: 처음 한 번 + 45번 더 본다.
     expect(calls.filter((c) => c.path.includes('/pods?'))).toHaveLength(PODS_GONE_MAX_MS / PODS_GONE_POLL_MS + 1)
+    expect(new Set(clock.sleeps)).toEqual(new Set([PODS_GONE_POLL_MS]))
   })
 
   it('reports an unreachable API while waiting as a platform problem', async () => {
