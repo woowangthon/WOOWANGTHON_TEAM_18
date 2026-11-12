@@ -67,7 +67,7 @@ EC2 ── gocd-server (GoCD 26.1.0, JVM -Xmx1g, 8153은 Tailscale 주소에만 
 | 인스턴스 역할 | 위 `/wcp/be` 권한에 `/wcp/gocd` 경로의 `ssm:GetParametersByPath`를 더한다(`kms:Decrypt`는 이미 있다). 컨테이너는 인스턴스 역할을 쓰지 못한다(IMDSv2 hop limit 1) |
 | 비밀값이 가는 곳 | 파이프라인 파일에는 비밀값이 없다. 알림 토큰과 AWS 키는 실행기 컨테이너의 환경변수다(AWS 실행기는 compose, 리더 실행기는 Secret `gocd-agent`). GoCD는 설정 저장소의 파이프라인에 비밀 변수를 붙일 수 없고(서버 설정의 환경은 그 파이프라인을 가리킬 수 없다) 비밀 관리 플러그인은 서버에 들어 있지 않아서다. 로그에 값이 찍히지 않는 것은 도구가 찍지 않기 때문이다 |
 | 접근 토큰 | `setup.sh`가 사용자 `be`로 발급해 `~/.config/wcp/gocd/be-gocd-token`(0600)에 한 번 쓴다. 운영자가 그 값을 SSM `/wcp/be/GOCD_TOKEN`에 넣는다. GoCD는 토큰을 만들 때 한 번만 보여 주므로 파일을 지우면 새로 발급해야 한다. **`be`는 관리자가 아니다**: 실행(schedule) · 스테이지 취소 · 읽기만 되고, 설정 저장소 등록 · 파이프라인 수정 · 관리자 지정은 403이다(실제 GoCD 26.1.0에서 확인). 토큰으로 설정 저장소를 등록하면 AWS 실행기에서 명령을 돌려 AWS 키를 꺼낼 수 있어서(아래 "왜 CodeBuild를 시작할 수 있는 키가 이 컨테이너에만 있나"와 같은 이유) 나눴다. `be`의 비밀번호는 `setup.sh`가 실행마다 새로 만들고 저장하지 않는다(토큰을 만들 때만 쓴다) |
-| 리더 실행기 | `setup.sh`가 `~/.config/wcp/gocd/leader-agent.env`(서버 주소, 등록 키, 알림 토큰)를 쓴다. 운영자가 그 파일로 리더의 Secret `gocd-agent`를 만든 뒤 `Infra/executor/agent.yaml`을 적용한다(그 파일 머리말). 이 Secret이 없으면 Pod는 `CreateContainerConfigError`로 서 있다 |
+| 리더 실행기 | `setup.sh`가 `~/.config/wcp/gocd/leader-agent.env`(서버 주소, 등록 키, 알림 토큰)를 쓴다. 등록 키와 알림 토큰은 SSM `/wcp/gocd/AGENT_AUTO_REGISTER_KEY` · `/wcp/gocd/PIPELINE_NOTIFY_TOKEN`에도 있다. 운영자가 그 파일이나 SSM에서 값을 화면에 찍지 않고 리더의 Secret `gocd-agent`(키 셋)를 만든 뒤 `Infra/executor/agent.yaml`을 적용한다(그 파일 머리말). 이 Secret이 없으면 Pod는 `CreateContainerConfigError`로 서 있다 |
 
 **BE 설정에 더할 값** (SSM `/wcp/be/<이름>`, 이름은 [`BE/.env.example`](../../BE/.env.example)과 같다):
 
