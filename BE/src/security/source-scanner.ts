@@ -120,7 +120,8 @@ export class SourceScanner {
       throw new ScanError('SOURCE_TOO_LARGE')
     }
     // GNU tar는 절대 경로와 `..`를 지우고 푼다. 첫 폴더(`<repo>-<sha>/`)는 벗긴다. .gitleaksignore는 풀지 않는다.
-    const tar = spawn('tar', ['-x', '-f', '-', '-C', dest, '--strip-components=1', '--no-same-owner', '--no-same-permissions', '--exclude=.gitleaksignore'], {
+    // --ignore-zeros: 끝 표시 뒤의 0 채움까지 다 읽게 한다. 없으면 tar가 먼저 끝나 입력이 닫히고(Premature close) 받기 실패로 보인다.
+    const tar = spawn('tar', ['-x', '-f', '-', '-C', dest, '--ignore-zeros', '--strip-components=1', '--no-same-owner', '--no-same-permissions', '--exclude=.gitleaksignore'], {
       stdio: ['pipe', 'ignore', 'ignore'],
       env: { PATH },
     })

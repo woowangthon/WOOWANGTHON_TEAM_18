@@ -8,8 +8,10 @@
 - 2026-11-12: the Trivy DB is ~1.7GB unpacked, so it stays out of the image and lives in a host folder.
 - 2026-11-12: the first container test failed: `node:22-bookworm-slim` has no system CA bundle, so trivy (Go) could not download its DB (`x509: certificate signed by unknown authority`). Node's own fetch was fine. Copied `ca-certificates.crt` from a stage that installs it.
 - 2026-11-12: local container scan of OWASP/NodeGoat: 3 secrets, 60 HIGH/CRITICAL vulnerabilities, ~1s; whole container peak memory ~100MB (cgroup v1 `memory.max_usage_in_bytes`).
+- 2026-11-12: PR #163 CI failed once with `SOURCE_FETCH_FAILED` in a tool-failure test. Under CPU load the pipeline into `tar` ended with `ERR_STREAM_PREMATURE_CLOSE`: GNU tar exits at the end-of-archive blocks without reading the zero padding after them, closing its stdin while we still write. Fixed with `--ignore-zeros`; 40 runs under full CPU load, 0 failures (before: about 1 in 6).
 
 ## Lessons
 
 - A Go binary in a slim Node image needs the CA bundle; test any tool that talks TLS inside the real image, not on the host.
 - Fake low-entropy tokens (`ghp_aBcDeF...0123456789`) are not found by gitleaks; use realistic random-looking values in fixtures.
+- When piping into `tar -x -f -`, add `--ignore-zeros` or tar may close stdin before the stream ends; reproduce stream races under CPU load, not on an idle machine.
