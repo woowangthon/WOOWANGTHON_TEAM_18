@@ -11,7 +11,7 @@
   - FE를 S3 + CloudFront로 `https://app.stairnoworks.com`에 올린다.
   - BE를 EC2의 컨테이너로 띄우고, Cloudflare Tunnel로 `https://api.stairnoworks.com`에 연다.
   - 설정값을 넣는 곳과, 다시 배포하는 명령을 정한다.
-- **하지 않는다**: CI에서 자동 배포는 하지 않는다. 대회 기간에는 운영자가 스크립트를 손으로 돌린다. GoCD 서버 설치는 GoCD 담당이 한다(같은 EC2).
+- **하지 않는다**: CI에서 자동 배포는 하지 않는다. 대회 기간에는 운영자가 스크립트를 손으로 돌린다. GoCD 서버 · AWS 실행기는 아래 "GoCD 서버 · AWS 실행기"에 있다(같은 EC2).
 
 ## 설계
 
@@ -49,6 +49,47 @@
 | 권한 | 인스턴스 역할에 `/wcp/be` 경로의 `ssm:GetParametersByPath`, `/wcp/tunnel/TUNNEL_TOKEN`의 `ssm:GetParameter`, `kms:Decrypt`만 |
 | 올리기 | EC2에서 [`Infra/aws/deploy-be.sh`](../../Infra/aws/deploy-be.sh) `[git-ref]`. 새 컨테이너가 `/api/health`에 답하지 않으면 이전 컨테이너(이미지 · 설정 그대로)를 다시 띄운다. 터널은 그대로 두고 BE만 바뀐다 |
 
+### GoCD 서버 · AWS 실행기
+
+같은 EC2에 컨테이너 둘이 더 뜬다. 구성은 [`Infra/gocd/compose.yaml`](../../Infra/gocd/compose.yaml)이다.
+
+```
+EC2 ── gocd-server (GoCD 26.1.0, JVM -Xmx1g, 8153은 Tailscale 주소에만 연다)
+   └── gocd-aws-agent (resource aws: Build 스테이지, CodeBuild 키가 있는 곳)
+리더 Pod (Infra/executor/agent.yaml, resource leader) ──Tailscale──▶ gocd-server:8153
+```
+
+| 항목 | 값 |
+| --- | --- |
+| 파이프라인 정의 | [`Infra/gocd/student-deploy.gocd.yaml`](../../Infra/gocd/student-deploy.gocd.yaml). GoCD가 이 레포의 이 파일을 읽는다(설정 저장소). 파이프라인 `student-deploy`는 Build(aws) → Prepare → Render → Apply → Verify → Switch(leader)이고, commit이 올라와도 시작하지 않는다. 시작은 플랫폼 서버의 실행 요청뿐이다. Verify는 Traefik으로 동작 확인, Switch는 공개 주소 전환(open Ingress 적용과 남은 open Ingress · Middleware 정리)으로 CLI(#139)를 부른다. 이전 슬롯을 0개로 줄이는 일은 Switch가 하지 않고, 플랫폼 서버가 전환 성공 알림을 받아 `live_slot`을 바꾼 뒤 한다(W7) |
+| 올리기 | EC2에서 [`Infra/aws/start-gocd.sh`](../../Infra/aws/start-gocd.sh). SSM의 값을 읽어 서버를 띄우고, [`Infra/gocd/setup.sh`](../../Infra/gocd/setup.sh)가 GoCD API로 로그인(파일 방식, 사용자 `admin`과 `be`) · 권한 나누기(시스템 관리자는 `admin`뿐, `be`는 파이프라인 그룹 `wcp`의 operate만) · 설정 저장소 등록 · BE가 쓸 접근 토큰 발급을 하고, AWS 실행기를 띄운다. 새 서버는 로그인이 꺼진 채 뜨므로 `setup.sh`가 끝날 때까지 127.0.0.1에만 열고, 그 뒤 같은 데이터로 Tailscale 주소에 다시 띄운다. 다시 돌려도 없는 것만 한다 |
+| 설정값 | SSM `/wcp/gocd/<이름>`(SecureString, 한 줄): `ADMIN_PASSWORD`(16자 이상), `PIPELINE_NOTIFY_TOKEN`(BE의 같은 이름과 같은 값, 32자 이상), `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`(아래 실행기 전용 IAM 사용자). `AWS_REGION=ap-northeast-2`는 공개 값이라 compose에 있다 |
+| 인스턴스 역할 | 위 `/wcp/be` 권한에 `/wcp/gocd` 경로의 `ssm:GetParametersByPath`를 더한다(`kms:Decrypt`는 이미 있다). 컨테이너는 인스턴스 역할을 쓰지 못한다(IMDSv2 hop limit 1) |
+| 비밀값이 가는 곳 | 파이프라인 파일에는 비밀값이 없다. 알림 토큰과 AWS 키는 실행기 컨테이너의 환경변수다(AWS 실행기는 compose, 리더 실행기는 Secret `gocd-agent`). GoCD는 설정 저장소의 파이프라인에 비밀 변수를 붙일 수 없고(서버 설정의 환경은 그 파이프라인을 가리킬 수 없다) 비밀 관리 플러그인은 서버에 들어 있지 않아서다. 로그에 값이 찍히지 않는 것은 도구가 찍지 않기 때문이다 |
+| 접근 토큰 | `setup.sh`가 사용자 `be`로 발급해 `~/.config/wcp/gocd/be-gocd-token`(0600)에 한 번 쓴다. 운영자가 그 값을 SSM `/wcp/be/GOCD_TOKEN`에 넣는다. GoCD는 토큰을 만들 때 한 번만 보여 주므로 파일을 지우면 새로 발급해야 한다. **`be`는 관리자가 아니다**: 실행(schedule) · 스테이지 취소 · 읽기만 되고, 설정 저장소 등록 · 파이프라인 수정 · 관리자 지정은 403이다(실제 GoCD 26.1.0에서 확인). 토큰으로 설정 저장소를 등록하면 AWS 실행기에서 명령을 돌려 AWS 키를 꺼낼 수 있어서(아래 "왜 CodeBuild를 시작할 수 있는 키가 이 컨테이너에만 있나"와 같은 이유) 나눴다. `be`의 비밀번호는 `setup.sh`가 실행마다 새로 만들고 저장하지 않는다(토큰을 만들 때만 쓴다) |
+| 리더 실행기 | `setup.sh`가 `~/.config/wcp/gocd/leader-agent.env`(서버 주소, 등록 키, 알림 토큰)를 쓴다. 운영자가 그 파일로 리더의 Secret `gocd-agent`를 만든 뒤 `Infra/executor/agent.yaml`을 적용한다(그 파일 머리말). 이 Secret이 없으면 Pod는 `CreateContainerConfigError`로 서 있다 |
+
+**BE 설정에 더할 값** (SSM `/wcp/be/<이름>`, 이름은 [`BE/.env.example`](../../BE/.env.example)과 같다):
+
+| 이름 | 값 |
+| --- | --- |
+| `GOCD_URL` | `http://<EC2의 Tailscale 주소>:8153`(끝에 `/` 없이) |
+| `GOCD_TOKEN` | `setup.sh`가 사용자 `be`로 만든 접근 토큰(operate만) |
+| `GOCD_PIPELINE` | `student-deploy` |
+| `PIPELINE_NOTIFY_TOKEN` | 위 `/wcp/gocd/PIPELINE_NOTIFY_TOKEN`과 같은 값 |
+
+**콘솔에서 만들 AWS 리소스** (서울 `ap-northeast-2`, 이름은 파이프라인이 그대로 쓴다):
+
+| 리소스 | 설정 |
+| --- | --- |
+| CodeBuild 프로젝트 `student-apps` | 소스 없음(NO_SOURCE). 환경: 관리형 Ubuntu 표준 이미지, Linux, **권한 있는 모드(privileged) 켬**(`docker build`), 컴퓨팅 MEDIUM 이상. **VPC 밖**. 시간 제한 **15분**(파이프라인이 대기 상한을 이것에 맞춘다, `build.ts`의 `MAX_WAIT_MS`). buildspec은 자리만 채운다(`version: 0.2`와 `echo`; 실제 buildspec은 StartBuild가 넘긴다). 로그 그룹 `/aws/codebuild/student-apps` |
+| 위 프로젝트의 서비스 역할 | CloudWatch Logs 쓰기와 `secretsmanager:GetSecretValue`(비밀 `wcp/codebuild/GHCR_TOKEN` 하나만). 그 밖의 권한은 없다 |
+| Secrets Manager 비밀 `wcp/codebuild/GHCR_TOKEN` | 평문(JSON 아님). 값은 봇 GitHub 계정의 토큰(classic, `write:packages`). 파이프라인의 `GHCR_TOKEN_SECRET_ID`에 이 이름이 들어 있다 |
+| IAM 사용자 `wcp-gocd-aws-agent` (AWS 실행기 전용) | `codebuild:StartBuild` · `codebuild:BatchGetBuilds`는 프로젝트 `student-apps`에만, `logs:GetLogEvents`는 그 로그 그룹(`/aws/codebuild/student-apps:log-stream:*`)에만. 콘솔 로그인은 없고 액세스 키만 만들어 SSM `/wcp/gocd/AWS_ACCESS_KEY_ID` · `AWS_SECRET_ACCESS_KEY`에 넣는다 |
+| 봇 GitHub 계정과 패키지 | 학생 이미지는 `ghcr.io/<봇 계정>/student-apps` 하나다([배포 인계](deploy-handoff.md)). 첫 push 뒤 GHCR에서 이 패키지를 **Public**으로 바꾼다(새 패키지는 비공개라 워커가 토큰 없이 받지 못한다, [ADR-003](../adr/003-registry-ghcr.md)). 봇 계정은 `wanggane-bot`이고, 파이프라인 파일의 `GHCR_USER` · `IMAGE_REPO`에 들어 있다. |
+
+**왜 CodeBuild를 시작할 수 있는 키가 이 컨테이너에만 있나**: CodeBuild를 시작할 수 있으면 빌드 명령을 바꿔 GHCR 토큰을 꺼내 갈 수 있어서다([배포 워크플로우](deploy-workflow.md) §8). 그래서 키는 실행기 전용 IAM 사용자의 것이고, 인스턴스 역할에는 CodeBuild 권한이 없다.
+
 ### 함께 바꿀 바깥 설정
 
 - **Supabase** Authentication → URL Configuration: Site URL과 Redirect URLs에 `https://app.stairnoworks.com` 추가(이슈 #49).
@@ -66,4 +107,6 @@
 ## 알려진 한계
 
 - BE는 컨테이너 하나다. 배포하는 몇 초 동안 API가 응답하지 않는다.
-- 스크립트는 실제 AWS에서 아직 돌려 보지 않았다(2026-11-11).
+- 스크립트는 실제 AWS에서 아직 돌려 보지 않았다(2026-11-11). `start-gocd.sh`와 AWS 실행기도 EC2에서는 돌려 보지 않았다(로컬 docker에서 서버 기동 · 로그인 · 설정 저장소 등록 · 접근 토큰 발급까지만 확인했다).
+- GoCD 서버와 AWS 실행기가 죽으면 새 배포가 시작되지 않는다(BE가 `503 PIPELINE_UNAVAILABLE`). (`setup`이나 artifact 받기가 실패한 job은 `job.sh`가 `STAGE_NO_REPORT`를 curl로 알린다.) 실행 중이던 job이 GoCD의 시간 제한이나 실행기가 죽어서 끝나면 알림을 보내는 task가 돌지 못해 그 배포는 `running`으로 남는다. 같은 프로젝트의 다음 시작이 그 기록을 시간 초과(`TIMED_OUT`)로 마감하지만(BE의 `STALE_RUN_MS`, 1시간), 그 전까지 학생에게는 진행 중으로 보인다.
+- BE 컨테이너가 Tailscale 주소의 8153에 닿는지(`GOCD_URL`)는 EC2에서 확인하지 않았다.
