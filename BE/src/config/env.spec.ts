@@ -167,6 +167,18 @@ describe('GATEWAY_PORT', () => {
   })
 })
 
+describe('TRIVY_CACHE_DIR', () => {
+  it('is optional: empty means the security scan is off', () => {
+    expect(validateEnv(base).TRIVY_CACHE_DIR).toBeUndefined()
+    expect(validateEnv({ ...base, TRIVY_CACHE_DIR: '' }).TRIVY_CACHE_DIR).toBeUndefined()
+    expect(validateEnv({ ...base, TRIVY_CACHE_DIR: '/var/cache/trivy' }).TRIVY_CACHE_DIR).toBe('/var/cache/trivy')
+  })
+
+  it.each(['var/cache/trivy', './cache', '/a\nb'])('stops the boot on a path that is not absolute: %j', (value) => {
+    expect(() => validateEnv({ ...base, TRIVY_CACHE_DIR: value })).toThrow(/TRIVY_CACHE_DIR/)
+  })
+})
+
 describe('K8S_*', () => {
   const pem = '-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----'
   const b64 = (text: string) => Buffer.from(text).toString('base64')

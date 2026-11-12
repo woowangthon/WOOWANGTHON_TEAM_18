@@ -3,6 +3,7 @@ import type { AuthUser } from '../auth/auth.decorators.js'
 import { parseUuid } from '../common/uuid.js'
 import { isCommitSha } from '../repos/repo-url.js'
 import { invalidCommit, ReposService } from '../repos/repos.service.js'
+import { SecurityScanService } from '../security/security-scan.service.js'
 import { type Issue, type Spec, validateSpec } from './deploy-input.js'
 import { type DeployRow, DeploysStore } from './deploys.store.js'
 
@@ -34,6 +35,7 @@ export class DeploysService {
   constructor(
     private readonly repos: ReposService,
     private readonly store: DeploysStore,
+    private readonly scans: SecurityScanService,
   ) {}
 
   /**
@@ -63,9 +65,10 @@ export class DeploysService {
       throw new ConflictException({ code: 'SLUG_TAKEN', message: 'This slug is used by another project' })
     }
 
-    return toDeploy(
-      await this.store.insert({ user_id: user.id, slug: spec.project.slug, repo: repo.full_name, commit_sha: commit, spec }),
-    )
+    const row = await this.store.insert({ user_id: user.id, slug: spec.project.slug, repo: repo.full_name, commit_sha: commit, spec })
+    // 보안 검사는 기다리지 않는다(FR-097). 결과는 진행 상태의 warnings로 보인다.
+    this.scans.request(row.repo, row.commit_sha)
+    return toDeploy(row)
   }
 
   /** 내 배포 입력 하나. 없는 id · 남의 id · UUID가 아닌 id는 모두 404다(남의 배포가 있는지 알려 주지 않는다). */
