@@ -307,6 +307,19 @@ describe('POST /api/deploys/:id/start', () => {
     expect(run(first).status).toBe('running')
   })
 
+  it('does not free the project while its fixing run has a live gateway token (the agent may be waiting on a trial)', async () => {
+    const first = seedDeploy()
+    await start(first)
+    Object.assign(run(first), { status: 'fixing', ticket_id: 't_trial', gateway_expires_at: new Date(Date.now() + 10 * 60_000).toISOString() })
+    run(first).updated_at = new Date(Date.now() - 61 * 60_000).toISOString()
+    expect((await start(seedDeploy())).body).toEqual(errorBody('DEPLOY_IN_PROGRESS'))
+    expect(run(first).status).toBe('fixing')
+    // 토큰이 끝나면 평소대로 판정한다.
+    run(first).gateway_expires_at = new Date(Date.now() - 1000).toISOString()
+    expect((await start(seedDeploy())).status).toBe(202)
+    expect(run(first)).toMatchObject({ status: 'failed', failure: { code: 'TIMED_OUT' } })
+  })
+
   it('logs a failed clean-up instead of swallowing it when GoCD refuses and the run cannot be deleted', async () => {
     const id = seedDeploy()
     gocdAnswer = () => new Response('{}', { status: 500 })
@@ -773,6 +786,25 @@ describe('POST /api/pipeline/notify', () => {
       expect(callsTo(AI_URL)).toHaveLength(0)
       // 진행 중이 아니므로 같은 프로젝트의 다음 배포를 받는다.
       expect((await start(seedDeploy())).status).toBe(202)
+    })
+
+    it.each([
+      ['UNEXPECTED_REFUSAL', 'prepare', /예상하지 못한 이유/],
+      ['TRAEFIK_UNREACHABLE', 'verify', /Traefik/],
+      ['SWITCH_REFUSED', 'switch', /거절/],
+      ['OPEN_MANIFEST_MISSING', 'switch', /필요한 파일이 없어/],
+      ['STAGE_NO_REPORT', 'render', /결과 보고를 읽지 못해/],
+      ['TRIAL_SWITCH_REFUSED', 'switch', /시험 실행/],
+      ['TRIAL_STILL_RUNNING', 'apply', /이전 시험 실행이 아직/],
+    ])('shows the student a fixed sentence for the platform code %s, not the generic one', async (code, stage, sentence) => {
+      const id = await reach(stage)
+      await notify({ deployId: id, stage, result: 'failed', failure: failure({ code }) })
+      const { failure: shown } = (await status(id)).body as StatusBody
+      expect(shown).toMatchObject({ code, stage })
+      expect(shown?.message).toMatch(sentence)
+      expect(shown?.message).not.toContain('플랫폼 문제로 배포하지 못했습니다')
+      // 로그 · 원본 · 비밀값은 문구에 없다.
+      expect(shown?.message).not.toContain('hunter2pass')
     })
 
     it('a switch failure ends as failed (the ticket contract has no such stage) and does not call the AI server', async () => {

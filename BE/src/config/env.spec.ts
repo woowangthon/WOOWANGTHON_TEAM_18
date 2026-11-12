@@ -105,7 +105,7 @@ describe('SUPABASE_URL', () => {
 })
 
 describe('pipeline and AI server settings', () => {
-  const names = ['GOCD_URL', 'GOCD_TOKEN', 'GOCD_PIPELINE', 'PIPELINE_NOTIFY_TOKEN', 'AI_SERVER_URL', 'AGENT_API_TOKEN'] as const
+  const names = ['GOCD_URL', 'GOCD_TOKEN', 'GOCD_PIPELINE', 'GOCD_TRIAL_PIPELINE', 'PIPELINE_NOTIFY_TOKEN', 'AI_SERVER_URL', 'AGENT_API_TOKEN'] as const
 
   it('are optional: unset or empty means the feature is off', () => {
     for (const raw of [base, { ...base, ...Object.fromEntries(names.map((n) => [n, ''])) }]) {
@@ -120,11 +120,12 @@ describe('pipeline and AI server settings', () => {
       GOCD_URL: 'https://gocd.example.com',
       GOCD_TOKEN: 'tok',
       GOCD_PIPELINE: 'student-deploy',
+      GOCD_TRIAL_PIPELINE: 'student-trial',
       PIPELINE_NOTIFY_TOKEN: 'n'.repeat(32),
       AI_SERVER_URL: 'http://localhost:8000',
       AGENT_API_TOKEN: 'a',
     })
-    expect(env).toMatchObject({ GOCD_URL: 'https://gocd.example.com', GOCD_PIPELINE: 'student-deploy', AI_SERVER_URL: 'http://localhost:8000' })
+    expect(env).toMatchObject({ GOCD_URL: 'https://gocd.example.com', GOCD_PIPELINE: 'student-deploy', GOCD_TRIAL_PIPELINE: 'student-trial', AI_SERVER_URL: 'http://localhost:8000' })
   })
 
   it.each([
@@ -136,6 +137,7 @@ describe('pipeline and AI server settings', () => {
     ['PIPELINE_NOTIFY_TOKEN', 'x'.repeat(31)],
     ['AGENT_API_TOKEN', ' x'],
     ['GOCD_PIPELINE', 'a/b'],
+    ['GOCD_TRIAL_PIPELINE', 'a b'],
   ])('rejects %s = "%s" at boot', (name, value) => {
     expect(() => validateEnv({ ...base, [name]: value })).toThrow(new RegExp(name))
   })

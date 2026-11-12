@@ -123,10 +123,10 @@ const result = (overrides: Record<string, unknown> = {}) => ({
 })
 
 describe('MCP gateway', () => {
-  it('lists only the tools that work without the pipeline', async () => {
+  it('lists the observation tools, the trial tools without run_build, and submit_result', async () => {
     const client = await connect()
     const { tools } = await client.listTools()
-    expect(tools.map((t) => t.name)).toEqual(['get_target_status', 'read_pod_logs', 'read_repo', 'submit_result'])
+    expect(tools.map((t) => t.name)).toEqual(['get_target_status', 'read_pod_logs', 'read_repo', 'run_render', 'run_deploy', 'run_verify', 'submit_result'])
     await client.close()
   })
 
@@ -162,7 +162,10 @@ describe('MCP gateway', () => {
     ['read_repo', { path: '/abs' }],
     ['read_repo', { path: 'src', source: { commitSha: SHA } }],
     ['read_repo', { path: 'missing.txt' }],
-    ['run_deploy', {}],
+    ['run_build', {}],
+    ['run_deploy', { source: { commitSha: SHA } }],
+    ['run_deploy', { specPatch: {} }],
+    ['run_verify', { specPatch: [] }],
   ])('rejects %s %j as INVALID_ARGUMENT', async (name, args) => {
     const client = await connect()
     expect(rejected(await call(client, name, args))).toBe('INVALID_ARGUMENT')
