@@ -65,7 +65,7 @@ AI 서버 (에이전트) → 플랫폼 서버 MCP 게이트웨이 → GoCD 서�
 
 | 도구 | 하는 일 | 입력 | 출력 | 티켓당 횟수 |
 |---|---|---|---|---|
-| `run_build` | Build (CodeBuild). 해시가 같으면 재사용 | `service`, `specPatch?`, `source?`, `buildOverrides?` | `BatchGetBuilds`의 `builds[0]` 원본, 실패 phase, 로그 마지막 200줄, 성공 시 이미지 digest | 2 |
+| `run_build` | Build (CodeBuild). 해시가 같은 이미지가 이미 있으면 빌드하지 않고 바로 `reused: true`와 그 이미지로 답한다(#149) | `service`, `specPatch?`, `source?`, `buildOverrides?` | `BatchGetBuilds`의 `builds[0]` 원본, 실패 phase, 로그 마지막 200줄, 성공 시 이미지 digest | 2 |
 | `run_render` | Render + k3s API server-side apply dry-run. 클러스터에 적용하지 않는다 | `specPatch?` | 통과 여부, 실패 시 k3s Status 원본 | 5 |
 | `run_deploy` | Prepare(live 슬롯 보호 검사, 대상 슬롯 비우기) → Render → Apply → Ready 대기 | `specPatch?`, `source?` | Pod · 이벤트 원본, rollout 결과 | 2 |
 | `run_verify` | Verify. 배포 입력에 있는 공개 서비스와 설정된 경로만 test Ingress로 Traefik에 요청하고, 내부 전용 서비스는 Pod Ready만 본다([배포 워크플로우](deploy-workflow.md) §4) | 없음 | 요청별 경로 · 상태 코드 · 응답 시간, 서비스별 Ready | 3 |
@@ -399,11 +399,11 @@ PydanticAI에서 두 모델을 OpenAI 호환 provider로 붙이고, 추론 모�
 - 요약본과 발췌는 정보를 버린다. 오류 표시 단어가 없는 원인 줄은 발췌에서 빠질 수 있고, 지난 도구 결과는 한 줄만 남는다. 에이전트가 필요하면 관찰 도구로 다시 읽는다.
 - 에이전트가 낸 `verified`가 정말 `run_verify` 통과 뒤인지 AI 서버는 따로 확인하지 않는다. 게이트웨이가 이 티켓의 시험 기록(같은 `specPatch`로 `run_deploy` → `run_verify` 통과)과 맞춰 보고(B2), 다시 실행의 Verify가 대상 슬롯을 한 번 더 확인한다(§1).
 - 가림 필터는 정해진 모양만 가린다. 이름 없이 나온 임의의 비밀 문자열은 못 가린다.
-- 게이트웨이가 지금 여는 도구는 일곱 개다: 관찰 셋(`get_target_status` · `read_pod_logs` · `read_repo`), 시험 셋(`run_render` · `run_deploy` · `run_verify`, F11b-1), `submit_result`. `run_build`는 B3, 대상 슬롯 운영 · `read_build_logs`는 그 뒤, `edit_repo_file` · `open_pr`은 F13이다. `verified`는 이 티켓에서 같은 `specPatch`로 `run_deploy` → `run_verify`를 통과했을 때만 받는다(B2). 그래서 지금 에이전트가 낼 수 있는 결과는 `verified` · `needs_user` · `gave_up`(과 F13 뒤 `pr_opened`)이다.
-- 시험 실행은 게이트웨이 쪽(F11b-1: `run_render` · `run_deploy` · `run_verify`, `BE/src/gateway/trials.ts`)과 파이프라인 쪽의 Switch CLI `TRIAL_ID` 가드 · Build CLI `buildOverrides` 받기를 구현했다. 결과를 모아 보내는 `trial-report`, 입력 task의 시험 분기(`?counter`, `build-overrides.json`), 시험 파이프라인 정의(`Infra/gocd/student-trial.gocd.yaml`)도 구현했지만 실제 GoCD로는 아직 돌려 보지 않았다. 시험 기록과 기다림은 플랫폼 서버 메모리에 있어, 서버가 다시 뜨면 기다리던 `run_*` 호출은 끊긴다(에이전트는 게이트웨이에 닿지 못한 것으로 본다). 빌드에 닿는 `specPatch`는 `run_build`가 열릴 때까지(B3), `name` · `slug`는 슬롯 · Secret 이름이 따라 바뀌어 시험할 수 없어 `PATCH_FORBIDDEN`이다. `verified` 뒤에는 고친 입력으로 배포 파이프라인을 처음부터 다시 실행한다(B2, 가짜 GoCD로만 자동 테스트했다).
-- 티켓 하나의 전체 시간은 시험 대기를 포함해 60분이 상한이다(에이전트 작업 15분은 대기를 뺀 시간). `build` 스테이지 티켓은 `run_build`가 열릴 때까지(B3) 이미지가 없어 시험할 수 없어 `needs_user` · `gave_up`만 낼 수 있고, 연 뒤에는 `run_build`로 고쳐 본다.
+- 게이트웨이가 지금 여는 도구는 여덟 개다: 관찰 셋(`get_target_status` · `read_pod_logs` · `read_repo`), 시험 넷(`run_build` · `run_render` · `run_deploy` · `run_verify`, F11b), `submit_result`. 대상 슬롯 운영 · `read_build_logs`는 그 뒤, `edit_repo_file` · `open_pr`은 F13이다. `verified`는 이 티켓에서 같은 `specPatch`로 `run_deploy` → `run_verify`를 통과했을 때만 받는다(B2). 빌드 값을 고쳤으면 그 서비스의 `run_build`도 같은 패치로 통과했어야 한다(B3). 그래서 지금 에이전트가 낼 수 있는 결과는 `verified` · `needs_user` · `gave_up`(과 F13 뒤 `pr_opened`)이다.
+- 시험 실행은 게이트웨이 쪽(F11b: `run_build` · `run_render` · `run_deploy` · `run_verify`, `BE/src/gateway/trials.ts` · `tools.ts`)과 파이프라인 쪽의 Switch CLI `TRIAL_ID` 가드 · Build CLI `buildOverrides` 받기를 구현했다. 결과를 모아 보내는 `trial-report`, 입력 task의 시험 분기(`?counter`, `build-overrides.json`), 시험 파이프라인 정의(`Infra/gocd/student-trial.gocd.yaml`)도 구현했지만 실제 GoCD로는 아직 돌려 보지 않았다. 시험 기록과 기다림은 플랫폼 서버 메모리에 있어, 서버가 다시 뜨면 기다리던 `run_*` 호출은 끊긴다(에이전트는 게이트웨이에 닿지 못한 것으로 본다). `name` · `slug`는 슬롯 · Secret 이름이 따라 바뀌어 시험할 수 없어 `PATCH_FORBIDDEN`이다. 빌드 값을 고친 서비스의 해시는 같은 commit의 GitHub 트리로 다시 계산한다(배포 입력을 만들 때와 같은 규칙, 가짜 응답으로만 시험했다). `verified` 뒤에는 고친 입력으로 배포 파이프라인을 처음부터 다시 실행한다(B2, 가짜 GoCD로만 자동 테스트했다).
+- 티켓 하나의 전체 시간은 시험 대기를 포함해 60분이 상한이다(에이전트 작업 15분은 대기를 뺀 시간). `build` 스테이지 티켓은 `run_build`로 고쳐 본다(통과한 이미지가 이 티켓의 시험 이미지가 되고 `build_cache`에도 남는다).
 - `student-trial` 하나를 모든 프로젝트가 같이 쓰고 리더 실행기는 하나(`Infra/executor/agent.yaml`의 `replicas: 1`)라 시험과 배포가 한 줄로 선다. 데모처럼 여럿이 동시에 쓸 때 시험 대기 30분 안에 드는지는 확인하지 않았다.
 - 티켓 한도(3개)는 실행 기록마다라 프로젝트 전체로는 한도가 없다(새 배포마다 새로 3개). 프로젝트 단위 한도는 별도 이슈로 논의한다.
-- 게이트웨이의 호출 횟수 · 작업 시간은 플랫폼 서버 메모리에서 센다: 전체 20회, 같은 호출 연속 2회, 도구별 횟수(§3 표, 지금 열린 `run_render` 5 · `run_deploy` 2 · `run_verify` 3), 작업 15분(첫 호출부터, 시험 대기는 진행 중인 것까지 뺀다), 티켓 전체 60분(대기 포함). 서버가 다시 뜨면 그 티켓은 처음부터 다시 세고, 티켓 시작은 저장된 만료 - 60분으로 보수적으로 잡아 남은 만료까지만 쓴다.
+- 게이트웨이의 호출 횟수 · 작업 시간은 플랫폼 서버 메모리에서 센다: 전체 20회, 같은 호출 연속 2회, 도구별 횟수(§3 표, 지금 열린 `run_build` 2 · `run_render` 5 · `run_deploy` 2 · `run_verify` 3), 작업 15분(첫 호출부터, 시험 대기는 진행 중인 것까지 뺀다), 티켓 전체 60분(대기 포함). 서버가 다시 뜨면 그 티켓은 처음부터 다시 세고, 티켓 시작은 저장된 만료 - 60분으로 보수적으로 잡아 남은 만료까지만 쓴다.
 - `read_repo`는 인증 없이 GitHub API를 부른다(서버 IP당 시간당 60번, 레포 소유 확인과 같이 쓴다). 한도에 닿으면 도구 오류로 끝난다.
 - 게이트웨이에 끝내 닿지 못하면 결과를 낼 길이 없다. 계약에 다른 길(콜백 · 재전송 요청)이 없어서, 플랫폼은 자기 제한 시간(1시간 TIMED_OUT)까지 기다린다. AI 서버에는 로그만 남는다.

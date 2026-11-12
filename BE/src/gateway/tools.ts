@@ -1,8 +1,10 @@
 import { isDeepStrictEqual } from 'node:util'
-import { Injectable, Logger } from '@nestjs/common'
+import { HttpException, Injectable, Logger } from '@nestjs/common'
 import { isRecord } from '../common/is-record.js'
 import { redact, redactString } from '../common/redact.js'
 import { AgentClient } from '../deploys/agent.client.js'
+import type { ServiceConditions } from '../deploys/deploy-condition.js'
+import { DeployConditionService } from '../deploys/deploy-condition.service.js'
 import { ticketCount } from '../deploys/deploy-run.js'
 import { type DeployRunRow, DeploysStore } from '../deploys/deploys.store.js'
 import { PipelineClient } from '../deploys/pipeline.client.js'
@@ -16,11 +18,19 @@ import type { GatewayTicket } from './tickets.js'
 import { GatewayTrials, TRIAL_WAIT_MS, type TrialFailure, type TrialTool } from './trials.js'
 
 // MCP 게이트웨이의 도구(api.md "MCP 게이트웨이 — 도구"). 인자 · 결과 모양은 거기 고정돼 있다.
-// F11: 관찰(get_target_status · read_pod_logs · read_repo)과 submit_result. F11b-1: 시험 실행 run_render · run_deploy · run_verify
-// (api.md "파이프라인 ↔ 플랫폼 서버" 4번). run_build는 B3, 대상 슬롯 운영 · read_build_logs는 그 뒤에 연다.
+// F11: 관찰(get_target_status · read_pod_logs · read_repo)과 submit_result. F11b: 시험 실행 run_build · run_render · run_deploy · run_verify
+// (api.md "파이프라인 ↔ 플랫폼 서버" 4번)와 verified 뒤 다시 실행(5번). 대상 슬롯 운영 · read_build_logs는 그 뒤에 연다.
 // 목록에 없는 도구는 에이전트가 부를 수 없다.
 
-export type RejectCode = BudgetCode | 'INVALID_ARGUMENT' | 'INVALID_RESULT' | 'TICKET_CLOSED' | 'PATCH_FORBIDDEN' | 'INVALID_SPEC' | 'LIVE_SLOT_PROTECTED'
+export type RejectCode =
+  | BudgetCode
+  | 'INVALID_ARGUMENT'
+  | 'INVALID_RESULT'
+  | 'TICKET_CLOSED'
+  | 'PATCH_FORBIDDEN'
+  | 'INVALID_SPEC'
+  | 'OVERRIDE_LIMIT'
+  | 'LIVE_SLOT_PROTECTED'
 
 export type ToolAnswer = { ok: true; content: Record<string, unknown> } | { ok: false; code: RejectCode; message: string; fields?: Issue[] }
 
@@ -32,6 +42,12 @@ export interface ToolDef {
 
 const DEFAULT_LINES = 100
 const MAX_LINES = 200
+
+// run_build의 buildOverrides 상한(AIagent.md §3 표). CodeBuild 프로젝트 기본은 MEDIUM이고 한 단계 위(LARGE)까지 받는다.
+// 이미지는 privileged 모드에서 docker가 도는 CodeBuild 표준 이미지만(빌드가 docker build로 돈다). 시험 빌드 대기 = timeoutMinutes + 5분이 30분 안에 들게 20분까지.
+export const OVERRIDE_COMPUTE_TYPES = ['BUILD_GENERAL1_SMALL', 'BUILD_GENERAL1_MEDIUM', 'BUILD_GENERAL1_LARGE']
+export const OVERRIDE_IMAGES = ['aws/codebuild/standard:7.0']
+export const OVERRIDE_MAX_MINUTES = 20
 
 export const TOOLS: ToolDef[] = [
   {
@@ -64,13 +80,26 @@ export const TOOLS: ToolDef[] = [
     },
   },
   {
+    name: 'run_build',
+    description:
+      '그 서비스 하나를 CodeBuild로 시험 빌드한다(최대 30분 기다린다). specPatch(build · runtime)를 적용한 빌드 값의 해시가 같은 이미지가 이미 있으면 빌드하지 않고 바로 reused: true와 그 이미지로 답한다. 통과한 이미지는 이 티켓의 run_render · run_deploy가 쓴다. buildOverrides는 그 빌드에만 쓰는 CodeBuild 설정이다.',
+    inputSchema: {
+      type: 'object',
+      properties: { service: { type: 'string' }, specPatch: { type: 'array' }, source: { type: 'object' }, buildOverrides: { type: 'object' } },
+      required: ['service'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'run_render',
-    description: 'Render + k3s server-side apply dry-run을 대상 슬롯 입력으로 시험한다(클러스터에 적용하지 않는다). specPatch는 그 시험에만 적용하는 JSON Patch다(runtime만).',
+    description:
+      'Render + k3s server-side apply dry-run을 대상 슬롯 입력으로 시험한다(클러스터에 적용하지 않는다). specPatch는 그 시험에만 적용하는 JSON Patch다(build · runtime. 빌드 값을 고친 서비스는 먼저 run_build).',
     inputSchema: { type: 'object', properties: { specPatch: { type: 'array' } }, additionalProperties: false },
   },
   {
     name: 'run_deploy',
-    description: '대상 슬롯에 Prepare(live 슬롯 보호, 슬롯 비우기) → Render → Apply → Ready 대기를 시험한다. 최대 30분 기다린다. specPatch는 그 시험에만 적용한다(runtime만).',
+    description:
+      '대상 슬롯에 Prepare(live 슬롯 보호, 슬롯 비우기) → Render → Apply → Ready 대기를 시험한다. 최대 30분 기다린다. specPatch는 그 시험에만 적용한다(build · runtime. 빌드 값을 고친 서비스는 먼저 run_build).',
     inputSchema: { type: 'object', properties: { specPatch: { type: 'array' }, source: { type: 'object' } }, additionalProperties: false },
   },
   {
@@ -85,7 +114,9 @@ export const TOOLS: ToolDef[] = [
   },
 ]
 
-const reject = (code: RejectCode, message: string): ToolAnswer => ({ ok: false, code, message })
+type Rejection = Extract<ToolAnswer, { ok: false }>
+
+const reject = (code: RejectCode, message: string): Rejection => ({ ok: false, code, message })
 
 /** 인자가 도구의 모양인지. 맞지 않으면 이유. */
 function argProblem(def: ToolDef, args: Record<string, unknown>): string | null {
@@ -134,6 +165,7 @@ export class GatewayTools {
     private readonly trials: GatewayTrials,
     private readonly pipeline: PipelineClient,
     private readonly agent: AgentClient,
+    private readonly conditions: DeployConditionService,
   ) {}
 
   async call(ticket: GatewayTicket, name: string, args: Record<string, unknown>): Promise<ToolAnswer> {
@@ -156,6 +188,7 @@ export class GatewayTools {
         return this.podLogs(ticket, args.service as string, (args.lines as number | undefined) ?? DEFAULT_LINES, args.previous === true)
       case 'read_repo':
         return this.readRepo(ticket, args.path as string, args.source)
+      case 'run_build':
       case 'run_render':
       case 'run_deploy':
       case 'run_verify':
@@ -211,18 +244,49 @@ export class GatewayTools {
     return { ok: true, content: entry.type === 'file' ? { ...entry, content: redactString(entry.content) } : entry }
   }
 
-  /** 시험 입력: 실행 기록의 입력에서 서비스를 모두 reuse + 이미지 digest로(이번 실행에서 빌드한 이미지, 원래 reuse 이미지). 이미지가 없으면 이유. */
-  private async baseInput(ticket: GatewayTicket, found?: DeployRunRow): Promise<Record<string, unknown> | string> {
-    const run = found ?? (await this.store.findRun(ticket.deployId))
-    if (!run) return 'the deploy run is gone'
-    const input = structuredClone(run.input)
-    const services = (input.deploy_condition as { services: Record<string, { buildInputHash: string; build: string; image: string | null }> }).services
-    for (const [name, c] of Object.entries(services)) {
-      const image = c.build === 'reuse' ? c.image : (run.images?.[name] ?? null)
-      if (!image) return `service ${name} has no image yet (the build did not pass); build tickets cannot be tried until run_build opens`
-      services[name] = { buildInputHash: c.buildInputHash, build: 'reuse', image }
+  /**
+   * 시험 입력(api.md "파이프라인 ↔ 플랫폼 서버" 4번 "입력"): 실행 기록의 입력에 specPatch를 적용하고, 서비스마다 빌드 입력 해시와 이미지를 정한다.
+   * 빌드 값이 실행 기록과 같으면 그 해시, 다르면 같은 commit으로 다시 계산한다. 이미지는 실행 기록(원래 reuse 이미지 · 이번 실행에서 빌드한 이미지)
+   * → 이 티켓의 시험 이미지 → build_cache 순서로 찾는다(빌드 값을 고친 서비스는 실행 기록의 이미지를 쓰지 않는다).
+   * `build`(run_build의 서비스)는 이미지가 없으면 `run`, 나머지는 모두 `reuse` + digest이고, 이미지가 없으면 이유(문자열)를 돌려준다.
+   */
+  private async trialInput(
+    ticket: GatewayTicket,
+    run: DeployRunRow,
+    specPatch: unknown,
+    build?: string,
+  ): Promise<{ ok: true; input: Record<string, unknown>; changed: { service: string; hash: string }[] } | Rejection> {
+    const patched = applySpecPatch(run.input, specPatch ?? [])
+    if (!patched.ok) return { ok: false, code: patched.code, message: patched.message, ...(patched.fields ? { fields: patched.fields } : {}) }
+    const input = patched.input
+    const before = (run.input.spec as Spec).services
+    const original = (run.input.deploy_condition as { services: ServiceConditions }).services
+    const services: ServiceConditions = {}
+    const changed: { service: string; hash: string }[] = []
+    for (const svc of (input.spec as Spec).services) {
+      const c = original[svc.name]
+      // name은 고칠 수 없어 실행 기록에 같은 서비스가 있다.
+      const same = isDeepStrictEqual(before.find((b) => b.name === svc.name)?.build, svc.build)
+      let hash = c.buildInputHash
+      if (!same) {
+        try {
+          hash = await this.conditions.buildHash(ticket.repo, ticket.commitSha, svc.build)
+        } catch (err) {
+          // 고친 context · dockerfile이 그 commit에 없다.
+          if (err instanceof HttpException && err.getStatus() === 422) return reject('INVALID_ARGUMENT', `${svc.name}: ${(err.getResponse() as { message?: string }).message ?? 'build source not found'}`)
+          throw err
+        }
+        changed.push({ service: svc.name, hash })
+      }
+      const fromRun = same ? (c.build === 'reuse' ? c.image : (run.images?.[svc.name] ?? null)) : null
+      const image = fromRun ?? this.trials.trialImage(ticket.ticketId, svc.name, hash) ?? (await this.store.cachedImage(ticket.slug, svc.name, hash))
+      if (!image && svc.name !== build) {
+        return reject('INVALID_ARGUMENT', `service ${svc.name} has no image for these build settings yet; call run_build for it first`)
+      }
+      services[svc.name] = image ? { buildInputHash: hash, build: 'reuse', image } : { buildInputHash: hash, build: 'run', image: null }
     }
-    return input
+    ;(input.deploy_condition as { services: ServiceConditions }).services = services
+    return { ok: true, input, changed }
   }
 
   private async runTrial(ticket: GatewayTicket, tool: TrialTool, args: Record<string, unknown>): Promise<ToolAnswer> {
@@ -238,20 +302,42 @@ export class GatewayTools {
   }
 
   private async trial(ticket: GatewayTicket, tool: TrialTool, args: Record<string, unknown>): Promise<ToolAnswer> {
-    const base = await this.baseInput(ticket)
-    if (typeof base === 'string') return reject('INVALID_ARGUMENT', base)
-    let input = base
-    if (tool === 'run_verify') input = this.trials.lastDeployInput(ticket.ticketId) ?? base
-    else {
-      if (args.specPatch !== undefined) {
-        const patched = applySpecPatch(base, args.specPatch)
-        if (!patched.ok) return { ok: false, code: patched.code, message: patched.message, ...(patched.fields ? { fields: patched.fields } : {}) }
-        input = patched.input
+    const run = await this.store.findRun(ticket.deployId)
+    if (!run) return reject('TICKET_CLOSED', 'the deploy run is gone')
+    let overrides: Record<string, unknown> | null = null
+    if (tool === 'run_build' && args.buildOverrides !== undefined) {
+      const checked = checkOverrides(args.buildOverrides)
+      if ('code' in checked) return checked
+      overrides = checked.overrides
+    }
+    const service = tool === 'run_build' ? (args.service as string) : undefined
+    let input: Record<string, unknown>
+    if (tool === 'run_verify') {
+      const last = this.trials.lastDeployInput(ticket.ticketId)
+      if (last) input = last
+      else {
+        const built = await this.trialInput(ticket, run, undefined)
+        if (!built.ok) return built
+        input = built.input
       }
+    } else {
+      const built = await this.trialInput(ticket, run, args.specPatch, service)
+      if (!built.ok) return built
+      input = built.input
       // live 경로 보호는 패치가 없어도 본다: 이 입력을 Apply하면 live가 같이 쓰는 Middleware가 바뀌는지.
       const live = (await this.store.findLastSucceededRun(ticket.slug))?.input.spec as Spec | undefined
       const why = live ? livePathProblem((input as { spec: Spec }).spec, live) : null
       if (why) return reject('PATCH_FORBIDDEN', why)
+    }
+
+    let condition: ServiceConditions[string] | undefined
+    if (service !== undefined) {
+      condition = (input.deploy_condition as { services: ServiceConditions }).services[service]
+      // #149: 같은 해시의 이미지가 이미 있다. 빌드할 것이 없으므로 시험을 돌리지 않고 바로 답한다(횟수는 위에서 셌고 대기는 0).
+      if (condition.build === 'reuse') {
+        this.trials.rememberImage(ticket.ticketId, service, condition.buildInputHash, condition.image!)
+        return { ok: true, content: { ok: true, reused: true, build: null, failedPhase: null, logTail: [], image: condition.image, failure: null } }
+      }
     }
 
     // 기다리는 동안 같은 티켓의 다른 호출이 TICKET_CLOSED를 받지 않게 토큰 만료를 먼저 늘리고, 끝나면 다시 쓴다(updated_at도 함께 바뀐다).
@@ -264,7 +350,7 @@ export class GatewayTools {
       return reject('TICKET_CLOSED', 'the ticket is no longer open')
     }
     const started = Date.now()
-    const outcome = await this.trials.run(ticket, tool, input, deadline)
+    const outcome = await this.trials.run(ticket, tool, input, deadline, overrides)
     const expiry = this.budget.endWait(ticket.ticketId, Date.now() - started)
     if (expiry !== null) await this.setExpiry(ticket, expiry)
 
@@ -274,7 +360,13 @@ export class GatewayTools {
     }
     const failure = outcome.result.failure as TrialFailure | null
     if (failure?.code === 'LIVE_SLOT_PROTECTED') return reject('LIVE_SLOT_PROTECTED', redactString(failure.message))
-    // 파이프라인이 읽은 k3s 원본 · 로그는 외부(AI 서버 · 추론 API)로 나가므로 가린다.
+    if (service !== undefined && condition && outcome.result.ok === true) {
+      // 통과한 이미지: 이 티켓의 시험 이미지로 기억하고 build_cache에도 쓴다(같은 해시 = 같은 이미지, 3번 build 통과 때와 같은 규칙).
+      const image = outcome.result.image as string
+      this.trials.rememberImage(ticket.ticketId, service, condition.buildInputHash, image)
+      await this.store.cacheImages([{ slug: ticket.slug, service, build_input_hash: condition.buildInputHash, image }])
+    }
+    // 파이프라인이 읽은 CodeBuild · k3s 원본 · 로그는 외부(AI 서버 · 추론 API)로 나가므로 가린다.
     return { ok: true, content: redact(outcome.result) as Record<string, unknown> }
   }
 
@@ -317,14 +409,15 @@ export class GatewayTools {
    * 그 입력을 실행 기록에 저장하고 student-deploy를 처음부터 다시 실행한다(공개 주소는 그 Switch에서만 바뀐다).
    */
   private async submitVerified(ticket: GatewayTicket, run: DeployRunRow, result: AgentResult, agentResult: Record<string, unknown>): Promise<ToolAnswer> {
-    const base = await this.baseInput(ticket, run)
-    if (typeof base === 'string') return reject('INVALID_RESULT', base)
-    const patched = applySpecPatch(base, result.specPatch)
-    if (!patched.ok) return { ok: false, code: patched.code, message: patched.message, ...(patched.fields ? { fields: patched.fields } : {}) }
+    const patched = await this.trialInput(ticket, run, result.specPatch)
+    if (!patched.ok) return patched.code === 'INVALID_ARGUMENT' ? reject('INVALID_RESULT', patched.message) : patched
     const tried = this.trials.verifiedInput(ticket.ticketId)
     if (!tried || !isDeepStrictEqual(tried, patched.input)) {
       return reject('INVALID_RESULT', 'verified needs a run_deploy with this same specPatch followed by a passing run_verify in this ticket')
     }
+    // 빌드 값을 고쳤으면 그 빌드 값으로 이 티켓에서 run_build가 통과(또는 재사용)했어야 한다.
+    const unbuilt = patched.changed.find((c) => this.trials.trialImage(ticket.ticketId, c.service, c.hash) === undefined)
+    if (unbuilt) return reject('INVALID_RESULT', `verified changes the build of ${unbuilt.service}; it needs a passing run_build of ${unbuilt.service} with the same specPatch in this ticket`)
 
     // 여기부터 티켓은 끝난다. 기다리는 시험을 취소하고, 같은 프로젝트의 이전 시험이 끝났음을 확인한 뒤에만 다시 실행한다.
     this.budget.forget(ticket.ticketId)
@@ -362,8 +455,44 @@ export class GatewayTools {
 
 /** 결과 없이 끝난 시험(실행 실패 · 대기 초과 · 이전 시험이 안 끝남)의 도구 결과. */
 function emptyResult(tool: TrialTool, failure: TrialFailure): Record<string, unknown> {
-  const fields = tool === 'run_render' ? { status: null } : tool === 'run_deploy' ? { services: [], pods: [], events: [] } : { ready: [], requests: [] }
+  const fields =
+    tool === 'run_build'
+      ? { reused: false, build: null, failedPhase: null, logTail: [], image: null }
+      : tool === 'run_render'
+        ? { status: null }
+        : tool === 'run_deploy'
+          ? { services: [], pods: [], events: [] }
+          : { ready: [], requests: [] }
   return { ok: false, ...fields, failure }
+}
+
+/** buildOverrides 검사(AIagent.md §3 표). 모양이 틀리면 INVALID_ARGUMENT, 상한 · 허용 목록 밖이면 OVERRIDE_LIMIT. 맞으면 받은 칸만 담은 새 객체. */
+function checkOverrides(value: unknown): { overrides: Record<string, unknown> } | Rejection {
+  const o = value as Record<string, unknown>
+  const unknown = Object.keys(o).find((k) => !['computeType', 'timeoutMinutes', 'image', 'cache'].includes(k))
+  if (unknown) return { ok: false, code: 'INVALID_ARGUMENT', message: `buildOverrides has an unknown key ${unknown}` }
+  const out: Record<string, unknown> = {}
+  if (o.computeType !== undefined) {
+    if (typeof o.computeType !== 'string') return { ok: false, code: 'INVALID_ARGUMENT', message: 'buildOverrides.computeType must be a string' }
+    if (!OVERRIDE_COMPUTE_TYPES.includes(o.computeType)) return { ok: false, code: 'OVERRIDE_LIMIT', message: `buildOverrides.computeType must be one of ${OVERRIDE_COMPUTE_TYPES.join(', ')}` }
+    out.computeType = o.computeType
+  }
+  if (o.timeoutMinutes !== undefined) {
+    if (!Number.isInteger(o.timeoutMinutes)) return { ok: false, code: 'INVALID_ARGUMENT', message: 'buildOverrides.timeoutMinutes must be an integer' }
+    const m = o.timeoutMinutes as number
+    if (m < 1 || m > OVERRIDE_MAX_MINUTES) return { ok: false, code: 'OVERRIDE_LIMIT', message: `buildOverrides.timeoutMinutes must be from 1 to ${OVERRIDE_MAX_MINUTES}` }
+    out.timeoutMinutes = m
+  }
+  if (o.image !== undefined) {
+    if (typeof o.image !== 'string') return { ok: false, code: 'INVALID_ARGUMENT', message: 'buildOverrides.image must be a string' }
+    if (!OVERRIDE_IMAGES.includes(o.image)) return { ok: false, code: 'OVERRIDE_LIMIT', message: `buildOverrides.image must be one of ${OVERRIDE_IMAGES.join(', ')}` }
+    out.image = o.image
+  }
+  if (o.cache !== undefined) {
+    if (typeof o.cache !== 'boolean') return { ok: false, code: 'INVALID_ARGUMENT', message: 'buildOverrides.cache must be a boolean' }
+    out.cache = o.cache
+  }
+  return { overrides: out }
 }
 
 const limitMessage: Record<BudgetCode, string> = {

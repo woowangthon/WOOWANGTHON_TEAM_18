@@ -255,3 +255,22 @@ describe('DeployConditionService.prepare', () => {
     expect(logError).toHaveBeenCalledWith(expect.stringContaining(`/rest/v1/${table} answered`))
   })
 })
+
+describe('DeployConditionService.buildHash', () => {
+  it('gives the same hash prepare gives for unchanged build settings, reading only that service\'s sources', async () => {
+    expect(await service.buildHash('Student/My-App', COMMIT, spec().services[1].build)).toBe(beHash)
+    expect(await service.buildHash('Student/My-App', COMMIT, spec().services[0].build)).toBe(feHash)
+    expect(calls(`${REST}/`)).toHaveLength(0)
+  })
+
+  it('gives a new hash for changed build settings', async () => {
+    const build = { ...spec().services[0].build, outputDir: 'build' }
+    expect(await service.buildHash('Student/My-App', COMMIT, build)).toBe(buildInputHash(build, { contextTree: FE_TREE, dockerfileBlob: null }))
+    expect(await service.buildHash('Student/My-App', COMMIT, build)).not.toBe(feHash)
+  })
+
+  it('answers 422 BUILD_SOURCE_NOT_FOUND for a patched context that is not in the commit', async () => {
+    const build = { ...spec().services[0].build, context: 'web' }
+    expect(await failure(service.buildHash('Student/My-App', COMMIT, build))).toMatchObject({ status: 422, body: { code: 'BUILD_SOURCE_NOT_FOUND', path: 'web' } })
+  })
+})

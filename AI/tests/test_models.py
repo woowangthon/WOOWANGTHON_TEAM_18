@@ -222,7 +222,7 @@ def test_spec_patch_forbidden_paths(path: str) -> None:
     "overrides",
     [
         {"specPatch": [{"op": "move", "path": "/spec/project/slug"}]},
-        {"buildOverrides": {"timeoutMinutes": 31}},
+        {"buildOverrides": {"timeoutMinutes": 21}},
         {"pr": {"files": ["a", "b", "c", "d", "e", "f"]}},
         {"pr": {"changedLines": 51}},
         {"commitSha": "abc"},
@@ -241,9 +241,9 @@ def test_result_rejects(overrides: dict[str, Any]) -> None:
 def test_result_limits_at_the_edge() -> None:
     r = AgentResult.model_validate(
         result(
-            buildOverrides={"timeoutMinutes": 30, "cache": True},
+            buildOverrides={"timeoutMinutes": 20, "cache": True},
             pr={"files": ["a", "b", "c", "d", "e"], "changedLines": 50},
         )
     )
-    assert r.build_overrides is not None and r.build_overrides.timeout_minutes == 30
+    assert r.build_overrides is not None and r.build_overrides.timeout_minutes == 20
     assert r.pr is not None and r.pr.changed_lines == 50

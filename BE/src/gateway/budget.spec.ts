@@ -31,9 +31,9 @@ describe('ToolBudget', () => {
     expect(budget.take('other', 'read_repo', { path: 'x' }, now)).toBeNull()
   })
 
-  it('counts the trial tools per ticket (render 5, deploy 2, verify 3)', () => {
+  it('counts the trial tools per ticket (build 2, render 5, deploy 2, verify 3)', () => {
     const budget = new ToolBudget(() => 0)
-    for (const [tool, limit] of [['run_render', 5], ['run_deploy', 2], ['run_verify', 3]] as const) {
+    for (const [tool, limit] of [['run_build', 2], ['run_render', 5], ['run_deploy', 2], ['run_verify', 3]] as const) {
       for (let i = 0; i < limit; i++) expect(budget.take('t', tool, { i }, 0)).toBeNull()
       expect(budget.take('t', tool, { i: 'x' }, 0)).toBe('TOOL_LIMIT')
     }
