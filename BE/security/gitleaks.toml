@@ -1,0 +1,3 @@
+# 보안 검사(UC-10)의 gitleaks 설정. 기본 규칙을 그대로 쓴다. 이 파일을 --config로 넘겨 레포 안의 .gitleaks.toml이 검사를 바꾸지 못하게 한다.
+[extend]
+useDefault = true

@@ -48,6 +48,7 @@
 | 설정값 | SSM Parameter Store `/wcp/be/<변수 이름>`(SecureString). 이름은 [`BE/.env.example`](../../BE/.env.example)과 같다. `CORS_ORIGINS=https://app.stairnoworks.com`. 값은 한 줄이어야 한다(여러 줄 값은 스크립트가 거절한다. PEM은 base64로). **필수 `/wcp/be/SECRET_HASH_KEY`**(비밀값 해시의 HMAC 키, 32자 이상, `openssl rand -hex 32`)가 없으면 BE가 부팅하지 않는다 |
 | 권한 | 인스턴스 역할에 `/wcp/be` 경로의 `ssm:GetParametersByPath`, `/wcp/tunnel/TUNNEL_TOKEN`의 `ssm:GetParameter`, `kms:Decrypt`만 |
 | 올리기 | EC2에서 [`Infra/aws/deploy-be.sh`](../../Infra/aws/deploy-be.sh) `[git-ref]`. 새 컨테이너가 `/api/health`에 답하지 않으면 이전 컨테이너(이미지 · 설정 그대로)를 다시 띄운다. 터널은 그대로 두고 BE만 바뀐다 |
+| 보안 검사 도구(UC-10) | BE 이미지에 gitleaks · trivy가 들어 있다(이미지 약 660MB, 도구 약 200MB). Trivy 취약점 DB는 이미지에 넣지 않는다: `deploy-be.sh`가 배포할 때마다 새 이미지의 trivy로 `~/.cache/wcp/trivy`에 받고(약 1.7GB, 로컬에서 약 37초) 컨테이너에 `/var/cache/trivy`로 읽기 전용으로 붙인다(`TRIVY_CACHE_DIR`). 받지 못하면 경고만 하고 가진 DB를 쓴다. 디스크 여유가 2GB 이상이어야 한다. 검사 하나는 로컬에서 1~3초, 컨테이너 최대 메모리 약 100MB였다 |
 
 ### GoCD 서버 · AWS 실행기
 
@@ -110,3 +111,4 @@ EC2 ── gocd-server (GoCD 26.1.0, JVM -Xmx1g, 8153은 Tailscale 주소에만 
 - 스크립트는 실제 AWS에서 아직 돌려 보지 않았다(2026-11-11). `start-gocd.sh`와 AWS 실행기도 EC2에서는 돌려 보지 않았다(로컬 docker에서 서버 기동 · 로그인 · 설정 저장소 등록 · 접근 토큰 발급까지만 확인했다).
 - GoCD 서버와 AWS 실행기가 죽으면 새 배포가 시작되지 않는다(BE가 `503 PIPELINE_UNAVAILABLE`). (`setup`이나 artifact 받기가 실패한 job은 `job.sh`가 `STAGE_NO_REPORT`를 curl로 알린다.) 실행 중이던 job이 GoCD의 시간 제한이나 실행기가 죽어서 끝나면 알림을 보내는 task가 돌지 못해 그 배포는 `running`으로 남는다. 같은 프로젝트의 다음 시작이 그 기록을 시간 초과(`TIMED_OUT`)로 마감하지만(BE의 `STALE_RUN_MS`, 1시간), 그 전까지 학생에게는 진행 중으로 보인다.
 - BE 컨테이너가 Tailscale 주소의 8153에 닿는지(`GOCD_URL`)는 EC2에서 확인하지 않았다.
+- 보안 검사의 Trivy DB는 배포할 때만 새로 받는다. BE를 오래 다시 배포하지 않으면 새로 알려진 취약점이 늦게 잡힌다. 배포 중 DB를 받는 동안 이전 컨테이너가 검사를 돌리면 그 검사는 실패할 수 있다(`SCAN_FAILED`, 다음 저장 때 다시 검사).

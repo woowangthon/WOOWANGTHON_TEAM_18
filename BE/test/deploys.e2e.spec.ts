@@ -4,6 +4,7 @@ import { Logger } from '@nestjs/common'
 import request from 'supertest'
 import type { App } from 'supertest/types.js'
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from 'vitest'
+import { SecurityScanService } from '../src/security/security-scan.service.js'
 import { errorBody, JWKS_URL, keySet, token } from './auth-helpers.js'
 import { startApp } from './start-app.js'
 
@@ -259,6 +260,15 @@ describe('POST /api/deploys saves', () => {
   it('a repo matched without regard to case (the spec says student/my-app, GitHub says Student/My-App)', async () => {
     const res = await create(body())
     expect((res.body as Json).repo).toBe('Student/My-App')
+  })
+  it('and asks for the security scan of the saved repo and commit without waiting for it (UC-10)', async () => {
+    await app.close()
+    const requestScan = vi.fn()
+    app = await startApp([], (b) => b.overrideProvider(SecurityScanService).useValue({ request: requestScan }))
+    const res = await create(body())
+    expect(res.status).toBe(201)
+    // GitHub가 돌려준 표기로, 저장한 뒤에 한 번.
+    expect(requestScan).toHaveBeenCalledExactlyOnceWith(FULL_NAME, SHA)
   })
 })
 
