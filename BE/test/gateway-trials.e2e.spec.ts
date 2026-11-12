@@ -410,6 +410,14 @@ describe('MCP gateway trial tools', () => {
         behave = answering('apply', deployOk)
         await call(c, 'run_deploy', { specPatch: port8000 })
       }],
+      // 두 번째 run_deploy가 실패하면 슬롯에는 그 배포가 반쯤 올라가 있다. 첫 입력의 확인을 되살리지 않는다.
+      ['another run_deploy that failed, then a passing run_verify', async (c: Client) => {
+        await tryAndVerify(c)
+        behave = answering('apply', { ...deployOk, ok: false, failure: { stage: 'apply', code: null, message: 'pod be crashed' } })
+        await call(c, 'run_deploy', { specPatch: port8000 })
+        behave = answering('verify', verifyOk)
+        expect((await call(c, 'run_verify')).structuredContent).toMatchObject({ ok: true })
+      }],
       ['a run_verify that failed', async (c: Client) => {
         await call(c, 'run_deploy', { specPatch: port8000 })
         behave = answering('verify', { ok: false, ready: [], requests: [], failure: { stage: 'verify', code: null, message: 'GET /api/health 502' } })

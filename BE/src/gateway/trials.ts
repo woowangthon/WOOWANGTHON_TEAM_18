@@ -51,7 +51,7 @@ const badResult = (message: string, fields: Issue[]) => new BadRequestException(
 export class GatewayTrials implements OnApplicationBootstrap {
   private readonly logger = new Logger(GatewayTrials.name)
   private readonly trials = new Map<string, Trial>()
-  /** 티켓마다 마지막으로 성공한 run_deploy의 입력(run_verify가 쓴다). */
+  /** 티켓마다 마지막으로 성공한 run_deploy의 입력(run_verify가 쓴다). 그 뒤 run_deploy를 부르면 지운다. */
   private readonly lastDeploy = new Map<string, Record<string, unknown>>()
   /** 티켓마다 마지막 run_deploy의 입력으로 run_verify까지 통과한 입력(`verified`를 받는 조건, api.md 5번). 그 뒤 run_deploy를 부르면 지운다. */
   private readonly verified = new Map<string, Record<string, unknown>>()
@@ -137,8 +137,12 @@ export class GatewayTrials implements OnApplicationBootstrap {
     })
     const trial: Trial = { id, deployId: ticket.deployId, ticketId: ticket.ticketId, slug: ticket.slug, slot: ticket.targetSlot, tool, input, counter: null, state: 'waiting', finish }
     this.trials.set(id, trial)
-    // run_deploy는 대상 슬롯을 비우고 다시 올린다. 앞서 확인한 입력은 더 이상 슬롯에 떠 있다고 할 수 없다.
-    if (tool === 'run_deploy') this.verified.delete(ticket.ticketId)
+    // run_deploy는 대상 슬롯을 비우고 다시 올린다. 앞서 올린 입력도, 확인한 입력도 더 이상 슬롯에 떠 있다고 할 수 없다
+    // (이 run_deploy가 실패해도 그렇다. 성공하면 아래에서 다시 적는다).
+    if (tool === 'run_deploy') {
+      this.lastDeploy.delete(ticket.ticketId)
+      this.verified.delete(ticket.ticketId)
+    }
     try {
       await this.pipeline.runTrial(ticket.deployId, id, STAGES[tool])
     } catch {
