@@ -16,6 +16,29 @@ pipeline=Infra/pipeline
 cli() { node "$pipeline/dist/cli/$1.js" "${@:2}"; }
 slot() { cat work/slot; }
 
+# The notify CLI is built by `setup`. When setup (pnpm install, tsc) or the artifact fetch before it failed, there is no CLI and
+# the run would stay `running` until the server's STALE_RUN_MS. This sends the same failure the CLI sends for a missing report
+# (STAGE_NO_REPORT, Infra/pipeline/src/notify.ts noReportNotice) with curl. The token goes in a header read from stdin, never
+# on a command line or in the log; curl retries a 503, a refused connection and a timeout.
+notify_without_cli() {
+  local stage=$1 url=${PLATFORM_API_URL:-} code body answer
+  : "${DEPLOY_ID:?DEPLOY_ID is not set}" "${PIPELINE_NOTIFY_TOKEN:?PIPELINE_NOTIFY_TOKEN is not set}"
+  # The same rule as the CLI's: https, or http on this machine only (the token must not cross a network in clear).
+  [[ $url =~ ^(https://[A-Za-z0-9.-]+(:[0-9]+)?|http://(127\.0\.0\.1|localhost)(:[0-9]+)?)/?$ ]] || { echo "PLATFORM_API_URL must look like https://api.stairnoworks.com" >&2; return 2; }
+  [[ $DEPLOY_ID =~ ^[A-Za-z0-9-]+$ ]] || { echo "DEPLOY_ID has characters a deploy id does not have" >&2; return 2; }
+  body=$(printf '{"deployId":"%s","stage":"%s","result":"failed","failure":{"code":"STAGE_NO_REPORT","service":null,"message":"the %s stage left no readable report: setup failed, the notify CLI is not built"}}' "$DEPLOY_ID" "$stage" "$stage")
+  [[ $PIPELINE_NOTIFY_TOKEN != *[\"\\]* ]] || { echo "PIPELINE_NOTIFY_TOKEN has a quote or a backslash" >&2; return 2; }
+  # `-K -` takes the header from stdin (printf is a builtin, so the token is in no argument list); `-H @-` fails with --retry too.
+  # The answer goes to a file, not /dev/null: curl 8.5 fails a retry (error 23) when it cannot truncate its output.
+  answer=$(mktemp)
+  code=$(printf 'header = "Authorization: Bearer %s"\n' "$PIPELINE_NOTIFY_TOKEN" |
+    curl -sS -K - -o "$answer" -w '%{http_code}' --max-time 20 --retry 4 --retry-delay 5 --retry-connrefused \
+    -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' --data-binary "$body" "${url%/}/api/pipeline/notify") || code=000
+  rm -f "$answer"
+  echo "notified $stage failed (STAGE_NO_REPORT, the notify CLI is not built): HTTP $code"
+  [[ $code == 2* ]]
+}
+
 
 case ${1:?usage: job.sh <step> [stage]} in
   clean)
@@ -63,8 +86,12 @@ case ${1:?usage: job.sh <step> [stage]} in
       build) report=work/build-report.json ;;
       *) report=out/$stage-report.json ;;
     esac
-    # A missing report is the notify CLI's business: it sends the platform failure STAGE_NO_REPORT.
-    cli notify "$stage" "$report"
+    # A missing report is the notify CLI's business: it sends the platform failure STAGE_NO_REPORT. Without the CLI, curl does.
+    if [[ -f $pipeline/dist/cli/notify.js ]]; then
+      cli notify "$stage" "$report"
+    else
+      notify_without_cli "$stage"
+    fi
     ;;
   *)
     echo "unknown step: $1" >&2
