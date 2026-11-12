@@ -28,6 +28,6 @@ Contract: `docs/design/api.md` "파이프라인 ↔ 플랫폼 서버" 4 · 5 and
 
 ## Done when
 
-- [ ] `pnpm verify` in `BE/` and `Infra/pipeline/`, and the AI verify line pass — from the test session
-- [ ] A build ticket goes run_build → run_deploy → run_verify → verified with the built image; a reuse answers without GoCD
-- [ ] mutation testing — hand mutants run by the test session
+- [x] `pnpm verify` in `BE/` and `Infra/pipeline/`, and the AI verify line pass — test session at 24dfaa3: BE 1543 passed (one environment failure, `source-scanner.spec` under root, same on main), pipeline 660, AI 286
+- [x] A build ticket goes run_build → run_deploy → run_verify → verified with the built image; a reuse answers without GoCD
+- [x] mutation testing — 9 hand mutants run by the test session, all caught
