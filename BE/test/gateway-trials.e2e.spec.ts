@@ -1,4 +1,4 @@
-import type { INestApplication } from '@nestjs/common'
+import { type INestApplication, UnprocessableEntityException } from '@nestjs/common'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import request from 'supertest'
@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { DeployRunRow } from '../src/deploys/deploys.store.js'
 import { DeploysStore } from '../src/deploys/deploys.store.js'
 import { AgentClient } from '../src/deploys/agent.client.js'
+import { DeployConditionService } from '../src/deploys/deploy-condition.service.js'
 import { PipelineClient } from '../src/deploys/pipeline.client.js'
 import { GatewayServer } from '../src/gateway/gateway.server.js'
 import { RepoReader } from '../src/gateway/repo-reader.js'
@@ -26,15 +27,34 @@ const SECRET = `ghp_${'s'.repeat(36)}`
 const FE_IMAGE = `ghcr.io/woowang-bot/student-apps@sha256:${'f'.repeat(64)}`
 const BE_IMAGE = `ghcr.io/woowang-bot/student-apps@sha256:${'e'.repeat(64)}`
 const HASH = (c: string) => `sha256:${c.repeat(64)}`
+const NEW_IMAGE = `ghcr.io/woowang-bot/student-apps@sha256:${'9'.repeat(64)}`
+const CACHED_IMAGE = `ghcr.io/woowang-bot/student-apps@sha256:${'8'.repeat(64)}`
 
 let run: DeployRunRow
 let live: DeployRunRow | undefined
 const expiries: string[] = []
+// build_cache(slug/서비스/해시 → 이미지)와 거기 쓴 줄.
+const cache = new Map<string, string>()
+const cached: unknown[] = []
+// 가짜 빌드 입력 해시: 고친 빌드 값마다 정해진 해시. context가 'missing'이면 그 commit에 없는 경로다.
+const hashed: unknown[] = []
+const fakeConditions = {
+  buildHash: (repo: string, commit: string, build: { context: string; outputDir: string | null }) => {
+    hashed.push([repo, commit, build])
+    if (build.context === 'missing') throw new UnprocessableEntityException({ code: 'BUILD_SOURCE_NOT_FOUND', message: `missing is not a folder in ${commit}`, path: 'missing' })
+    return Promise.resolve(HASH(build.outputDir === 'build' ? 'c' : 'd'))
+  },
+}
 const fakeStore = {
   findRunByGatewayToken: (hash: string) => Promise.resolve(hash === run.gateway_token_hash ? run : undefined),
   findById: (id: string) => Promise.resolve(id === DEPLOY ? { id, repo: 'student/my-app', slug: 'my-app' } : undefined),
   findRun: (id: string) => Promise.resolve(id === DEPLOY ? run : undefined),
   findLastSucceededRun: () => Promise.resolve(live),
+  cachedImage: (slug: string, service: string, hash: string) => Promise.resolve(cache.get(`${slug}/${service}/${hash}`) ?? null),
+  cacheImages: (rows: { slug: string; service: string; build_input_hash: string; image: string }[]) => {
+    cached.push(...rows)
+    return Promise.resolve()
+  },
   updateRun: (_id: string, where: { status?: string }, patch: Record<string, unknown>) => {
     if (where.status && run.status !== where.status) return Promise.resolve(false)
     if (typeof patch.gateway_expires_at === 'string') expiries.push(patch.gateway_expires_at)
@@ -130,6 +150,9 @@ beforeEach(async () => {
   }
   live = undefined
   expiries.length = 0
+  cache.clear()
+  cached.length = 0
+  hashed.length = 0
   readInputs.length = 0
   scheduled = []
   scheduleFails = false
@@ -149,7 +172,9 @@ beforeEach(async () => {
       .overrideProvider(RepoReader)
       .useValue({})
       .overrideProvider(AgentClient)
-      .useValue(fakeAgent),
+      .useValue(fakeAgent)
+      .overrideProvider(DeployConditionService)
+      .useValue(fakeConditions),
   )
   app.get(GatewayTrials).settleRetryMs = 10
   const port = await app.get(GatewayServer).listen(0, '127.0.0.1')
@@ -281,7 +306,7 @@ describe('MCP gateway trial tools', () => {
   })
 
   it.each([
-    ['a build path', [{ op: 'replace', path: '/spec/services/0/build/outputDir', value: 'build' }], 'PATCH_FORBIDDEN'],
+    ['a build path with no image for it yet (run_build first)', [{ op: 'replace', path: '/spec/services/0/build/outputDir', value: 'build' }], 'INVALID_ARGUMENT'],
     ['a service name', [{ op: 'replace', path: '/spec/services/0/name', value: 'web' }], 'PATCH_FORBIDDEN'],
     ['a value that breaks the spec rules', [{ op: 'replace', path: '/spec/services/1/runtime/port', value: 0 }], 'INVALID_SPEC'],
     ['a malformed patch', [{ op: 'copy', path: '/spec/services/1/runtime/port' }], 'INVALID_ARGUMENT'],
@@ -333,12 +358,131 @@ describe('MCP gateway trial tools', () => {
     await client.close()
   })
 
-  it('cannot try a build ticket: the service has no image yet', async () => {
+  it('cannot try a build ticket without run_build: the service has no image yet', async () => {
     run.images = null
     const client = await connect()
-    expect(rejected(await call(client, 'run_render'))?.message).toMatch(/no image yet/)
+    expect(rejected(await call(client, 'run_render'))?.message).toMatch(/be has no image .* call run_build for it first/)
     expect(scheduled).toEqual([])
     await client.close()
+  })
+
+  describe('run_build (api.md 4, #149)', () => {
+    const outputDir = [{ op: 'replace', path: '/spec/services/0/build/outputDir', value: 'build' }]
+    const buildOk = { ok: true, reused: false, build: null, failedPhase: null, logTail: [], image: NEW_IMAGE, failure: null }
+    const conditionOf = (input: unknown, service: string) => (input as { deploy_condition: { services: Record<string, unknown> } }).deploy_condition.services[service]
+
+    it('builds the one service with the patched build settings on student-trial, then the image is the ticket\'s trial image and in build_cache', async () => {
+      behave = answering('build', buildOk)
+      const client = await connect()
+      const answer = await call(client, 'run_build', { service: 'fe', specPatch: outputDir, buildOverrides: { timeoutMinutes: 20, cache: false } })
+      expect(answer.structuredContent).toEqual(buildOk)
+      expect(scheduled).toEqual([{ deployId: DEPLOY, trialId: expect.stringMatching(/^tr_/) as string, stages: 'build' }])
+      const read = readInputs[0] as { input: Record<string, unknown>; buildOverrides: unknown }
+      // 그 서비스만 run(다시 계산한 해시), 나머지는 reuse + digest. buildOverrides는 입력 옆 칸으로.
+      expect(conditionOf(read.input, 'fe')).toEqual({ buildInputHash: HASH('c'), build: 'run', image: null })
+      expect(conditionOf(read.input, 'be')).toEqual({ buildInputHash: HASH('b'), build: 'reuse', image: BE_IMAGE })
+      expect(read.buildOverrides).toEqual({ timeoutMinutes: 20, cache: false })
+      expect(hashed).toEqual([['student/my-app', SHA, expect.objectContaining({ outputDir: 'build' }) as unknown]])
+      expect(cached).toEqual([{ slug: 'my-app', service: 'fe', build_input_hash: HASH('c'), image: NEW_IMAGE }])
+
+      // 같은 패치의 run_deploy는 그 시험 이미지를 reuse로 쓴다(빌드하지 않는다).
+      behave = answering('apply', deployOk)
+      expect(rejected(await call(client, 'run_deploy', { specPatch: outputDir }))).toBeNull()
+      expect(conditionOf((readInputs[1] as { input: unknown }).input, 'fe')).toEqual({ buildInputHash: HASH('c'), build: 'reuse', image: NEW_IMAGE })
+      await client.close()
+    })
+
+    it('answers reused at once, without any trial, when the service already has an image for those build settings (#149)', async () => {
+      const client = await connect()
+      // 실행 기록의 이미지(빌드한 be), 원래 reuse 이미지(fe), build_cache(고친 fe) 순서.
+      expect((await call(client, 'run_build', { service: 'be' })).structuredContent).toEqual({ ok: true, reused: true, build: null, failedPhase: null, logTail: [], image: BE_IMAGE, failure: null })
+      cache.set(`my-app/fe/${HASH('c')}`, CACHED_IMAGE)
+      expect((await call(client, 'run_build', { service: 'fe', specPatch: outputDir })).structuredContent).toMatchObject({ ok: true, reused: true, image: CACHED_IMAGE })
+      expect(scheduled).toEqual([])
+      expect(expiries).toEqual([])
+      expect(cached).toEqual([])
+      // 횟수는 센다(티켓당 2).
+      expect(rejected(await call(client, 'run_build', { service: 'fe' }))).toMatchObject({ code: 'TOOL_LIMIT' })
+      await client.close()
+    })
+
+    it('takes the ticket\'s trial image before build_cache', async () => {
+      behave = answering('build', buildOk)
+      const client = await connect()
+      await call(client, 'run_build', { service: 'fe', specPatch: outputDir })
+      cache.set(`my-app/fe/${HASH('c')}`, CACHED_IMAGE)
+      behave = answering('render', { ok: true, status: null, failure: null })
+      await call(client, 'run_render', { specPatch: outputDir })
+      expect(conditionOf((readInputs[1] as { input: unknown }).input, 'fe')).toMatchObject({ image: NEW_IMAGE })
+      await client.close()
+    })
+
+    it('answers a failed build as the tool result and remembers no image', async () => {
+      const failed = { ok: false, reused: false, build: { id: 'cb:1', buildStatus: 'FAILED' }, failedPhase: 'BUILD', logTail: [`npm ERR! token ${SECRET}`], image: null, failure: { stage: 'build', code: null, message: 'FAILED' } }
+      behave = answering('build', failed)
+      const client = await connect()
+      const answer = await call(client, 'run_build', { service: 'fe', specPatch: outputDir })
+      expect(answer.structuredContent).toMatchObject({ ok: false, failedPhase: 'BUILD', image: null, failure: { stage: 'build' } })
+      expect(JSON.stringify(answer.structuredContent)).not.toContain(SECRET)
+      expect(cached).toEqual([])
+      expect(rejected(await call(client, 'run_render', { specPatch: outputDir }))).toMatchObject({ code: 'INVALID_ARGUMENT' })
+      await client.close()
+    })
+
+    it('answers ok: false with the run_build fields when the trial cannot start', async () => {
+      scheduleFails = true
+      const client = await connect()
+      expect((await call(client, 'run_build', { service: 'fe', specPatch: outputDir })).structuredContent).toEqual({
+        ok: false,
+        reused: false,
+        build: null,
+        failedPhase: null,
+        logTail: [],
+        image: null,
+        failure: { stage: null, code: 'PIPELINE_UNAVAILABLE', message: expect.any(String) as string },
+      })
+      await client.close()
+    })
+
+    it.each([
+      ['a timeout over 20 minutes', { timeoutMinutes: 21 }, 'OVERRIDE_LIMIT'],
+      ['a zero timeout', { timeoutMinutes: 0 }, 'OVERRIDE_LIMIT'],
+      ['a compute type two steps up', { computeType: 'BUILD_GENERAL1_2XLARGE' }, 'OVERRIDE_LIMIT'],
+      ['an image outside the list', { image: 'ubuntu:24.04' }, 'OVERRIDE_LIMIT'],
+      ['a fractional timeout', { timeoutMinutes: 5.5 }, 'INVALID_ARGUMENT'],
+      ['a cache that is not a boolean', { cache: 'no' }, 'INVALID_ARGUMENT'],
+      ['an unknown key (buildspec)', { buildspec: 'x' }, 'INVALID_ARGUMENT'],
+    ])('refuses buildOverrides with %s as %s before scheduling', async (_label, buildOverrides, code) => {
+      const client = await connect()
+      expect(rejected(await call(client, 'run_build', { service: 'fe', specPatch: outputDir, buildOverrides }))).toMatchObject({ code })
+      expect(scheduled).toEqual([])
+      await client.close()
+    })
+
+    it('takes buildOverrides at the edge of the limits', async () => {
+      behave = answering('build', buildOk)
+      const client = await connect()
+      const buildOverrides = { computeType: 'BUILD_GENERAL1_LARGE', timeoutMinutes: 1, image: 'aws/codebuild/standard:7.0', cache: true }
+      expect(rejected(await call(client, 'run_build', { service: 'fe', specPatch: outputDir, buildOverrides }))).toBeNull()
+      expect((readInputs[0] as { buildOverrides: unknown }).buildOverrides).toEqual(buildOverrides)
+      await client.close()
+    })
+
+    it('refuses a patched build source that is not in the commit as INVALID_ARGUMENT', async () => {
+      const client = await connect()
+      const answer = await call(client, 'run_build', { service: 'fe', specPatch: [{ op: 'replace', path: '/spec/services/0/build/context', value: 'missing' }] })
+      expect(rejected(answer)).toMatchObject({ code: 'INVALID_ARGUMENT', message: expect.stringContaining('missing is not a folder') as string })
+      expect(scheduled).toEqual([])
+      await client.close()
+    })
+
+    it('refuses an unknown service and a source', async () => {
+      const client = await connect()
+      expect(rejected(await call(client, 'run_build', { service: 'db' }))).toMatchObject({ code: 'INVALID_ARGUMENT' })
+      expect(rejected(await call(client, 'run_build', { service: 'fe', source: { commitSha: SHA } }))).toMatchObject({ code: 'INVALID_ARGUMENT' })
+      expect(scheduled).toEqual([])
+      await client.close()
+    })
   })
 
   describe('submit_result verified (api.md 5: re-run student-deploy with the checked input)', () => {
@@ -442,6 +586,36 @@ describe('MCP gateway trial tools', () => {
       await client.close()
     })
 
+    describe('with a build patch', () => {
+      const outputDir = [{ op: 'replace', path: '/spec/services/0/build/outputDir', value: 'build' }]
+      const feOf = (input: unknown) => (input as { deploy_condition: { services: Record<string, unknown> } }).deploy_condition.services.fe
+
+      it('takes it after run_build → run_deploy → run_verify with that patch, and re-runs with the built image', async () => {
+        behave = answering('build', { ok: true, reused: false, build: null, failedPhase: null, logTail: [], image: NEW_IMAGE, failure: null })
+        const client = await connect()
+        expect((await call(client, 'run_build', { service: 'fe', specPatch: outputDir })).structuredContent).toMatchObject({ ok: true })
+        await tryAndVerify(client, outputDir)
+        expect((await call(client, 'submit_result', verified(outputDir, { buildOverrides: { timeoutMinutes: 10 } }))).structuredContent).toEqual({ accepted: true })
+        expect(reruns).toEqual([DEPLOY])
+        expect(feOf(run.input)).toEqual({ buildInputHash: HASH('c'), build: 'reuse', image: NEW_IMAGE })
+        expect(specOf(run.input).services[0]).toMatchObject({ build: { outputDir: 'build' } })
+        await client.close()
+      })
+
+      it('needs a run_build of that service in this ticket even when build_cache already had the image', async () => {
+        cache.set(`my-app/fe/${HASH('c')}`, CACHED_IMAGE)
+        const client = await connect()
+        await tryAndVerify(client, outputDir)
+        expect(rejected(await call(client, 'submit_result', verified(outputDir)))).toMatchObject({ code: 'INVALID_RESULT', message: expect.stringContaining('run_build of fe') as string })
+        expect(run.status).toBe('fixing')
+        // run_build는 같은 해시의 이미지가 있어 바로 reused로 답하고, 그 뒤에는 받는다.
+        expect((await call(client, 'run_build', { service: 'fe', specPatch: outputDir })).structuredContent).toMatchObject({ reused: true, image: CACHED_IMAGE })
+        expect((await call(client, 'submit_result', verified(outputDir))).structuredContent).toEqual({ accepted: true })
+        expect(feOf(run.input)).toEqual({ buildInputHash: HASH('c'), build: 'reuse', image: CACHED_IMAGE })
+        await client.close()
+      })
+    })
+
     it('rejects verified with another specPatch than the one tried', async () => {
       const client = await connect()
       await tryAndVerify(client)
@@ -453,7 +627,7 @@ describe('MCP gateway trial tools', () => {
     })
 
     it.each([
-      ['a build path', [{ op: 'replace', path: '/spec/services/0/build/outputDir', value: 'build' }], 'PATCH_FORBIDDEN'],
+      ['a service name', [{ op: 'replace', path: '/spec/services/0/name', value: 'web' }], 'PATCH_FORBIDDEN'],
       ['a value that breaks the spec rules', [{ op: 'replace', path: '/spec/services/1/runtime/port', value: 0 }], 'INVALID_SPEC'],
     ])('rejects a verified specPatch with %s as %s', async (_label, specPatch, code) => {
       const client = await connect()

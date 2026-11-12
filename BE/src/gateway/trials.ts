@@ -16,7 +16,7 @@ export { checkTrialResult } from './trial-result.js'
 /** 시험 하나의 대기 상한. 티켓 전체 상한까지 남은 시간이 더 짧으면 그쪽에서 끝난다. */
 export const TRIAL_WAIT_MS = 30 * 60_000
 
-const STAGES: Record<TrialTool, TrialStages> = { run_render: 'render', run_deploy: 'prepare,render,apply', run_verify: 'verify' }
+const STAGES: Record<TrialTool, TrialStages> = { run_build: 'build', run_render: 'render', run_deploy: 'prepare,render,apply', run_verify: 'verify' }
 const TRIAL_ID = /^tr_[0-9a-f]{12}$/
 
 export interface TrialFailure {
@@ -35,6 +35,8 @@ interface Trial {
   slug: string
   slot: Slot
   tool: TrialTool
+  /** run_build의 CodeBuild override(게이트웨이가 검사한 값). 그 밖의 도구는 null. */
+  buildOverrides: Record<string, unknown> | null
   input: Record<string, unknown>
   /** 입력을 읽은 job이 알린 GoCD 인스턴스 번호. 없으면 아직 입력을 읽은 job이 없다. */
   counter: number | null
@@ -55,6 +57,8 @@ export class GatewayTrials implements OnApplicationBootstrap {
   private readonly lastDeploy = new Map<string, Record<string, unknown>>()
   /** 티켓마다 마지막 run_deploy의 입력으로 run_verify까지 통과한 입력(`verified`를 받는 조건, api.md 5번). 그 뒤 run_deploy를 부르면 지운다. */
   private readonly verified = new Map<string, Record<string, unknown>>()
+  /** 티켓마다 run_build가 통과(또는 재사용)한 이미지: `<서비스>\n<빌드 입력 해시>` → digest. 시험 입력과 verified가 쓴다. */
+  private readonly images = new Map<string, Map<string, string>>()
   /** 끝난 티켓. 시험을 준비하던 호출이 티켓이 끝난 뒤 시험을 등록하지 못하게 한다(티켓 수만큼만 쌓인다). */
   private readonly closed = new Set<string>()
   /** BE 시작 때의 남은 시험 취소. 끝나기 전(성공 · 실패 모두)에는 새 시험을 시작하지 않는다. true면 확인됨. */
@@ -95,6 +99,18 @@ export class GatewayTrials implements OnApplicationBootstrap {
     return this.lastDeploy.get(ticketId)
   }
 
+  /** 이 티켓의 시험 이미지(그 서비스 · 그 빌드 입력 해시로 run_build가 통과했거나 재사용한 이미지). 없으면 undefined. */
+  trialImage(ticketId: string, service: string, hash: string): string | undefined {
+    return this.images.get(ticketId)?.get(`${service}\n${hash}`)
+  }
+
+  rememberImage(ticketId: string, service: string, hash: string, image: string): void {
+    if (this.closed.has(ticketId)) return
+    const mine = this.images.get(ticketId) ?? new Map<string, string>()
+    mine.set(`${service}\n${hash}`, image)
+    this.images.set(ticketId, mine)
+  }
+
   /** 이 티켓에서 run_deploy → run_verify를 통과한 입력. 없으면 undefined. */
   verifiedInput(ticketId: string): Record<string, unknown> | undefined {
     return this.verified.get(ticketId)
@@ -122,6 +138,7 @@ export class GatewayTrials implements OnApplicationBootstrap {
     tool: TrialTool,
     input: Record<string, unknown>,
     deadline: number,
+    buildOverrides: Record<string, unknown> | null = null,
   ): Promise<TrialOutcome> {
     // 시작 때 취소를 확인하지 못했으면 한 번 더 해 본다.
     if (!(await this.leftovers)) this.leftovers = this.cancelLeftovers()
@@ -135,7 +152,7 @@ export class GatewayTrials implements OnApplicationBootstrap {
     const done = new Promise<TrialOutcome>((resolve) => {
       finish = resolve
     })
-    const trial: Trial = { id, deployId: ticket.deployId, ticketId: ticket.ticketId, slug: ticket.slug, slot: ticket.targetSlot, tool, input, counter: null, state: 'waiting', finish }
+    const trial: Trial = { id, deployId: ticket.deployId, ticketId: ticket.ticketId, slug: ticket.slug, slot: ticket.targetSlot, tool, buildOverrides, input, counter: null, state: 'waiting', finish }
     this.trials.set(id, trial)
     // run_deploy는 대상 슬롯을 비우고 다시 올린다. 앞서 올린 입력도, 확인한 입력도 더 이상 슬롯에 떠 있다고 할 수 없다
     // (이 run_deploy가 실패해도 그렇다. 성공하면 아래에서 다시 적는다).
@@ -170,6 +187,7 @@ export class GatewayTrials implements OnApplicationBootstrap {
     this.closed.add(ticketId)
     this.lastDeploy.delete(ticketId)
     this.verified.delete(ticketId)
+    this.images.delete(ticketId)
     for (const t of [...this.trials.values()]) {
       if (t.ticketId === ticketId && t.state === 'waiting') {
         await this.cancel(t)
@@ -189,7 +207,7 @@ export class GatewayTrials implements OnApplicationBootstrap {
     if (!(await this.runOpen(trial)) || !this.waiting(trial)) throw notFound()
     if (trial.counter !== null && trial.counter !== counter) throw badResult('another pipeline run already read this trial', [{ path: 'counter', code: 'CONFLICT' }])
     trial.counter = counter
-    return { deployId: trial.deployId, slot: trial.slot, input: trial.input, buildOverrides: null }
+    return { deployId: trial.deployId, slot: trial.slot, input: trial.input, buildOverrides: trial.buildOverrides }
   }
 
   /** `POST /api/pipeline/trials/:trialId/result`. 모르는 · 끝난 시험의 결과는 아무것도 바꾸지 않는다(재전송 · 늦은 결과에 안전). */

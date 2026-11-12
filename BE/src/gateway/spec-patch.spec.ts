@@ -25,12 +25,17 @@ describe('applySpecPatch', () => {
     expect(applySpecPatch(before, [])).toEqual({ ok: true, input: before })
   })
 
+  it('applies a build path too (its image comes from run_build)', () => {
+    const out = applySpecPatch(input(), [{ op: 'replace', path: '/spec/services/0/build/outputDir', value: 'build' }])
+    expect(out.ok).toBe(true)
+    if (out.ok) expect(services(out.input)[0].build.outputDir).toBe('build')
+  })
+
   it.each([
-    ['a build path (run_build is not open)', '/spec/services/0/build/outputDir', 'build'],
     ['a service name', '/spec/services/0/name', 'name and slug'],
     ['the slug', '/spec/project/slug', 'name and slug'],
-    ['anything outside runtime', '/spec/services/0/role', 'only /spec/services/{i}/runtime'],
-    ['the commit', '/commitSha', 'only /spec/services/{i}/runtime'],
+    ['anything outside build and runtime', '/spec/services/0/role', 'only /spec/services/{i}/build'],
+    ['the commit', '/commitSha', 'only /spec/services/{i}/build'],
   ])('refuses %s as PATCH_FORBIDDEN', (_label, path, why) => {
     const out = applySpecPatch(input(), [{ op: 'replace', path, value: 'x' }])
     expect(out).toMatchObject({ ok: false, code: 'PATCH_FORBIDDEN' })

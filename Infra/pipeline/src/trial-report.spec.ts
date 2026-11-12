@@ -13,13 +13,9 @@ const DEPLOY = parseTrialStages('prepare,render,apply')
 const VERIFY = parseTrialStages('verify')
 const BUILD = parseTrialStages('build')
 
-// BE가 이 본문을 받아 주는가(BE/src/gateway/trial-result.ts). run_build는 BE가 아직 받지 않아(B3) 도구 표의 칸만 본다.
+// BE가 이 본문을 받아 주는가(BE/src/gateway/trial-result.ts).
 const accepted = (trial: Trial, body: TrialBody | null) => {
   expect(body).not.toBeNull()
-  if (trial.tool === 'run_build') {
-    expect(Object.keys(body!.result).sort()).toEqual(['build', 'failedPhase', 'failure', 'image', 'logTail', 'ok', 'reused'])
-    return body!
-  }
   expect(checkTrialResult(trial.tool, JSON.parse(JSON.stringify(body)))).toEqual([])
   return body!
 }

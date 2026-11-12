@@ -143,7 +143,7 @@ class SpecPatchOp(Wire):
 
 class BuildOverrides(Wire):
     compute_type: str | None = None
-    timeout_minutes: Annotated[int, Field(ge=1, le=30)] | None = None
+    timeout_minutes: Annotated[int, Field(ge=1, le=20)] | None = None
     image: str | None = None
     cache: bool | None = None
 

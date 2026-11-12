@@ -9,7 +9,7 @@ const HISTORY_PAGE = 20
 const unavailable = () => new ServiceUnavailableException({ code: 'PIPELINE_UNAVAILABLE', message: 'Could not start the deploy pipeline' })
 
 /** 시험 실행이 돌릴 스테이지(api.md "파이프라인 ↔ 플랫폼 서버" 4번 `TRIAL_STAGES`). */
-export type TrialStages = 'render' | 'prepare,render,apply' | 'verify'
+export type TrialStages = 'build' | 'render' | 'prepare,render,apply' | 'verify'
 
 /**
  * GoCD 서버 호출. 배포 파이프라인(`GOCD_PIPELINE`)과 AI 에이전트의 시험 전용 파이프라인(`GOCD_TRIAL_PIPELINE`)을 실행하고, 시험 파이프라인의 남은 스테이지를 취소한다.

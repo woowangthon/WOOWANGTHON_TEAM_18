@@ -53,4 +53,15 @@ export class DeployConditionService {
     }
     return { deployId, slot, input: { commitSha: row.commit_sha, deploy_condition: { secretHash, services }, spec } }
   }
+
+  /**
+   * 고친 빌드 값(`specPatch`)으로 한 서비스의 빌드 입력 해시를 다시 낸다. 같은 commit · 같은 규칙(위 prepare)이다.
+   * AI 에이전트의 시험 입력(api.md "파이프라인 ↔ 플랫폼 서버" 4번)이 쓴다. 없는 경로면 422 BUILD_SOURCE_NOT_FOUND를 던진다.
+   */
+  async buildHash(repoName: string, commitSha: string, build: Spec['services'][number]['build']): Promise<string> {
+    const [owner, repo] = repoName.split('/')
+    const { context, dockerfile } = build
+    const shas = await this.repos.sourceShas({ owner, repo }, commitSha, { trees: [context], blobs: dockerfile === null ? [] : [dockerfile] })
+    return buildInputHash(build, { contextTree: shas.get(context)!, dockerfileBlob: dockerfile === null ? null : shas.get(dockerfile)! })
+  }
 }

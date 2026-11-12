@@ -237,11 +237,20 @@ describe('GatewayTrials', () => {
   })
 })
 
+const BUILT = `ghcr.io/woowang-bot/student-apps@sha256:${'9'.repeat(64)}`
+
 describe('checkTrialResult', () => {
   it('accepts each tool shape with or without a failure', () => {
     expect(checkTrialResult('run_render', { stage: 'render', result: { ok: false, status: { code: 422 }, failure: { stage: 'render', code: null, message: 'x' } } })).toEqual([])
     expect(checkTrialResult('run_deploy', { stage: 'prepare', result: { ok: false, services: [], pods: [], events: [], failure: { stage: 'prepare', code: 'LIVE_SLOT_PROTECTED', message: 'x' } } })).toEqual([])
     expect(checkTrialResult('run_verify', { stage: 'verify', result: { ok: true, ready: [{ service: 'fe', ready: true }], requests: [{ service: 'fe', path: '/', status: 200, ms: 12, error: null }], failure: null } })).toEqual([])
+    expect(checkTrialResult('run_build', { stage: 'build', result: { ok: true, reused: false, build: null, failedPhase: null, logTail: [], image: BUILT, failure: null } })).toEqual([])
+    expect(
+      checkTrialResult('run_build', {
+        stage: 'build',
+        result: { ok: false, reused: false, build: { id: 'cb:1', phases: [] }, failedPhase: 'BUILD', logTail: ['npm ERR!'], image: null, failure: { stage: 'build', code: null, message: 'FAILED' } },
+      }),
+    ).toEqual([])
   })
 
   it.each([
@@ -253,6 +262,10 @@ describe('checkTrialResult', () => {
     ['ok from a stage before the last', 'run_deploy', { stage: 'render', result: { ok: true, services: [], pods: [], events: [], failure: null } }, 'stage'],
     ['ok with a failure', 'run_verify', { stage: 'verify', result: { ok: true, ready: [], requests: [], failure: { stage: 'verify', code: null, message: 'x' } } }, 'result.failure'],
     ['a failure without the failure field', 'run_render', { stage: 'render', result: { ok: false, status: null, failure: null } }, 'result.failure'],
+    ['a passed build without an image', 'run_build', { stage: 'build', result: { ok: true, reused: false, build: null, failedPhase: null, logTail: [], image: null, failure: null } }, 'result.image'],
+    ['a build image that is not a digest', 'run_build', { stage: 'build', result: { ok: true, reused: false, build: null, failedPhase: null, logTail: [], image: 'nginx:latest', failure: null } }, 'result.image'],
+    ['a build log over 200 lines', 'run_build', { stage: 'build', result: { ok: false, reused: false, build: null, failedPhase: null, logTail: Array(201).fill('x'), image: null, failure: { stage: 'build', code: null, message: 'm' } } }, 'result.logTail'],
+    ['a build stage for another tool', 'run_render', { stage: 'build', result: { ok: true, status: null, failure: null } }, 'stage'],
   ])('reports %s', (_label, tool, body, path) => {
     expect(checkTrialResult(tool as 'run_render', body).map((i) => i.path)).toContain(path)
   })

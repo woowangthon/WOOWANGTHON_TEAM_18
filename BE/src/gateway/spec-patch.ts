@@ -3,7 +3,8 @@ import { type Issue, type Spec, validateSpec } from '../deploys/deploy-input.js'
 
 // 시험용 수정안 `specPatch`(JSON Patch, RFC 6902)의 검사와 적용(docs/design/AIagent.md §6, api.md "파이프라인 ↔ 플랫폼 서버" 4번).
 // 그 시험의 입력에만 적용하고 DB의 spec은 바꾸지 않는다.
-// F11b-1: 빌드 경로(`build`)는 run_build가 열릴 때까지, 이름(`name` · `slug`)은 슬롯 · Secret 이름이 함께 바뀌어 시험할 수 없어 받지 않는다.
+// `build` · `runtime` 경로를 받는다. 빌드 경로를 고치면 그 서비스의 이미지는 run_build로 만든다(B3, 게이트웨이가 시험 입력을 만들 때 본다).
+// 이름(`name` · `slug`)은 슬롯 · Secret 이름이 함께 바뀌어 대상 슬롯에서 시험할 수 없어 받지 않는다.
 
 export type PatchProblem = { code: 'INVALID_ARGUMENT' | 'PATCH_FORBIDDEN' | 'INVALID_SPEC'; message: string; fields?: Issue[] }
 
@@ -31,9 +32,8 @@ function parseOps(value: unknown): Op[] | string {
 
 /** 경로 규칙. 어긋나면 이유. */
 function pathProblem(path: string): string | null {
-  if (BUILD.test(path)) return `${path}: build settings cannot be tried yet (run_build is not open); only runtime can be patched`
   if (NAMES.test(path)) return `${path}: name and slug cannot be tried on the target slot (slot and Secret names follow them)`
-  if (!RUNTIME.test(path)) return `${path}: only /spec/services/{i}/runtime/... can be patched`
+  if (!RUNTIME.test(path) && !BUILD.test(path)) return `${path}: only /spec/services/{i}/build/... and /spec/services/{i}/runtime/... can be patched`
   return null
 }
 
