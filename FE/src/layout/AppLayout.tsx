@@ -38,7 +38,7 @@ function AppLayout() {
               <img
                 src="/logo.png"
                 alt="WCP"
-                className="h-10 w-auto rounded-md dark:bg-fg dark:p-0.5"
+                className="size-10 rounded-md object-contain dark:bg-fg dark:p-0.5"
               />
             </Link>
             <nav aria-label="주 메뉴" className="flex min-h-12 gap-1">
