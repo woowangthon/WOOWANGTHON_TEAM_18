@@ -5,8 +5,8 @@
 # and GoCD refuses a material whose autoUpdate differs from the config repo's.
 #
 # Stages: Build on the AWS executor (resource aws, calls CodeBuild); Prepare, Render and Apply on the leader executor
-# (resource leader, Infra/executor/agent.yaml). Verify and Switch are not here yet: their CLIs are not written, and a
-# stage that calls a missing CLI would report a verify failure on every run.
+# (resource leader, Infra/executor/agent.yaml). Verify and Switch are not here yet: their CLIs are merged (#139), but the
+# stages are added in a follow-up PR (PR-E) together with the way out to Traefik their checks need.
 #
 # Each job is `Infra/gocd/job.sh` steps: setup, the stage, then notify with run_if any. The Build job fetches the input
 # once; the later stages get it (and the images) from Build's `work/` artifact, so one run uses one input and one slot.

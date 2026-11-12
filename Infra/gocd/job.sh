@@ -14,6 +14,8 @@ cd "$(dirname "$0")/../.."
 pipeline=Infra/pipeline
 cli() { node "$pipeline/dist/cli/$1.js" "${@:2}"; }
 slot() { cat work/slot; }
+# A result file left by an earlier run would be read by notify as this run's result, so the stage's own files go first.
+fresh() { rm -f -- "$@"; }
 
 case ${1:?usage: job.sh <step> [stage]} in
   setup)
@@ -31,6 +33,7 @@ case ${1:?usage: job.sh <step> [stage]} in
   build)
     # GoCD sets GO_REVISION_<material name>; the buildspec checks out the platform repo at this commit.
     export PLATFORM_COMMIT=${GO_REVISION_PLATFORM:?GO_REVISION_PLATFORM is not set}
+    fresh work/build-report.json work/deploy-input.built.json
     status=0
     cli build work/deploy-input.json work/build-report.json || status=$?
     # The report is there for a failed build too, and the notice needs it. Stage CLIs read the built input.
@@ -39,9 +42,9 @@ case ${1:?usage: job.sh <step> [stage]} in
     fi
     exit "$status"
     ;;
-  prepare) cli prepare work/deploy-input.built.json "$(slot)" out ;;
-  render) cli render work/deploy-input.built.json "$(slot)" out ;;
-  apply) cli apply work/deploy-input.built.json "$(slot)" out/slot.yaml out ;;
+  prepare) fresh out/prepare-report.json; cli prepare work/deploy-input.built.json "$(slot)" out ;;
+  render) fresh out/render-report.json out/slot.yaml out/open.yaml; cli render work/deploy-input.built.json "$(slot)" out ;;
+  apply) fresh out/apply-report.json; cli apply work/deploy-input.built.json "$(slot)" out/slot.yaml out ;;
   notify)
     stage=${2:?usage: job.sh notify <stage>}
     case $stage in
