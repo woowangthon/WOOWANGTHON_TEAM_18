@@ -3,9 +3,9 @@ import { type INestApplication, Logger } from '@nestjs/common'
 import request from 'supertest'
 import type { App } from 'supertest/types.js'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { DeploymentScaler } from '../src/admin/deployment-scaler.js'
 import { ClusterError } from '../src/k8s/cluster-error.js'
 import { ClusterReader, type DeploymentInfo, type NodeInfo, type PodInfo } from '../src/k8s/cluster-reader.js'
+import { DeploymentScaler } from '../src/k8s/deployment-scaler.js'
 import { errorBody, JWKS_URL, keySet, token } from './auth-helpers.js'
 import { startApp } from './start-app.js'
 
@@ -37,7 +37,7 @@ const reader = {
   deployments: (slug: string) => read(slug, (space) => space.deployments),
   pods: (slug: string) => read(slug, (space) => space.pods),
 }
-const scaler: DeploymentScaler = {
+const scaler: Pick<DeploymentScaler, 'scaleToZero'> = {
   scaleToZero(slug, name) {
     if (scaleFails[name]) return Promise.reject(scaleFails[name])
     scaled.push({ slug, name })

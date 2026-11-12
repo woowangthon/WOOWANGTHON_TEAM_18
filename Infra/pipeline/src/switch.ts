@@ -27,6 +27,22 @@ const nameOf = (obj: Record<string, unknown>) => {
   return typeof name === 'string' ? name : ''
 }
 
+/**
+ * 시험 실행(student-trial, env `TRIAL_ID`가 있음)에서 불렸으면 아무것도 바꾸지 않는 실패 결과, 아니면 null.
+ * 시험에는 Switch 스테이지가 없다. 이것은 시험 env로 Switch가 잘못 불렸을 때 공개 주소가 바뀌지 않게 하는 이중 안전이다(api.md "파이프라인 ↔ 플랫폼 서버" 4번).
+ * 값이 비어 있어도 변수가 있으면 거절한다: 시험이 아닌 실행에는 이 변수가 없다.
+ */
+export function trialRefusal(env: NodeJS.ProcessEnv, slot: Slot): SwitchReport | null {
+  if (env.TRIAL_ID === undefined) return null
+  return {
+    ok: false,
+    slot,
+    applied: [],
+    deleted: [],
+    failure: { kind: 'platform', code: 'TRIAL_SWITCH_REFUSED', service: null, message: 'switch was called in a trial run (TRIAL_ID is set); nothing was changed' },
+  }
+}
+
 /** `openManifest`는 Render의 open.yaml. 공개 서비스가 없을 때만 null이다(open Ingress를 모두 지운다). 공개 서비스가 있는데 null이면 아무것도 하지 않고 실패한다. */
 export async function runSwitch(input: DeployInput, slot: Slot, openManifest: string | null, call: KubeCall): Promise<SwitchReport> {
   const namespace = `proj-${input.spec.project.slug}`

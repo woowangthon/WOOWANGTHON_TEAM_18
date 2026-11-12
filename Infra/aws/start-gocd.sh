@@ -3,7 +3,7 @@
 #   bash Infra/aws/start-gocd.sh        (the user must be in the docker group; Tailscale must be up)
 # Run it once, and again after the settings or the repo change: it only does what is missing.
 # Settings are read from SSM Parameter Store under $SSM_PATH (default /wcp/gocd), one single-line SecureString per variable:
-#   ADMIN_PASSWORD          GoCD's one admin user (16+ characters)
+#   ADMIN_PASSWORD          GoCD's admin user (16+ characters); the platform server's user `be` needs no value (setup.sh makes its password)
 #   PIPELINE_NOTIFY_TOKEN   the same value as /wcp/be/PIPELINE_NOTIFY_TOKEN (32+ characters)
 #   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY   the executor-only IAM user wcp-gocd-aws-agent (CodeBuild only)
 #   TAILNET_ADDR            optional: this EC2's Tailscale address; defaults to `tailscale ip -4`

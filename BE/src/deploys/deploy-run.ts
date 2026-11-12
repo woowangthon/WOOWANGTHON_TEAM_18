@@ -42,6 +42,13 @@ const PLATFORM_MESSAGES: Record<string, string> = {
   CODEBUILD_API_ERROR: '빌드 서비스(CodeBuild)에 문제가 있어 배포하지 못했습니다. 잠시 뒤 다시 시도해 주세요.',
   IMAGE_PULL_FAILED: '이미지를 클러스터로 받아 오지 못했습니다. 잠시 뒤 다시 시도해 주세요.',
   LIVE_SLOT_PROTECTED: '서비스 중인 슬롯을 보호하기 위해 배포를 중단했습니다. 운영자에게 알려 주세요.',
+  UNEXPECTED_REFUSAL: '클러스터가 예상하지 못한 이유로 요청을 거절해 배포를 중단했습니다. 운영자에게 알려 주세요.',
+  TRAEFIK_UNREACHABLE: '동작 확인 중 공개 진입점(Traefik)에 닿지 못했습니다. 잠시 뒤 다시 시도해 주세요.',
+  SWITCH_REFUSED: '공개 주소를 바꾸는 요청을 클러스터가 거절했습니다. 운영자에게 알려 주세요.',
+  OPEN_MANIFEST_MISSING: '공개 주소를 바꾸는 데 필요한 파일이 없어 아무것도 바꾸지 않고 중단했습니다. 운영자에게 알려 주세요.',
+  STAGE_NO_REPORT: '배포 단계가 끝났지만 결과 보고를 읽지 못해 배포를 중단했습니다. 운영자에게 알려 주세요.',
+  TRIAL_SWITCH_REFUSED: '시험 실행에서는 공개 주소를 바꾸지 않아 전환을 중단했습니다. 공개 주소는 바뀌지 않았습니다. 운영자에게 알려 주세요.',
+  TRIAL_STILL_RUNNING: '이전 시험 실행이 아직 끝나지 않아 다음 단계를 시작하지 못했습니다. 잠시 뒤 다시 배포해 주세요.',
 }
 
 export interface StoredFailure {

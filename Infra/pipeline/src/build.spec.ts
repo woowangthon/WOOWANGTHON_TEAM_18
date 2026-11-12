@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { AwsError } from './aws.js'
-import { appDir, type BuildConfig, imageTag, MAX_POLL_ERRORS, runBuilds, startBuildRequest } from './build.js'
+import { appDir, type BuildConfig, imageTag, MAX_POLL_ERRORS, maxWaitMs, parseBuildOverrides, runBuilds, startBuildRequest } from './build.js'
 import type { Service } from './deploy-input.js'
 import { COMMIT, deployInput, digest, HASH_BE, HASH_FE, IMAGE_REPO } from './fixtures.js'
 
@@ -125,6 +125,75 @@ const FE_ID = 'student-apps:my-app-fe-111111111111'
 const BE_ID = 'student-apps:my-app-be-222222222222'
 const succeeded = (id: string, c: string) => ({ id, buildStatus: 'SUCCEEDED', exportedEnvironmentVariables: [{ name: 'IMAGE_DIGEST', value: digest(c) }] })
 const inProgress = (id: string) => ({ id, buildStatus: 'IN_PROGRESS' })
+
+describe('startBuildRequest with run_build overrides', () => {
+  const input = deployInput()
+  const svc = input.spec.services[0]
+  const keys = (req: object) => Object.keys(req).filter((k) => k.endsWith('Override') && k !== 'sourceTypeOverride' && k !== 'buildspecOverride' && k !== 'environmentVariablesOverride')
+
+  it('sends no override without overrides (student-deploy) or with an empty object', () => {
+    expect(keys(startBuildRequest(input, svc, config))).toEqual([])
+    expect(keys(startBuildRequest(input, svc, config, {}))).toEqual([])
+  })
+
+  it('maps each given field to its StartBuild override and keeps the env and buildspec', () => {
+    const req = startBuildRequest(input, svc, config, { computeType: 'BUILD_GENERAL1_MEDIUM', timeoutMinutes: 20, image: 'aws/codebuild/standard:7.0', cache: false })
+    expect(req).toMatchObject({
+      computeTypeOverride: 'BUILD_GENERAL1_MEDIUM',
+      timeoutInMinutesOverride: 20,
+      imageOverride: 'aws/codebuild/standard:7.0',
+      cacheOverride: { type: 'NO_CACHE' },
+      buildspecOverride: 'version: 0.2\n',
+      environmentVariablesOverride: startBuildRequest(input, svc, config).environmentVariablesOverride,
+    })
+  })
+
+  it('leaves the project cache as it is for cache: true', () => {
+    expect(keys(startBuildRequest(input, svc, config, { cache: true }))).toEqual([])
+  })
+})
+
+describe('parseBuildOverrides', () => {
+  it('reads null as no overrides and an object with the four fields', () => {
+    expect(parseBuildOverrides('null')).toBeNull()
+    expect(parseBuildOverrides('{}')).toEqual({})
+    expect(parseBuildOverrides('{"computeType":"BUILD_GENERAL1_LARGE","timeoutMinutes":1,"image":"aws/codebuild/standard:7.0","cache":true}')).toEqual({
+      computeType: 'BUILD_GENERAL1_LARGE',
+      timeoutMinutes: 1,
+      image: 'aws/codebuild/standard:7.0',
+      cache: true,
+    })
+    expect(parseBuildOverrides('{"timeoutMinutes":20}')).toEqual({ timeoutMinutes: 20 })
+  })
+
+  it.each([
+    ['not json', 'is not JSON'],
+    ['[]', 'must be an object or null'],
+    ['3', 'must be an object or null'],
+    ['{"buildspec":"x"}', 'unknown key buildspec'],
+    ['{"environmentVariables":[]}', 'unknown key environmentVariables'],
+    ['{"computeType":"medium"}', 'computeType must look like'],
+    ['{"computeType":1}', 'computeType must look like'],
+    ['{"timeoutMinutes":21}', 'timeoutMinutes must be an integer from 1 to 20'],
+    ['{"timeoutMinutes":0}', 'timeoutMinutes must be an integer from 1 to 20'],
+    ['{"timeoutMinutes":5.5}', 'timeoutMinutes must be an integer from 1 to 20'],
+    ['{"timeoutMinutes":"10"}', 'timeoutMinutes must be an integer from 1 to 20'],
+    ['{"image":"a b"}', 'image must be a build image name'],
+    ['{"image":""}', 'image must be a build image name'],
+    ['{"cache":"false"}', 'cache must be true or false'],
+  ])('refuses %s', (text, message) => {
+    expect(() => parseBuildOverrides(text)).toThrow(`build overrides: ${message}`)
+  })
+})
+
+describe('maxWaitMs', () => {
+  it('is 20 minutes without a timeout override and timeoutMinutes + 5 with one', () => {
+    expect(maxWaitMs(null)).toBe(20 * 60_000)
+    expect(maxWaitMs({ cache: false })).toBe(20 * 60_000)
+    expect(maxWaitMs({ timeoutMinutes: 20 })).toBe(25 * 60_000)
+    expect(maxWaitMs({ timeoutMinutes: 3 })).toBe(8 * 60_000)
+  })
+})
 
 describe('runBuilds', () => {
   it('starts every run service in parallel, skips reuse, polls until all finish and fills the digests', async () => {
@@ -305,6 +374,17 @@ describe('runBuilds', () => {
     expect(report.failures).toEqual([{ service: 'fe', kind: 'platform', code: 'BUILD_WAIT_TIMEOUT', message: 'build did not finish in 20 minutes' }])
     // 10초마다 묻는다. 20분째(120번째)에는 아직 넘기지 않았으므로 한 번 더 묻고 멈춘다.
     expect(calls.filter((c) => c[1] === 'batch-get-builds')).toHaveLength(121)
+  })
+
+  it('with a timeout override waits timeoutMinutes + 5 minutes and passes the overrides to StartBuild', async () => {
+    const { aws, calls } = fakeAws({ 'codebuild start-build': [started], 'codebuild batch-get-builds': [{ builds: [inProgress(FE_ID), succeeded(BE_ID, 'e')] }] })
+    const report = await runBuilds(deployInput(), config, aws, fakeClock(), { timeoutMinutes: 3, cache: false })
+    expect(report.failures).toEqual([{ service: 'fe', kind: 'platform', code: 'BUILD_WAIT_TIMEOUT', message: 'build did not finish in 8 minutes' }])
+    // 8분 = 48번째까지는 넘기지 않으므로 49번 묻는다.
+    expect(calls.filter((c) => c[1] === 'batch-get-builds')).toHaveLength(49)
+    const requests = calls.filter((c) => c[1] === 'start-build').map((c) => JSON.parse(c[3]) as Record<string, unknown>)
+    expect(requests).toHaveLength(2)
+    for (const req of requests) expect(req).toMatchObject({ timeoutInMinutesOverride: 3, cacheOverride: { type: 'NO_CACHE' } })
   })
 
   it('lists failures in spec order', async () => {
