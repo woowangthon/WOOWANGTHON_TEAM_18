@@ -588,7 +588,7 @@ verified (submit_result)
 
 - 모두 로그인 토큰이 필요하고, `isAdmin`(`app_metadata.role === 'admin'`, [`auth.md`](auth.md))일 때만 받는다. 아니면 `403 ADMIN_REQUIRED`다. 운영자 계정은 하나다.
 - 리더의 쿠버네티스 API에 닿지 못하면(시간 초과 · 인증서 검증 실패 · 설정 없음) `503 CLUSTER_UNREACHABLE`, 닿았는데 서버 계정에 그 일의 권한이 없으면(401 · 403) `503 CLUSTER_FORBIDDEN`이다. 화면은 앞의 것을 "리더 무응답"으로 보여 준다([`cluster.md`](cluster.md) §10). `503 DATABASE_UNAVAILABLE`도 있다.
-- **사용량 수치는 아직 수집하지 않는다.** 서버 계정의 `metrics.k8s.io` 읽기 권한(노드 · `proj-` 공간 Pod의 CPU · 메모리)은 들어갔지만([`cluster.md`](cluster.md) §8, #130) 서버가 아직 그 API를 부르지 않는다. 그래서 `usage`는 `null`이고 응답에 `usageStatus: "not_collected"`를 싣는다. 값을 지어내지 않는다. 서버가 그 API를 부르면 `usage`가 `{ "cpuMillicores", "memoryBytes" }`로 채워지고 `usageStatus`가 `"collected"`가 된다.
+- **노드 사용량은 `metrics.k8s.io`로 읽는다**(`GET /apis/metrics.k8s.io/v1beta1/nodes`, 권한 [`cluster.md`](cluster.md) §8, #130). 읽으면 노드의 `usage`가 `{ "cpuMillicores", "memoryBytes" }`로 채워지고 응답의 `usageStatus`는 `"collected"`다. 사용량을 읽지 못하면(권한 · 시간 초과 · 그 API가 없음) 노드 목록은 그대로 주고 모든 노드의 `usage`가 `null`, `usageStatus`가 `"not_collected"`다(오류로 답하지 않는다: 노드 목록 읽기가 실패해야만 `503`이다). 읽었는데 어떤 노드가 그 목록에 없으면(첫 수집 전, 수십 초) 그 노드만 `usage: null`이다. 값을 지어내지 않는다. Pod 사용량은 이 API에 싣지 않는다.
 
 ### `GET /api/admin/nodes` — 노드 현황
 
@@ -596,7 +596,7 @@ verified (submit_result)
 
 ```json
 {
-  "usageStatus": "not_collected",
+  "usageStatus": "collected",
   "nodes": [
     {
       "name": "leader",
@@ -605,7 +605,7 @@ verified (submit_result)
       "cpu": { "capacityMillicores": 4000, "allocatableMillicores": 3900 },
       "memory": { "capacityBytes": 16777216000, "allocatableBytes": 16000000000 },
       "disk": { "capacityBytes": 250000000000, "allocatableBytes": 230000000000 },
-      "usage": null
+      "usage": { "cpuMillicores": 123, "memoryBytes": 7002152960 }
     }
   ]
 }

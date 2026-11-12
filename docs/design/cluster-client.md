@@ -71,10 +71,11 @@
 | `pods` | `name`, `labels`, `phase`, `node`(놓인 노드), `ready`(컨테이너가 모두 준비됨), `restarts`(컨테이너 재시작 횟수의 합), `waiting`(기다리는 컨테이너 — init 컨테이너 포함 — 의 이유: `CrashLoopBackOff` · `ImagePullBackOff` 등, 없으면 `null`) |
 | `deployments` | `name`, `labels`, `replicas`(원하는 수), `ready`, `updated`, `available` |
 | `nodes` | `name`, `ready`, `roles`(`node-role.kubernetes.io/<역할>` 라벨에서), `capacity` · `allocatable`(`cpu` · `memory` · `ephemeral-storage`, 쿠버네티스 수량 글 그대로) |
+| `nodeUsage` | `name`, `usage`(`cpu` · `memory`, `metrics.k8s.io`의 노드 사용량, 쿠버네티스 수량 글 그대로). 갓 뜬 노드는 첫 수집 전까지 목록에 없다 |
 | `logs` | 글. `tailLines` 기본 200(최대 2000), 응답은 256 KiB에서 자른다(요청 하나의 제한 시간 5초 안에 느린 구간으로도 받을 크기). 이어 받기(follow)는 없다 |
 
 - 목록은 한 번에 받는다(쪽 나눔 없음). 공간 하나의 Pod는 상한(ResourceQuota)으로 묶여 있고 노드는 셋이다.
-- 실제 사용량(CPU · 메모리)은 이 모듈에 아직 없다. 권한은 들어갔다([cluster.md](cluster.md) §8, #130): `GET /apis/metrics.k8s.io/v1beta1/nodes`와 `/apis/metrics.k8s.io/v1beta1/namespaces/<공간>/pods`. 응답은 다른 목록처럼 `items` 배열이고, 항목의 `metadata.name`이 노드 · Pod 이름과 같다. 값은 쿠버네티스 수량 글이다(실제 리더 응답: 노드는 `usage`에 CPU `123018642n`(나노코어) · 메모리 `6838040Ki`, Pod는 `containers[].usage`에 같은 모양). 갓 뜬 Pod와 노드는 첫 수집(수십 초) 전까지 목록에 없으므로 없는 항목은 오류가 아니라 "아직 없음"이다. 운영자 API의 응답에는 Pod 사용량 자리가 아직 없다([api.md](api.md)는 노드의 `usage`만 정한다). Pod 사용량을 화면에 내려면 api.md부터 고친다. 호출은 다음 PR. 디스크 사용량 · 지난 값은 Prometheus에 묻는다(2026-11-11부터 된다, [cluster.md](cluster.md) §10): `GET /api/v1/namespaces/monitoring/services/monitoring-prometheus:9090/proxy/api/v1/query?query=<PromQL>`. `GET`만 된다.
+- 실제 사용량(CPU · 메모리): 노드는 `nodeUsage`로 읽는다(운영자 API #171, 아래 "실제 리더 확인"에는 아직 없다: 이 호출을 서버로 돌려 본 적은 없다). Pod 사용량 호출은 아직 없다. 권한은 들어갔다([cluster.md](cluster.md) §8, #130): `GET /apis/metrics.k8s.io/v1beta1/nodes`와 `/apis/metrics.k8s.io/v1beta1/namespaces/<공간>/pods`. 응답은 다른 목록처럼 `items` 배열이고, 항목의 `metadata.name`이 노드 · Pod 이름과 같다. 값은 쿠버네티스 수량 글이다(실제 리더 응답: 노드는 `usage`에 CPU `123018642n`(나노코어) · 메모리 `6838040Ki`, Pod는 `containers[].usage`에 같은 모양). 갓 뜬 Pod와 노드는 첫 수집(수십 초) 전까지 목록에 없으므로 없는 항목은 오류가 아니라 "아직 없음"이다. 운영자 API의 응답에는 Pod 사용량 자리가 없다([api.md](api.md)는 노드의 `usage`만 정한다). Pod 사용량을 화면에 내려면 api.md부터 고친다. 디스크 사용량 · 지난 값은 Prometheus에 묻는다(2026-11-11부터 된다, [cluster.md](cluster.md) §10): `GET /api/v1/namespaces/monitoring/services/monitoring-prometheus:9090/proxy/api/v1/query?query=<PromQL>`. `GET`만 된다.
 
 ### 일부러 없는 것
 

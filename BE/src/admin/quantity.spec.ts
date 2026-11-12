@@ -7,6 +7,7 @@ describe('millicores', () => {
     ['3800m', 3800],
     ['0.5', 500],
     ['250000000n', 250],
+    ['1500u', 2],
     ['2k', 2_000_000],
   ])('%s is %d', (q, expected) => expect(millicores(q)).toBe(expected))
 })

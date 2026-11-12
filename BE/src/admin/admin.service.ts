@@ -1,9 +1,9 @@
-import { ConflictException, Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common'
+import { ConflictException, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common'
 import type { AuthUser } from '../auth/auth.decorators.js'
 import { SLUG } from '../deploys/deploy-input.js'
 import { publicUrl } from '../deploys/deploy-run.js'
 import { ClusterError } from '../k8s/cluster-error.js'
-import { ClusterReader, type NodeInfo, type PodInfo } from '../k8s/cluster-reader.js'
+import { ClusterReader, type NodeInfo, type NodeUsageInfo, type PodInfo } from '../k8s/cluster-reader.js'
 import { DeploymentScaler } from '../k8s/deployment-scaler.js'
 import { AdminStore, type ProjectRecord } from './admin.store.js'
 import { bytes, millicores } from './quantity.js'
@@ -29,10 +29,18 @@ export interface NodeView {
   cpu: { capacityMillicores: number | null; allocatableMillicores: number | null }
   memory: { capacityBytes: number | null; allocatableBytes: number | null }
   disk: { capacityBytes: number | null; allocatableBytes: number | null }
-  usage: null
+  /** 사용량을 읽지 못했거나 이 노드가 아직 수집 전이면 null */
+  usage: { cpuMillicores: number; memoryBytes: number } | null
 }
 
-function toNode({ name, ready, roles, capacity, allocatable }: NodeInfo): NodeView {
+function toUsage(usage: NodeUsageInfo['usage'] | undefined): NodeView['usage'] {
+  const cpuMillicores = millicores(usage?.cpu)
+  const memoryBytes = bytes(usage?.memory)
+  // 한 칸이라도 읽을 수 없으면 값을 지어내지 않는다.
+  return cpuMillicores === null || memoryBytes === null ? null : { cpuMillicores, memoryBytes }
+}
+
+function toNode({ name, ready, roles, capacity, allocatable }: NodeInfo, usage: NodeUsageInfo['usage'] | undefined): NodeView {
   return {
     name,
     ready,
@@ -40,8 +48,7 @@ function toNode({ name, ready, roles, capacity, allocatable }: NodeInfo): NodeVi
     cpu: { capacityMillicores: millicores(capacity.cpu), allocatableMillicores: millicores(allocatable.cpu) },
     memory: { capacityBytes: bytes(capacity.memory), allocatableBytes: bytes(allocatable.memory) },
     disk: { capacityBytes: bytes(capacity['ephemeral-storage']), allocatableBytes: bytes(allocatable['ephemeral-storage']) },
-    // 사용량(Prometheus · metrics.k8s.io) 읽기 권한이 아직 없다. 값을 지어내지 않는다.
-    usage: null,
+    usage: toUsage(usage),
   }
 }
 
@@ -64,6 +71,8 @@ const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 @Injectable()
 export class AdminService {
+  private readonly logger = new Logger(AdminService.name)
+
   constructor(
     private readonly store: AdminStore,
     private readonly reader: ClusterReader,
@@ -71,8 +80,20 @@ export class AdminService {
   ) {}
 
   async nodes() {
-    const nodes = (await readList(this.reader.nodes())).map(toNode)
-    return { usageStatus: 'not_collected' as const, nodes }
+    const [infos, usages] = await Promise.all([readList(this.reader.nodes()), this.nodeUsages()])
+    // 사용량을 못 읽어도 노드 목록은 보여 준다. 읽었는데 목록에 없는 노드는 첫 수집 전이라 null이다.
+    const nodes = infos.map((info) => toNode(info, usages?.get(info.name)))
+    return { usageStatus: usages === null ? ('not_collected' as const) : ('collected' as const), nodes }
+  }
+
+  /** 노드 이름별 사용량. 읽지 못하면 null(원인은 종류만 로그에 남긴다: 메시지에 값이 있을 수 있다). */
+  private async nodeUsages(): Promise<Map<string, NodeUsageInfo['usage']> | null> {
+    try {
+      return new Map((await this.reader.nodeUsage()).map((u) => [u.name, u.usage]))
+    } catch (err) {
+      this.logger.warn(`Node usage not read: ${err instanceof ClusterError ? `${err.kind} ${err.apiStatus ?? ''}`.trim() : 'error'}`)
+      return null
+    }
   }
 
   /** DB에 배포가 있는 프로젝트마다 공간 `proj-<slug>`를 읽는다(서버 계정은 공간 전체를 한 번에 읽을 수 없다). */
