@@ -678,6 +678,25 @@ describe('POST /api/pipeline/notify', () => {
       expect((await start(seedDeploy())).status).toBe(202)
     })
 
+    it.each([
+      ['UNEXPECTED_REFUSAL', 'prepare', /예상하지 못한 이유/],
+      ['TRAEFIK_UNREACHABLE', 'verify', /Traefik/],
+      ['SWITCH_REFUSED', 'switch', /거절/],
+      ['OPEN_MANIFEST_MISSING', 'switch', /필요한 파일이 없어/],
+      ['STAGE_NO_REPORT', 'render', /결과 보고를 읽지 못해/],
+      ['TRIAL_SWITCH_REFUSED', 'switch', /시험 실행/],
+      ['TRIAL_STILL_RUNNING', 'apply', /이전 시험 실행이 아직/],
+    ])('shows the student a fixed sentence for the platform code %s, not the generic one', async (code, stage, sentence) => {
+      const id = await reach(stage)
+      await notify({ deployId: id, stage, result: 'failed', failure: failure({ code }) })
+      const { failure: shown } = (await status(id)).body as StatusBody
+      expect(shown).toMatchObject({ code, stage })
+      expect(shown?.message).toMatch(sentence)
+      expect(shown?.message).not.toContain('플랫폼 문제로 배포하지 못했습니다')
+      // 로그 · 원본 · 비밀값은 문구에 없다.
+      expect(shown?.message).not.toContain('hunter2pass')
+    })
+
     it('a switch failure ends as failed (the ticket contract has no such stage) and does not call the AI server', async () => {
       const id = await reach('switch')
       await notify({ deployId: id, stage: 'switch', result: 'failed', failure: failure() })
