@@ -242,3 +242,15 @@ export function checkImages(conditions: ServiceConditions, images: Record<string
   }
   return issues
 }
+
+/** AI 에이전트 티켓은 실행 기록당 이만큼까지다(api.md "파이프라인 ↔ 플랫폼 서버" 5번). */
+export const MAX_TICKETS = 3
+
+/**
+ * 이 실행 기록에서 지금 티켓이 몇 번째인가. 센 값은 `agent_result.tickets`에 둔다(칸을 더하지 않는다):
+ * 첫 티켓 뒤 새 티켓은 `verified` 뒤 다시 실행이 실패할 때만 나오고, 그때 `agent_result`는 앞 티켓의 결과다.
+ */
+export function ticketCount(run: { agent_result?: Record<string, unknown> | null } | undefined): number {
+  const before = run?.agent_result?.tickets
+  return (typeof before === 'number' && Number.isInteger(before) && before > 0 ? before : 0) + 1
+}

@@ -54,6 +54,8 @@ export class GatewayTrials implements OnApplicationBootstrap {
   private readonly trials = new Map<string, Trial>()
   /** 티켓마다 마지막으로 성공한 run_deploy의 입력(run_verify가 쓴다). */
   private readonly lastDeploy = new Map<string, Record<string, unknown>>()
+  /** 티켓마다 마지막 run_deploy의 입력으로 run_verify까지 통과한 입력(`verified`를 받는 조건, api.md 5번). 그 뒤 run_deploy를 부르면 지운다. */
+  private readonly verified = new Map<string, Record<string, unknown>>()
   /** 끝난 티켓. 시험을 준비하던 호출이 티켓이 끝난 뒤 시험을 등록하지 못하게 한다(티켓 수만큼만 쌓인다). */
   private readonly closed = new Set<string>()
   /** BE 시작 때의 남은 시험 취소. 끝나기 전(성공 · 실패 모두)에는 새 시험을 시작하지 않는다. true면 확인됨. */
@@ -63,6 +65,9 @@ export class GatewayTrials implements OnApplicationBootstrap {
     private readonly pipeline: PipelineClient,
     private readonly store: DeploysStore,
   ) {}
+
+  /** `verified` 뒤 다시 실행 전, 끝난 시험을 다시 확인하기 전에 기다리는 시간(ms). */
+  settleRetryMs = 3000
 
   /** BE가 시작할 때 남은 시험 인스턴스를 취소한다. 서버 시작은 막지 않고, 새 시험만 그 뒤로 미룬다. */
   onApplicationBootstrap(): void {
@@ -91,6 +96,24 @@ export class GatewayTrials implements OnApplicationBootstrap {
     return this.lastDeploy.get(ticketId)
   }
 
+  /** 이 티켓에서 run_deploy → run_verify를 통과한 입력. 없으면 undefined. */
+  verifiedInput(ticketId: string): Record<string, unknown> | undefined {
+    return this.verified.get(ticketId)
+  }
+
+  /**
+   * 같은 프로젝트의 이전 시험이 모두 끝났는가(`verified` 뒤 다시 실행 전, api.md 4번 "순서"). 확인하지 못하면 잠시 기다렸다 한 번 더 본다.
+   * 시작 때의 남은 시험 취소도 확인돼야 한다.
+   */
+  async settled(slug: string): Promise<boolean> {
+    for (let attempt = 0; ; attempt++) {
+      if (!(await this.leftovers)) this.leftovers = this.cancelLeftovers()
+      if ((await this.leftovers) && (await this.previousEnded(slug))) return true
+      if (attempt === 1) return false
+      await new Promise((resolve) => setTimeout(resolve, this.settleRetryMs))
+    }
+  }
+
   /**
    * 시험을 실행하고 결과를 기다린다. 결과 없이 끝나면(실행 실패 · 이전 시험이 안 끝남 · 대기 초과) failure다.
    * `deadline`은 대기가 끝나는 절대 시각(ms)이다: 실행 요청 같은 앞 단계가 걸린 만큼 기다림이 줄어, 토큰 만료보다 늦게 기다리지 않는다.
@@ -115,6 +138,8 @@ export class GatewayTrials implements OnApplicationBootstrap {
     })
     const trial: Trial = { id, deployId: ticket.deployId, ticketId: ticket.ticketId, slug: ticket.slug, slot: ticket.targetSlot, tool, input, counter: null, state: 'waiting', finish }
     this.trials.set(id, trial)
+    // run_deploy는 대상 슬롯을 비우고 다시 올린다. 앞서 확인한 입력은 더 이상 슬롯에 떠 있다고 할 수 없다.
+    if (tool === 'run_deploy') this.verified.delete(ticket.ticketId)
     try {
       await this.pipeline.runTrial(ticket.deployId, id, STAGES[tool])
     } catch {
@@ -129,7 +154,10 @@ export class GatewayTrials implements OnApplicationBootstrap {
     const outcome = await Promise.race([done, timeout])
     clearTimeout(timer)
     if (trial.state === 'waiting') await this.cancel(trial)
-    if ('result' in outcome && tool === 'run_deploy' && outcome.result.ok === true) this.lastDeploy.set(ticket.ticketId, input)
+    const passed = 'result' in outcome && outcome.result.ok === true
+    if (passed && tool === 'run_deploy') this.lastDeploy.set(ticket.ticketId, input)
+    // 마지막으로 성공한 run_deploy의 입력을 확인했을 때만(그 입력이 지금 대상 슬롯에 떠 있다).
+    if (passed && tool === 'run_verify' && this.lastDeploy.get(ticket.ticketId) === input) this.verified.set(ticket.ticketId, input)
     if (trial.state === 'ended') this.trials.delete(id)
     return outcome
   }
@@ -138,6 +166,7 @@ export class GatewayTrials implements OnApplicationBootstrap {
   async endTicket(ticketId: string): Promise<void> {
     this.closed.add(ticketId)
     this.lastDeploy.delete(ticketId)
+    this.verified.delete(ticketId)
     for (const t of [...this.trials.values()]) {
       if (t.ticketId === ticketId && t.state === 'waiting') {
         await this.cancel(t)

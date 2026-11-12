@@ -6,10 +6,12 @@ import type { App } from 'supertest/types.js'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { DeployRunRow } from '../src/deploys/deploys.store.js'
 import { DeploysStore } from '../src/deploys/deploys.store.js'
+import { AgentClient } from '../src/deploys/agent.client.js'
 import { PipelineClient } from '../src/deploys/pipeline.client.js'
 import { GatewayServer } from '../src/gateway/gateway.server.js'
 import { RepoReader } from '../src/gateway/repo-reader.js'
 import { tokenHash } from '../src/gateway/tickets.js'
+import { GatewayTrials } from '../src/gateway/trials.js'
 import { ClusterReader } from '../src/k8s/cluster-reader.js'
 import { validSpec } from './spec-fixture.js'
 import { startApp } from './start-app.js'
@@ -46,6 +48,9 @@ type Behave = (trialId: string, stages: string) => Promise<void>
 let scheduled: { deployId: string; trialId: string; stages: string }[]
 let behave: Behave
 let scheduleFails: boolean
+let cancelOk: boolean
+let reruns: string[]
+let rerunFails: boolean
 const fakePipeline = {
   runTrial(deployId: string, trialId: string, stages: string) {
     if (scheduleFails) return Promise.reject(new Error('GoCD down'))
@@ -53,9 +58,21 @@ const fakePipeline = {
     setImmediate(() => void behave(trialId, stages))
     return Promise.resolve()
   },
-  cancelTrial: () => Promise.resolve(true),
+  cancelTrial: () => Promise.resolve(cancelOk),
   cancelAllTrials: () => Promise.resolve(0),
-  run: () => Promise.resolve(),
+  run(deployId: string) {
+    if (rerunFails) return Promise.reject(new Error('GoCD down'))
+    reruns.push(deployId)
+    return Promise.resolve()
+  },
+}
+// 가짜 AI 서버: 종료 알림만 기록한다.
+let closes: unknown[][]
+const fakeAgent = {
+  close: (...args: unknown[]) => {
+    closes.push(args)
+    return Promise.resolve(true)
+  },
 }
 
 let app: INestApplication<App>
@@ -116,6 +133,10 @@ beforeEach(async () => {
   readInputs.length = 0
   scheduled = []
   scheduleFails = false
+  cancelOk = true
+  reruns = []
+  rerunFails = false
+  closes = []
   behave = answering('apply', deployOk)
   app = await startApp([], (b) =>
     b
@@ -126,8 +147,11 @@ beforeEach(async () => {
       .overrideProvider(ClusterReader)
       .useValue({})
       .overrideProvider(RepoReader)
-      .useValue({}),
+      .useValue({})
+      .overrideProvider(AgentClient)
+      .useValue(fakeAgent),
   )
+  app.get(GatewayTrials).settleRetryMs = 10
   const port = await app.get(GatewayServer).listen(0, '127.0.0.1')
   url = `http://127.0.0.1:${port}/mcp`
 })
@@ -315,6 +339,160 @@ describe('MCP gateway trial tools', () => {
     expect(rejected(await call(client, 'run_render'))?.message).toMatch(/no image yet/)
     expect(scheduled).toEqual([])
     await client.close()
+  })
+
+  describe('submit_result verified (api.md 5: re-run student-deploy with the checked input)', () => {
+    const verified = (specPatch: unknown[], extra: Record<string, unknown> = {}) => ({
+      result: {
+        ticketId: 't_trial',
+        commitSha: SHA,
+        status: 'verified',
+        classification: { method: 'code', caseId: 'V2', path: 'playbook' },
+        actions: [{ tool: 'run_deploy', ok: true }, { tool: 'run_verify', ok: true }],
+        specPatch,
+        summary: 'be 포트를 8000으로 고쳐 대상 슬롯에서 확인했습니다',
+        ...extra,
+      },
+    })
+    /** run_deploy(패치) → run_verify 통과까지. */
+    const tryAndVerify = async (client: Client, specPatch: unknown[] = port8000) => {
+      behave = answering('apply', deployOk)
+      expect((await call(client, 'run_deploy', { specPatch })).structuredContent).toMatchObject({ ok: true })
+      behave = answering('verify', verifyOk)
+      expect((await call(client, 'run_verify')).structuredContent).toMatchObject({ ok: true })
+    }
+
+    it('saves the checked input (all reuse + digest) on the run, re-runs student-deploy from build and keeps the ticket id', async () => {
+      const client = await connect()
+      await tryAndVerify(client)
+      expect((await call(client, 'submit_result', verified(port8000))).structuredContent).toEqual({ accepted: true })
+      expect(reruns).toEqual([DEPLOY])
+      expect(run).toMatchObject({ status: 'running', stage: 'build', failure: null, gateway_token_hash: null, ticket_id: 't_trial' })
+      expect(specOf(run.input).services[1].runtime.port).toBe(8000)
+      expect(run.input.deploy_condition).toEqual({
+        services: { fe: { buildInputHash: HASH('a'), build: 'reuse', image: FE_IMAGE }, be: { buildInputHash: HASH('b'), build: 'reuse', image: BE_IMAGE } },
+      })
+      // 다시 실행이 쓰는 입력은 확인한 run_deploy의 입력과 같다.
+      expect(run.input).toEqual(readInputs[0].input)
+      expect(run.agent_result).toMatchObject({ status: 'verified', summary: expect.any(String) as string, tickets: 1 })
+      expect(closes).toEqual([])
+      // 토큰은 끝났다.
+      expect(rejected(await call(client, 'run_render'))).toMatchObject({ code: 'TICKET_CLOSED' })
+      await client.close()
+    })
+
+    it('counts the ticket after the one the earlier verified result counted', async () => {
+      run.agent_result = { status: 'verified', summary: 'x', tickets: 2 }
+      const client = await connect()
+      await tryAndVerify(client)
+      await call(client, 'submit_result', verified(port8000))
+      expect(run.agent_result).toMatchObject({ tickets: 3 })
+      await client.close()
+    })
+
+    it('takes an empty specPatch after a plain re-run that passed', async () => {
+      const client = await connect()
+      await tryAndVerify(client, [])
+      expect((await call(client, 'submit_result', verified([]))).structuredContent).toEqual({ accepted: true })
+      expect(run).toMatchObject({ status: 'running', stage: 'build' })
+      await client.close()
+    })
+
+    it.each([
+      ['no trial at all', async () => {}],
+      ['run_deploy without a passing run_verify', async (c: Client) => void (await call(c, 'run_deploy', { specPatch: port8000 }))],
+      ['run_verify without a run_deploy (it checked the original input)', async (c: Client) => {
+        behave = answering('verify', verifyOk)
+        await call(c, 'run_verify')
+      }],
+      ['another run_deploy after the passing run_verify', async (c: Client) => {
+        await tryAndVerify(c)
+        behave = answering('apply', deployOk)
+        await call(c, 'run_deploy', { specPatch: port8000 })
+      }],
+      ['a run_verify that failed', async (c: Client) => {
+        await call(c, 'run_deploy', { specPatch: port8000 })
+        behave = answering('verify', { ok: false, ready: [], requests: [], failure: { stage: 'verify', code: null, message: 'GET /api/health 502' } })
+        await call(c, 'run_verify')
+      }],
+    ])('rejects verified as INVALID_RESULT after %s, and keeps the ticket open', async (_label, before) => {
+      const client = await connect()
+      await before(client)
+      expect(rejected(await call(client, 'submit_result', verified(port8000)))).toMatchObject({ code: 'INVALID_RESULT' })
+      expect(run.status).toBe('fixing')
+      expect(reruns).toEqual([])
+      await client.close()
+    })
+
+    it('rejects verified with another specPatch than the one tried', async () => {
+      const client = await connect()
+      await tryAndVerify(client)
+      const other = [{ op: 'replace', path: '/spec/services/1/runtime/port', value: 8080 }]
+      expect(rejected(await call(client, 'submit_result', verified(other)))).toMatchObject({ code: 'INVALID_RESULT' })
+      expect(rejected(await call(client, 'submit_result', verified([])))).toMatchObject({ code: 'INVALID_RESULT' })
+      expect(run.status).toBe('fixing')
+      await client.close()
+    })
+
+    it.each([
+      ['a build path', [{ op: 'replace', path: '/spec/services/0/build/outputDir', value: 'build' }], 'PATCH_FORBIDDEN'],
+      ['a value that breaks the spec rules', [{ op: 'replace', path: '/spec/services/1/runtime/port', value: 0 }], 'INVALID_SPEC'],
+    ])('rejects a verified specPatch with %s as %s', async (_label, specPatch, code) => {
+      const client = await connect()
+      await tryAndVerify(client)
+      expect(rejected(await call(client, 'submit_result', verified(specPatch)))).toMatchObject({ code })
+      expect(run.status).toBe('fixing')
+      await client.close()
+    })
+
+    it('ends as failed PIPELINE_UNAVAILABLE and closes the ticket when student-deploy cannot be scheduled', async () => {
+      rerunFails = true
+      const client = await connect()
+      await tryAndVerify(client)
+      expect((await call(client, 'submit_result', verified(port8000))).structuredContent).toEqual({ accepted: true })
+      expect(run).toMatchObject({ status: 'failed', failure: { code: 'PIPELINE_UNAVAILABLE', stage: 'build', service: null } })
+      expect(closes).toEqual([['t_trial', SHA, 'stopped']])
+      await client.close()
+    })
+
+    it('does not re-run while an earlier trial of the project cannot be confirmed stopped: failed TRIAL_STILL_RUNNING', async () => {
+      const client = await connect()
+      await tryAndVerify(client)
+      // 입력을 읽고 결과를 보내지 않는 run_render가 기다리는 중에 verified를 낸다. 그 취소를 GoCD가 받지 않는다.
+      behave = async (trialId) => void (await readInput(trialId))
+      cancelOk = false
+      const waiting = call(client, 'run_render')
+      while (readInputs.length < 3) await new Promise((r) => setTimeout(r, 5))
+      expect((await call(client, 'submit_result', verified(port8000))).structuredContent).toEqual({ accepted: true })
+      expect(reruns).toEqual([])
+      expect(run).toMatchObject({ status: 'failed', failure: { code: 'TRIAL_STILL_RUNNING', stage: 'verify', service: null }, agent_result: { status: 'verified' } })
+      expect(closes).toEqual([['t_trial', SHA, 'stopped']])
+      // 기다리던 run_render는 티켓이 끝나 거절된다.
+      expect(rejected(await waiting)).toMatchObject({ code: 'TICKET_CLOSED' })
+      await client.close()
+    })
+
+    it('re-runs once the earlier trial could be cancelled on the second look', async () => {
+      const client = await connect()
+      await tryAndVerify(client)
+      behave = async (trialId) => void (await readInput(trialId))
+      cancelOk = false
+      const waiting = call(client, 'run_render')
+      while (readInputs.length < 3) await new Promise((r) => setTimeout(r, 5))
+      // 첫 취소(티켓 종료)와 첫 확인은 실패하고, 잠시 뒤 다시 확인할 때 취소된다.
+      let cancels = 0
+      fakePipeline.cancelTrial = () => Promise.resolve(++cancels >= 3)
+      try {
+        expect((await call(client, 'submit_result', verified(port8000))).structuredContent).toEqual({ accepted: true })
+      } finally {
+        fakePipeline.cancelTrial = () => Promise.resolve(cancelOk)
+      }
+      expect(cancels).toBe(3)
+      expect(reruns).toEqual([DEPLOY])
+      expect(run.status).toBe('running')
+      await waiting
+      await client.close()
+    })
   })
 
   describe('pipeline routes', () => {

@@ -547,6 +547,16 @@ def test_verify_ticket_runs_the_v2_playbook() -> None:
     result = only_result(gw)
     assert result["classification"] == {"method": "code", "caseId": "V2", "path": "playbook"}
     assert result["specPatch"] == patch
+    # 게이트웨이가 verified를 받는 조건(api.md 5번):
+    # 같은 specPatch로 run_deploy → 그 뒤 run_verify 통과.
+    assert gw.tool_calls() == ["read_pod_logs", "run_deploy", "run_verify"]
+    assert dict(gw.calls)["run_deploy"] == {"specPatch": patch}
+    # 게이트웨이 검사(BE/src/gateway/result.ts)가 아는 칸만 보낸다.
+    gateway_keys = {
+        "ticketId", "commitSha", "status", "classification", "actions", "specPatch",
+        "buildOverrides", "pr", "userRequest", "evidence", "summary",
+    }  # fmt: skip
+    assert set(result) <= gateway_keys
     first = local.sent(0)
     # verify 티켓은 통과하지 못한 검사를 errorMessage로, 그 서비스의 Pod를 raw.k8s로 싣는다.
     assert '"caseId":"V2"' in first and "Error: be: GET /api/health -> 404" in first

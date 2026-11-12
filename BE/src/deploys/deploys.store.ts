@@ -66,7 +66,7 @@ export interface DeployRunRow {
 }
 
 type NewRun = Pick<DeployRunRow, 'deploy_id' | 'user_id' | 'slug' | 'target_slot' | 'input' | 'status' | 'stage'>
-type RunPatch = Partial<Pick<DeployRunRow, 'status' | 'stage' | 'failure' | 'ticket_id' | 'gateway_token_hash' | 'gateway_expires_at' | 'images' | 'agent_result'>>
+type RunPatch = Partial<Pick<DeployRunRow, 'input' | 'status' | 'stage' | 'failure' | 'ticket_id' | 'gateway_token_hash' | 'gateway_expires_at' | 'images' | 'agent_result'>>
 
 const isRunRow = (v: unknown): v is DeployRunRow =>
   isRecord(v) &&

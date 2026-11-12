@@ -1,12 +1,16 @@
+import { isDeepStrictEqual } from 'node:util'
 import { Injectable, Logger } from '@nestjs/common'
 import { isRecord } from '../common/is-record.js'
 import { redact, redactString } from '../common/redact.js'
-import { DeploysStore } from '../deploys/deploys.store.js'
+import { AgentClient } from '../deploys/agent.client.js'
+import { ticketCount } from '../deploys/deploy-run.js'
+import { type DeployRunRow, DeploysStore } from '../deploys/deploys.store.js'
+import { PipelineClient } from '../deploys/pipeline.client.js'
 import { ClusterReader } from '../k8s/cluster-reader.js'
 import type { Issue, Spec } from '../deploys/deploy-input.js'
 import { type BudgetCode, ToolBudget } from './budget.js'
 import { RepoReader, repoPath } from './repo-reader.js'
-import { checkResult, storedResult } from './result.js'
+import { type AgentResult, checkResult, storedResult } from './result.js'
 import { applySpecPatch, livePathProblem } from './spec-patch.js'
 import type { GatewayTicket } from './tickets.js'
 import { GatewayTrials, TRIAL_WAIT_MS, type TrialFailure, type TrialTool } from './trials.js'
@@ -128,6 +132,8 @@ export class GatewayTools {
     private readonly cluster: ClusterReader,
     private readonly repo: RepoReader,
     private readonly trials: GatewayTrials,
+    private readonly pipeline: PipelineClient,
+    private readonly agent: AgentClient,
   ) {}
 
   async call(ticket: GatewayTicket, name: string, args: Record<string, unknown>): Promise<ToolAnswer> {
@@ -206,8 +212,8 @@ export class GatewayTools {
   }
 
   /** 시험 입력: 실행 기록의 입력에서 서비스를 모두 reuse + 이미지 digest로(이번 실행에서 빌드한 이미지, 원래 reuse 이미지). 이미지가 없으면 이유. */
-  private async baseInput(ticket: GatewayTicket): Promise<Record<string, unknown> | string> {
-    const run = await this.store.findRun(ticket.deployId)
+  private async baseInput(ticket: GatewayTicket, found?: DeployRunRow): Promise<Record<string, unknown> | string> {
+    const run = found ?? (await this.store.findRun(ticket.deployId))
     if (!run) return 'the deploy run is gone'
     const input = structuredClone(run.input)
     const services = (input.deploy_condition as { services: Record<string, { buildInputHash: string; build: string; image: string | null }> }).services
@@ -281,19 +287,75 @@ export class GatewayTools {
     const checked = checkResult(value, ticket)
     if (!checked.ok) return reject('INVALID_RESULT', checked.message)
     const { result } = checked
+    const run = await this.store.findRun(ticket.deployId)
+    // 학생에게 보일 칸만 남긴다(도구 호출 원본 · 로그는 버린다). 외부에서 온 글이라 한 번 더 가린다.
+    // tickets: 이 실행 기록에서 몇 번째 티켓의 결과인가(실행 기록당 3개, api.md 5번). 학생에게 보이는 칸은 아니다.
+    const agentResult = { ...(redact(storedResult(result)) as Record<string, unknown>), tickets: ticketCount(run) }
+    if (result.status === 'verified') {
+      if (run?.status === 'fixing') return this.submitVerified(ticket, run, result, agentResult)
+      this.budget.forget(ticket.ticketId)
+      await this.trials.endTicket(ticket.ticketId)
+      return reject('TICKET_CLOSED', 'the ticket is no longer open')
+    }
+
     // fixing인 동안만 바꾼다. 그 사이 끝났으면(시간 초과 등) 토큰도 끝난 것이다.
     const patch =
       result.status === 'gave_up'
         ? { status: 'failed' as const, failure: { code: 'AGENT_GAVE_UP', stage: ticket.failure?.stage ?? 'build', service: ticket.failure?.service ?? null } }
         : // pr_opened(머지 대기)도 needs_user(학생 조치 대기)도 학생을 기다린다.
           { status: 'needs_user' as const }
-    // 학생에게 보일 칸만 남긴다(도구 호출 원본 · 로그는 버린다). 외부에서 온 글이라 한 번 더 가린다.
-    const agentResult = redact(storedResult(result)) as Record<string, unknown>
     const applied = await this.store.updateRun(ticket.deployId, { status: 'fixing' }, { ...patch, agent_result: agentResult, gateway_token_hash: null })
     this.budget.forget(ticket.ticketId)
     await this.trials.endTicket(ticket.ticketId)
     if (!applied) return reject('TICKET_CLOSED', 'the ticket is no longer open')
     this.logger.log(`ticket ${ticket.ticketId} result ${result.status}`)
+    return { ok: true, content: { accepted: true } }
+  }
+
+  /**
+   * `verified`(api.md "파이프라인 ↔ 플랫폼 서버" 5번): 이 티켓에서 같은 specPatch로 run_deploy → run_verify를 통과했으면
+   * 그 입력을 실행 기록에 저장하고 student-deploy를 처음부터 다시 실행한다(공개 주소는 그 Switch에서만 바뀐다).
+   */
+  private async submitVerified(ticket: GatewayTicket, run: DeployRunRow, result: AgentResult, agentResult: Record<string, unknown>): Promise<ToolAnswer> {
+    const base = await this.baseInput(ticket, run)
+    if (typeof base === 'string') return reject('INVALID_RESULT', base)
+    const patched = applySpecPatch(base, result.specPatch)
+    if (!patched.ok) return { ok: false, code: patched.code, message: patched.message, ...(patched.fields ? { fields: patched.fields } : {}) }
+    const tried = this.trials.verifiedInput(ticket.ticketId)
+    if (!tried || !isDeepStrictEqual(tried, patched.input)) {
+      return reject('INVALID_RESULT', 'verified needs a run_deploy with this same specPatch followed by a passing run_verify in this ticket')
+    }
+
+    // 여기부터 티켓은 끝난다. 기다리는 시험을 취소하고, 같은 프로젝트의 이전 시험이 끝났음을 확인한 뒤에만 다시 실행한다.
+    this.budget.forget(ticket.ticketId)
+    await this.trials.endTicket(ticket.ticketId)
+    const stage = ticket.failure?.stage ?? 'build'
+    if (!(await this.trials.settled(ticket.slug))) {
+      const failure = { code: 'TRIAL_STILL_RUNNING', stage, service: null }
+      const applied = await this.store.updateRun(ticket.deployId, { status: 'fixing' }, { status: 'failed', failure, agent_result: agentResult, gateway_token_hash: null })
+      if (!applied) return reject('TICKET_CLOSED', 'the ticket is no longer open')
+      await this.agent.close(ticket.ticketId, ticket.commitSha, 'stopped')
+      this.logger.error(`ticket ${ticket.ticketId} verified but an earlier trial could not be confirmed stopped`)
+      return { ok: true, content: { accepted: true } }
+    }
+
+    // 고친 입력(모든 서비스 reuse + 이미지 digest)을 실행 기록에 저장한다. 학생이 저장한 deploys.spec은 그대로다.
+    // ticket_id는 종료 알림(success · superseded · stopped)을 보낼 때까지 남긴다.
+    const applied = await this.store.updateRun(
+      ticket.deployId,
+      { status: 'fixing' },
+      { status: 'running', stage: 'build', failure: null, input: patched.input, agent_result: agentResult, gateway_token_hash: null },
+    )
+    if (!applied) return reject('TICKET_CLOSED', 'the ticket is no longer open')
+    try {
+      await this.pipeline.run(ticket.deployId)
+    } catch {
+      const failure = { code: 'PIPELINE_UNAVAILABLE', stage: 'build' as const, service: null }
+      if (await this.store.updateRun(ticket.deployId, { status: 'running', stage: 'build' }, { status: 'failed', failure })) {
+        await this.agent.close(ticket.ticketId, ticket.commitSha, 'stopped')
+      }
+    }
+    this.logger.log(`ticket ${ticket.ticketId} result verified: deploy pipeline started again`)
     return { ok: true, content: { accepted: true } }
   }
 }

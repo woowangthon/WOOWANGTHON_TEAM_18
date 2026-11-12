@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ServiceConditions } from './deploy-condition.js'
-import { buildSteps, checkImages, classifyFailure, nextStage, publicUrl, STAGES, toFailure, validateNotice } from './deploy-run.js'
+import { buildSteps, checkImages, classifyFailure, nextStage, publicUrl, STAGES, ticketCount, toFailure, validateNotice } from './deploy-run.js'
 
 const ID = '6f1c0a52-3b7e-4a40-9a6c-2f5d8e1b7c90'
 const IMAGE = `ghcr.io/woowang-bot/student-apps@sha256:${'c'.repeat(64)}`
@@ -193,5 +193,19 @@ describe('checkImages', () => {
       { path: 'images.be', code: 'UNKNOWN_KEY' },
       { path: 'images.ghost', code: 'UNKNOWN_KEY' },
     ])
+  })
+})
+
+describe('ticketCount', () => {
+  it.each([
+    ['no run', undefined, 1],
+    ['no earlier result', { agent_result: null }, 1],
+    ['an earlier verified result of the first ticket', { agent_result: { status: 'verified', tickets: 1 } }, 2],
+    ['the third ticket after two', { agent_result: { tickets: 2 } }, 3],
+    ['a count that is not a positive integer', { agent_result: { tickets: '2' } }, 1],
+    ['a zero count', { agent_result: { tickets: 0 } }, 1],
+    ['a fractional count', { agent_result: { tickets: 1.5 } }, 1],
+  ])('is the next ticket number with %s', (_label, run, n) => {
+    expect(ticketCount(run)).toBe(n)
   })
 })
