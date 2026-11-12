@@ -122,16 +122,36 @@ describe('fetch-input and notify CLIs', () => {
       expect(out).toContain('STAGE_NO_REPORT')
     })
 
-    it('exit 1 on a 400, naming the fields to fix', async () => {
-      const p = await serve(() => ({ status: 400, body: { error: { code: 'BAD_REQUEST', message: 'x', fields: [{ path: 'images.fe', code: 'INVALID_VALUE' }] } } }))
+    const refusedFields = { error: { code: 'BAD_REQUEST', message: 'x', fields: [{ path: 'images.fe', code: 'INVALID_VALUE' }, { path: 'failure.service', code: 'INVALID_VALUE' }] } }
+
+    it('a 400 is answered once with STAGE_NO_REPORT that carries the fields BE named, exit 0 when that goes through', async () => {
+      const p = await serve((_, n) => (n === 0 ? { status: 400, body: refusedFields } : { status: 200, body: { ok: true, applied: true } }))
+      expect(await notifyCli(['build', report(okBuild())], p.env, sleep)).toBe(0)
+      expect(p.seen).toHaveLength(2)
+      const second = JSON.parse(p.seen[1].body) as { failure: { message: string } }
+      expect(second).toMatchObject({ deployId: DEPLOY_ID, stage: 'build', result: 'failed', failure: { code: 'STAGE_NO_REPORT', service: null } })
+      expect(second.failure.message).toContain('images.fe INVALID_VALUE')
+      expect(second.failure.message).toContain('failure.service INVALID_VALUE')
+      expect(out).toContain('STAGE_NO_REPORT')
+    })
+
+    it('exit 1 when the second notice is refused too, naming the fields, and it does not try a third', async () => {
+      const p = await serve(() => ({ status: 400, body: refusedFields }))
       expect(await notifyCli(['build', report(okBuild())], p.env, sleep)).toBe(1)
       expect(out).toContain('images.fe INVALID_VALUE')
+      expect(p.seen).toHaveLength(2)
+    })
+
+    it('a notice that already is STAGE_NO_REPORT is not sent again on a 400', async () => {
+      const p = await serve(() => ({ status: 400, body: refusedFields }))
+      expect(await notifyCli(['render', join(dir, 'missing.json')], p.env, sleep)).toBe(1)
       expect(p.seen).toHaveLength(1)
     })
 
-    it.each([401, 404])('exit 1 on %i', async (status) => {
+    it.each([401, 404])('exit 1 on %i, and nothing is sent again (a token or deploy id problem is the same the second time)', async (status) => {
       const p = await serve(() => ({ status, body: { error: { code: 'X' } } }))
       expect(await notifyCli(['apply', report({ ok: true })], p.env, sleep)).toBe(1)
+      expect(p.seen).toHaveLength(1)
     })
 
     it('tries again on 503 and exit 0 when it goes through', async () => {
