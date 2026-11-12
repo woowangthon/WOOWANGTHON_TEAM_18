@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { beforeEach, expect, it, vi } from 'vitest'
+import { AuthContext } from '../auth/auth-context.ts'
 import ProfilePage from './ProfilePage.tsx'
 
 // 실제 Supabase를 부르지 않는다. 테스트 전용 대역이라 MOCK 표식은 필요 없다(conventions §6).
@@ -22,11 +23,20 @@ beforeEach(() => {
   auth.linkIdentity.mockReset()
 })
 
-const renderPage = (url = '/profile') =>
+const sessionOf = (appMetadata: Record<string, unknown> = {}) =>
+  ({ access_token: 'tok', user: { email: 'me@example.com', app_metadata: appMetadata } }) as never
+const renderPage = (url = '/profile', appMetadata: Record<string, unknown> = {}) =>
   render(
-    <MemoryRouter initialEntries={[url]}>
-      <ProfilePage />
-    </MemoryRouter>,
+    <AuthContext.Provider
+      value={{
+        state: { status: 'signedIn', session: sessionOf(appMetadata) },
+        signOut: () => Promise.resolve(),
+      }}
+    >
+      <MemoryRouter initialEntries={[url]}>
+        <ProfilePage />
+      </MemoryRouter>
+    </AuthContext.Provider>,
   )
 const linkButton = () => screen.getByRole('button', { name: 'GitHub로 연동하기' })
 
@@ -60,6 +70,13 @@ it('G4: shows the linked handle and a link to the new deploy page', async () => 
     screen.getByRole('link', { name: '새 배포 요청하기' }).getAttribute('href'),
   ).toBe('/deploy/new')
   expect(screen.queryByRole('button', { name: 'GitHub로 연동하기' })).toBeNull()
+})
+
+it('G4: hides the new deploy link for an admin (monitoring account) but still says linked', async () => {
+  auth.getUserIdentities.mockResolvedValue(githubLinked)
+  renderPage('/profile', { role: 'admin' })
+  expect(await screen.findByText('GitHub 계정을 연동했어요')).toBeTruthy()
+  expect(screen.queryByRole('link', { name: '새 배포 요청하기' })).toBeNull()
 })
 
 it('G4: still says linked when the identity has no user name', async () => {

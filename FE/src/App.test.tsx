@@ -196,6 +196,19 @@ it('does not show the menu link to a non-admin, nor to a user whose only role is
   expect(screen.queryByRole('link', { name: '관리자' })).toBeNull()
 })
 
+it('hides the deploy menu from an admin (monitoring account) and keeps it for a non-admin', () => {
+  renderApp('/dashboard', 'in', sessionWith({ role: 'admin' }))
+  expect(screen.queryByRole('link', { name: '내 배포' })).toBeNull()
+  for (const name of ['대시보드', '프로필', '관리자']) {
+    expect(screen.getByRole('link', { name })).toBeTruthy()
+  }
+})
+
+it('shows the deploy menu to a non-admin', () => {
+  renderApp('/dashboard')
+  expect(screen.getByRole('link', { name: '내 배포' })).toBeTruthy()
+})
+
 it('does not treat another role as admin', () => {
   renderApp('/admin', 'in', sessionWith({ role: 'student' }))
   expect(h1()).toBe('권한이 없어요')

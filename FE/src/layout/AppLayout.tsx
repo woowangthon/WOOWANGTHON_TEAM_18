@@ -48,9 +48,12 @@ function AppLayout() {
               <NavLink to="/profile" className={navLinkClass}>
                 프로필
               </NavLink>
-              <NavLink to="/deploys" className={navLinkClass}>
-                내 배포
-              </NavLink>
+              {/* 관리자는 모니터링 계정이라 배포 메뉴를 숨긴다(편의일 뿐, 서버는 막지 않는다). */}
+              {!isAdmin(state.session) && (
+                <NavLink to="/deploys" className={navLinkClass}>
+                  내 배포
+                </NavLink>
+              )}
               {isAdmin(state.session) && (
                 <NavLink to="/admin" className={navLinkClass}>
                   관리자

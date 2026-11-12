@@ -26,6 +26,8 @@
 
 `isAdmin`은 토큰의 `app_metadata.role === 'admin'`일 때만 참이다. `app_metadata`는 서버(관리자 키 · SQL)로만 바뀌고, `user_metadata`는 사용자가 `updateUser`로 직접 고칠 수 있어 권한 판단에 쓰지 않는다. FE도 화면을 보일지 정하려고 세션의 `app_metadata.role`로 같은 규칙을 읽지만(Admin Page 경로 보호와 메뉴 링크), 이것은 편의일 뿐이고 판단은 서버가 한다. 두 곳이 어긋나면(승격 · 강등 직후 토큰이 갱신되기 전) 서버의 `403`이 이긴다.
 
+관리자는 모니터링 계정이라, 화면은 관리자에게 배포 메뉴(`내 배포`)와 프로필의 `새 배포 요청하기` 링크를 숨긴다. 편의일 뿐이고 서버는 막지 않는다(주소를 직접 열면 열린다).
+
 관리자 지정 절차:
 
 1. Supabase 대시보드 Authentication → Users → **Add user**로 관리자 계정을 만든다 (Auto Confirm User를 켜면 이메일 확인을 건너뛴다).
