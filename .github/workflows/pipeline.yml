@@ -10,6 +10,8 @@ on:
       - 'Infra/build/**'
       - 'Infra/charts/**'
       - 'BE/src/deploys/deploy-condition.ts'
+      - 'BE/src/deploys/deploy-run.ts'
+      - 'BE/src/gateway/trial-result.ts'
       - '.github/workflows/pipeline.yml'
 
 permissions:

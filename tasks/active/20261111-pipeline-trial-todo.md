@@ -2,7 +2,7 @@
 
 - **SRS**: UC-14 (P0) — FR-076, FR-098, FR-099
 - **Owner**: suda5936 (track A)
-- **Branch**: feat/pipeline-trial-report
+- **Branch**: feat/pipeline-trial-report (A1, #148), feat/pipeline-trial-report-cli (A1b)
 
 ## Plan
 
@@ -17,7 +17,9 @@ Contract: `docs/design/api.md` "파이프라인 ↔ 플랫폼 서버" 4 (#147, A
 - [x] Switch guard — files: `src/switch.ts`, `src/cli/switch.ts`, `src/switch.spec.ts`, `src/cli/switch.spec.ts`
 - [x] Build overrides — files: `src/build.ts`, `src/cli/build.ts`, `src/build.spec.ts`
 - [x] Docs — files: `Infra/pipeline/CLAUDE.md`, `docs/design/deploy-workflow.md`, `docs/design/AIagent.md`, `docs/ai-scope.md`
-- [ ] A2: `trial-report`, `fetch-input` trial branch (after #142)
+- [x] A1b: `trial-report` (stage report → tool result + failure, once per trial, STAGE_NO_REPORT, one-retry on 400, `TRIAL_INPUT_INVALID` when a run_build input does not have exactly one `run` service) — files: `src/trial-report.ts`, `src/cli/trial-report.ts`, `src/notify.ts` (export the failure sentence functions), tests `src/trial-report.spec.ts`, `src/cli/trial.spec.ts`
+- [x] A1b: `fetch-input` trial branch (`?counter=$GO_PIPELINE_COUNTER`, `build-overrides.json`) — files: `src/fetch-input.ts`, `src/cli/fetch-input.ts`
+- [x] A1b: BE `checkTrialResult` moved to a Nest-free file so the pipeline test can import it — files: `BE/src/gateway/trial-result.ts`, `BE/src/gateway/trials.ts`
 
 ## Done when
 
