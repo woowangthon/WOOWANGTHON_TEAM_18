@@ -142,7 +142,7 @@ export class ClusterReader {
   }
 }
 
-function space(slug: string): string {
+export function space(slug: string): string {
   // 요청 경로에 들어가는 값이다. 검증을 통과하지 않은 값은 부른 쪽의 버그다.
   if (!SLUG.test(slug)) throw new Error(`Not a valid slug: ${JSON.stringify(slug)}`)
   return `proj-${slug}`
