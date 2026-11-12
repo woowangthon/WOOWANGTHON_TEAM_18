@@ -424,6 +424,16 @@ describe('MCP gateway trial tools', () => {
       await client.close()
     })
 
+    it('rejects an empty verified specPatch when only run_verify ran (it checked the original input, no run_deploy)', async () => {
+      behave = answering('verify', verifyOk)
+      const client = await connect()
+      expect((await call(client, 'run_verify')).structuredContent).toMatchObject({ ok: true })
+      expect(rejected(await call(client, 'submit_result', verified([])))).toMatchObject({ code: 'INVALID_RESULT' })
+      expect(run.status).toBe('fixing')
+      expect(reruns).toEqual([])
+      await client.close()
+    })
+
     it('rejects verified with another specPatch than the one tried', async () => {
       const client = await connect()
       await tryAndVerify(client)

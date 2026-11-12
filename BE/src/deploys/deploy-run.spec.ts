@@ -204,6 +204,7 @@ describe('ticketCount', () => {
     ['the third ticket after two', { agent_result: { tickets: 2 } }, 3],
     ['a count that is not a positive integer', { agent_result: { tickets: '2' } }, 1],
     ['a zero count', { agent_result: { tickets: 0 } }, 1],
+    ['a negative count', { agent_result: { tickets: -1 } }, 1],
     ['a fractional count', { agent_result: { tickets: 1.5 } }, 1],
   ])('is the next ticket number with %s', (_label, run, n) => {
     expect(ticketCount(run)).toBe(n)
