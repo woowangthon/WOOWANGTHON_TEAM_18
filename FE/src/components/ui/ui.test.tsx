@@ -262,20 +262,31 @@ it('SelectField passes the chosen value, not the event', () => {
   expect(seen).toEqual(['be'])
 })
 
-it('Tabs mark the active tab with aria-current, a bold weight and the accent underline', () => {
+it('Tabs are a tablist: the active tab is selected and the only one in the Tab order, arrows move focus', () => {
   render(
     <Tabs aria-label="보기">
       <Tab active>개요</Tab>
+      <Tab>배포 이력</Tab>
       <Tab>로그</Tab>
     </Tabs>,
   )
-  const on = screen.getByRole('button', { name: '개요' })
-  const off = screen.getByRole('button', { name: '로그' })
-  expect(on.getAttribute('aria-current')).toBe('true')
+  expect(screen.getByRole('tablist', { name: '보기' })).toBeTruthy()
+  const [on, mid, last] = screen.getAllByRole('tab')
+  expect(on.getAttribute('aria-selected')).toBe('true')
   expect(on.className).toContain('border-accent-ui')
   expect(on.className).toContain('font-bold')
-  expect(off.getAttribute('aria-current')).toBeNull()
-  expect(off.getAttribute('type')).toBe('button')
+  expect(on.getAttribute('tabindex')).toBe('0')
+  expect(mid.getAttribute('aria-selected')).toBe('false')
+  expect(mid.getAttribute('tabindex')).toBe('-1')
+  on.focus()
+  fireEvent.keyDown(on, { key: 'ArrowRight' })
+  expect(document.activeElement).toBe(mid)
+  fireEvent.keyDown(mid, { key: 'End' })
+  expect(document.activeElement).toBe(last)
+  fireEvent.keyDown(last, { key: 'ArrowRight' })
+  expect(document.activeElement).toBe(on)
+  fireEvent.keyDown(on, { key: 'ArrowLeft' })
+  expect(document.activeElement).toBe(last)
 })
 
 it('Spinner is a named status', () => {
@@ -298,8 +309,8 @@ it('Banner reads errors at once (alert) and the rest politely (status), with a m
   )
   expect(screen.getByRole('alert').textContent).toContain('빌드가 실패했어요')
   expect(screen.getAllByRole('status')).toHaveLength(2)
-  expect(screen.getByRole('alert').textContent).toContain('!')
-  expect(screen.getByText('배포가 끝났어요').parentElement?.textContent).toContain('✓')
+  expect(screen.getByRole('alert').querySelector('svg')).toBeTruthy()
+  expect(screen.getByText('배포가 끝났어요').parentElement?.parentElement?.querySelector('svg')).toBeTruthy()
 })
 
 it('Steps list every step with its state in text and mark the running one as the current step', () => {
@@ -317,6 +328,8 @@ it('Steps list every step with its state in text and mark the running one as the
   expect(items).toHaveLength(3)
   expect(items[0].textContent).toContain('완료')
   expect(items[1].textContent).toContain('진행 중')
+  // 진행 중 · 대기 · 실패는 상태 글자가 눈에 보인다(색이 가까워 색만으로는 못 가른다).
+  expect(screen.getByText('진행 중').className).not.toContain('sr-only')
   expect(items[1].getAttribute('aria-current')).toBe('step')
   expect(items[2].textContent).toContain('대기 중')
   expect(items[0].getAttribute('aria-current')).toBeNull()
