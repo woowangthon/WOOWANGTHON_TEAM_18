@@ -254,7 +254,7 @@ PR이 머지되기 전까지 live 슬롯은 그대로 돈다(첫 배포라면 �
 |---|---|
 | **AWS EC2 1대 (t3.large, 메모리 8GB)** | 플랫폼 서버, AI 서버, GoCD 서버, AWS 실행기, Tailscale. 컨테이너마다 env를 따로 준다 |
 | 봇 GitHub 계정 | 학생 레포를 fork해 작업 브랜치에 고친 파일을 올리고 수정 PR을 연다 (ADR-002). 학생 레포에 쓰기 권한은 없다 |
-| GoCD 파이프라인 정의 | [`Infra/gocd/student-deploy.gocd.yaml`](../../Infra/gocd/student-deploy.gocd.yaml). Build는 AWS 실행기, Prepare · Render · Apply는 리더 실행기. 스테이지마다 job의 마지막 task가 `run_if: any`로 알림을 보낸다. Verify · Switch 스테이지는 CLI가 머지됐고(#139) 후속 PR(PR-E)에서 더한다. 서버 · AWS 실행기 구성과 만들어야 할 AWS 리소스는 [플랫폼 호스팅](platform-hosting.md#gocd-서버--aws-실행기) |
+| GoCD 파이프라인 정의 | [`Infra/gocd/student-deploy.gocd.yaml`](../../Infra/gocd/student-deploy.gocd.yaml). Build는 AWS 실행기, Prepare · Render · Apply · Verify · Switch는 리더 실행기. 스테이지마다 job의 마지막 task가 `run_if: any`로 알림을 보낸다. 서버 · AWS 실행기 구성과 만들어야 할 AWS 리소스는 [플랫폼 호스팅](platform-hosting.md#gocd-서버--aws-실행기) |
 | AWS CodeBuild | 빌드마다 새 환경, VPC 밖, IAM은 로그 쓰기 정도. GHCR push 토큰은 Secrets Manager에서 push 단계에만 꺼낸다. 비밀 env 값은 넘기지 않는다 |
 | GHCR | 공개 이미지. 워커가 토큰 없이 받는다 |
 | 리더 PC | k3s 제어, 리더 실행기(`student-deploy`의 Prepare ~ Switch와 `student-trial`의 Prepare ~ Verify. 두 파이프라인의 Build는 AWS 실행기), Traefik, Secret(암호화), vLLM |
