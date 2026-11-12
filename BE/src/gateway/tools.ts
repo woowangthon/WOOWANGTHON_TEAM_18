@@ -250,13 +250,15 @@ export class GatewayTools {
 
     // 기다리는 동안 같은 티켓의 다른 호출이 TICKET_CLOSED를 받지 않게 토큰 만료를 먼저 늘리고, 끝나면 다시 쓴다(updated_at도 함께 바뀐다).
     // 늘리지 못했으면(그 사이 티켓이 끝났다) 시험을 실행하지 않는다.
+    // 대기 상한은 지금 기준의 절대 마감 시각으로 넘긴다: 만료 갱신 · 실행 요청에 걸린 시간만큼 기다림이 줄어 토큰보다 늦게 기다리지 않는다.
     const cap = this.budget.waitCap(ticket.ticketId, TRIAL_WAIT_MS)
+    const deadline = Date.now() + cap
     if (!(await this.setExpiry(ticket, this.budget.startWait(ticket.ticketId, cap)))) {
       this.budget.endWait(ticket.ticketId, 0)
       return reject('TICKET_CLOSED', 'the ticket is no longer open')
     }
     const started = Date.now()
-    const outcome = await this.trials.run(ticket, tool, input, cap)
+    const outcome = await this.trials.run(ticket, tool, input, deadline)
     const expiry = this.budget.endWait(ticket.ticketId, Date.now() - started)
     if (expiry !== null) await this.setExpiry(ticket, expiry)
 

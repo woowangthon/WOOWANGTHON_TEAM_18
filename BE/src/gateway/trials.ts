@@ -91,12 +91,15 @@ export class GatewayTrials implements OnApplicationBootstrap {
     return this.lastDeploy.get(ticketId)
   }
 
-  /** 시험을 실행하고 결과를 기다린다. 결과 없이 끝나면(실행 실패 · 이전 시험이 안 끝남 · 대기 초과) failure다. */
+  /**
+   * 시험을 실행하고 결과를 기다린다. 결과 없이 끝나면(실행 실패 · 이전 시험이 안 끝남 · 대기 초과) failure다.
+   * `deadline`은 대기가 끝나는 절대 시각(ms)이다: 실행 요청 같은 앞 단계가 걸린 만큼 기다림이 줄어, 토큰 만료보다 늦게 기다리지 않는다.
+   */
   async run(
     ticket: { deployId: string; ticketId: string; slug: string; targetSlot: Slot },
     tool: TrialTool,
     input: Record<string, unknown>,
-    waitMs: number,
+    deadline: number,
   ): Promise<TrialOutcome> {
     // 시작 때 취소를 확인하지 못했으면 한 번 더 해 본다.
     if (!(await this.leftovers)) this.leftovers = this.cancelLeftovers()
@@ -118,9 +121,10 @@ export class GatewayTrials implements OnApplicationBootstrap {
       this.trials.delete(id)
       return { failure: { stage: null, code: 'PIPELINE_UNAVAILABLE', message: 'could not start the trial pipeline' } }
     }
+    // 남은 시간이 없으면 바로 끝난다(아래에서 취소한다).
     let timer: NodeJS.Timeout | undefined
     const timeout = new Promise<TrialOutcome>((resolve) => {
-      timer = setTimeout(() => resolve({ failure: { stage: null, code: 'TRIAL_TIMEOUT', message: `no trial result within ${Math.round(waitMs / 60_000)} minutes` } }), waitMs)
+      timer = setTimeout(() => resolve({ failure: { stage: null, code: 'TRIAL_TIMEOUT', message: 'no trial result before the wait limit' } }), Math.max(0, deadline - Date.now()))
     })
     const outcome = await Promise.race([done, timeout])
     clearTimeout(timer)
@@ -150,7 +154,7 @@ export class GatewayTrials implements OnApplicationBootstrap {
     if (counterParam === undefined) throw badResult('counter is required', [{ path: 'counter', code: 'REQUIRED' }])
     const counter = typeof counterParam === 'string' && /^\d{1,9}$/.test(counterParam) ? Number(counterParam) : NaN
     if (!Number.isInteger(counter) || counter < 1) throw badResult('counter must be a positive integer', [{ path: 'counter', code: 'INVALID_VALUE' }])
-    if (!(await this.isOpen(trial))) throw notFound()
+    if (!(await this.runOpen(trial)) || !this.waiting(trial)) throw notFound()
     if (trial.counter !== null && trial.counter !== counter) throw badResult('another pipeline run already read this trial', [{ path: 'counter', code: 'CONFLICT' }])
     trial.counter = counter
     return { deployId: trial.deployId, slot: trial.slot, input: trial.input, buildOverrides: null }
@@ -163,16 +167,23 @@ export class GatewayTrials implements OnApplicationBootstrap {
     const issues = checkTrialResult(trial.tool, body)
     if (issues.length > 0) throw badResult('Trial result has invalid fields', issues)
     // 실행 기록이 그 티켓으로 열려 있을 때만 받는다(티켓이 끝났으면 늦은 결과다).
-    if (!(await this.isOpen(trial))) return { ok: true, applied: false }
+    if (!(await this.runOpen(trial))) return { ok: true, applied: false }
+    // await 사이에 취소 · 대기 초과가 시험을 끝냈을 수 있다. 이 확인과 ended 사이에는 await가 없다.
+    if (!this.waiting(trial)) return { ok: true, applied: false }
     trial.state = 'ended'
     trial.finish({ result: (body as { result: Record<string, unknown> }).result })
     return { ok: true, applied: true }
   }
 
-  /** 시험이 아직 기다리고(맵에 같은 객체) 실행 기록이 그 티켓으로 fixing인가. await 뒤에 다시 확인한다. */
-  private async isOpen(trial: Trial): Promise<boolean> {
+  /** 실행 기록이 그 티켓으로 fixing인가. */
+  private async runOpen(trial: Trial): Promise<boolean> {
     const run = await this.store.findRun(trial.deployId)
-    return Boolean(run && run.status === 'fixing' && run.ticket_id === trial.ticketId) && this.trials.get(trial.id) === trial && trial.state === 'waiting'
+    return Boolean(run && run.status === 'fixing' && run.ticket_id === trial.ticketId)
+  }
+
+  /** 시험이 아직 기다리는가(맵에 같은 객체). await 뒤 상태를 바꾸기 바로 전에 부른다. */
+  private waiting(trial: Trial): boolean {
+    return this.trials.get(trial.id) === trial && trial.state === 'waiting'
   }
 
   private async cancel(trial: Trial): Promise<void> {

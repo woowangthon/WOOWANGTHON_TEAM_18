@@ -61,14 +61,23 @@ export class PipelineClient {
     }
   }
 
-  /** 시험 파이프라인의 끝나지 않은 인스턴스를 모두 취소한다(BE가 시작할 때: 시험 기록이 메모리에 있어 이어 갈 수 없다). 취소한 인스턴스 수. */
+  /**
+   * 시험 파이프라인의 끝나지 않은 인스턴스를 모두 취소한다(BE가 시작할 때: 시험 기록이 메모리에 있어 이어 갈 수 없다). 취소한 인스턴스 수.
+   * 하나라도 취소를 확인하지 못하면 던진다(정리 실패: 그 인스턴스가 아직 대상 슬롯을 바꾸고 있을 수 있다).
+   */
   async cancelAllTrials(): Promise<number> {
     const pipeline = this.trialPipeline
     if (!this.configured(pipeline)) return 0
     const history = await this.get(`/go/api/pipelines/${encodeURIComponent(pipeline)}/history?page_size=${HISTORY_PAGE}`)
     const instances: unknown[] = isRecord(history) && Array.isArray(history.pipelines) ? history.pipelines : []
     let cancelled = 0
-    for (const instance of instances) if (runningStages(instance).length > 0 && (await this.cancelRunning(pipeline, instance))) cancelled++
+    let failed = 0
+    for (const instance of instances) {
+      if (runningStages(instance).length === 0) continue
+      if (await this.cancelRunning(pipeline, instance)) cancelled++
+      else failed++
+    }
+    if (failed > 0) throw new Error(`could not cancel ${failed} unfinished trial run(s)`)
     return cancelled
   }
 

@@ -95,6 +95,16 @@ describe('PipelineClient', () => {
     expect(await client({ GOCD_TRIAL_PIPELINE: undefined }).cancelAllTrials()).toBe(0)
   })
 
+  it('fails the start-up clean-up when GoCD refuses to cancel any unfinished instance', async () => {
+    answer = (url) =>
+      url.includes('/history')
+        ? Response.json({ pipelines: [instance(9, [['render', 'Building', 1]]), instance(6, [['verify', 'Building', 2]])] })
+        : url.includes('/6/verify/2/cancel')
+          ? new Response('{}', { status: 409 })
+          : Response.json({})
+    await expect(client().cancelAllTrials()).rejects.toThrow(/could not cancel 1/)
+  })
+
   it('never puts the GoCD token in a log', async () => {
     answer = () => new Response('{}', { status: 500 })
     const c = client()
