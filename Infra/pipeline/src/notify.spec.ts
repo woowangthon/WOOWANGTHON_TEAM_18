@@ -3,11 +3,12 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { checkImages, validateNotice } from '../../../BE/src/deploys/deploy-run.js'
 import type { BuildFailure, BuildReport } from './build.js'
 import { builtDeployInput, deployInput, digest } from './fixtures.js'
-import { BE_OWN_CODES, FALLBACK_CODE, NOTIFY_STAGES, noReportNotice, noticeFrom, type NoticeBody, parseStage, pickFailure, sendNotice } from './notify.js'
+import { AWARE_DATETIME, BE_OWN_CODES, FALLBACK_CODE, NOTIFY_STAGES, noReportNotice, noticeFrom, type NoticeBody, type NotifyStage, parseStage, PLATFORM_CODE, pickFailure, refusal, SERVICE, sendNotice } from './notify.js'
 import { DEPLOY_ID, fakePlatform, TOKEN } from './platform-fake.js'
 
 const NOW = Date.parse('2026-11-11T05:00:00Z')
 const now = () => NOW
+const BE_DEPLOY_RUN = readFileSync(new URL('../../../BE/src/deploys/deploy-run.ts', import.meta.url), 'utf8')
 
 // BE가 이 본문을 받아 주는가: 매퍼가 만든 모든 본문은 BE의 검사를 통과해야 한다.
 const accepted = (body: NoticeBody) => {
@@ -143,9 +144,16 @@ describe('build report', () => {
 
 describe('platform failure codes', () => {
   it("BE_OWN_CODES is BE's INTERNAL_CODES (a code BE adds must not be forwarded as a platform code: BE would answer 400 and the run would wait for the timeout)", () => {
-    const source = readFileSync(new URL('../../../BE/src/deploys/deploy-run.ts', import.meta.url), 'utf8')
-    const list = /const INTERNAL_CODES = \[([^\]]*)\] as const/.exec(source)?.[1] ?? ''
+    const list = /const INTERNAL_CODES = \[([^\]]*)\] as const/.exec(BE_DEPLOY_RUN)?.[1] ?? ''
     expect([...list.matchAll(/'([A-Z_]+)'/g)].map((m) => m[1])).toEqual(BE_OWN_CODES)
+  })
+
+  it.each([
+    ['SERVICE', SERVICE],
+    ['PLATFORM_CODE', PLATFORM_CODE],
+    ['AWARE_DATETIME', AWARE_DATETIME],
+  ])("%s is BE's (a rule BE changes must break this test, not send a body BE answers 400 to)", (name, pattern) => {
+    expect(new RegExp(`const ${name} = /(.*)/\\n`).exec(BE_DEPLOY_RUN)?.[1]).toBe(pattern.source)
   })
 
   const codeOf = (code: string) => {
@@ -251,18 +259,105 @@ describe('failure fields BE would refuse (so the sender sees it as an unusable r
   it.each([
     ['a service that is a number', { ok: false, failure: { kind: 'platform', code: 'K8S_TIMEOUT', service: 7, message: 'm' } }, 'failure.service is not a string'],
     ['a student failure whose service is an object', student({ service: {} }), 'failure.service is not a string'],
-    ['events with an item that is not an object', student({ raw: { pod: null, events: [{ reason: 'x' }, 'text'], status: null } }), 'failure.raw.events has an item that is not an object'],
+    ['events with an item that is not an object', student({ raw: { pod: null, events: [{ reason: 'x' }, 'text'], status: null } }), 'failure.raw.k8s.events is not a list of objects'],
+    ['a student service that is not a service name', student({ service: 'Bad_Name' }), 'failure.service is not a service name'],
+    ['a platform service that is not a service name', { ok: false, failure: { kind: 'platform', code: 'K8S_TIMEOUT', service: 'a'.repeat(53), message: 'm' } }, 'failure.service is not a service name'],
+    ['an errorMessage that is not a string', student({ errorMessage: 5 }), 'failure.message is not a string'],
   ])('apply report with %s', (_, report, why) => {
     expect(() => noticeFrom(DEPLOY_ID, 'apply', report, now)).toThrow(`apply report: ${why}`)
   })
 
-  it('a build failure whose service is not a string', () => {
-    expect(() => noticeFrom(DEPLOY_ID, 'build', { ok: false, failures: [{ kind: 'platform', service: 3, code: 'X_CODE', message: 'm' }] }, now)).toThrow('build report: has a failure that is neither platform nor build')
+  it.each([
+    ['a service that is not a string', buildFailed('fe', { service: 3 as never }), 'failure.service is not a string'],
+    ['a service that is not a service name', buildFailed('Bad_Name'), 'failure.service is not a service name'],
+    ['a logTail with an item that is not a string', buildFailed('fe', { logTail: ['ok', 3 as never] }), 'failure.logs.lines is not a list of strings'],
+  ])('a build failure with %s', (_, failure, why) => {
+    expect(() => noticeFrom(DEPLOY_ID, 'build', failedBuild(failure), now)).toThrow(`build report: ${why}`)
   })
 
   it('a missing service stays null (a platform problem of no one service)', () => {
     const body = noticeFrom(DEPLOY_ID, 'apply', { ok: false, failure: { kind: 'platform', code: 'K8S_TIMEOUT', message: 'm' } }, now)
     expect(body).toMatchObject({ failure: { service: null } })
+  })
+})
+
+// `refusal`(보내기 전의 검사)과 BE의 `validateNotice`가 같은 본문에 같은 답을 하는가. 한쪽이 거절할 본문을 다른 쪽이 통과시키면 안 된다:
+// BE가 400으로 거절하면 다시 보내지지 않아 배포가 시간 초과까지 멈춘다.
+describe('refusal answers like BE validateNotice', () => {
+  const k8s = (over: Record<string, unknown> = {}) => ({ pod: null, events: [], status: null, ...over })
+  const studentFailure = (over: Record<string, unknown> = {}) => ({ code: null, service: 'be', message: 'm', raw: { codebuild: null, k8s: k8s() }, ...over })
+  const inBuild = (over: Record<string, unknown> = {}) => ({ code: null, service: 'fe', message: 'm', raw: { codebuild: { id: 'cb:1' }, k8s: null }, ...over })
+  const logs = (over: Record<string, unknown> = {}) => ({ from: '2026-11-11T01:00:00Z', to: '2026-11-11T01:10:00Z', lines: ['a'], ...over })
+  const k8sRaw = (over: Record<string, unknown>) => ({ raw: { codebuild: null, k8s: k8s(over) } })
+
+  const cases: [string, NotifyStage, Record<string, unknown>, boolean][] = [
+    ['a student failure', 'apply', studentFailure(), true],
+    ['with valid logs', 'apply', studentFailure({ logs: logs() }), true],
+    ['with null logs', 'apply', studentFailure({ logs: null }), true],
+    ['with logs of more than 200 lines', 'apply', studentFailure({ logs: logs({ lines: Array.from({ length: 300 }, () => 'x') }) }), true],
+    ['logs with an offset time', 'verify', studentFailure({ logs: logs({ from: '2026-11-11T10:00:00.123+09:00' }) }), true],
+    ['a render failure with its status', 'render', studentFailure(k8sRaw({ status: { message: 'x' } })), true],
+    ['a build failure with the build', 'build', inBuild(), true],
+    ['a build failure with logs', 'build', inBuild({ logs: logs() }), true],
+    ['a platform failure', 'apply', { code: 'K8S_TIMEOUT', service: 'be', message: 'm' }, true],
+    ['a platform failure whose evidence is junk (BE does not read it)', 'apply', { code: 'K8S_TIMEOUT', service: 'be', message: 'm', raw: 'junk', logs: 7 }, true],
+    ['a switch failure without evidence (no ticket for switch)', 'switch', { code: null, service: null, message: 'm' }, true],
+    ['no service', 'prepare', studentFailure({ service: null }), true],
+    ['a service left out (JSON drops undefined)', 'prepare', studentFailure({ service: undefined }), true],
+    ['a code left out (JSON drops undefined)', 'apply', studentFailure({ code: undefined }), true],
+    ['the longest service name', 'apply', studentFailure({ service: `a${'b'.repeat(50)}c` }), true],
+    ['a service name that is too long', 'apply', studentFailure({ service: `a${'b'.repeat(51)}c` }), false],
+    ['an upper-case service name', 'apply', studentFailure({ service: 'Bad_Name' }), false],
+    ['a service name ending with a dash', 'apply', studentFailure({ service: 'be-' }), false],
+    ['a service name starting with a digit', 'apply', studentFailure({ service: '1be' }), false],
+    ['a service that is a number', 'apply', studentFailure({ service: 7 }), false],
+    ['a service that is an object', 'apply', { code: 'K8S_TIMEOUT', service: {}, message: 'm' }, false],
+    ['a message that is a number', 'apply', studentFailure({ message: 5 }), false],
+    ['no message', 'apply', studentFailure({ message: undefined }), false],
+    ['a code BE keeps for itself', 'apply', { code: 'BUILD_FAILED', service: 'be', message: 'm' }, false],
+    ['a code that is too short', 'apply', { code: 'ab', service: 'be', message: 'm' }, false],
+    ['a build failure without the build', 'build', inBuild({ raw: { codebuild: null, k8s: null } }), false],
+    ['a build failure with a k8s part', 'build', inBuild({ raw: { codebuild: { id: 'cb:1' }, k8s: k8s() } }), false],
+    ['a k8s failure with a codebuild part', 'apply', studentFailure({ raw: { codebuild: { id: 'x' }, k8s: k8s() } }), false],
+    ['a k8s failure without the k8s part', 'apply', studentFailure({ raw: { codebuild: null, k8s: null } }), false],
+    ['raw that is a string', 'apply', studentFailure({ raw: 'x' }), false],
+    ['raw left out (a student failure needs its evidence)', 'apply', { code: null, service: 'be', message: 'm' }, false],
+    ['raw that is null', 'apply', studentFailure({ raw: null }), false],
+    ['a pod that is a string', 'apply', studentFailure(k8sRaw({ pod: 'x' })), false],
+    ['events that are not a list', 'apply', studentFailure(k8sRaw({ events: 'x' })), false],
+    ['an event that is not an object', 'apply', studentFailure(k8sRaw({ events: [{ a: 1 }, 'x'] })), false],
+    ['a render failure without a status', 'render', studentFailure(), false],
+    ['a status on apply', 'apply', studentFailure(k8sRaw({ status: { message: 'x' } })), false],
+    ['a status that is a string', 'render', studentFailure(k8sRaw({ status: 'x' })), false],
+    ['logs that are a string', 'apply', studentFailure({ logs: 'x' }), false],
+    ['logs lines with a number', 'apply', studentFailure({ logs: logs({ lines: ['a', 3] }) }), false],
+    ['logs lines that are not a list', 'apply', studentFailure({ logs: logs({ lines: 'a' }) }), false],
+    ['logs without lines', 'apply', studentFailure({ logs: { from: logs().from, to: logs().to } }), false],
+    ['a log start without a time zone', 'apply', studentFailure({ logs: logs({ from: '2026-11-11T10:00:00' }) }), false],
+    ['a log end that is not a date', 'apply', studentFailure({ logs: logs({ to: '2026-13-45T00:00:00Z' }) }), false],
+    ['a log end that is missing', 'apply', studentFailure({ logs: { from: logs().from, lines: [] } }), false],
+  ]
+  it.each(cases)('%s (%s)', (_name, stage, failure, ok) => {
+    const body = { deployId: DEPLOY_ID, stage, result: 'failed', failure } as unknown as NoticeBody
+    const why = refusal(body)
+    expect(validateNotice(JSON.parse(JSON.stringify(body))).ok, 'BE validateNotice').toBe(ok)
+    expect(why === null, `refusal: ${why}`).toBe(ok)
+  })
+
+  const passed = (over: Record<string, unknown>) => ({ deployId: DEPLOY_ID, stage: 'build', result: 'passed', ...over }) as unknown as NoticeBody
+  it.each([
+    ['a build with images of services', passed({ images: { fe: digest('a') } }), true],
+    ['a build with an image of a name that is not a service', passed({ images: { Bad_Name: digest('a') } }), false],
+    ['a build with an image that is not a digest', passed({ images: { fe: 'ghcr.io/x/y:latest' } }), false],
+    ['a build without images', passed({}), false],
+    ['images on a stage that is not build', passed({ stage: 'apply', images: { fe: digest('a') } }), false],
+    ['an apply without images', passed({ stage: 'apply' }), true],
+    ['a deploy id that is not a UUID', passed({ deployId: 'not-a-uuid', images: {} }), false],
+    ['a deploy id in upper case', passed({ deployId: DEPLOY_ID.toUpperCase(), images: {} }), true],
+  ])('a passed notice: %s', (_name, body, ok) => {
+    const why = refusal(body)
+    expect(validateNotice(JSON.parse(JSON.stringify(body))).ok, 'BE validateNotice').toBe(ok)
+    expect(why === null, `refusal: ${why}`).toBe(ok)
   })
 })
 

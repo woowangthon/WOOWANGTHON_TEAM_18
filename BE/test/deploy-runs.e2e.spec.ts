@@ -6,6 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } fr
 import { AgentClient } from '../src/deploys/agent.client.js'
 import { DeployConditionService } from '../src/deploys/deploy-condition.service.js'
 import { DeployPreparer } from '../src/deploys/deploy-preparer.js'
+import { ClusterError } from '../src/k8s/cluster-error.js'
+import { ClusterReader } from '../src/k8s/cluster-reader.js'
+import { DeploymentScaler } from '../src/k8s/deployment-scaler.js'
 import { combineDigests, serviceDigest } from '../src/deploys/secrets-input.js'
 import { errorBody, JWKS_URL, keySet, token } from './auth-helpers.js'
 import { startApp } from './start-app.js'
@@ -35,6 +38,10 @@ let aiAnswer: () => Response
 let restOverride: ((table: string, method: string) => Response | undefined) | undefined
 // 가짜 준비 확인(#82). 기본은 준비됨이고 슬롯은 a다.
 let prepare: (deployId: string) => Promise<unknown>
+// 가짜 클러스터(W7): 공간의 Deployment 이름(또는 읽기 오류)과, 0으로 내린 것 · 내리지 못하는 것.
+let spaceDeployments: string[] | Error
+let scaled: { slug: string; name: string }[]
+let scaleFails: Record<string, Error>
 let app: INestApplication<App>
 let logError: MockInstance<Logger['error']>
 
@@ -168,10 +175,27 @@ beforeEach(async () => {
   aiAnswer = () => Response.json({ ticketId: 't_x' }, { status: 202 })
   prepare = (id) => Promise.resolve(preparedFor(id))
   restOverride = undefined
+  spaceDeployments = []
+  scaled = []
+  scaleFails = {}
   fetchMock.mockClear()
   vi.stubGlobal('fetch', fetchMock)
   logError = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
-  app = await startApp([], (b) => b.overrideProvider(DeployPreparer).useValue({ prepareIfReady: (id: string) => prepare(id) }))
+  app = await startApp([], (b) =>
+    b
+      .overrideProvider(DeployPreparer)
+      .useValue({ prepareIfReady: (id: string) => prepare(id) })
+      .overrideProvider(ClusterReader)
+      .useValue({ deployments: () => (spaceDeployments instanceof Error ? Promise.reject(spaceDeployments) : Promise.resolve(spaceDeployments.map((name) => ({ name })))) })
+      .overrideProvider(DeploymentScaler)
+      .useValue({
+        scaleToZero: (slug: string, name: string) => {
+          if (scaleFails[name]) return Promise.reject(scaleFails[name])
+          scaled.push({ slug, name })
+          return Promise.resolve()
+        },
+      }),
+  )
 })
 
 afterEach(async () => {
@@ -632,6 +656,79 @@ describe('POST /api/pipeline/notify', () => {
     const resend = await notify({ deployId: id, stage: 'switch', result: 'passed' })
     expect(resend.body).toEqual({ ok: true, applied: false })
     expect(db.build_cache).toHaveLength(1)
+  })
+
+  describe('W7: the old live slot is scaled down after the address switched', () => {
+    // 프로젝트는 슬롯 a가 live이고, 이번 배포는 b에 했다.
+    const deployToB = async () => {
+      ;(db.projects ??= []).push({ slug: 'my-app', live_slot: 'a' })
+      prepare = (id) => Promise.resolve(preparedFor(id, 'b'))
+      const id = seedDeploy()
+      await start(id)
+      await notify({ deployId: id, stage: 'build', result: 'passed', images: { fe: IMAGE } })
+      for (const stage of ['prepare', 'render', 'apply', 'verify']) await notify({ deployId: id, stage, result: 'passed' })
+      return id
+    }
+    const names = () => scaled.map((s) => s.name).sort()
+    // 이름이 `-a`로 끝나는 것만 슬롯 a다(`banana`는 a로 끝나지만 슬롯이 아니다).
+    const both = ['fe-a', 'be-a', 'fe-b', 'be-b', 'banana', 'a']
+
+    it('scales only the Deployments of the old slot to 0, after the live slot changed', async () => {
+      spaceDeployments = both
+      const id = await deployToB()
+      expect(scaled).toEqual([])
+      await notify({ deployId: id, stage: 'switch', result: 'passed' })
+      expect(names()).toEqual(['be-a', 'fe-a'])
+      expect(scaled.every((s) => s.slug === 'my-app')).toBe(true)
+      expect(db.projects).toEqual([expect.objectContaining({ slug: 'my-app', live_slot: 'b' })])
+      expect(run(id)).toMatchObject({ status: 'succeeded', stage: null })
+    })
+
+    it('scales down the other slot even when the live slot was already switched by an earlier attempt', async () => {
+      spaceDeployments = both
+      const id = await deployToB()
+      db.projects[0].live_slot = 'b'
+      await notify({ deployId: id, stage: 'switch', result: 'passed' })
+      expect(names()).toEqual(['be-a', 'fe-a'])
+    })
+
+    it('does nothing to the cluster on the first deploy of a project', async () => {
+      spaceDeployments = both
+      const id = seedDeploy()
+      await start(id)
+      await notify({ deployId: id, stage: 'build', result: 'passed', images: { fe: IMAGE } })
+      for (const stage of ['prepare', 'render', 'apply', 'verify', 'switch']) await notify({ deployId: id, stage, result: 'passed' })
+      expect(scaled).toEqual([])
+      expect(run(id)).toMatchObject({ status: 'succeeded' })
+    })
+
+    it('still succeeds when some Deployments cannot be scaled down, and logs which', async () => {
+      spaceDeployments = both
+      scaleFails['be-a'] = new ClusterError('forbidden', 403)
+      const id = await deployToB()
+      expect((await notify({ deployId: id, stage: 'switch', result: 'passed' })).body).toEqual({ ok: true, applied: true })
+      expect(names()).toEqual(['fe-a'])
+      expect(run(id)).toMatchObject({ status: 'succeeded', stage: null })
+      expect(db.projects).toEqual([expect.objectContaining({ live_slot: 'b' })])
+      expect(logError).toHaveBeenCalledWith(expect.stringContaining('W7: could not scale my-app be-a to 0'))
+    })
+
+    it('still succeeds when the Deployments cannot be listed', async () => {
+      spaceDeployments = new ClusterError('unreachable')
+      const id = await deployToB()
+      expect((await notify({ deployId: id, stage: 'switch', result: 'passed' })).body).toEqual({ ok: true, applied: true })
+      expect(scaled).toEqual([])
+      expect(run(id)).toMatchObject({ status: 'succeeded' })
+      expect(logError).toHaveBeenCalledWith(expect.stringContaining('W7: could not list deployments of my-app'))
+    })
+
+    it('does not scale again when the same notice is sent twice', async () => {
+      spaceDeployments = both
+      const id = await deployToB()
+      await notify({ deployId: id, stage: 'switch', result: 'passed' })
+      await notify({ deployId: id, stage: 'switch', result: 'passed' })
+      expect(names()).toEqual(['be-a', 'fe-a'])
+    })
   })
 
   it('the next deploy of the project can start after it completed', async () => {

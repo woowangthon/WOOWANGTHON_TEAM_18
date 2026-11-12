@@ -1,7 +1,7 @@
 import type { BuildFailure } from './build.js'
 import { isImageDigest, isRecord, parseDeployInput } from './deploy-input.js'
 import type { StageFailure } from './failure.js'
-import { callPlatform, type PlatformConn, type Sleep } from './platform-api.js'
+import { callPlatform, type PlatformConn, type Sleep, UUID } from './platform-api.js'
 
 // 스테이지가 끝났다고 플랫폼 서버에 알린다(`POST /api/pipeline/notify`). 스테이지 CLI가 쓴 결과 JSON을 알림 본문으로 바꾼다.
 // 본문의 계약은 docs/design/api.md "파이프라인 ↔ 플랫폼 서버", 받는 쪽의 검사는 BE의 `validateNotice`(BE/src/deploys/deploy-run.ts)다.
@@ -17,7 +17,8 @@ export function parseStage(v: string | undefined): NotifyStage {
 
 type Raw = Record<string, unknown>
 
-interface FailureBody {
+// `type`이다(interface가 아니다): `refusal`이 `Record<string, unknown>`으로 읽는다.
+type FailureBody = {
   code: string | null
   service: string | null
   message: string
@@ -30,7 +31,7 @@ export type NoticeBody =
   | { deployId: string; stage: NotifyStage; result: 'failed'; failure: FailureBody }
 
 // BE가 플랫폼 문제 코드로 받는 모양(`^[A-Za-z][A-Za-z0-9_]{2,63}$`)과, BE가 스스로 정하는 코드(파이프라인이 보내면 AI를 건너뛰게 되어 거절한다).
-const PLATFORM_CODE = /^[A-Za-z][A-Za-z0-9_]{2,63}$/
+export const PLATFORM_CODE = /^[A-Za-z][A-Za-z0-9_]{2,63}$/
 export const BE_OWN_CODES = ['BUILD_FAILED', 'DEPLOY_FAILED', 'VERIFY_FAILED', 'SWITCH_FAILED', 'AGENT_UNAVAILABLE', 'AGENT_GAVE_UP', 'TIMED_OUT']
 /** 쓸 수 없는 코드의 대신. `null`로 보내면 학생 문제로 읽혀 AI 에이전트에 넘어가므로 플랫폼 문제로 남겨 둔다(원래 코드는 message에 있다). */
 export const FALLBACK_CODE = 'PIPELINE_FAILED'
@@ -70,6 +71,60 @@ export function pickFailure(failures: BuildFailure[]): BuildFailure | undefined 
   return failures.find((f) => f.kind === 'platform') ?? failures[0]
 }
 
+// BE `validateNotice`의 서비스 이름과 시간대가 있는 ISO 8601(AI 서버는 AwareDatetime만 받는다).
+export const SERVICE = /^[a-z]([a-z0-9-]{0,50}[a-z0-9])?$/
+export const AWARE_DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/
+
+const isString = (v: unknown): v is string => typeof v === 'string'
+const isAwareTime = (v: unknown) => isString(v) && AWARE_DATETIME.test(v) && !Number.isNaN(Date.parse(v))
+
+// 문제 티켓으로 가는 실패(BE `checkEvidence`)의 raw · logs. stage별: build는 CodeBuild 원본, 그 밖은 k3s 원본이고 status는 render일 때만 있다.
+function evidenceProblem(stage: NotifyStage, f: Record<string, unknown>): string | null {
+  const raw: Record<string, unknown> = isRecord(f.raw) ? f.raw : {}
+  if (stage === 'build') {
+    if (!isRecord(raw.codebuild)) return 'failure.raw.codebuild is not an object'
+    if (raw.k8s != null) return 'failure.raw.k8s must be null on a build'
+  } else {
+    if (raw.codebuild != null) return 'failure.raw.codebuild must be null'
+    const k8s = raw.k8s
+    if (!isRecord(k8s)) return 'failure.raw.k8s is not an object'
+    if (k8s.pod != null && !isRecord(k8s.pod)) return 'failure.raw.k8s.pod is not an object'
+    if (k8s.events != null && !(Array.isArray(k8s.events) && k8s.events.every(isRecord))) return 'failure.raw.k8s.events is not a list of objects'
+    if (stage === 'render' ? !isRecord(k8s.status) : k8s.status != null) return 'failure.raw.k8s.status is an object only on a render'
+  }
+  const logs = f.logs
+  if (logs == null) return null
+  if (!isRecord(logs) || !isAwareTime(logs.from) || !isAwareTime(logs.to)) return 'failure.logs.from or to is not a time with a zone'
+  return Array.isArray(logs.lines) && logs.lines.every(isString) ? null : 'failure.logs.lines is not a list of strings'
+}
+
+/**
+ * 보내기 전의 검사: BE `validateNotice`가 400으로 거절할 본문이면 그 이유를, 아니면 null을 돌려준다. 400은 다시 보내지지 않아
+ * 배포가 BE의 1시간 정리까지 멈추므로, 거절될 본문은 보내지 않고 `STAGE_NO_REPORT`로 알린다. BE의 규칙을 한 곳에서 같은 기준으로 옮긴 것이고,
+ * 같은 본문에 BE와 같은 답을 하는지는 시험이 대 본다(정규식은 BE와 같은지도 본다).
+ */
+export function refusal(body: NoticeBody): string | null {
+  if (!UUID.test(body.deployId)) return 'deployId is not a UUID'
+  if (body.result === 'passed') {
+    // build만 images를 싣는다(BE는 build가 아닌 stage의 images를 UNKNOWN_KEY로 거절한다).
+    if ((body.stage === 'build') !== (body.images !== undefined)) return 'images belong to a build notice and only to it'
+    for (const [name, image] of Object.entries(body.images ?? {})) {
+      if (!SERVICE.test(name)) return `images.${name} is not a service name`
+      if (!isImageDigest(image)) return `images.${name} is not an image digest`
+    }
+    return null
+  }
+  const f: Record<string, unknown> = body.failure
+  const code = f.code ?? null
+  if (code !== null && !(isString(code) && PLATFORM_CODE.test(code) && !BE_OWN_CODES.includes(code))) return 'failure.code is not a usable platform code'
+  const service = f.service ?? null
+  if (service !== null && !isString(service)) return 'failure.service is not a string'
+  if (isString(service) && !SERVICE.test(service)) return 'failure.service is not a service name'
+  if (!isString(f.message)) return 'failure.message is not a string'
+  // 플랫폼 문제와 switch는 AI 티켓이 되지 않아 증거를 보지 않는다.
+  return code !== null || body.stage === 'switch' ? null : evidenceProblem(body.stage, f)
+}
+
 /**
  * 스테이지 결과 JSON을 알림 본문으로 바꾼다. 순수 함수다(보내지 않는다).
  * - build: 성공이면 `run` 서비스마다 이미지 digest(`images`), 실패면 `failures`에서 하나를 골라 알린다.
@@ -77,6 +132,13 @@ export function pickFailure(failures: BuildFailure[]): BuildFailure | undefined 
  * 결과가 이 모양이 아니면 무엇이 틀렸는지 담아 던진다.
  */
 export function noticeFrom(deployId: string, stage: NotifyStage, report: unknown, now: () => number = Date.now): NoticeBody {
+  const body = mapReport(deployId, stage, report, now)
+  const why = refusal(body)
+  if (why !== null) throw new Error(`${stage} report: ${why}`)
+  return body
+}
+
+function mapReport(deployId: string, stage: NotifyStage, report: unknown, now: () => number): NoticeBody {
   const fail = (what: string) => new Error(`${stage} report: ${what}`)
   if (!isRecord(report) || typeof report.ok !== 'boolean') throw fail('has no boolean ok')
   const base = { deployId, stage }
@@ -95,7 +157,7 @@ export function noticeFrom(deployId: string, stage: NotifyStage, report: unknown
       return { ...base, result: 'passed', images }
     }
     const failures = Array.isArray(report.failures) ? (report.failures as unknown[]) : []
-    if (!failures.every((f) => isRecord(f) && (f.kind === 'platform' || f.kind === 'build') && typeof f.service === 'string')) throw fail('has a failure that is neither platform nor build')
+    if (!failures.every((f) => isRecord(f) && (f.kind === 'platform' || f.kind === 'build'))) throw fail('has a failure that is neither platform nor build')
     const picked = pickFailure(failures as BuildFailure[])
     if (picked === undefined) throw fail('is not ok but lists no failure')
     return { ...base, result: 'failed', failure: buildFailure(picked, now) }
@@ -104,9 +166,6 @@ export function noticeFrom(deployId: string, stage: NotifyStage, report: unknown
   if (report.ok) return { ...base, result: 'passed' }
   const f = report.failure
   if (!isRecord(f) || (f.kind !== 'platform' && f.kind !== 'student')) throw fail('is not ok but has no failure of kind platform or student')
-  // BE가 400으로 거절할 칸(문자열이 아닌 service, 객체가 아닌 events 원소)은 여기서 걸러 STAGE_NO_REPORT로 알린다: 400은 다시 보내지지 않아 배포가 멈춘다.
-  if (f.service != null && typeof f.service !== 'string') throw fail('failure.service is not a string')
-  if (f.kind === 'student' && isRecord(f.raw) && Array.isArray(f.raw.events) && !f.raw.events.every(isRecord)) throw fail('failure.raw.events has an item that is not an object')
   return { ...base, result: 'failed', failure: f.kind === 'platform' ? platformFailure(String(f.code), (f.service as string | null) ?? null, String(f.message)) : k8sFailure(stage, f as Extract<StageFailure, { kind: 'student' }>) }
 }
 
