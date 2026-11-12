@@ -25,6 +25,6 @@ Contract: `docs/design/api.md` "파이프라인 ↔ 플랫폼 서버" 5 (ADR-014
 
 ## Done when
 
-- [ ] `pnpm verify` in `BE/` and the AI verify line pass — from the test session
-- [ ] An SDK MCP client runs run_deploy(patch) → run_verify → submit verified, and the run is `running` from `build` with the checked input and `student-deploy` scheduled; every refusal leaves the run `fixing`
-- [ ] mutation testing — hand mutants run by the test session
+- [x] `pnpm verify` in `BE/` and the AI verify line pass — PASS from the test session (d6c2d62: 35 files, 1463 passed, 1 skipped; AI 286 passed at cab2e83)
+- [x] An SDK MCP client runs run_deploy(patch) → run_verify → submit verified, and the run is `running` from `build` with the checked input and `student-deploy` scheduled; every refusal leaves the run `fixing`
+- [x] mutation testing — 8 hand mutants run by the test session; two survived at first (the run_verify record condition, a negative ticket count), tests added, all caught
