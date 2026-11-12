@@ -2,13 +2,21 @@
 # Runs the Prepare, Render, Apply, Verify and Switch stages (docs/design/deploy-workflow.md §2) with the
 # account in account.yaml. The Build stage runs on the AWS executor, so no AWS tool or credential is here.
 #
-# NOT applied yet: it needs the GoCD server on the EC2. On that day the operator creates the Secret
-# `gocd-agent` in this namespace on the leader, values typed there and never put in the repo or a chat:
+# Applied on the leader 2026-11-12 (issue #164); it registers with the GoCD server on the EC2 as
+# k3s-leader-executor, resource `leader`. It reads the Secret `gocd-agent` in this namespace, three keys, whose
+# values never go into the repo or a chat:
 #   GO_SERVER_URL            http://<the EC2's tailnet address>:8153/go  (cluster DNS does not know tailnet names)
-#   AGENT_AUTO_REGISTER_KEY  the agent auto-register key from the GoCD server's config
+#   AGENT_AUTO_REGISTER_KEY  the agent auto-register key (SSM /wcp/gocd/AGENT_AUTO_REGISTER_KEY)
+#   PIPELINE_NOTIFY_TOKEN    the token Infra/gocd/job.sh reports deploy results with
+#                            (SSM /wcp/gocd/PIPELINE_NOTIFY_TOKEN, the same value as the platform server's)
+# The same three lines are in ~/.config/wcp/gocd/leader-agent.env on the EC2 (Infra/gocd/setup.sh). The operator
+# pipes them, without printing them and with no trailing newline on a value, into
+#   ssh k3s-leader 'sudo k3s kubectl -n deploy create secret generic gocd-agent --from-env-file=/dev/stdin'
 # then applies this file (from the operator's machine):
 #   ssh k3s-leader 'sudo k3s kubectl apply -f -' < Infra/executor/agent.yaml
 # Without the Secret the Pod stays in CreateContainerConfigError, which is the intended failure.
+# Every start downloads the agent and its plugins from the GoCD server into the emptyDir below: about 6.5 minutes
+# over a relayed (DERP) tailnet path on 2026-11-12, so do not restart the Pod right before a demo.
 #
 # In: nothing (the agent dials the server). Out: cluster DNS, the leader's API, Traefik's Pods (the
 # Verify stage sends its test requests through Traefik), the GoCD server port inside the tailnet range,
