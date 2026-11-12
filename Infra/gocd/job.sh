@@ -6,7 +6,8 @@
 #   fetch-input            Build job only: work/deploy-input.json and work/slot from the platform server
 #   build                  Build stage; also writes work/deploy-input.built.json (the input with images filled)
 #   prepare | render | apply   the stage CLI, on the files the Build job published (work/, and out/slot.yaml for apply)
-#   notify <stage>         tell the platform server how the stage ended (runs after a pass and after a failure)
+#   notify <stage>         tell the platform server how the stage ended (runs after a pass and after a failure);
+#                          without the built CLI it sends STAGE_NO_REPORT with curl (notify_without_cli)
 # Every step stops at the first error. Nothing here prints the environment: PIPELINE_NOTIFY_TOKEN and the AWS key
 # are in it, and a job log is readable by everyone who can open GoCD.
 set -euo pipefail
@@ -26,8 +27,9 @@ notify_without_cli() {
   # The same rule as the CLI's: https, or http on this machine only (the token must not cross a network in clear).
   [[ $url =~ ^(https://[A-Za-z0-9.-]+(:[0-9]+)?|http://(127\.0\.0\.1|localhost)(:[0-9]+)?)/?$ ]] || { echo "PLATFORM_API_URL must look like https://api.stairnoworks.com" >&2; return 2; }
   [[ $DEPLOY_ID =~ ^[A-Za-z0-9-]+$ ]] || { echo "DEPLOY_ID has characters a deploy id does not have" >&2; return 2; }
-  body=$(printf '{"deployId":"%s","stage":"%s","result":"failed","failure":{"code":"STAGE_NO_REPORT","service":null,"message":"the %s stage left no readable report: setup failed, the notify CLI is not built"}}' "$DEPLOY_ID" "$stage" "$stage")
-  [[ $PIPELINE_NOTIFY_TOKEN != *[\"\\]* ]] || { echo "PIPELINE_NOTIFY_TOKEN has a quote or a backslash" >&2; return 2; }
+  # The token goes into curl's config syntax, so only the characters setup.sh accepts for it (no quote, backslash or newline).
+  [[ $PIPELINE_NOTIFY_TOKEN =~ ^[A-Za-z0-9._~+/=-]+$ ]] || { echo "PIPELINE_NOTIFY_TOKEN has characters a token does not have" >&2; return 2; }
+  body=$(printf '{"deployId":"%s","stage":"%s","result":"failed","failure":{"code":"STAGE_NO_REPORT","service":null,"message":"the %s stage left no readable report: the notify CLI is not built (setup or an earlier task failed)"}}' "$DEPLOY_ID" "$stage" "$stage")
   # `-K -` takes the header from stdin (printf is a builtin, so the token is in no argument list); `-H @-` fails with --retry too.
   # The answer goes to a file, not /dev/null: curl 8.5 fails a retry (error 23) when it cannot truncate its output.
   answer=$(mktemp)
@@ -35,7 +37,7 @@ notify_without_cli() {
     curl -sS -K - -o "$answer" -w '%{http_code}' --max-time 20 --retry 4 --retry-delay 5 --retry-connrefused \
     -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' --data-binary "$body" "${url%/}/api/pipeline/notify") || code=000
   rm -f "$answer"
-  echo "notified $stage failed (STAGE_NO_REPORT, the notify CLI is not built): HTTP $code"
+  echo "notify $stage failed (STAGE_NO_REPORT, the notify CLI is not built): HTTP $code"
   [[ $code == 2* ]]
 }
 

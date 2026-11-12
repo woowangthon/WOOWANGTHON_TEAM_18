@@ -78,8 +78,8 @@ done
 curl -fsS --max-time 5 "$url/go/api/v1/health" > /dev/null || { echo "no GoCD server answers at $url" >&2; exit 1; }
 
 # 1. Login. The password file is written first; the bcrypt hashes are made in a throwaway httpd container (stdin, not argv).
-hash() { printf '%s\n' "$2" | docker run --rm -i httpd:2.4.70-alpine htpasswd -niB "$1"; }
-{ hash "$admin" "$GOCD_ADMIN_PASSWORD"; hash "$be_user" "$be_password"; } |
+htpasswd_line() { printf '%s\n' "$2" | docker run --rm -i httpd:2.4.70-alpine htpasswd -niB "$1"; }
+{ htpasswd_line "$admin" "$GOCD_ADMIN_PASSWORD"; htpasswd_line "$be_user" "$be_password"; } |
   docker exec -i gocd-server sh -c "umask 077; cat > $password_file"
 code=$(api GET /go/api/admin/security/auth_configs/file 'v2')
 if [[ $code == 404 ]]; then
@@ -96,7 +96,7 @@ code=$(api GET /go/api/admin/security/auth_configs/file 'v2')
 [[ $code == 200 ]] || must "logging in as $admin" "$code"
 
 # 2. Rights. With no system administrator named, every user who can log in is one, so `admin` is named first. Then the group
-# `wcp` (where the pipeline is) gives `be` operate (schedule, cancel; it also lets it view) and no administration.
+# `wcp` (where the pipeline is) gives `be` view and operate (schedule, cancel) and no administration.
 code=$(api GET /go/api/admin/security/system_admins 'v2')
 [[ $code == 200 ]] || must "reading the system administrators" "$code"
 code=$(IF_MATCH=$(cat "$work/etag") api PUT /go/api/admin/security/system_admins 'v2' "{\"roles\":[],\"users\":[\"$admin\"]}")
