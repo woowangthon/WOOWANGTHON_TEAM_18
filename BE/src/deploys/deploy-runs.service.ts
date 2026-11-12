@@ -17,12 +17,14 @@ import {
   classifyFailure,
   type DeployStatus,
   type Failure,
+  MAX_TICKETS,
   nextStage,
   type Notice,
   publicUrl,
   type Stage,
   type StepKey,
   type StepState,
+  ticketCount,
   toFailure,
   validateNotice,
 } from './deploy-run.js'
@@ -164,8 +166,8 @@ export class DeployRunsService {
           { status: active.status },
           { status: 'failed', failure: { code: 'TIMED_OUT', stage: active.stage ?? 'build', service: null } },
         )
-        // 에이전트가 아직 그 티켓을 붙잡고 있을 수 있다. 멈추라고 알린다(받지 못해도 실행 기록은 이미 끝났다).
-        if (expired && active.status === 'fixing' && active.ticket_id) {
+        // 에이전트가 아직 그 티켓을 붙잡고 있을 수 있다(fixing, 또는 verified 뒤 다시 실행 중인 running). 멈추라고 알린다(받지 못해도 실행 기록은 이미 끝났다).
+        if (expired && active.ticket_id) {
           await this.agent.close(active.ticket_id, commitOf(active), 'stopped')
         }
       }
@@ -237,7 +239,10 @@ export class DeployRunsService {
     await this.store.setLiveSlot(run.slug, run.target_slot)
     // 주소는 이미 바뀌었다. 이전 슬롯을 못 내려도 배포는 성공이다.
     if (hadLive) await this.scaleDownSlot(run.slug, targetSlot(run.target_slot))
-    return this.store.updateRun(run.deploy_id, where, { status: 'succeeded', stage: null })
+    const done = await this.store.updateRun(run.deploy_id, where, { status: 'succeeded', stage: null })
+    // verified 뒤 다시 실행이 성공했다(api.md 5번). 받지 못해도 배포는 이미 끝났다.
+    if (done && run.ticket_id) await this.agent.close(run.ticket_id, commitOf(run), 'success')
+    return done
   }
 
   /**
@@ -261,7 +266,18 @@ export class DeployRunsService {
     const { failure } = notice
     const { code, callAgent } = classifyFailure(notice.stage, failure.platformCode)
     const stored = { code, stage: notice.stage, service: failure.service }
-    if (!callAgent) return this.store.updateRun(run.deploy_id, where, { status: 'failed', failure: stored })
+    if (!callAgent) {
+      const done = await this.store.updateRun(run.deploy_id, where, { status: 'failed', failure: stored })
+      // verified 뒤 다시 실행이 플랫폼 문제로 끝났다. 앞 티켓의 에이전트에 멈추라고 알린다.
+      if (done && run.ticket_id) await this.agent.close(run.ticket_id, commitOf(run), 'stopped')
+      return done
+    }
+    // 다시 실행이 또 실패했는데 티켓을 이미 실행 기록당 상한만큼 냈다: 새 티켓 없이 마감한다.
+    if (ticketCount(run) > MAX_TICKETS) {
+      const done = await this.store.updateRun(run.deploy_id, where, { status: 'failed', failure: { ...stored, code: 'AGENT_GAVE_UP' } })
+      if (done && run.ticket_id) await this.agent.close(run.ticket_id, commitOf(run), 'stopped')
+      return done
+    }
 
     // 티켓을 보내기 전에 상태를 먼저 바꾼다: 같은 알림이 겹쳐 와도 하나만 통과해 티켓이 두 번 가지 않는다.
     const ticketId = `t_${randomBytes(6).toString('hex')}`
@@ -275,6 +291,8 @@ export class DeployRunsService {
       gateway_expires_at: expiresAt.toISOString(),
     })
     if (!claimed) return false
+    // verified 뒤 다시 실행이 또 실패했다: 앞 티켓은 새 티켓으로 바뀐다(api.md 5번).
+    if (run.ticket_id) await this.agent.close(run.ticket_id, commitOf(run), 'superseded')
 
     // 여기부터 무엇이 던져도 "fixing"에 갇히지 않게 실패로 마감한다.
     let sent = false
@@ -313,7 +331,7 @@ export class DeployRunsService {
       errorMessage: redactString(failure.message),
       raw,
       logs,
-      previous: null,
+      previous: previousTicket(run),
     }) as Record<string, unknown>
 
     return this.agent.sendTicket({ ticket, gateway: { token: gatewayToken, expiresAt: expiresAt.toISOString() } })
@@ -327,6 +345,13 @@ const badNotice = (message: string, fields: { path: string; code: string }[]) =>
 
 // 에이전트가 시험 실행을 기다리는 티켓은 1시간 넘게 알림이 없어도 멈춘 것이 아니다. 토큰 만료(티켓 전체 상한 60분 안)가 지나면 평소대로 판정한다.
 const isWorkingTicket = (run: DeployRunRow) => run.status === 'fixing' && run.gateway_expires_at !== null && Date.parse(run.gateway_expires_at) > Date.now()
+
+/** 새 티켓의 `previous`: 이 실행 기록의 앞 티켓(verified 뒤 다시 실행이 실패했을 때). 없으면 null. */
+function previousTicket(run: DeployRunRow): { ticketId: string; status: string; summary: string } | null {
+  if (!run.ticket_id) return null
+  const r = run.agent_result
+  return { ticketId: run.ticket_id, status: typeof r?.status === 'string' ? r.status : 'stopped', summary: typeof r?.summary === 'string' ? r.summary : '' }
+}
 
 const commitOf = (run: DeployRunRow) => (run.input as { commitSha: string }).commitSha
 

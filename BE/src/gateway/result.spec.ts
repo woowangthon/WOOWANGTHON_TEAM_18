@@ -23,12 +23,16 @@ describe('checkResult', () => {
     ['needs_user', { status: 'needs_user', userRequest: { message: 'DATABASE_URL을 넣어 주세요', secretKeys: ['DATABASE_URL'] } }],
     ['pr_opened', { status: 'pr_opened', pr: { url: 'https://github.com/a/b/pull/1', files: ['a', 'b', 'c', 'd', 'e'], changedLines: 50 } }],
     ['null optional fields', { pr: null, userRequest: null, specPatch: null, buildOverrides: null, evidence: undefined }],
+    ['verified with an empty specPatch (only re-ran)', { status: 'verified', specPatch: [] }],
+    ['verified with a specPatch and buildOverrides', { status: 'verified', specPatch: [{ op: 'replace', path: '/spec/services/0/runtime/port', value: 8000 }], buildOverrides: { cache: false } }],
   ])('accepts %s', (_label, overrides) => {
     expect(message(overrides)).toBeNull()
   })
 
   it.each([
-    [{ status: 'verified', specPatch: [] }, /verified is not accepted yet/],
+    [{ status: 'verified' }, /verified requires specPatch/],
+    [{ status: 'verified', specPatch: {} }, /verified requires specPatch/],
+    [{ status: 'verified', specPatch: [], buildOverrides: [] }, /buildOverrides must be an object/],
     [{ specPatch: [{ op: 'replace' }] }, /specPatch/],
     [{ buildOverrides: {} }, /buildOverrides/],
     [{ status: 'done' }, /status/],

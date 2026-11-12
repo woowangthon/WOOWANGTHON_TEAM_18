@@ -282,20 +282,25 @@ describe('POST /api/deploys/:id/start', () => {
     expect(callsTo(GOCD_URL)).toHaveLength(2)
   })
 
-  it.each(['running', 'fixing'] as const)('frees the project when its %s run has not changed for over an hour (it ends as TIMED_OUT)', async (state) => {
+  it.each([
+    ['running', null],
+    ['running', 't_stale'],
+    ['fixing', 't_stale'],
+  ] as const)('frees the project when its %s run (ticket %s) has not changed for over an hour (it ends as TIMED_OUT)', async (state, ticket) => {
     const first = seedDeploy()
     await start(first)
     run(first).status = state
-    if (state === 'fixing') run(first).ticket_id = 't_stale'
+    // running + 티켓: verified 뒤 다시 실행 중이다(ticket_id는 종료 알림 때까지 남는다).
+    run(first).ticket_id = ticket
     run(first).updated_at = new Date(Date.now() - 61 * 60_000).toISOString()
     const res = await start(seedDeploy())
     expect(res.status).toBe(202)
     expect(run(first)).toMatchObject({ status: 'failed', failure: { code: 'TIMED_OUT', stage: 'build', service: null } })
     expect(callsTo(GOCD_URL)).toHaveLength(2)
-    // 고치던 실행이면 AI 서버에 티켓이 끝났다고 알린다(stopped).
+    // 티켓이 있던 실행이면(고치던 중, 또는 다시 실행 중) AI 서버에 티켓이 끝났다고 알린다(stopped).
     const closes = callsTo(CLOSE_URL)
-    expect(closes).toHaveLength(state === 'fixing' ? 1 : 0)
-    if (state === 'fixing') expect(bodyOf(closes[0])).toEqual({ ticketId: 't_stale', commitSha: SHA, reason: 'stopped' })
+    expect(closes).toHaveLength(ticket ? 1 : 0)
+    if (ticket) expect(bodyOf(closes[0])).toEqual({ ticketId: 't_stale', commitSha: SHA, reason: 'stopped' })
     expect(((await status(first)).body as StatusBody).failure?.code).toBe('TIMED_OUT')
   })
 
@@ -746,6 +751,8 @@ describe('POST /api/pipeline/notify', () => {
     expect(db.build_cache).toEqual(cached)
     expect(run(id)).toMatchObject({ status: 'succeeded', stage: null })
     expect((await status(id)).body).toMatchObject({ status: 'succeeded', url: 'https://my-app.stairnoworks.com' })
+    // 티켓 없이 성공한 실행이라 종료 알림이 없다.
+    expect(fetchMock.mock.calls.filter(([u]) => urlOf(u).endsWith('/close'))).toEqual([])
 
     // 같은 알림을 다시 받아도 아무것도 바뀌지 않는다.
     const resend = await notify({ deployId: id, stage: 'switch', result: 'passed' })
@@ -866,6 +873,7 @@ describe('POST /api/pipeline/notify', () => {
       expect(res.body).toEqual({ ok: true, applied: true })
       expect(run(id)).toMatchObject({ status: 'failed', stage, failure: { code, stage, service: 'be' }, ticket_id: null })
       expect(callsTo(AI_URL)).toHaveLength(0)
+      expect(fetchMock.mock.calls.filter(([u]) => urlOf(u).endsWith('/close'))).toEqual([])
       // 진행 중이 아니므로 같은 프로젝트의 다음 배포를 받는다.
       expect((await start(seedDeploy())).status).toBe(202)
     })
@@ -1007,6 +1015,54 @@ describe('POST /api/pipeline/notify', () => {
       const id = await reach('apply')
       expect((await notify({ deployId: id, stage: 'apply', result: 'failed', failure: failure() })).status).toBe(200)
       expect(run(id)).toMatchObject({ status: 'failed', failure: { code: 'AGENT_UNAVAILABLE' } })
+    })
+
+    describe('after a verified re-run (api.md 5: same run, the earlier ticket kept until it is closed)', () => {
+      const SUMMARY = 'be 포트를 8000으로 고쳐 대상 슬롯에서 확인했습니다'
+      // 다시 실행 중인 실행 기록: 앞 티켓 t_stale의 verified 결과(그 티켓이 몇 번째였는지)를 들고 running이다.
+      const rerun = async (stage: string, tickets = 1) => {
+        const id = await reach(stage)
+        Object.assign(run(id), { ticket_id: 't_stale', agent_result: { status: 'verified', summary: SUMMARY, tickets } })
+        return id
+      }
+      const closes = () => callsTo(CLOSE_URL).map(bodyOf)
+
+      it('closes the ticket with success once the re-run switched the address', async () => {
+        const id = await rerun('switch')
+        expect((await notify({ deployId: id, stage: 'switch', result: 'passed' })).body).toEqual({ ok: true, applied: true })
+        expect(run(id)).toMatchObject({ status: 'succeeded' })
+        expect(closes()).toEqual([{ ticketId: 't_stale', commitSha: SHA, reason: 'success' }])
+        // 같은 알림을 다시 받아도 다시 알리지 않는다.
+        await notify({ deployId: id, stage: 'switch', result: 'passed' })
+        expect(closes()).toHaveLength(1)
+      })
+
+      it('closes the ticket with stopped when the re-run ends on a platform problem, and sends no new ticket', async () => {
+        const id = await rerun('apply')
+        await notify({ deployId: id, stage: 'apply', result: 'failed', failure: failure({ code: 'IMAGE_PULL_FAILED' }) })
+        expect(run(id)).toMatchObject({ status: 'failed', failure: { code: 'IMAGE_PULL_FAILED' } })
+        expect(closes()).toEqual([{ ticketId: 't_stale', commitSha: SHA, reason: 'stopped' }])
+        expect(callsTo(AI_URL)).toHaveLength(0)
+      })
+
+      it('supersedes the earlier ticket with a new one whose previous is that verified ticket', async () => {
+        const id = await rerun('verify', 2)
+        await notify({ deployId: id, stage: 'verify', result: 'failed', failure: failure() })
+        expect(closes()).toEqual([{ ticketId: 't_stale', commitSha: SHA, reason: 'superseded' }])
+        const { ticket } = bodyOf(callsTo(AI_URL)[0])
+        expect(ticket).toMatchObject({ stage: 'verify', previous: { ticketId: 't_stale', status: 'verified', summary: SUMMARY } })
+        expect(ticket.ticketId).not.toBe('t_stale')
+        expect(run(id)).toMatchObject({ status: 'fixing', ticket_id: ticket.ticketId, failure: { code: 'VERIFY_FAILED' } })
+      })
+
+      it('ends as AGENT_GAVE_UP without a fourth ticket when the run already had three', async () => {
+        const id = await rerun('verify', 3)
+        expect((await notify({ deployId: id, stage: 'verify', result: 'failed', failure: failure() })).body).toEqual({ ok: true, applied: true })
+        expect(run(id)).toMatchObject({ status: 'failed', ticket_id: 't_stale', failure: { code: 'AGENT_GAVE_UP', stage: 'verify', service: 'be' } })
+        expect(callsTo(AI_URL)).toHaveLength(0)
+        expect(closes()).toEqual([{ ticketId: 't_stale', commitSha: SHA, reason: 'stopped' }])
+        expect(((await status(id)).body as StatusBody).failure?.code).toBe('AGENT_GAVE_UP')
+      })
     })
 
     it('ignores a failure for a run that already ended', async () => {

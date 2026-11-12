@@ -21,6 +21,7 @@ const updates: { where: unknown; patch: Record<string, unknown> }[] = []
 const fakeStore = {
   findRunByGatewayToken: (hash: string) => Promise.resolve(hash === run.gateway_token_hash ? run : undefined),
   findById: (id: string) => Promise.resolve(id === DEPLOY ? { id, repo: 'student/app', slug: 'my-app' } : undefined),
+  findRun: (id: string) => Promise.resolve(id === DEPLOY ? run : undefined),
   updateRun: (_id: string, where: { status?: string }, patch: Record<string, unknown>) => {
     updates.push({ where, patch })
     if (where.status && run.status !== where.status) return Promise.resolve(false)
@@ -226,6 +227,8 @@ describe('MCP gateway', () => {
             pr: null,
             evidence: [],
             classification: { method: 'code', caseId: 'A1', path: 'playbook' },
+            // 이 실행 기록의 첫 티켓(학생에게 보이는 칸이 아니다).
+            tickets: 1,
           },
           gateway_token_hash: null,
         },
@@ -261,7 +264,7 @@ describe('MCP gateway', () => {
   })
 
   it.each([
-    ['verified before the trial-run tools exist', { status: 'verified', specPatch: [] }],
+    ['verified without a specPatch', { status: 'verified' }],
     ['another commit', { commitSha: 'f'.repeat(40) }],
     ['another ticket', { ticketId: 't_other' }],
     ['needs_user without userRequest', { status: 'needs_user' }],

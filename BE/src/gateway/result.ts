@@ -1,14 +1,18 @@
 import { isRecord } from '../common/is-record.js'
 
 // `submit_result`의 해결 결과 검사(docs/design/AIagent.md §6). 모양이 다르면 INVALID_RESULT다.
-// `verified`는 F11b 전까지 받지 않는다: 실행 도구가 없어 대상 슬롯에서 확인한 적이 없기 때문이다.
+// `verified`의 specPatch가 이 티켓의 시험으로 확인된 것인지는 여기서 보지 않는다(게이트웨이가 시험 기록과 맞춰 본다, api.md 5번).
 
-export type AcceptedStatus = 'pr_opened' | 'needs_user' | 'gave_up'
+export type AcceptedStatus = 'verified' | 'pr_opened' | 'needs_user' | 'gave_up'
 
 export interface AgentResult {
   ticketId: string
   commitSha: string
   status: AcceptedStatus
+  /** verified일 때만: 확인한 시험의 JSON Patch(재실행만 했으면 빈 배열). */
+  specPatch?: unknown[] | null
+  /** verified일 때만: 기록용 CodeBuild override(그 빌드는 이미 통과했다). */
+  buildOverrides?: Record<string, unknown> | null
   classification: { method: 'code' | 'llm'; caseId: string | null; path: 'playbook' | 'replan_after_playbook' | 'plan' }
   actions: { tool: string; ok: boolean; args?: Record<string, unknown>; result?: string }[]
   pr?: { url?: string; files?: string[]; changedLines?: number } | null
@@ -32,8 +36,9 @@ function problem(r: Record<string, unknown>, ticket: { ticketId: string; commitS
   if (r.ticketId !== ticket.ticketId) return 'ticketId differs from the ticket'
   if (r.commitSha !== ticket.commitSha) return 'commitSha differs from the ticket'
   if (!isString(r.status) || !STATUSES.includes(r.status)) return 'status is not one of verified, pr_opened, needs_user, gave_up'
-  if (r.status === 'verified') return 'verified is not accepted yet: the gateway has no trial-run tools to confirm it on the target slot'
-  if (!absent(r.specPatch) || !absent(r.buildOverrides)) return 'specPatch and buildOverrides belong to a verified result'
+  if (r.status !== 'verified' && (!absent(r.specPatch) || !absent(r.buildOverrides))) return 'specPatch and buildOverrides belong to a verified result'
+  if (r.status === 'verified' && !Array.isArray(r.specPatch)) return 'status verified requires specPatch (an empty array if the trial only re-ran)'
+  if (!absent(r.buildOverrides) && !isRecord(r.buildOverrides)) return 'buildOverrides must be an object'
 
   const c = r.classification
   if (!isRecord(c) || (c.method !== 'code' && c.method !== 'llm') || !(c.caseId === null || isString(c.caseId)) || !PATHS.includes(c.path as string)) {

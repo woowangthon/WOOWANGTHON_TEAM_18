@@ -22,17 +22,21 @@ DEFAULTS: dict[str, Json] = {
         "logTail": [],
         "image": "ghcr.io/x@sha256:1",
     },
-    "run_render": {"ok": True, "status": None},
+    # 게이트웨이의 run_render · run_deploy · run_verify 결과에는 failure가 늘 있다
+    # (api.md "MCP 게이트웨이 — 도구").
+    "run_render": {"ok": True, "status": None, "failure": None},
     "run_deploy": {
         "ok": True,
         "services": [{"service": "be", "ready": True, "reason": None}],
         "pods": [],
         "events": [],
+        "failure": None,
     },
     "run_verify": {
         "ok": True,
         "ready": [{"service": "be", "ready": True}],
         "requests": [{"service": "be", "path": "/", "status": 200, "ms": 12, "error": None}],
+        "failure": None,
     },
     "get_target_status": {"pods": [], "events": [], "rollouts": []},
     "read_pod_logs": {"lines": ["Server listening on port 3000"]},
