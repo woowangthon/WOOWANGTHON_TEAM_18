@@ -5,7 +5,7 @@
 # It
 #   1. turns on login (file-based, two users: `admin` and `be`), so the API is no longer open,
 #   2. makes `admin` the only system administrator and gives `be` the operate right on the pipeline group `wcp` and nothing else,
-#   3. registers this repo as the config repo (Infra/gocd/*.gocd.yaml defines the pipeline),
+#   3. registers this repo as the config repo (Infra/gocd/*.gocd.yaml defines student-deploy and student-trial),
 #   4. creates the access token the platform server uses (BE env GOCD_TOKEN) as the user `be`, once,
 #   5. writes what the agents need.
 # The platform server's token must not be an administrator's: with the config repo's rights it could register a repo whose
@@ -130,13 +130,15 @@ else
   must "reading the config repo" "$code"
 fi
 
-# The pipeline appears when GoCD has read the YAML.
-found=
-for _ in $(seq 60); do
-  [[ $(api GET "/go/api/admin/pipelines/$pipeline" 'v11') == 200 ]] && { found=1; break; }
-  sleep 2
+# The pipelines appear when GoCD has read the YAML (the same config repo holds both: Infra/gocd/*.gocd.yaml).
+for name in "$pipeline" student-trial; do
+  found=
+  for _ in $(seq 60); do
+    [[ $(api GET "/go/api/admin/pipelines/$name" 'v11') == 200 ]] && { found=1; break; }
+    sleep 2
+  done
+  [[ -n $found ]] || { echo "the pipeline $name did not appear: look at the config repo's last parse in the GoCD UI (Admin > Config Repositories)" >&2; exit 1; }
 done
-[[ -n $found ]] || { echo "the pipeline $pipeline did not appear: look at the config repo's last parse in the GoCD UI (Admin > Config Repositories)" >&2; exit 1; }
 
 # 4. The access token for the platform server (as the user `be`), once: GoCD shows it only at creation.
 # A token file kept from an earlier server (its data volume made again) is not known here: check it, and make a new one if not.
@@ -151,7 +153,7 @@ if [[ -s $state/be-gocd-token ]]; then
   fi
 fi
 if [[ ! -s $state/be-gocd-token ]]; then
-  code=$(cred=$work/be.cfg api POST /go/api/current_user/access_tokens 'v1' '{"description":"wcp platform server (schedules student-deploy)"}')
+  code=$(cred=$work/be.cfg api POST /go/api/current_user/access_tokens 'v1' '{"description":"wcp platform server (schedules student-deploy and student-trial)"}')
   [[ $code == 200 || $code == 201 ]] || must "creating the access token" "$code"
   token=$(sed -n 's/.*"token" *: *"\([^"]*\)".*/\1/p' "$work/out" | head -1)
   [[ -n $token ]] || { echo "the answer had no token" >&2; exit 1; }

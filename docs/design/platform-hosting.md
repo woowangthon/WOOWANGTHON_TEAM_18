@@ -62,7 +62,7 @@ EC2 ── gocd-server (GoCD 26.1.0, JVM -Xmx1g, 8153은 Tailscale 주소에만 
 
 | 항목 | 값 |
 | --- | --- |
-| 파이프라인 정의 | [`Infra/gocd/student-deploy.gocd.yaml`](../../Infra/gocd/student-deploy.gocd.yaml). GoCD가 이 레포의 이 파일을 읽는다(설정 저장소). 파이프라인 `student-deploy`는 Build(aws) → Prepare → Render → Apply → Verify → Switch(leader)이고, commit이 올라와도 시작하지 않는다. 시작은 플랫폼 서버의 실행 요청뿐이다. Verify는 Traefik으로 동작 확인, Switch는 공개 주소 전환(open Ingress 적용과 남은 open Ingress · Middleware 정리)으로 CLI(#139)를 부른다. 이전 슬롯을 0개로 줄이는 일은 Switch가 하지 않고, 플랫폼 서버가 전환 성공 알림을 받아 `live_slot`을 바꾼 뒤 한다(W7) |
+| 파이프라인 정의 | [`Infra/gocd/student-deploy.gocd.yaml`](../../Infra/gocd/student-deploy.gocd.yaml). GoCD가 이 레포의 이 파일을 읽는다(설정 저장소). 파이프라인 `student-deploy`는 Build(aws) → Prepare → Render → Apply → Verify → Switch(leader)이고, commit이 올라와도 시작하지 않는다. 시작은 플랫폼 서버의 실행 요청뿐이다. Verify는 Traefik으로 동작 확인, Switch는 공개 주소 전환(open Ingress 적용과 남은 open Ingress · Middleware 정리)으로 CLI(#139)를 부른다. 이전 슬롯을 0개로 줄이는 일은 Switch가 하지 않고, 플랫폼 서버가 전환 성공 알림을 받아 `live_slot`을 바꾼 뒤 한다(W7). AI 에이전트의 시험은 같은 설정 저장소의 [`Infra/gocd/student-trial.gocd.yaml`](../../Infra/gocd/student-trial.gocd.yaml)(Build(aws) → Prepare → Render → Apply → Verify(leader), **Switch 없음**)이고, 게이트웨이가 `DEPLOY_ID` · `TRIAL_ID` · `TRIAL_STAGES`로 실행한다(api.md "파이프라인 ↔ 플랫폼 서버" 4번). `setup.sh`는 두 파이프라인이 모두 읽힐 때까지 기다린다 |
 | 올리기 | EC2에서 [`Infra/aws/start-gocd.sh`](../../Infra/aws/start-gocd.sh). SSM의 값을 읽어 서버를 띄우고, [`Infra/gocd/setup.sh`](../../Infra/gocd/setup.sh)가 GoCD API로 로그인(파일 방식, 사용자 `admin`과 `be`) · 권한 나누기(시스템 관리자는 `admin`뿐, `be`는 파이프라인 그룹 `wcp`의 operate만) · 설정 저장소 등록 · BE가 쓸 접근 토큰 발급을 하고, AWS 실행기를 띄운다. 새 서버는 로그인이 꺼진 채 뜨므로 `setup.sh`가 끝날 때까지 127.0.0.1에만 열고, 그 뒤 같은 데이터로 Tailscale 주소에 다시 띄운다. 다시 돌려도 없는 것만 한다 |
 | 설정값 | SSM `/wcp/gocd/<이름>`(SecureString, 한 줄): `ADMIN_PASSWORD`(16자 이상), `PIPELINE_NOTIFY_TOKEN`(BE의 같은 이름과 같은 값, 32자 이상), `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`(아래 실행기 전용 IAM 사용자). `AWS_REGION=ap-northeast-2`는 공개 값이라 compose에 있다 |
 | 인스턴스 역할 | 위 `/wcp/be` 권한에 `/wcp/gocd` 경로의 `ssm:GetParametersByPath`를 더한다(`kms:Decrypt`는 이미 있다). 컨테이너는 인스턴스 역할을 쓰지 못한다(IMDSv2 hop limit 1) |
@@ -77,6 +77,7 @@ EC2 ── gocd-server (GoCD 26.1.0, JVM -Xmx1g, 8153은 Tailscale 주소에만 
 | `GOCD_URL` | `http://<EC2의 Tailscale 주소>:8153`(끝에 `/` 없이) |
 | `GOCD_TOKEN` | `setup.sh`가 사용자 `be`로 만든 접근 토큰(operate만) |
 | `GOCD_PIPELINE` | `student-deploy` |
+| `GOCD_TRIAL_PIPELINE` | `student-trial`(AI 에이전트의 시험. 비워 두면 게이트웨이의 `run_*` 도구가 실패한다) |
 | `PIPELINE_NOTIFY_TOKEN` | 위 `/wcp/gocd/PIPELINE_NOTIFY_TOKEN`과 같은 값 |
 
 **콘솔에서 만들 AWS 리소스** (서울 `ap-northeast-2`, 이름은 파이프라인이 그대로 쓴다):
