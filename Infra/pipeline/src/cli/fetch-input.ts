@@ -4,8 +4,7 @@ import { setTimeout } from 'node:timers/promises'
 import { pathToFileURL } from 'node:url'
 import { required } from '../config.js'
 import { type FetchedInput, fetchInput, fetchTrialInput } from '../fetch-input.js'
-import { deployIdFromEnv, exitCodeOf, type PlatformConn, platformFromEnv, type Sleep } from '../platform-api.js'
-import { TRIAL_ID } from '../trial-report.js'
+import { deployIdFromEnv, exitCodeOf, type PlatformConn, platformFromEnv, type Sleep, TRIAL_ID } from '../platform-api.js'
 
 // GoCD Build job의 첫 task: `node dist/cli/fetch-input.js <출력 폴더>`. 환경: DEPLOY_ID(GoCD가 넣는다), PLATFORM_API_URL, PIPELINE_NOTIFY_TOKEN.
 // 출력 폴더에 deploy-input.json(응답의 `input`, 모양을 확인한 것)과 slot(대상 슬롯 `a` 또는 `b`, 줄바꿈 없음)을 쓴다.

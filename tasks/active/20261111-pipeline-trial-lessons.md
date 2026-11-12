@@ -6,6 +6,7 @@
 - 2026-11-11: Split A1/A2: the trial result messages must match #142's notify messages, so `trial-report` waits for #142 instead of copying its client and message rules.
 - 2026-11-11: Open question sent to coordination: a `run_build` whose service turns out `reuse` has no `run` service in the input, so the pipeline cannot tell which image to report; proposed that BE answers it without scheduling.
 - 2026-11-12: A1 merged (#148). A1b on team main 2feae58 (#142 · #141 · #150 merged). BE's `checkTrialResult` lived in `trials.ts` next to Nest imports, which the pipeline package cannot resolve, so it moved to `trial-result.ts` (same code, re-exported) and `trial-report.spec.ts` checks every body against it. run_build is not in BE yet (B3): its bodies are checked against the api.md tool table only.
+- 2026-11-12: #158 review follow-up (fix/trial-report-review): api.md §4 status line, a comment on why pipeline.yml watches two BE files, a passed report with a non-null failure is now a shape error (STAGE_NO_REPORT), and `TRIAL_ID` moved to `platform-api.ts` so `fetch-input` does not pull in the trial mapper.
 
 ## Lessons
 

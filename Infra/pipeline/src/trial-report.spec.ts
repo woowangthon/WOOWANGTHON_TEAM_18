@@ -64,6 +64,20 @@ describe('trialBodyFrom: once per trial', () => {
     expect(() => trialBodyFrom(RENDER, 'render', { ok: 'yes' }, deployInput())).toThrow('render report: has no boolean ok')
   })
 
+  it.each([
+    [DEPLOY, 'prepare'],
+    [DEPLOY, 'apply'],
+    [VERIFY, 'verify'],
+  ] as const)('refuses a passed report that carries a failure (%j at %s), even at a middle stage', (trial, stage) => {
+    const report = { ok: true, ready: [], requests: [], failure: { kind: 'platform', code: 'K8S_TIMEOUT', service: null, message: 'x' } }
+    expect(() => trialBodyFrom(trial, stage, report, deployInput())).toThrow(`${stage} report: is ok but has a failure`)
+  })
+
+  it('takes a passed report whose failure is null or absent', () => {
+    expect(trialBodyFrom(RENDER, 'render', { ok: true, failure: null }, deployInput())).not.toBeNull()
+    expect(trialBodyFrom(RENDER, 'render', { ok: true }, deployInput())).not.toBeNull()
+  })
+
   it('refuses a failed report without a failure of a known kind', () => {
     expect(() => trialBodyFrom(RENDER, 'render', { ok: false, failure: null }, deployInput())).toThrow('is not ok but has no failure of kind platform or student')
     expect(() => trialBodyFrom(RENDER, 'render', { ok: false, failure: { kind: 'other' } }, deployInput())).toThrow('is not ok but has no failure of kind platform or student')
