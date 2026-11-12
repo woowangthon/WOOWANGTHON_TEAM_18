@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # One step of a student-deploy job (Infra/gocd/student-deploy.gocd.yaml). GoCD runs it from the material checkout:
 #   bash Infra/gocd/job.sh <step> [stage]
+#   clean <stage>          the job's first task: remove this stage's own result files (see below)
 #   setup                  install and build Infra/pipeline
 #   fetch-input            Build job only: work/deploy-input.json and work/slot from the platform server
 #   build                  Build stage; also writes work/deploy-input.built.json (the input with images filled)
@@ -14,10 +15,22 @@ cd "$(dirname "$0")/../.."
 pipeline=Infra/pipeline
 cli() { node "$pipeline/dist/cli/$1.js" "${@:2}"; }
 slot() { cat work/slot; }
-# A result file left by an earlier run would be read by notify as this run's result, so the stage's own files go first.
-fresh() { rm -f -- "$@"; }
+
 
 case ${1:?usage: job.sh <step> [stage]} in
+  clean)
+    # A result file left by an earlier run would be read by notify (run_if any) as this run's result. This is the job's first
+    # task, so it runs before setup, fetch-input and the artifact fetch can fail. Only this stage's own files go: the ones
+    # fetched from an earlier stage (work/deploy-input.built.json, render's out/slot.yaml) are not touched here.
+    case ${2:?usage: job.sh clean <stage>} in
+      build) files=(work/build-report.json work/deploy-input.built.json) ;;
+      prepare) files=(out/prepare-report.json) ;;
+      render) files=(out/render-report.json out/slot.yaml out/open.yaml) ;;
+      apply) files=(out/apply-report.json) ;;
+      *) echo "unknown stage: $2" >&2; exit 2 ;;
+    esac
+    rm -f -- "${files[@]}"
+    ;;
   setup)
     export COREPACK_ENABLE_DOWNLOAD_PROMPT=0 CI=true
     cd "$pipeline"
@@ -33,7 +46,6 @@ case ${1:?usage: job.sh <step> [stage]} in
   build)
     # GoCD sets GO_REVISION_<material name>; the buildspec checks out the platform repo at this commit.
     export PLATFORM_COMMIT=${GO_REVISION_PLATFORM:?GO_REVISION_PLATFORM is not set}
-    fresh work/build-report.json work/deploy-input.built.json
     status=0
     cli build work/deploy-input.json work/build-report.json || status=$?
     # The report is there for a failed build too, and the notice needs it. Stage CLIs read the built input.
@@ -42,9 +54,9 @@ case ${1:?usage: job.sh <step> [stage]} in
     fi
     exit "$status"
     ;;
-  prepare) fresh out/prepare-report.json; cli prepare work/deploy-input.built.json "$(slot)" out ;;
-  render) fresh out/render-report.json out/slot.yaml out/open.yaml; cli render work/deploy-input.built.json "$(slot)" out ;;
-  apply) fresh out/apply-report.json; cli apply work/deploy-input.built.json "$(slot)" out/slot.yaml out ;;
+  prepare) cli prepare work/deploy-input.built.json "$(slot)" out ;;
+  render) cli render work/deploy-input.built.json "$(slot)" out ;;
+  apply) cli apply work/deploy-input.built.json "$(slot)" out/slot.yaml out ;;
   notify)
     stage=${2:?usage: job.sh notify <stage>}
     case $stage in

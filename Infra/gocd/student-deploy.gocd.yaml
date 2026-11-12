@@ -53,6 +53,10 @@ pipelines:
               tasks:
                 - exec:
                     command: bash
+                    arguments: [Infra/gocd/job.sh, clean, build]
+                    run_if: passed
+                - exec:
+                    command: bash
                     arguments: [Infra/gocd/job.sh, setup]
                     run_if: passed
                 - exec:
@@ -79,6 +83,10 @@ pipelines:
                     source: out
                     destination: ""
               tasks:
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, clean, prepare]
+                    run_if: passed
                 - fetch:
                     stage: build
                     job: build
@@ -109,6 +117,10 @@ pipelines:
                     source: out
                     destination: ""
               tasks:
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, clean, render]
+                    run_if: passed
                 - fetch:
                     stage: build
                     job: build
@@ -139,6 +151,10 @@ pipelines:
                     source: out
                     destination: ""
               tasks:
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, clean, apply]
+                    run_if: passed
                 - fetch:
                     stage: build
                     job: build
