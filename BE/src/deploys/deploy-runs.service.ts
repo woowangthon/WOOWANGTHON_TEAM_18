@@ -154,7 +154,7 @@ export class DeployRunsService {
     } catch (err) {
       if (!(err instanceof StoreConflict) || err.constraint.includes('deploy_runs_pkey')) throw err
       const active = await this.store.findActiveRun(row.slug)
-      if (active && Date.now() - Date.parse(active.updated_at) < STALE_RUN_MS) throw err
+      if (active && (Date.now() - Date.parse(active.updated_at) < STALE_RUN_MS || isWorkingTicket(active))) throw err
       if (active) {
         const expired = await this.store.updateRun(
           active.deploy_id,
@@ -320,6 +320,9 @@ const alreadyStarted = () => new ConflictException({ code: 'ALREADY_STARTED', me
 const inProgress = () => new ConflictException({ code: 'DEPLOY_IN_PROGRESS', message: 'Another deploy of this project is in progress' })
 const badNotice = (message: string, fields: { path: string; code: string }[]) =>
   new BadRequestException({ code: 'BAD_REQUEST', message, fields })
+
+// 에이전트가 시험 실행을 기다리는 티켓은 1시간 넘게 알림이 없어도 멈춘 것이 아니다. 토큰 만료(티켓 전체 상한 60분 안)가 지나면 평소대로 판정한다.
+const isWorkingTicket = (run: DeployRunRow) => run.status === 'fixing' && run.gateway_expires_at !== null && Date.parse(run.gateway_expires_at) > Date.now()
 
 const commitOf = (run: DeployRunRow) => (run.input as { commitSha: string }).commitSha
 

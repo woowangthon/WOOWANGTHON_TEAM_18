@@ -307,6 +307,19 @@ describe('POST /api/deploys/:id/start', () => {
     expect(run(first).status).toBe('running')
   })
 
+  it('does not free the project while its fixing run has a live gateway token (the agent may be waiting on a trial)', async () => {
+    const first = seedDeploy()
+    await start(first)
+    Object.assign(run(first), { status: 'fixing', ticket_id: 't_trial', gateway_expires_at: new Date(Date.now() + 10 * 60_000).toISOString() })
+    run(first).updated_at = new Date(Date.now() - 61 * 60_000).toISOString()
+    expect((await start(seedDeploy())).body).toEqual(errorBody('DEPLOY_IN_PROGRESS'))
+    expect(run(first).status).toBe('fixing')
+    // 토큰이 끝나면 평소대로 판정한다.
+    run(first).gateway_expires_at = new Date(Date.now() - 1000).toISOString()
+    expect((await start(seedDeploy())).status).toBe(202)
+    expect(run(first)).toMatchObject({ status: 'failed', failure: { code: 'TIMED_OUT' } })
+  })
+
   it('logs a failed clean-up instead of swallowing it when GoCD refuses and the run cannot be deleted', async () => {
     const id = seedDeploy()
     gocdAnswer = () => new Response('{}', { status: 500 })
