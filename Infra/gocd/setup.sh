@@ -101,7 +101,7 @@ code=$(api GET /go/api/admin/security/system_admins 'v2')
 [[ $code == 200 ]] || must "reading the system administrators" "$code"
 code=$(IF_MATCH=$(cat "$work/etag") api PUT /go/api/admin/security/system_admins 'v2' "{\"roles\":[],\"users\":[\"$admin\"]}")
 [[ $code == 200 ]] || must "naming the system administrator" "$code"
-group="{\"name\":\"wcp\",\"authorization\":{\"view\":{\"users\":[\"$be_user\"],\"roles\":[]},\"operate\":{\"users\":[\"$be_user\"],\"roles\":[]},\"admin\":{\"users\":[],\"roles\":[]}}}"
+group="{\"name\":\"wcp\",\"authorization\":{\"view\":{\"users\":[\"$be_user\"],\"roles\":[]},\"operate\":{\"users\":[\"$be_user\"],\"roles\":[]},\"admins\":{\"users\":[],\"roles\":[]}}}"
 code=$(api GET /go/api/admin/pipeline_groups/wcp 'v1')
 if [[ $code == 404 ]]; then
   code=$(api POST /go/api/admin/pipeline_groups 'v1' "$group")
@@ -117,7 +117,16 @@ if [[ $code == 404 ]]; then
     "{\"id\":\"$pipeline\",\"plugin_id\":\"yaml.config.plugin\",\"material\":{\"type\":\"git\",\"attributes\":{\"url\":\"$repo_url\",\"branch\":\"$repo_branch\",\"auto_update\":true}},\"configuration\":[{\"key\":\"file_pattern\",\"value\":\"Infra/gocd/*.gocd.yaml\"}],\"rules\":[{\"directive\":\"allow\",\"action\":\"refer\",\"type\":\"pipeline_group\",\"resource\":\"wcp\"}]}")
   [[ $code == 200 || $code == 201 ]] || must "registering the config repo" "$code"
   echo "config repo registered ($repo_url, $repo_branch)"
-elif [[ $code != 200 ]]; then
+elif [[ $code == 200 ]]; then
+  # A rerun with another CONFIG_REPO_URL or _BRANCH must not pass silently on the old repo (its pipeline may have the same name).
+  have_url=$(sed -n 's/.*"url" *: *"\([^"]*\)".*/\1/p' "$work/out" | head -1)
+  have_branch=$(sed -n 's/.*"branch" *: *"\([^"]*\)".*/\1/p' "$work/out" | head -1)
+  [[ $have_url == "$repo_url" && $have_branch == "$repo_branch" ]] || {
+    echo "the config repo $pipeline is already registered with $have_url ($have_branch), not $repo_url ($repo_branch):" >&2
+    echo "delete it in the GoCD UI (Admin > Config Repositories) and run this again" >&2
+    exit 1
+  }
+else
   must "reading the config repo" "$code"
 fi
 
@@ -130,6 +139,17 @@ done
 [[ -n $found ]] || { echo "the pipeline $pipeline did not appear: look at the config repo's last parse in the GoCD UI (Admin > Config Repositories)" >&2; exit 1; }
 
 # 4. The access token for the platform server (as the user `be`), once: GoCD shows it only at creation.
+# A token file kept from an earlier server (its data volume made again) is not known here: check it, and make a new one if not.
+if [[ -s $state/be-gocd-token ]]; then
+  printf 'header = "Authorization: bearer %s"\n' "$(head -1 "$state/be-gocd-token")" > "$work/token.cfg"
+  code=$(cred=$work/token.cfg api GET /go/api/current_user 'v1')
+  if [[ $code == 401 ]]; then
+    rm -f "$state/be-gocd-token"
+    echo "the token in $state/be-gocd-token is not this server's (new server data?): making a new one, replace SSM /wcp/be/GOCD_TOKEN"
+  elif [[ $code != 200 ]]; then
+    must "checking the existing access token" "$code"
+  fi
+fi
 if [[ ! -s $state/be-gocd-token ]]; then
   code=$(cred=$work/be.cfg api POST /go/api/current_user/access_tokens 'v1' '{"description":"wcp platform server (schedules student-deploy)"}')
   [[ $code == 200 || $code == 201 ]] || must "creating the access token" "$code"

@@ -4,9 +4,10 @@
 # starts a run. The material keeps GoCD's default polling because it is the same repo and branch as the config repo,
 # and GoCD refuses a material whose autoUpdate differs from the config repo's.
 #
-# Stages: Build on the AWS executor (resource aws, calls CodeBuild); Prepare, Render and Apply on the leader executor
-# (resource leader, Infra/executor/agent.yaml). Verify and Switch are not here yet: their CLIs are merged (#139), but the
-# stages are added in a follow-up PR (PR-E) together with the way out to Traefik their checks need.
+# Stages: Build on the AWS executor (resource aws, calls CodeBuild); Prepare, Render, Apply, Verify and Switch on the leader
+# executor (resource leader, Infra/executor/agent.yaml). Verify sends its test requests through Traefik (the executor's
+# NetworkPolicy allows it); Switch is the only stage that changes the public address. A failed stage stops the run, so
+# Switch never follows a failed Verify.
 #
 # Each job is `Infra/gocd/job.sh` steps: setup, the stage, then notify with run_if any. The Build job fetches the input
 # once; the later stages get it (and the images) from Build's `work/` artifact, so one run uses one input and one slot.
@@ -178,4 +179,78 @@ pipelines:
                 - exec:
                     command: bash
                     arguments: [Infra/gocd/job.sh, notify, apply]
+                    run_if: any
+      - verify:
+          clean_workspace: true
+          jobs:
+            verify:
+              timeout: 10
+              resources:
+                - leader
+              artifacts:
+                - build:
+                    source: out
+                    destination: ""
+              tasks:
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, clean, verify]
+                    run_if: passed
+                - fetch:
+                    stage: build
+                    job: build
+                    source: work
+                    destination: .
+                    run_if: passed
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, setup]
+                    run_if: passed
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, verify]
+                    run_if: passed
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, notify, verify]
+                    run_if: any
+      - switch:
+          clean_workspace: true
+          jobs:
+            switch:
+              timeout: 10
+              resources:
+                - leader
+              artifacts:
+                - build:
+                    source: out
+                    destination: ""
+              tasks:
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, clean, switch]
+                    run_if: passed
+                - fetch:
+                    stage: build
+                    job: build
+                    source: work
+                    destination: .
+                    run_if: passed
+                - fetch:
+                    stage: render
+                    job: render
+                    source: out
+                    destination: .
+                    run_if: passed
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, setup]
+                    run_if: passed
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, switch]
+                    run_if: passed
+                - exec:
+                    command: bash
+                    arguments: [Infra/gocd/job.sh, notify, switch]
                     run_if: any

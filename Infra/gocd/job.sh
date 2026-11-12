@@ -5,7 +5,8 @@
 #   setup                  install and build Infra/pipeline
 #   fetch-input            Build job only: work/deploy-input.json and work/slot from the platform server
 #   build                  Build stage; also writes work/deploy-input.built.json (the input with images filled)
-#   prepare | render | apply   the stage CLI, on the files the Build job published (work/, and out/slot.yaml for apply)
+#   prepare | render | apply | verify | switch   the stage CLI, on the files the Build job published (work/), and for apply
+#                          Render's out/slot.yaml, for switch Render's out/open.yaml
 #   notify <stage>         tell the platform server how the stage ended (runs after a pass and after a failure);
 #                          without the built CLI it sends STAGE_NO_REPORT with curl (notify_without_cli)
 # Every step stops at the first error. Nothing here prints the environment: PIPELINE_NOTIFY_TOKEN and the AWS key
@@ -52,6 +53,8 @@ case ${1:?usage: job.sh <step> [stage]} in
       prepare) files=(out/prepare-report.json) ;;
       render) files=(out/render-report.json out/slot.yaml out/open.yaml) ;;
       apply) files=(out/apply-report.json) ;;
+      verify) files=(out/verify-report.json) ;;
+      switch) files=(out/switch-report.json) ;;
       *) echo "unknown stage: $2" >&2; exit 2 ;;
     esac
     rm -f -- "${files[@]}"
@@ -82,6 +85,9 @@ case ${1:?usage: job.sh <step> [stage]} in
   prepare) cli prepare work/deploy-input.built.json "$(slot)" out ;;
   render) cli render work/deploy-input.built.json "$(slot)" out ;;
   apply) cli apply work/deploy-input.built.json "$(slot)" out/slot.yaml out ;;
+  verify) cli verify work/deploy-input.built.json "$(slot)" out ;;
+  # With no public service Render writes no open.yaml and the CLI deletes the open Ingresses; with one it fails on its own.
+  switch) cli switch work/deploy-input.built.json "$(slot)" out/open.yaml out ;;
   notify)
     stage=${2:?usage: job.sh notify <stage>}
     case $stage in

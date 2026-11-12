@@ -8,6 +8,7 @@
 #   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY   the executor-only IAM user wcp-gocd-aws-agent (CodeBuild only)
 #   TAILNET_ADDR            optional: this EC2's Tailscale address; defaults to `tailscale ip -4`
 # The server port is bound to that Tailscale address only, so nothing outside the tailnet reaches it (ADR-009, #128).
+# A new server has no login, so it first listens on 127.0.0.1 only; it is published on the tailnet after setup.sh turned login on.
 # What it leaves for the operator (files in $STATE, mode 0600, never printed):
 #   be-gocd-token      -> SSM /wcp/be/GOCD_TOKEN  (aws ssm put-parameter --type SecureString --value file://...)
 #   leader-agent.env   -> the leader's Secret `gocd-agent` (Infra/executor/agent.yaml header)
@@ -37,12 +38,13 @@ unset ADMIN_PASSWORD
 export GOCD_STATE=$state
 export GOCD_TAILNET_ADDR=${TAILNET_ADDR:-$(tailscale ip -4 2>/dev/null | head -1)}
 [[ -n $GOCD_TAILNET_ADDR ]] || { echo "no Tailscale address: bring Tailscale up or set TAILNET_ADDR" >&2; exit 1; }
-export GOCD_BIND=$GOCD_TAILNET_ADDR
-# The port is published on the Tailscale address only, so setup.sh must call that address (not 127.0.0.1).
-export GOCD_URL=http://$GOCD_BIND:8153
 
+# Loopback until login is on (setup.sh step 1 and everything after it), then the same container data on the Tailscale address.
+GOCD_BIND=127.0.0.1 "${compose[@]}" up -d gocd-server
+GOCD_URL=http://127.0.0.1:8153 bash Infra/gocd/setup.sh
+# Exported: the agent's `up` below also brings up gocd-server (depends_on) and must keep this binding.
+export GOCD_BIND=$GOCD_TAILNET_ADDR
 "${compose[@]}" up -d gocd-server
-bash Infra/gocd/setup.sh
 "${compose[@]}" --profile agents up -d --build aws-agent
 
 # The agent registers by itself (Agents page of the GoCD UI over the tailnet: resource aws).
