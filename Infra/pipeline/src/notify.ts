@@ -17,6 +17,7 @@ export function parseStage(v: string | undefined): NotifyStage {
 
 type Raw = Record<string, unknown>
 
+// `type`이다(interface가 아니다): `refusal`이 `Record<string, unknown>`으로 읽는다.
 type FailureBody = {
   code: string | null
   service: string | null
@@ -79,8 +80,7 @@ const isAwareTime = (v: unknown) => isString(v) && AWARE_DATETIME.test(v) && !Nu
 
 // 문제 티켓으로 가는 실패(BE `checkEvidence`)의 raw · logs. stage별: build는 CodeBuild 원본, 그 밖은 k3s 원본이고 status는 render일 때만 있다.
 function evidenceProblem(stage: NotifyStage, f: Record<string, unknown>): string | null {
-  const raw = f.raw ?? {}
-  if (!isRecord(raw)) return 'failure.raw is not an object'
+  const raw: Record<string, unknown> = isRecord(f.raw) ? f.raw : {}
   if (stage === 'build') {
     if (!isRecord(raw.codebuild)) return 'failure.raw.codebuild is not an object'
     if (raw.k8s != null) return 'failure.raw.k8s must be null on a build'
@@ -90,10 +90,7 @@ function evidenceProblem(stage: NotifyStage, f: Record<string, unknown>): string
     if (!isRecord(k8s)) return 'failure.raw.k8s is not an object'
     if (k8s.pod != null && !isRecord(k8s.pod)) return 'failure.raw.k8s.pod is not an object'
     if (k8s.events != null && !(Array.isArray(k8s.events) && k8s.events.every(isRecord))) return 'failure.raw.k8s.events is not a list of objects'
-    const status = k8s.status ?? null
-    if (status !== null && !isRecord(status)) return 'failure.raw.k8s.status is not an object'
-    if (stage === 'render' && status === null) return 'failure.raw.k8s.status is missing on a render'
-    if (stage !== 'render' && status !== null) return 'failure.raw.k8s.status must be null unless render'
+    if (stage === 'render' ? !isRecord(k8s.status) : k8s.status != null) return 'failure.raw.k8s.status is an object only on a render'
   }
   const logs = f.logs
   if (logs == null) return null
