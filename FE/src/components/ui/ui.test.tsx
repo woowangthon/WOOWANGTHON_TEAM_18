@@ -287,6 +287,9 @@ it('Tabs are a tablist: the active tab is selected and the only one in the Tab o
   expect(document.activeElement).toBe(on)
   fireEvent.keyDown(on, { key: 'ArrowLeft' })
   expect(document.activeElement).toBe(last)
+  // Alt+← 같은 브라우저 단축키는 탭 이동으로 가로채지 않는다.
+  fireEvent.keyDown(last, { key: 'ArrowLeft', altKey: true })
+  expect(document.activeElement).toBe(last)
 })
 
 it('Spinner is a named status', () => {
@@ -335,6 +338,23 @@ it('Steps list every step with its state in text and mark the running one as the
   expect(items[0].getAttribute('aria-current')).toBeNull()
 })
 
+it('Steps show waiting and failed states in text and by shape, not by color alone', () => {
+  render(
+    <Steps
+      aria-label="배포 단계"
+      steps={[
+        { label: '비밀값', state: 'wait' },
+        { label: '빌드', state: 'fail' },
+      ]}
+    />,
+  )
+  const [wait, fail] = screen.getAllByRole('listitem')
+  expect(wait.textContent).toContain('입력 대기')
+  expect(wait.querySelector('.border-dashed')).toBeTruthy()
+  expect(fail.textContent).toContain('실패')
+  expect(fail.querySelector('svg')).toBeTruthy()
+})
+
 it('Meter exposes its value and clamps the bar to 0–100%', () => {
   const { rerender } = render(<Meter value={60} aria-label="사용량" />)
   const m = screen.getByRole('progressbar', { name: '사용량' })
@@ -342,6 +362,8 @@ it('Meter exposes its value and clamps the bar to 0–100%', () => {
   expect((m.firstElementChild as HTMLElement).style.width).toBe('60%')
   rerender(<Meter value={250} max={100} aria-label="사용량" />)
   expect((screen.getByRole('progressbar').firstElementChild as HTMLElement).style.width).toBe('100%')
+  expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('100')
   rerender(<Meter value={-5} aria-label="사용량" />)
   expect((screen.getByRole('progressbar').firstElementChild as HTMLElement).style.width).toBe('0%')
+  expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('0')
 })

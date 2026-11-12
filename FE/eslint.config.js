@@ -6,10 +6,10 @@ import reactRefresh from 'eslint-plugin-react-refresh'
 import globals from 'globals'
 import tseslint from 'typescript-eslint'
 
-// selectors를 주면 기본 목록이 통째로 바뀐다. className과, 변종을 담는 variants 객체의 값을 검사한다.
+// selectors를 주면 기본 목록이 통째로 바뀐다. className과, 변종을 담는 variants · sizes 객체의 값을 검사한다.
 const tailwindSelectors = [
   { kind: 'attribute', name: '^className$' },
-  { kind: 'variable', name: '^variants$', match: [{ type: 'objectValues' }] },
+  { kind: 'variable', name: '^(variants|sizes)$', match: [{ type: 'objectValues' }] },
 ]
 
 export default tseslint.config(

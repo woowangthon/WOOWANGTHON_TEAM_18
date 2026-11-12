@@ -19,6 +19,8 @@ export function Tabs({
 
 // 방향키는 탭(버튼)이 받아 같은 tablist 안의 형제 탭으로 초점을 옮긴다.
 function moveFocus(e: KeyboardEvent<HTMLButtonElement>) {
+  // Alt+← (뒤로 가기) 같은 브라우저 단축키는 막지 않는다.
+  if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return
   const keys = ['ArrowLeft', 'ArrowRight', 'Home', 'End']
   if (!keys.includes(e.key)) return
   const list = e.currentTarget.closest('[role="tablist"]')

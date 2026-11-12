@@ -18,6 +18,7 @@ function AppLayout() {
   const [signOutFailedAt, setSignOutFailedAt] = useState<string | null>(null)
 
   if (state.status !== 'signedIn') return null
+  const admin = isAdmin(state.session)
 
   async function handleSignOut() {
     setSignOutFailedAt(null)
@@ -32,11 +33,11 @@ function AppLayout() {
     <>
       <header className="border-b border-line bg-bg">
         <div className="mx-auto flex min-h-16 max-w-300 flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 sm:px-8">
-          <div className="flex flex-wrap items-stretch gap-x-8">
+          <div className="flex flex-wrap items-stretch gap-x-8 self-stretch">
             <Link to="/dashboard" className="flex items-center py-2">
-              {/* 임시: 로고 PNG가 흰 배경이라 다크에서는 밝은 칩 위에 올린다. 투명 배경 로고가 생기면 칩을 뺀다. */}
+              {/* 임시: 로고가 흰 배경이라 다크에서는 밝은 칩 위에 올린다. 투명 배경 로고가 생기면 칩을 뺀다. */}
               <img
-                src="/logo.png"
+                src="/logo.svg"
                 alt="WCP"
                 className="size-10 rounded-md object-contain dark:bg-fg dark:p-0.5"
               />
@@ -49,12 +50,12 @@ function AppLayout() {
                 프로필
               </NavLink>
               {/* 관리자는 모니터링 계정이라 배포 메뉴를 숨긴다(편의일 뿐, 서버는 막지 않는다). */}
-              {!isAdmin(state.session) && (
+              {!admin && (
                 <NavLink to="/deploys" className={navLinkClass}>
                   내 배포
                 </NavLink>
               )}
-              {isAdmin(state.session) && (
+              {admin && (
                 <NavLink to="/admin" className={navLinkClass}>
                   관리자
                 </NavLink>
