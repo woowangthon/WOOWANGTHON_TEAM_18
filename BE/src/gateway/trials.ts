@@ -103,6 +103,7 @@ export class GatewayTrials implements OnApplicationBootstrap {
     if (!(await this.leftovers) || !(await this.previousEnded(ticket.slug))) {
       return { failure: { stage: null, code: 'TRIAL_STILL_RUNNING', message: 'an earlier trial of this project could not be confirmed stopped' } }
     }
+    // 위의 await 사이에 티켓이 끝났을 수 있다. 이 확인과 등록 사이에는 await가 없다.
     if (this.closed.has(ticket.ticketId)) return closedFailure()
     const id = `tr_${randomBytes(6).toString('hex')}`
     let finish!: (o: TrialOutcome) => void
@@ -110,8 +111,6 @@ export class GatewayTrials implements OnApplicationBootstrap {
       finish = resolve
     })
     const trial: Trial = { id, deployId: ticket.deployId, ticketId: ticket.ticketId, slug: ticket.slug, slot: ticket.targetSlot, tool, input, counter: null, state: 'waiting', finish }
-    // 위의 await 사이에 티켓이 끝났을 수 있다. 등록과 확인 사이에는 await가 없다.
-    if (this.closed.has(ticket.ticketId)) return closedFailure()
     this.trials.set(id, trial)
     try {
       await this.pipeline.runTrial(ticket.deployId, id, STAGES[tool])

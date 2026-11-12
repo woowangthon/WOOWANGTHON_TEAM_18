@@ -184,6 +184,24 @@ describe('MCP gateway trial tools', () => {
     await client.close()
   })
 
+  it('does not run the trial when the ticket ended before the wait could start (the expiry could not be raised)', async () => {
+    const client = await connect()
+    // 토큰 확인 뒤, 만료를 늘리기 전에 티켓이 끝난다(다른 호출이 결과를 냈다).
+    const lookup = fakeStore.findLastSucceededRun
+    fakeStore.findLastSucceededRun = () => {
+      run.status = 'needs_user'
+      return Promise.resolve(undefined)
+    }
+    try {
+      expect(rejected(await call(client, 'run_render'))).toMatchObject({ code: 'TICKET_CLOSED' })
+    } finally {
+      fakeStore.findLastSucceededRun = lookup
+    }
+    expect(scheduled).toEqual([])
+    expect(expiries).toEqual([])
+    await client.close()
+  })
+
   it('does not extend past the stored expiry for a ticket the previous process handled (BE restarted)', async () => {
     run.updated_at = '2026-11-11T00:00:00Z'
     const before = Date.parse(run.gateway_expires_at!)
