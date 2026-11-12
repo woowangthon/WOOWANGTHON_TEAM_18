@@ -124,10 +124,10 @@ const result = (overrides: Record<string, unknown> = {}) => ({
 })
 
 describe('MCP gateway', () => {
-  it('lists the observation tools, the trial tools without run_build, and submit_result', async () => {
+  it('lists the observation tools, the four trial tools and submit_result', async () => {
     const client = await connect()
     const { tools } = await client.listTools()
-    expect(tools.map((t) => t.name)).toEqual(['get_target_status', 'read_pod_logs', 'read_repo', 'run_render', 'run_deploy', 'run_verify', 'submit_result'])
+    expect(tools.map((t) => t.name)).toEqual(['get_target_status', 'read_pod_logs', 'read_repo', 'run_build', 'run_render', 'run_deploy', 'run_verify', 'submit_result'])
     await client.close()
   })
 
