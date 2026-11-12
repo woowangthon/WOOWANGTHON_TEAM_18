@@ -187,5 +187,29 @@
       { "tool": "run_verify" },
       { "tool": "submit_result", "when": "DB 연결 실패 · 비밀값 문제면 needs_user로" }
     ]
+  },
+  {
+    "caseId": "V1", "stage": "verify", "category": "repo",
+    "title": "정적 파일 404 (Vite base · outputDir 경로)",
+    "match": { "path": "errorMessage", "regex": "(?i)(?:/assets/|\\.(?:m?js|css|map|png|jpe?g|gif|svg|ico|webp|woff2?|ttf))\\S*.*\\b404\\b|\\b404\\b.*(?:/assets/|\\.(?:m?js|css|map|png|jpe?g|gif|svg|ico|webp|woff2?|ttf)\\b)" },
+    "playbook": [
+      { "tool": "read_repo", "args": { "path": "." } },
+      { "tool": "read_repo", "when": "Vite 프로젝트면 설정 파일을 읽어 base를 본다", "args": { "path": "vite.config.ts" } },
+      { "tool": "run_build", "when": "빌드 결과 폴더가 spec의 outputDir과 다를 때", "args": { "specPatch": [{ "op": "replace", "path": "/spec/services/{i}/build/outputDir", "value": "{outputDir}" }] } },
+      { "tool": "run_deploy", "args": { "specPatch": "앞 단계와 같음" } },
+      { "tool": "run_verify" },
+      { "tool": "submit_result", "when": "레포 파일(vite.config의 base 등)을 고쳐야 하면, 수정 PR 도구가 준비되기 전에는 needs_user로 고칠 파일 · 값을 알린다" }
+    ]
+  },
+  {
+    "caseId": "V2", "stage": "verify", "category": "spec",
+    "title": "API 경로 404 (stripPrefix · ingressPath · health.path)",
+    "match": { "path": "errorMessage", "regex": "(?i)/(?:api|healthz?|readyz?|livez?)(?=[/?#\\s]|$)\\S*.*\\b404\\b|\\b404\\b.*/(?:api|healthz?|readyz?|livez?)(?=[/?#\\s]|$)" },
+    "playbook": [
+      { "tool": "read_pod_logs", "args": { "lines": 100 } },
+      { "tool": "read_repo", "when": "앱이 받는 경로(라우터 prefix)를 확인한다", "args": { "path": "." } },
+      { "tool": "run_deploy", "when": "앱이 prefix 없이 받으면 stripPrefix를 켜고, 헬스체크 경로가 다르면 health.path를 고친다", "args": { "specPatch": [{ "op": "replace", "path": "/spec/services/{i}/runtime/stripPrefix", "value": "{stripPrefix}" }] } },
+      { "tool": "run_verify" }
+    ]
   }
 ]

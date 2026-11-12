@@ -35,6 +35,7 @@ import { SecretsService } from './secrets.service.js'
     // 공간 확인 → Secret 쓰기. 클러스터 설정이 없으면 쓸 때 503 CLUSTER_UNAVAILABLE이다.
     { provide: SecretWriter, useClass: ClusterSecretWriter },
   ],
-  exports: [DeployConditionService],
+  // 게이트웨이(src/gateway)가 실행 기록 · AI 서버 연결을 같이 쓴다.
+  exports: [DeployConditionService, DeploysStore, AgentClient],
 })
 export class DeploysModule {}

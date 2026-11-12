@@ -15,6 +15,7 @@ const HASH_KEY = process.env.SECRET_HASH_KEY ?? ''
 const REST = 'https://test.supabase.co/rest/v1/'
 const GOCD_URL = 'https://gocd.test/go/api/pipelines/student-deploy/schedule'
 const AI_URL = 'https://ai.test/agent/tickets'
+const CLOSE_URL = `${AI_URL}/t_stale/close`
 const NOTIFY_TOKEN = 'pipeline_notify_test_0123456789abcdef'
 const SHA = '0123456789abcdef0123456789abcdef01234567'
 const USER = '11111111-1111-4111-8111-111111111111'
@@ -106,6 +107,7 @@ const fetchMock = vi.fn<typeof fetch>((input, init) => {
   if (url.startsWith(REST)) return Promise.resolve().then(() => rest(new URL(url), init))
   if (url === GOCD_URL) return Promise.resolve().then(() => gocdAnswer())
   if (url === AI_URL) return Promise.resolve().then(() => aiAnswer())
+  if (url === CLOSE_URL) return Promise.resolve(new Response(null, { status: 204 }))
   return Promise.reject(new Error(`unexpected fetch ${url}`))
 })
 const callsTo = (url: string) => fetchMock.mock.calls.filter(([u]) => urlOf(u) === url)
@@ -260,11 +262,16 @@ describe('POST /api/deploys/:id/start', () => {
     const first = seedDeploy()
     await start(first)
     run(first).status = state
+    if (state === 'fixing') run(first).ticket_id = 't_stale'
     run(first).updated_at = new Date(Date.now() - 61 * 60_000).toISOString()
     const res = await start(seedDeploy())
     expect(res.status).toBe(202)
     expect(run(first)).toMatchObject({ status: 'failed', failure: { code: 'TIMED_OUT', stage: 'build', service: null } })
     expect(callsTo(GOCD_URL)).toHaveLength(2)
+    // 고치던 실행이면 AI 서버에 티켓이 끝났다고 알린다(stopped).
+    const closes = callsTo(CLOSE_URL)
+    expect(closes).toHaveLength(state === 'fixing' ? 1 : 0)
+    if (state === 'fixing') expect(bodyOf(closes[0])).toEqual({ ticketId: 't_stale', commitSha: SHA, reason: 'stopped' })
     expect(((await status(first)).body as StatusBody).failure?.code).toBe('TIMED_OUT')
   })
 
@@ -407,9 +414,46 @@ describe('GET /api/deploys/:id/status', () => {
         { key: 'done', state: 'pending' },
       ],
       failure: null,
+      agent: null,
       url: null,
       warnings: [],
       updatedAt: '2026-11-11T01:00:00.000Z',
+    })
+  })
+
+  it('shows the AI agent result the gateway stored, and only its student-facing fields', async () => {
+    const id = seedDeploy()
+    await start(id)
+    Object.assign(run(id), {
+      status: 'needs_user',
+      agent_result: {
+        status: 'needs_user',
+        summary: 'DATABASE_URL이 비어 있어 서버가 뜨지 않습니다.',
+        userRequest: { message: 'DATABASE_URL을 다시 넣어 주세요.', secretKeys: ['DATABASE_URL'] },
+        pr: null,
+        evidence: [{ ref: 'pod-logs', text: 'Error: DATABASE_URL is not set' }, { text: 'no ref' }],
+        classification: { method: 'code', caseId: 'A3', path: 'playbook' },
+      },
+    })
+    const { agent } = (await status(id)).body as { agent: unknown }
+    expect(agent).toEqual({
+      status: 'needs_user',
+      summary: 'DATABASE_URL이 비어 있어 서버가 뜨지 않습니다.',
+      userRequest: { message: 'DATABASE_URL을 다시 넣어 주세요.', secretKeys: ['DATABASE_URL'] },
+      prUrl: null,
+      evidence: [
+        { ref: 'pod-logs', text: 'Error: DATABASE_URL is not set' },
+        { ref: null, text: 'no ref' },
+      ],
+    })
+
+    run(id).agent_result = { status: 'pr_opened', summary: 'PR을 열었습니다.', pr: { url: 'https://github.com/student/app/pull/3' } }
+    expect(((await status(id)).body as { agent: unknown }).agent).toEqual({
+      status: 'pr_opened',
+      summary: 'PR을 열었습니다.',
+      userRequest: null,
+      prUrl: 'https://github.com/student/app/pull/3',
+      evidence: [],
     })
   })
 

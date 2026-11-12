@@ -31,7 +31,7 @@ export type NoticeBody =
 
 // BE가 플랫폼 문제 코드로 받는 모양(`^[A-Za-z][A-Za-z0-9_]{2,63}$`)과, BE가 스스로 정하는 코드(파이프라인이 보내면 AI를 건너뛰게 되어 거절한다).
 const PLATFORM_CODE = /^[A-Za-z][A-Za-z0-9_]{2,63}$/
-export const BE_OWN_CODES = ['BUILD_FAILED', 'DEPLOY_FAILED', 'VERIFY_FAILED', 'SWITCH_FAILED', 'AGENT_UNAVAILABLE', 'TIMED_OUT']
+export const BE_OWN_CODES = ['BUILD_FAILED', 'DEPLOY_FAILED', 'VERIFY_FAILED', 'SWITCH_FAILED', 'AGENT_UNAVAILABLE', 'AGENT_GAVE_UP', 'TIMED_OUT']
 /** 쓸 수 없는 코드의 대신. `null`로 보내면 학생 문제로 읽혀 AI 에이전트에 넘어가므로 플랫폼 문제로 남겨 둔다(원래 코드는 message에 있다). */
 export const FALLBACK_CODE = 'PIPELINE_FAILED'
 
@@ -95,7 +95,7 @@ export function noticeFrom(deployId: string, stage: NotifyStage, report: unknown
       return { ...base, result: 'passed', images }
     }
     const failures = Array.isArray(report.failures) ? (report.failures as unknown[]) : []
-    if (!failures.every((f) => isRecord(f) && (f.kind === 'platform' || f.kind === 'build'))) throw fail('has a failure that is neither platform nor build')
+    if (!failures.every((f) => isRecord(f) && (f.kind === 'platform' || f.kind === 'build') && typeof f.service === 'string')) throw fail('has a failure that is neither platform nor build')
     const picked = pickFailure(failures as BuildFailure[])
     if (picked === undefined) throw fail('is not ok but lists no failure')
     return { ...base, result: 'failed', failure: buildFailure(picked, now) }
@@ -104,6 +104,9 @@ export function noticeFrom(deployId: string, stage: NotifyStage, report: unknown
   if (report.ok) return { ...base, result: 'passed' }
   const f = report.failure
   if (!isRecord(f) || (f.kind !== 'platform' && f.kind !== 'student')) throw fail('is not ok but has no failure of kind platform or student')
+  // BE가 400으로 거절할 칸(문자열이 아닌 service, 객체가 아닌 events 원소)은 여기서 걸러 STAGE_NO_REPORT로 알린다: 400은 다시 보내지지 않아 배포가 멈춘다.
+  if (f.service != null && typeof f.service !== 'string') throw fail('failure.service is not a string')
+  if (f.kind === 'student' && isRecord(f.raw) && Array.isArray(f.raw.events) && !f.raw.events.every(isRecord)) throw fail('failure.raw.events has an item that is not an object')
   return { ...base, result: 'failed', failure: f.kind === 'platform' ? platformFailure(String(f.code), (f.service as string | null) ?? null, String(f.message)) : k8sFailure(stage, f as Extract<StageFailure, { kind: 'student' }>) }
 }
 

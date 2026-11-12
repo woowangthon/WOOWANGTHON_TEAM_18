@@ -157,7 +157,7 @@ describe('platform failure codes', () => {
     expect(codeOf(code)).toMatchObject({ code, message: 'StartBuild throttled' })
   })
 
-  it.each(['Bad.Code', 'ab', '1ABC', 'has space', 'A'.repeat(65), 'BUILD_FAILED', 'DEPLOY_FAILED', 'VERIFY_FAILED', 'SWITCH_FAILED', 'AGENT_UNAVAILABLE', 'TIMED_OUT', ''])(
+  it.each(['Bad.Code', 'ab', '1ABC', 'has space', 'A'.repeat(65), 'BUILD_FAILED', 'DEPLOY_FAILED', 'VERIFY_FAILED', 'SWITCH_FAILED', 'AGENT_UNAVAILABLE', 'AGENT_GAVE_UP', 'TIMED_OUT', ''])(
     '%j is a code BE would refuse: it becomes %s with the original in the message, never null (null would call the AI agent)',
     (code) => {
       const failure = codeOf(code)
@@ -243,6 +243,26 @@ describe('reports that do not fit', () => {
     ['not ok and a failure that is a string', { ok: false, failure: 'x' }],
   ])('apply report: %s', (_, report) => {
     expect(() => noticeFrom(DEPLOY_ID, 'apply', report, now)).toThrow(/^apply report: /)
+  })
+})
+
+describe('failure fields BE would refuse (so the sender sees it as an unusable report, not a 400 that is never retried)', () => {
+  const student = (over: Record<string, unknown>) => ({ ok: false, failure: { kind: 'student', service: 'be', errorMessage: 'm', raw: { pod: null, events: [], status: null }, ...over } })
+  it.each([
+    ['a service that is a number', { ok: false, failure: { kind: 'platform', code: 'K8S_TIMEOUT', service: 7, message: 'm' } }, 'failure.service is not a string'],
+    ['a student failure whose service is an object', student({ service: {} }), 'failure.service is not a string'],
+    ['events with an item that is not an object', student({ raw: { pod: null, events: [{ reason: 'x' }, 'text'], status: null } }), 'failure.raw.events has an item that is not an object'],
+  ])('apply report with %s', (_, report, why) => {
+    expect(() => noticeFrom(DEPLOY_ID, 'apply', report, now)).toThrow(`apply report: ${why}`)
+  })
+
+  it('a build failure whose service is not a string', () => {
+    expect(() => noticeFrom(DEPLOY_ID, 'build', { ok: false, failures: [{ kind: 'platform', service: 3, code: 'X_CODE', message: 'm' }] }, now)).toThrow('build report: has a failure that is neither platform nor build')
+  })
+
+  it('a missing service stays null (a platform problem of no one service)', () => {
+    const body = noticeFrom(DEPLOY_ID, 'apply', { ok: false, failure: { kind: 'platform', code: 'K8S_TIMEOUT', message: 'm' } }, now)
+    expect(body).toMatchObject({ failure: { service: null } })
   })
 })
 

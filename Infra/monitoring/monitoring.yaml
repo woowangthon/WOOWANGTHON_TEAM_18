@@ -1,0 +1,248 @@
+# Metrics on the leader (build 11): Prometheus, Grafana, node-exporter, kube-state-metrics.
+# Design and reasons: docs/design/cluster.md §10, ADR-006.
+# Installed through k3s's own Helm controller (the HelmChart object below), the way k3s ships Traefik,
+# so no helm binary or release state lives on the operator's machine.
+#
+# Before the first apply, create Grafana's admin Secret on the leader. The password is made there and
+# never printed; read it from the Secret when you log in.
+#   ssh k3s-leader 'sudo k3s kubectl create namespace monitoring --dry-run=client -o yaml | sudo k3s kubectl apply -f - &&
+#     sudo k3s kubectl -n monitoring create secret generic grafana-admin --from-literal=admin-user=admin --from-literal=admin-password="$(openssl rand -base64 24)"'
+# Apply (from the operator's machine), then run check.sh:
+#   ssh k3s-leader 'sudo k3s kubectl apply -f -' < Infra/monitoring/monitoring.yaml
+# Grafana is at https://grafana.stairnoworks.com so the operator page of the platform can embed it.
+# Dashboards and the API need a login; the login page, /api/health and static files do not.
+# The page's iframe is used with the view-only account (make-viewer.sh creates it once). The admin
+# account works at the same address too, so use it only for changes; without the tunnel:
+#   ssh -L 3000:localhost:3000 k3s-leader 'sudo k3s kubectl -n monitoring port-forward svc/monitoring-grafana 3000:80'
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  labels:
+    # node-exporter reads the host (hostNetwork, hostPID, host paths), which baseline refuses.
+    pod-security.kubernetes.io/enforce: privileged
+---
+# In: only Pods of this namespace (Prometheus scraping its own parts, Grafana asking Prometheus).
+# grafana-from-traefik below adds the one way in from outside the namespace.
+# Without it any Pod in the cluster, and a school-LAN device that routes the Pod range through a node
+# (cluster.md "알려진 한계"), could read the Prometheus API and reach Grafana's login page.
+# The API server's service proxy and `kubectl port-forward` still work: both reach the Pods from the
+# leader itself, and the policy engine always lets a node talk to its own Pods.
+# node-exporter is on the host network, so this does not cover it; the host firewall does (cluster.md §3).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: same-namespace-only
+  namespace: monitoring
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress"]
+  ingress:
+  - from:
+    - podSelector: {}
+---
+# Visitors of grafana.stairnoworks.com arrive through the tunnel and Traefik (cluster.md §9), so
+# Traefik's Pods may reach Grafana's web port, and nothing else in this namespace. Prometheus stays
+# closed: its API has no login.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: grafana-from-traefik
+  namespace: monitoring
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: grafana
+  policyTypes: ["Ingress"]
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: traefik
+    ports:
+    - port: 3000
+      protocol: TCP
+---
+# Only the platform's own page may put Grafana in a frame. allow_embedding (below) drops Grafana's
+# X-Frame-Options: deny, and without this header any site could frame it: a student app on
+# <slug>.stairnoworks.com is the same site as grafana.stairnoworks.com, so the operator's session
+# cookie would be sent inside that frame.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: grafana-frame
+  namespace: monitoring
+spec:
+  headers:
+    contentSecurityPolicy: "frame-ancestors 'self' https://app.stairnoworks.com"
+---
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: monitoring
+  namespace: kube-system
+spec:
+  # The same chart as the project's Helm repository, taken from GHCR: the repository serves the archive
+  # from GitHub's release CDN, which stalls on the school network (the first install timed out there).
+  chart: oci://ghcr.io/prometheus-community/charts/kube-prometheus-stack
+  # Pinned. Prometheus Operator v0.95.1. Bump on purpose, never by a floating version.
+  version: 93.1.1
+  targetNamespace: monitoring
+  valuesContent: |-
+    # Stable object names: the Prometheus Service is monitoring-prometheus, which server-read below names.
+    fullnameOverride: monitoring
+
+    # k3s runs etcd, the scheduler, the controller manager and kube-proxy inside its own process, bound
+    # to localhost. Their scrape targets would only ever be down.
+    kubeEtcd: {enabled: false}
+    kubeScheduler: {enabled: false}
+    kubeControllerManager: {enabled: false}
+    kubeProxy: {enabled: false}
+    defaultRules:
+      rules:
+        etcd: false
+        kubeControllerManager: false
+        kubeSchedulerAlerting: false
+        kubeSchedulerRecording: false
+        kubeProxy: false
+        alertmanager: false
+
+    # The cluster sends no alerts (cluster.md §10), so there is no Alertmanager to run.
+    alertmanager: {enabled: false}
+
+    prometheusOperator:
+      # The webhook needs a certificate job and only checks rule syntax at apply time.
+      admissionWebhooks: {enabled: false}
+      tls: {enabled: false}
+      nodeSelector: &leader {kubernetes.io/hostname: k3s-leader}
+      tolerations: &onleader
+      - {key: node-role.kubernetes.io/control-plane, operator: Exists, effect: NoSchedule}
+      resources:
+        requests: {cpu: 50m, memory: 128Mi}
+        limits: {memory: 512Mi}
+
+    prometheus:
+      prometheusSpec:
+        nodeSelector: *leader
+        tolerations: *onleader
+        # Two weeks (ADR-006). local-path does not enforce the volume size, so the size cap is what
+        # keeps the leader's disk safe.
+        retention: 14d
+        retentionSize: 20GB
+        storageSpec:
+          volumeClaimTemplate:
+            spec:
+              storageClassName: local-path
+              accessModes: ["ReadWriteOnce"]
+              resources:
+                requests: {storage: 30Gi}
+        resources:
+          requests: {cpu: 250m, memory: 1Gi}
+          limits: {memory: 4Gi}
+        enableAdminAPI: false
+        # Pick up every ServiceMonitor and PodMonitor, not only the chart's own.
+        serviceMonitorSelectorNilUsesHelmValues: false
+        podMonitorSelectorNilUsesHelmValues: false
+      additionalPodMonitors:
+      # k3s's Traefik already serves metrics on its `metrics` port (9100).
+      - name: traefik
+        namespaceSelector: {matchNames: ["kube-system"]}
+        selector: {matchLabels: {app.kubernetes.io/name: traefik}}
+        podMetricsEndpoints:
+        - port: metrics
+      # The tunnel client. Infra/cloudflared/cloudflared.yaml lets Prometheus in on this port.
+      - name: cloudflared
+        namespaceSelector: {matchNames: ["cloudflared"]}
+        selector: {matchLabels: {app: cloudflared}}
+        podMetricsEndpoints:
+        - port: metrics
+
+    grafana:
+      nodeSelector: *leader
+      tolerations: *onleader
+      admin:
+        existingSecret: grafana-admin
+        userKey: admin-user
+        passwordKey: admin-password
+      persistence:
+        enabled: true
+        storageClassName: local-path
+        size: 2Gi
+      # local-path directories are world-writable, so no root init container is needed to chown them.
+      initChownData: {enabled: false}
+      testFramework: {enabled: false}
+      defaultDashboardsTimezone: Asia/Seoul
+      # HTTPS ends at Cloudflare and the tunnel hands plain HTTP to Traefik, like every student address.
+      ingress:
+        enabled: true
+        ingressClassName: traefik
+        hosts: ["grafana.stairnoworks.com"]
+        path: /
+        annotations:
+          # <namespace>-<Middleware name>@kubernetescrd
+          traefik.ingress.kubernetes.io/router.middlewares: monitoring-grafana-frame@kubernetescrd
+      # Grafana serves its own /metrics without a login, and the Ingress would publish it. Nothing here
+      # needs Grafana's own numbers, so the endpoint and its scrape are off.
+      serviceMonitor: {enabled: false}
+      grafana.ini:
+        server:
+          root_url: https://grafana.stairnoworks.com
+        metrics:
+          enabled: false
+        security:
+          # The operator page (app.stairnoworks.com) shows dashboards in an iframe. This only drops the
+          # X-Frame-Options header; the Middleware grafana-frame says who may frame, and a frame still
+          # needs a login.
+          allow_embedding: true
+          # The address is HTTPS only (Cloudflare redirects http). Browsers still accept a Secure cookie
+          # on http://localhost, so the port-forward keeps working.
+          cookie_secure: true
+          strict_transport_security: true
+        analytics:
+          reporting_enabled: false
+          check_for_updates: false
+          check_for_plugin_updates: false
+      resources:
+        requests: {cpu: 50m, memory: 128Mi}
+        # Grafana with the default dashboards sat at about 450Mi right after the install.
+        limits: {memory: 1Gi}
+
+    kube-state-metrics:
+      nodeSelector: *leader
+      tolerations: *onleader
+      resources:
+        requests: {cpu: 20m, memory: 64Mi}
+        limits: {memory: 256Mi}
+
+    # node-exporter keeps the chart's defaults: one Pod per node, on the leader too.
+---
+# The platform server queries Prometheus through the leader API's service proxy (no new port, the same
+# token). Only this one Service, and only GET. A query can read the metric numbers of every namespace;
+# logs, Secrets and objects stay limited to proj- spaces (cluster.md §8, §10).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: prometheus-query
+  namespace: monitoring
+rules:
+- apiGroups: [""]
+  resources: ["services/proxy"]
+  resourceNames: ["monitoring-prometheus:9090"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: platform-server-prometheus-query
+  namespace: monitoring
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: prometheus-query
+subjects:
+- kind: ServiceAccount
+  name: platform-server
+  namespace: platform
