@@ -37,6 +37,7 @@ const liveWith = (services: MetricsService[], overrides: Partial<Metrics> = {}):
   usageStatus: 'collected',
   series: {
     status: 'collected',
+    endT: T + 60,
     windowSeconds: 3600,
     stepSeconds: 60,
     services: services.map((s) => ({
@@ -135,7 +136,7 @@ it('says getting ready for a waiting reason it does not know, and stopped as off
 
 it('shows not collected, with no zero and no fake line, when usage and series were not collected', async () => {
   api.apiFetch.mockResolvedValue(
-    liveWith([{ ...fe, usage: null }], { usageStatus: 'not_collected', series: { status: 'not_collected', windowSeconds: 3600, stepSeconds: 60, services: [] } }),
+    liveWith([{ ...fe, usage: null }], { usageStatus: 'not_collected', series: { status: 'not_collected', endT: T + 60, windowSeconds: 3600, stepSeconds: 60, services: [] } }),
   )
   await show()
   expect(card().getByText(`지금 사용량: ${NOT_COLLECTED}`)).toBeTruthy()
@@ -146,7 +147,7 @@ it('shows not collected, with no zero and no fake line, when usage and series we
 
 it('shows not collected for a service with no points yet instead of drawing a line', async () => {
   api.apiFetch.mockResolvedValue(
-    liveWith([fe], { series: { status: 'collected', windowSeconds: 3600, stepSeconds: 60, services: [{ name: 'fe', cpuMillicores: [], memoryBytes: [] }] } }),
+    liveWith([fe], { series: { status: 'collected', endT: T + 60, windowSeconds: 3600, stepSeconds: 60, services: [{ name: 'fe', cpuMillicores: [], memoryBytes: [] }] } }),
   )
   await show()
   expect(card().getByText(`fe CPU 사용량(최근 1시간): ${NOT_COLLECTED}`)).toBeTruthy()
@@ -159,6 +160,7 @@ it('leaves a gap in the line for a minute with no point instead of joining acros
     liveWith([fe], {
       series: {
         status: 'collected',
+        endT: T + 180,
         windowSeconds: 3600,
         stepSeconds: 60,
         services: [{ name: 'fe', cpuMillicores: [{ t: T, v: 10 }, { t: T + 180, v: 20 }], memoryBytes: [{ t: T, v: 1048576 }] }],

@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { cpuText } from './format.ts'
+import { cpuText, memoryText } from './format.ts'
 
 it('shows a small non-zero CPU figure to two decimals instead of 0', () => {
   expect(cpuText(40)).toBe('0.04코어')
@@ -19,4 +19,8 @@ it('keeps exactly 0, 0.1 cores and above, and unreadable values as before', () =
   expect(cpuText(3900)).toBe('3.9코어')
   expect(cpuText(24000)).toBe('24코어')
   expect(cpuText(null)).toBe('읽지 못함')
+})
+
+it('shows a service memory in MiB', () => {
+  expect(memoryText(73_400_320)).toBe('70MiB')
 })

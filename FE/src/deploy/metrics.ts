@@ -18,6 +18,8 @@ export type Point = { t: number; v: number }
 
 export type Series = {
   status: 'collected' | 'not_collected'
+  // 서버가 시계열을 물은 "지금"(유닉스 초). 그래프의 끝은 마지막 점이 아니라 이 값이다.
+  endT: number
   windowSeconds: number
   stepSeconds: number
   services: { name: string; cpuMillicores: Point[]; memoryBytes: Point[] }[]
@@ -65,13 +67,8 @@ export const waitingText = (waiting: string | null) => {
   }
 }
 
-// 1코어 = 1000밀리코어. 학생에게는 코어로 보인다.
-export const cpuText = (millicores: number) => `${(millicores / 1000).toFixed(2)}코어`
-// 서버의 바이트를 1024 단위로 나눈 값이라 MiB다(운영자 화면의 GiB와 같은 단위 계열).
-export const memoryText = (bytes: number) => `${Math.round(bytes / 1048576)}MiB`
-
 // 시계열을 같은 간격의 칸으로 펼친다. 점이 없는 시각은 null로 둬서 그래프가 선을 끊게 한다(없는 값을 지어내지 않는다).
-// 끝 시각은 여러 서비스를 같은 눈금에 맞추도록 호출하는 쪽이 정해 넘긴다(받은 점 중 가장 늦은 시각, latestT).
+// 끝 시각은 서버가 준 series.endT다. 수집이 멈춰도 그래프가 마지막 점에서 끝나지 않고, 빈 시간은 null로 남는다.
 export function slotsOf(points: Point[], endT: number, windowSeconds: number, stepSeconds: number): (number | null)[] {
   if (points.length === 0) return []
   const count = Math.floor(windowSeconds / stepSeconds) + 1
@@ -83,7 +80,3 @@ export function slotsOf(points: Point[], endT: number, windowSeconds: number, st
   }
   return slots
 }
-
-// 서비스들의 점 중 가장 늦은 시각. 그래프의 "최근 1시간"은 지금이 아니라 이 시각에서 끝나는 1시간이다(서버가 창의 끝을 주지 않는다). 점이 하나도 없으면 0이고, 그때는 어느 서비스도 칸을 만들지 않으므로 쓰이지 않는다.
-export const latestT = (series: Series) =>
-  Math.max(0, ...series.services.flatMap((s) => [...s.cpuMillicores, ...s.memoryBytes]).map((p) => p.t))

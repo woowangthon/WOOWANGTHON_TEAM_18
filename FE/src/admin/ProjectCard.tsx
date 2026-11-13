@@ -3,11 +3,12 @@ import NoticeBanner from '../components/NoticeBanner.tsx'
 import { Badge } from '../components/ui/Badge.tsx'
 import { Button } from '../components/ui/Button.tsx'
 import { ApiError, apiFetch } from '../lib/api.ts'
+import { cpuText, memoryText } from '../lib/format.ts'
 import { clusterAlert } from './clusterAlert.tsx'
 import { ClusterProblem } from './ClusterProblem.tsx'
 import { timeText } from './format.ts'
 import Row from './Row.tsx'
-import type { AdminProject, StopResponse } from './types.ts'
+import type { AdminProject, AdminService, StopResponse } from './types.ts'
 import { isForbidden } from './useAdminRead.ts'
 
 // 공간의 서비스가 하나도 없거나(공간 없음) 모두 0개로 내려갔으면(중지됨) 끌 것이 없다. 중지 뒤에는 lastStop이 아니라 replicas를 본다.
@@ -37,6 +38,13 @@ type StopState =
 
 // running: 끌 것이 있다(버튼을 보인다). 중지한 뒤 다시 읽으면 프로젝트가 중지됨이 되지만, 방금 한 일의 결과는 그대로 보여야 하므로 이 패널은 계속 그린다.
 type StopHandlers = { onStopped: () => void; onForbidden: () => void }
+
+// 서비스 한 줄의 재시작 횟수와 지금 사용량. 읽지 못한 사용량은 0으로 보이지 않고 그렇게 말한다.
+function serviceUsageText(service: AdminService, usageStatus: AdminProject['usageStatus']) {
+  const restarts = `재시작 ${service.restarts}회`
+  if (service.usage) return `${restarts} · CPU ${cpuText(service.usage.cpuMillicores)} · 메모리 ${memoryText(service.usage.memoryBytes)}`
+  return `${restarts} · ${usageStatus === 'not_collected' ? '사용량 수집 전' : '사용량 아직 없음'}`
+}
 
 function StopPanel({ slug, running, onStopped, onForbidden }: { slug: string; running: boolean } & StopHandlers) {
   const [stop, setStop] = useState<StopState>({ step: 'idle' })
@@ -194,6 +202,7 @@ function ProjectCard({ project, onStopped, onForbidden }: { project: AdminProjec
                   · 준비 {service.readyReplicas}/{service.replicas}
                 </span>
               </p>
+              <p className="text-muted">{serviceUsageText(service, project.usageStatus)}</p>
               {service.pods.length > 0 && (
                 <ul className="flex flex-col gap-0.5 text-muted">
                   {service.pods.map((pod) => (

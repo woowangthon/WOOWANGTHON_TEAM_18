@@ -1,6 +1,5 @@
 import { expect, it } from 'vitest'
-import { cpuText, latestT, memoryText, slotsOf, stateText, waitingText } from './metrics.ts'
-import type { Series } from './metrics.ts'
+import { slotsOf, stateText, waitingText } from './metrics.ts'
 
 it('spreads points over 61 one-minute slots and leaves the missing minutes null', () => {
   const end = 10_000
@@ -30,20 +29,6 @@ it('drops a point outside the window instead of stretching the grid', () => {
   expect(slots.filter((v) => v !== null)).toEqual([4])
 })
 
-it('uses the latest time of any service as the common end of the grid', () => {
-  const series: Series = {
-    status: 'collected',
-    windowSeconds: 3600,
-    stepSeconds: 60,
-    services: [
-      { name: 'fe', cpuMillicores: [{ t: 100, v: 1 }], memoryBytes: [{ t: 100, v: 1 }] },
-      { name: 'be', cpuMillicores: [{ t: 220, v: 1 }], memoryBytes: [] },
-    ],
-  }
-  expect(latestT(series)).toBe(220)
-  expect(latestT({ ...series, services: [{ name: 'fe', cpuMillicores: [], memoryBytes: [] }] })).toBe(0)
-})
-
 it('says each state in plain words and unknown ones as getting ready', () => {
   expect(stateText('running')).toBe('실행 중')
   expect(stateText('starting')).toBe('시작하는 중')
@@ -58,8 +43,10 @@ it('explains the known waiting reasons and falls back to getting ready', () => {
   expect(waitingText(null)).toBe('준비 중이에요')
 })
 
-it('shows cpu in cores and memory in MiB', () => {
-  expect(cpuText(40)).toBe('0.04코어')
-  expect(cpuText(1500)).toBe('1.50코어')
-  expect(memoryText(73_400_320)).toBe('70MiB')
+it('ends the grid at the given end time, not at the last point, so a stalled collection leaves the tail empty', () => {
+  const end = 10_000
+  const slots = slotsOf([{ t: end - 600, v: 7 }], end, 3600, 60)
+  expect(slots).toHaveLength(61)
+  expect(slots[50]).toBe(7)
+  expect(slots.slice(51).every((v) => v === null)).toBe(true)
 })
