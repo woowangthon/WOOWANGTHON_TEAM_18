@@ -14,6 +14,7 @@ import { RepoReader } from '../src/gateway/repo-reader.js'
 import { tokenHash } from '../src/gateway/tickets.js'
 import { GatewayTrials } from '../src/gateway/trials.js'
 import { ClusterReader } from '../src/k8s/cluster-reader.js'
+import { DeploymentScaler } from '../src/k8s/deployment-scaler.js'
 import { validSpec } from './spec-fixture.js'
 import { startApp } from './start-app.js'
 
@@ -45,7 +46,10 @@ const fakeConditions = {
     return Promise.resolve(HASH(build.outputDir === 'build' ? 'c' : 'd'))
   },
 }
+const scaled: string[] = []
 const fakeStore = {
+  liveSlot: () => Promise.resolve(null),
+  findActiveRun: () => Promise.resolve(undefined),
   findRunByGatewayToken: (hash: string) => Promise.resolve(hash === run.gateway_token_hash ? run : undefined),
   findById: (id: string) => Promise.resolve(id === DEPLOY ? { id, repo: 'student/my-app', slug: 'my-app' } : undefined),
   findRun: (id: string) => Promise.resolve(id === DEPLOY ? run : undefined),
@@ -160,6 +164,7 @@ beforeEach(async () => {
   reruns = []
   rerunFails = false
   closes = []
+  scaled.length = 0
   behave = answering('apply', deployOk)
   app = await startApp([], (b) =>
     b
@@ -168,7 +173,9 @@ beforeEach(async () => {
       .overrideProvider(PipelineClient)
       .useValue(fakePipeline)
       .overrideProvider(ClusterReader)
-      .useValue({})
+      .useValue({ deployments: () => Promise.resolve([{ name: 'be-a' }, { name: 'be-b' }, { name: 'fe-b' }]) })
+      .overrideProvider(DeploymentScaler)
+      .useValue({ scaleToZero: (_slug: string, name: string) => Promise.resolve(void scaled.push(name)) })
       .overrideProvider(RepoReader)
       .useValue({})
       .overrideProvider(AgentClient)
@@ -683,6 +690,43 @@ describe('MCP gateway trial tools', () => {
       expect(reruns).toEqual([DEPLOY])
       expect(run.status).toBe('running')
       await waiting
+      await client.close()
+    })
+  })
+
+  describe('a gave_up ticket whose original failure was before apply', () => {
+    const gaveUp = { result: { ticketId: 't_trial', commitSha: SHA, status: 'gave_up', classification: { method: 'code', caseId: 'V2', path: 'playbook' }, actions: [], summary: '고치지 못했습니다' } }
+    beforeEach(() => {
+      run.stage = 'render'
+      run.failure = { code: 'CHART_RENDER_FAILED', stage: 'render', service: 'be' }
+    })
+
+    it('scales the target slot down when the ticket tried run_deploy, even if that run_deploy failed', async () => {
+      const client = await connect()
+      behave = answering('apply', { ...deployOk, ok: false, failure: { stage: 'apply', code: null, message: 'pod be crashed' } })
+      await call(client, 'run_deploy', { specPatch: port8000 })
+      expect((await call(client, 'submit_result', gaveUp)).structuredContent).toEqual({ accepted: true })
+      expect(run.status).toBe('failed')
+      // 대상 슬롯은 b다(live였던 a는 그대로).
+      expect(scaled.sort()).toEqual(['be-b', 'fe-b'])
+      await client.close()
+    })
+
+    it('leaves the slot alone when the ticket never ran run_deploy', async () => {
+      const client = await connect()
+      expect((await call(client, 'submit_result', gaveUp)).structuredContent).toEqual({ accepted: true })
+      expect(run.status).toBe('failed')
+      expect(scaled).toEqual([])
+      await client.close()
+    })
+
+    it('leaves the slot alone for a switch failure even after run_deploy', async () => {
+      run.stage = 'switch'
+      run.failure = { code: 'SWITCH_REFUSED', stage: 'switch', service: null }
+      const client = await connect()
+      await call(client, 'run_deploy', { specPatch: port8000 })
+      await call(client, 'submit_result', gaveUp)
+      expect(scaled).toEqual([])
       await client.close()
     })
   })

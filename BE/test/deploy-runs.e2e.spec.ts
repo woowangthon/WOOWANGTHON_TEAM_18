@@ -841,6 +841,82 @@ describe('POST /api/pipeline/notify', () => {
     expect((await start(seedDeploy())).status).toBe(202)
   })
 
+  describe('the target slot of a deploy that ended failed is scaled down', () => {
+    const failure = { service: 'be', message: 'm', raw: { codebuild: null, k8s: { pod: null, events: [], status: null } }, logs: { from: '2026-11-11T01:00:00Z', to: '2026-11-11T01:10:00Z', lines: [] } }
+    // 대상 슬롯은 a(preparedFor 기본값)다. 이름이 `-a`로 끝나는 것만 그 슬롯이다.
+    const both = ['fe-a', 'be-a', 'fe-b', 'be-b', 'banana']
+    const reach = async (stage: string) => {
+      const id = seedDeploy()
+      await start(id)
+      await notify({ deployId: id, stage: 'build', result: 'passed', images: { fe: IMAGE } })
+      for (const s of ['prepare', 'render', 'apply', 'verify'].slice(0, ['prepare', 'render', 'apply', 'verify'].indexOf(stage))) await notify({ deployId: id, stage: s, result: 'passed' })
+      return id
+    }
+    const names = () => scaled.map((x) => x.name).sort()
+
+    it.each(['apply', 'verify'])('after a platform problem at %s, only the target slot', async (stage) => {
+      spaceDeployments = both
+      const id = await reach(stage)
+      await notify({ deployId: id, stage, result: 'failed', failure: { ...failure, code: 'K8S_UNREACHABLE' } })
+      expect(run(id)).toMatchObject({ status: 'failed' })
+      expect(names()).toEqual(['be-a', 'fe-a'])
+    })
+
+    it('after AGENT_UNAVAILABLE', async () => {
+      spaceDeployments = both
+      aiAnswer = () => new Response('{}', { status: 503 })
+      const id = await reach('apply')
+      await notify({ deployId: id, stage: 'apply', result: 'failed', failure })
+      expect(run(id)).toMatchObject({ status: 'failed', failure: { code: 'AGENT_UNAVAILABLE' } })
+      expect(names()).toEqual(['be-a', 'fe-a'])
+    })
+
+    it('not while the AI agent is working on the ticket (it reads this slot\'s Pods and events)', async () => {
+      spaceDeployments = both
+      const id = await reach('apply')
+      await notify({ deployId: id, stage: 'apply', result: 'failed', failure })
+      expect(run(id)).toMatchObject({ status: 'fixing' })
+      expect(scaled).toEqual([])
+    })
+
+    it.each(['build', 'prepare', 'render', 'switch'])('not after a failure at %s (nothing of this run is on the target slot, or the switch may be half done)', async (stage) => {
+      spaceDeployments = both
+      const id = stage === 'build' ? seedDeploy() : stage === 'switch' ? await reach('verify') : await reach(stage)
+      if (stage === 'build') await start(id)
+      if (stage === 'switch') await notify({ deployId: id, stage: 'verify', result: 'passed' })
+      await notify({ deployId: id, stage, result: 'failed', failure: { ...failure, code: 'SOME_PLATFORM_CODE', raw: { codebuild: null, k8s: { pod: null, events: [], status: stage === 'render' ? {} : null } } } })
+      expect(run(id)).toMatchObject({ status: 'failed' })
+      expect(scaled).toEqual([])
+    })
+
+    it('never when the project says that slot is live', async () => {
+      spaceDeployments = both
+      ;(db.projects ??= []).push({ slug: 'my-app', live_slot: 'a' })
+      const id = await reach('apply')
+      await notify({ deployId: id, stage: 'apply', result: 'failed', failure: { ...failure, code: 'K8S_UNREACHABLE' } })
+      expect(run(id)).toMatchObject({ status: 'failed' })
+      expect(scaled).toEqual([])
+    })
+
+    it('still ends as failed when the cluster cannot be reached, and logs it', async () => {
+      spaceDeployments = new ClusterError('unreachable')
+      const id = await reach('apply')
+      expect((await notify({ deployId: id, stage: 'apply', result: 'failed', failure: { ...failure, code: 'K8S_UNREACHABLE' } })).body).toEqual({ ok: true, applied: true })
+      expect(run(id)).toMatchObject({ status: 'failed' })
+      expect(logError).toHaveBeenCalledWith(expect.stringContaining('failed slot: could not list deployments of my-app'))
+    })
+
+    it('after the run already had the most tickets (AGENT_GAVE_UP without a new ticket)', async () => {
+      spaceDeployments = both
+      const id = await reach('apply')
+      db.deploy_runs.find((r) => r.deploy_id === id)!.ticket_id = 't_stale'
+      db.deploy_runs.find((r) => r.deploy_id === id)!.agent_result = { tickets: 3 }
+      await notify({ deployId: id, stage: 'apply', result: 'failed', failure })
+      expect(run(id)).toMatchObject({ status: 'failed', failure: { code: 'AGENT_GAVE_UP' } })
+      expect(names()).toEqual(['be-a', 'fe-a'])
+    })
+  })
+
   describe('a failure', () => {
     const failure = (over: Record<string, unknown> = {}) => ({
       service: 'be',
