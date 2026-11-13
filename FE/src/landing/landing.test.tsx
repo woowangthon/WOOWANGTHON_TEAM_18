@@ -50,10 +50,17 @@ it('jumps to a step from its dot button', () => {
 it('pauses while hovered and resumes after', () => {
   render(<HeroCarousel />)
   const region = screen.getByRole('group', { name: '배포 흐름 4단계' })
-  fireEvent.mouseEnter(region)
+  fireEvent.pointerEnter(region, { pointerType: 'mouse' })
   advance(CAROUSEL_MS * 3)
   expect(caption()).toBe('1 / 4')
-  fireEvent.mouseLeave(region)
+  fireEvent.pointerLeave(region, { pointerType: 'mouse' })
+  advance(CAROUSEL_MS)
+  expect(caption()).toBe('2 / 4')
+})
+
+it('does not pause for a touch', () => {
+  render(<HeroCarousel />)
+  fireEvent.pointerEnter(screen.getByRole('group', { name: '배포 흐름 4단계' }), { pointerType: 'touch' })
   advance(CAROUSEL_MS)
   expect(caption()).toBe('2 / 4')
 })

@@ -26,8 +26,9 @@ function HeroCarousel() {
       role="group"
       aria-roledescription="캐러셀"
       aria-label="배포 흐름 4단계"
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
+      // 터치는 손을 떼도 pointerleave가 오지 않는 환경이 있어 마우스일 때만 멈춘다.
+      onPointerEnter={(e) => setHovered(e.pointerType === 'mouse')}
+      onPointerLeave={() => setHovered(false)}
       onFocus={() => setFocused(true)}
       onBlur={(e) => {
         if (!e.currentTarget.contains(e.relatedTarget)) setFocused(false)
