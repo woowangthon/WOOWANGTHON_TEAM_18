@@ -52,7 +52,7 @@
 			"dst": ["tag:platform-server:8153"],
 		},
 		// The AI server on the EC2 -> the local model, through `tailscale serve` on the leader (port 18000, forwarded
-		// to the vLLM Service; Infra/vllm/base.yaml step 4). vLLM still asks for its API key. Added 2026-11-13.
+		// to the vLLM Service; Infra/vllm/base.yaml step 4). vLLM still asks for its API key. In the admin console since 2026-11-14.
 		{
 			"action": "accept",
 			"src": ["tag:platform-server"],
