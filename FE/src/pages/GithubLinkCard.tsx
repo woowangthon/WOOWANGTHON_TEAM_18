@@ -9,12 +9,8 @@ import { Card } from '../components/ui/Card.tsx'
 import { Skeleton } from '../components/ui/Skeleton.tsx'
 import { primaryLinkClass } from '../components/primaryLinkClass.ts'
 import { supabase } from '../lib/supabase.ts'
+import { useGithubLink } from './useGithubLink.ts'
 
-type LinkState =
-  | { status: 'loading' }
-  | { status: 'failed' }
-  | { status: 'unlinked' }
-  | { status: 'linked'; handle: string | null }
 type LinkFailure = 'cancelled' | 'exists' | 'temporary'
 
 const failureText: Record<LinkFailure, string> = {
@@ -47,36 +43,9 @@ function GithubLinkCard() {
   const { state } = useAuth()
   // 관리자는 모니터링 계정이라 배포 진입점을 숨긴다(편의일 뿐, 서버는 막지 않는다).
   const showDeployLink = !(state.status === 'signedIn' && isAdmin(state.session))
-  const [link, setLink] = useState<LinkState>({ status: 'loading' })
-  const [attempt, setAttempt] = useState(0)
+  const { link, recheck } = useGithubLink()
   const [redirecting, setRedirecting] = useState(false)
   const [linkCallFailure, setLinkCallFailure] = useState<LinkFailure | null>(null)
-
-  useEffect(() => {
-    let ignore = false
-    supabase.auth
-      .getUserIdentities()
-      .then(({ data, error }) => {
-        if (ignore) return
-        if (error) {
-          setLink({ status: 'failed' })
-          return
-        }
-        const github = data.identities.find((identity) => identity.provider === 'github')
-        if (!github) {
-          setLink({ status: 'unlinked' })
-          return
-        }
-        const handle: unknown = github.identity_data?.user_name
-        setLink({ status: 'linked', handle: typeof handle === 'string' ? handle : null })
-      })
-      .catch(() => {
-        if (!ignore) setLink({ status: 'failed' })
-      })
-    return () => {
-      ignore = true
-    }
-  }, [attempt])
 
   // GitHub에서 뒤로 가기로 돌아오면 브라우저가 이 화면을 멈춘 상태 그대로(이동하는 중) 되살릴 수 있다.
   useEffect(() => {
@@ -132,10 +101,7 @@ function GithubLinkCard() {
         <NoticeBanner title="연동 상태를 확인하지 못했어요">잠시 후 다시 시도해 주세요.</NoticeBanner>
         <Button
           variant="outline"
-          onClick={() => {
-            setLink({ status: 'loading' })
-            setAttempt((n) => n + 1)
-          }}
+          onClick={recheck}
         >
           다시 확인하기
         </Button>

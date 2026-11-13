@@ -107,7 +107,7 @@ it('shows the app bar with the email, links and logout on protected pages', () =
   expect(screen.getByRole('link', { name: '대시보드' }).getAttribute('href')).toBe('/dashboard')
   expect(screen.getByRole('link', { name: '프로필' }).getAttribute('href')).toBe('/profile')
   expect(screen.getByRole('link', { name: '내 배포' }).getAttribute('href')).toBe('/deploys')
-  expect(screen.getByRole('link', { name: 'WCP' }).getAttribute('href')).toBe('/dashboard')
+  expect(screen.getByRole('link', { name: 'WCP' }).getAttribute('href')).toBe('/')
   expect(screen.getByRole('button', { name: '로그아웃' })).toBeTruthy()
 })
 
@@ -203,12 +203,29 @@ it('does not show the menu link to a non-admin, nor to a user whose only role is
   expect(screen.queryByRole('link', { name: '관리자' })).toBeNull()
 })
 
-it('hides the deploy menu from an admin (monitoring account) and keeps it for a non-admin', () => {
-  renderApp('/dashboard', 'in', sessionWith({ role: 'admin' }))
-  expect(screen.queryByRole('link', { name: '내 배포' })).toBeNull()
-  for (const name of ['대시보드', '프로필', '관리자']) {
-    expect(screen.getByRole('link', { name })).toBeTruthy()
+it('shows an admin only the admin menu (no dashboard, profile or deploys)', () => {
+  renderApp('/admin', 'in', sessionWith({ role: 'admin' }))
+  expect(screen.getByRole('link', { name: '관리자' })).toBeTruthy()
+  for (const name of ['대시보드', '프로필', '내 배포']) {
+    expect(screen.queryByRole('link', { name })).toBeNull()
   }
+})
+
+it.each([
+  '/dashboard',
+  '/profile',
+  '/deploys',
+  '/deploys/0b6f0c1e-4a52-4d8e-9a1b-3f7d2c5e8a90',
+  '/deploys/0b6f0c1e-4a52-4d8e-9a1b-3f7d2c5e8a90/secrets',
+  '/deploy/new',
+])('sends an admin who opens %s to the Admin Page', (path) => {
+  renderApp(path, 'in', sessionWith({ role: 'admin' }))
+  expect(h1()).toBe('관리자')
+})
+
+it('does not send a non-admin whose only role is a user_metadata one away from the student pages', () => {
+  renderApp('/dashboard', 'in', sessionWith({}, { role: 'admin' }))
+  expect(h1()).toBe('대시보드')
 })
 
 it('shows the deploy menu to a non-admin', () => {

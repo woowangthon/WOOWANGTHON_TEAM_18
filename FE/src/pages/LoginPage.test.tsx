@@ -201,7 +201,7 @@ it('locks the form while submitting and releases it afterwards', async () => {
   expect((busy as HTMLButtonElement).disabled).toBe(true)
   expect(busy.getAttribute('aria-busy')).toBe('true')
   expect((emailInput() as HTMLInputElement).disabled).toBe(true)
-  expect(screen.getByText('입력은 잠겨 있어요. 보통 1~2초 걸려요.')).toBeTruthy()
+  expect(screen.queryByText('입력은 잠겨 있어요. 보통 1~2초 걸려요.')).toBeNull()
 
   finish(fail({ code: 'invalid_credentials', status: 400 }))
   await waitFor(() => {
