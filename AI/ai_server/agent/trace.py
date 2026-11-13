@@ -20,7 +20,10 @@ _TEXT_LIMIT = 120
 _FIELDS_LIMIT = 20
 _PATCH_LIMIT = 30
 _OPS = frozenset({"add", "replace", "remove", "move", "copy", "test"})
-_UNSAFE = re.compile(r"[^\w./\[\]{}:@#%+=,\-]")
+# 경로 · 코드 · 이름에 쓰는 글자만 남긴다. `=` `,` 같은 기호를 빼서
+# "KEY=값"이 경로 칸에 들어와도 그대로 남지 않게 한다.
+_UNSAFE = re.compile(r"[^\w./\[\]{}:\-]")
+_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,39}")
 
 
 def clean(value: Any) -> str:
@@ -60,7 +63,11 @@ def patch_shape(patch: Any) -> str:
         name = op.get("op")
         kind = name if isinstance(name, str) and name in _OPS else "?"
         value = value_type(op["value"]) if "value" in op else "-"
-        parts.append(f"{kind} {clean(op.get('path', ''))} {value}")
+        path = op.get("path")
+        # 모델이 문자열이 아닌 것을 경로에 넣어도(객체 안의 값 등) 타입만 싣는다.
+        parts.append(
+            f"{kind} {clean(path) if isinstance(path, str) else f'<{value_type(path)}>'} {value}"
+        )
     if len(patch) > _PATCH_LIMIT:
         parts.append(f"+{len(patch) - _PATCH_LIMIT} more")
     return "[" + "; ".join(parts) + "]"
@@ -75,7 +82,8 @@ def args_shape(args: Any) -> str:
         if key == "specPatch":
             parts.append(f"specPatch={patch_shape(args[key])}")
         else:
-            parts.append(clean(key))
+            # 키는 모델이 만든 글이다. 이름처럼 생긴 것만 싣고 나머지는 가린다.
+            parts.append(str(key) if _NAME.fullmatch(str(key)) else "<key>")
     return " ".join(parts) if parts else "-"
 
 

@@ -256,3 +256,18 @@ def test_the_run_ends_the_same_way_with_or_without_the_trace_log(
     caplog.set_level(logging.INFO, logger=trace.log.name)
     loud = run()
     assert quiet == loud and quiet["commitSha"] == SHA
+
+
+@pytest.mark.parametrize("path", [{"k": SECRET_VALUE}, [SECRET_VALUE], None, 5])
+def test_a_path_that_is_not_a_string_is_logged_as_its_type(path: Any) -> None:
+    shape = trace.patch_shape([{"op": "add", "path": path, "value": 1}])
+    assert SECRET_VALUE not in shape and shape.startswith("[add <")
+
+
+def test_a_value_written_into_a_path_does_not_survive_the_separator() -> None:
+    shape = trace.patch_shape([{"op": "add", "path": f"/spec/env/KEY={SECRET_VALUE}", "value": 1}])
+    assert "KEY?" in shape and "=" not in shape
+
+
+def test_an_argument_key_that_is_not_a_plain_name_is_masked() -> None:
+    assert trace.args_shape({"service": 1, SECRET_VALUE + " x": 2}) == "<key> service"
