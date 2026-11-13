@@ -15,7 +15,7 @@ import PasswordRules from '../auth/PasswordRules.tsx'
 import { verifyRedirectTo } from '../auth/redirects.ts'
 import ResendControls from '../auth/ResendControls.tsx'
 import PasswordField from '../components/PasswordField.tsx'
-import { Alert } from '../components/ui/Alert.tsx'
+import NoticeBanner from '../components/NoticeBanner.tsx'
 import { Button } from '../components/ui/Button.tsx'
 import { Field } from '../components/ui/Field.tsx'
 import { supabase } from '../lib/supabase.ts'
@@ -86,17 +86,17 @@ function SignupPage() {
           <p className="text-sm text-muted">메일의 링크를 누르면 가입이 끝나고 로그인돼요.</p>
         </div>
 
-        <Alert variant="info" title="메일이 안 오나요?">
+        <NoticeBanner variant="info" title="메일이 안 오나요?">
           이미 가입한 주소라면 메일이 오지 않을 수 있어요.{' '}
-          <Link to="/login" className="font-bold underline">
+          <Link to="/login" className="font-bold text-accent-text underline">
             로그인
           </Link>
           하거나{' '}
-          <Link to="/reset-password" className="font-bold underline">
+          <Link to="/reset-password" className="font-bold text-accent-text underline">
             비밀번호를 다시 설정
           </Link>
           해 보세요.
-        </Alert>
+        </NoticeBanner>
 
         <ResendControls
           label="인증 메일 다시 보내기"
@@ -126,16 +126,16 @@ function SignupPage() {
       </div>
 
       {notice && (
-        <Alert title={mailFailureCopy[notice].title}>
+        <NoticeBanner title={mailFailureCopy[notice].title}>
           <div className="flex flex-col gap-2">
             <p>{mailFailureCopy[notice].body}</p>
             {notice === 'not-authorized' && (
-              <Link to="/login" className="font-bold underline">
+              <Link to="/login" className="font-bold text-accent-text underline">
                 로그인으로 이동
               </Link>
             )}
           </div>
-        </Alert>
+        </NoticeBanner>
       )}
 
       <form
@@ -183,9 +183,9 @@ function SignupPage() {
         </Button>
       </form>
 
-      <p className="text-sm text-muted">
+      <p className="text-center text-sm text-muted">
         이미 계정이 있으신가요?{' '}
-        <Link to="/login" className="font-bold text-fg underline">
+        <Link to="/login" className="font-bold text-accent-text underline">
           로그인
         </Link>
       </p>

@@ -16,8 +16,11 @@ function AdminPage() {
   if (forbidden) return <ForbiddenNotice />
   return (
     <>
-      <h1 className="text-xl">관리자</h1>
-      <div className="flex items-center gap-2 text-sm text-muted">
+      <div className="flex flex-col gap-1">
+        <h1 className="text-2xl">관리자</h1>
+        <p className="text-muted">클러스터 노드와 실행 중인 서비스를 봐요.</p>
+      </div>
+      <div className="flex flex-wrap items-center gap-2 text-sm text-muted">
         <span>{REFRESH_MS / 1000}초마다 새로 읽어요</span>
         <Button
           variant="outline"

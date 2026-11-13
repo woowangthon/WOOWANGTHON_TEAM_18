@@ -2,9 +2,12 @@ import { useEffect, useState } from 'react'
 import { Link, useLocation } from 'react-router'
 import { isAdmin } from '../auth/isAdmin.ts'
 import { useAuth } from '../auth/useAuth.ts'
-import { Alert } from '../components/ui/Alert.tsx'
+import NoticeBanner from '../components/NoticeBanner.tsx'
 import { Button } from '../components/ui/Button.tsx'
+import { Badge } from '../components/ui/Badge.tsx'
 import { Card } from '../components/ui/Card.tsx'
+import { Skeleton } from '../components/ui/Skeleton.tsx'
+import { primaryLinkClass } from '../components/primaryLinkClass.ts'
 import { supabase } from '../lib/supabase.ts'
 
 type LinkState =
@@ -113,7 +116,9 @@ function GithubLinkCard() {
 
   if (link.status === 'loading') {
     return (
-      <Card>
+      <Card className="flex flex-col gap-3 p-6">
+        <Skeleton className="w-1/3" />
+        <Skeleton className="w-2/3" />
         <p role="status" className="text-sm text-muted">
           연동 결과를 확인하는 중…
         </p>
@@ -123,8 +128,8 @@ function GithubLinkCard() {
 
   if (link.status === 'failed') {
     return (
-      <Card className="flex flex-col items-start gap-4">
-        <Alert title="연동 상태를 확인하지 못했어요">잠시 후 다시 시도해 주세요.</Alert>
+      <Card className="flex flex-col items-start gap-4 p-6">
+        <NoticeBanner title="연동 상태를 확인하지 못했어요">잠시 후 다시 시도해 주세요.</NoticeBanner>
         <Button
           variant="outline"
           onClick={() => {
@@ -140,14 +145,20 @@ function GithubLinkCard() {
 
   if (link.status === 'linked') {
     return (
-      <Card className="flex flex-col items-start gap-3">
-        <h2 className="text-lg">GitHub 계정을 연동했어요</h2>
+      <Card className="flex flex-col items-start gap-3 border-ok p-6">
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="text-lg">GitHub 계정을 연동했어요</h2>
+          <Badge variant="ok">연동됨</Badge>
+        </div>
         <p className="text-sm">
           {link.handle ? `@${link.handle} 계정이 연결됐어요.` : 'GitHub 계정이 연결됐어요.'} 이제
           새 배포를 요청할 수 있어요.
         </p>
         {showDeployLink && (
-          <Link to="/deploy/new" className="text-sm font-bold underline">
+          <Link
+            to="/deploy/new"
+            className={primaryLinkClass}
+          >
             새 배포 요청하기
           </Link>
         )}
@@ -156,15 +167,15 @@ function GithubLinkCard() {
   }
 
   return (
-    <Card className="flex flex-col items-start gap-4">
+    <Card className="flex flex-col items-start gap-4 p-6">
       <div className="flex flex-col gap-1">
         <h2 className="text-lg">GitHub 계정 연동</h2>
         <p className="text-sm text-muted">배포를 요청하려면 한 번만 연동해 주세요.</p>
       </div>
       {failure && !redirecting && (
-        <Alert title="GitHub 연동에 실패했어요">{failureText[failure]}</Alert>
+        <NoticeBanner title="GitHub 연동에 실패했어요">{failureText[failure]}</NoticeBanner>
       )}
-      <ul className="flex list-disc flex-col gap-1 pl-5 text-sm">
+      <ul className="flex list-disc flex-col gap-1 pl-5 text-sm text-muted">
         <li>내가 올린 레포가 내 계정 것인지 확인하는 데만 써요.</li>
         <li>읽기 권한만 요청해요. 코드를 바꾸지 않아요.</li>
         <li>GitHub로 로그인하는 건 아니에요. 로그인은 지금처럼 이메일로 해요.</li>

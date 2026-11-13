@@ -4,9 +4,9 @@ import { Link } from 'react-router'
 function ForbiddenNotice() {
   return (
     <section className="flex flex-col gap-3">
-      <h1 className="text-xl">권한이 없어요</h1>
+      <h1 className="text-2xl">권한이 없어요</h1>
       <p>이 화면은 운영자만 볼 수 있어요.</p>
-      <Link to="/dashboard" className="self-start underline">
+      <Link to="/dashboard" className="self-start text-accent-text underline">
         대시보드로 가기
       </Link>
     </section>
