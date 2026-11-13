@@ -5,10 +5,10 @@
 
 ## 범위
 
-FE가 화면을 만들기 전에 쓸 **토큰과 기본 컴포넌트 15종**(`Button`, `Input`, `Field`, `Alert`, `Badge`, `Table`, `Card`, `LogBlock`, `SelectField`와, 2026-11-13에 더한 `Tabs`, `Spinner`, `Skeleton`, `Banner`, `Steps`, `Meter`)을 정한다. `Field`와 `Alert`는 로그인 화면(#51)에서, `SelectField`(`<select>`에 보이는 라벨 · 오류 문구 · aria 연결을 붙인 것. `Field`와 같은 규칙)는 배포 설정 화면(#71)에서 추가했다. 코드는 `FE/src/styles/`, `FE/src/components/ui/`에 있다.
+FE가 화면을 만들기 전에 쓸 **토큰과 기본 컴포넌트 16종**(`Button`, `Input`, `Field`, `Alert`, `Badge`, `Table`, `Card`, `LogBlock`, `SelectField`와, 2026-11-13에 더한 `Tabs`, `Spinner`, `Skeleton`, `Banner`, `Steps`, `Meter`, `Sparkline`)을 정한다. `Field`와 `Alert`는 로그인 화면(#51)에서, `SelectField`(`<select>`에 보이는 라벨 · 오류 문구 · aria 연결을 붙인 것. `Field`와 같은 규칙)는 배포 설정 화면(#71)에서 추가했다. 코드는 `FE/src/styles/`, `FE/src/components/ui/`에 있다.
 
 - 하는 것: 흑백 미니멀(Vercel식)에 **주황 포인트 색 하나**(`#F7941D`, 2026-11-13 사용자가 A안으로 확정)를 얹는다. 정보 밀도 높게, 한글과 영문이 한 줄에 섞이는 화면(`nginx:1.27`, `Running 2/3`)을 기준으로 한다. 다크 모드는 OS 설정(`prefers-color-scheme`)을 따른다.
-- 하지 않는 것: 수동 다크 모드 토글, 라우터, 실제 화면, 위 15종 밖의 컴포넌트, 변종 라이브러리, 기성 컴포넌트 키트(shadcn/ui 등).
+- 하지 않는 것: 수동 다크 모드 토글, 라우터, 실제 화면, 위 16종 밖의 컴포넌트, 변종 라이브러리, 기성 컴포넌트 키트(shadcn/ui 등).
 - 컴포넌트를 눈으로 확인하려고 임시 스타일 가이드 페이지를 두었다가 삭제했다. 컴포넌트와 토큰만 남기고, 화면은 PR에 첨부한 스크린샷(라이트 · 다크, 1440px · 390px)으로 남긴다.
 
 ## 설계
@@ -68,6 +68,7 @@ FE가 화면을 만들기 전에 쓸 **토큰과 기본 컴포넌트 15종**(`Bu
 | `Banner` | 제목 없는 한 줄 안내 4종(info · ok · warn · err) | SVG 기호를 함께 둔다(원 `i` · 체크 · 삼각형 · ×라서 색을 못 봐도 경고와 오류가 갈린다). `err`만 `role="alert"` |
 | `Steps` | 세로 단계(완료 · 진행 · 대기 · 실패 · 예정) | 진행 중 · 대기 · 실패는 상태 글자가 눈에 보이고(완료 · 예정은 스크린 리더용), 대기는 점선 테두리 + `…`라 진행 중(실선)과 모양으로 갈린다. `accent-ui`와 `warn`은 색이 가까워(다크 1.12:1, 라이트 1.63:1) 구분 수단으로 못 쓴다. 진행 중 단계는 `aria-current="step"` |
 | `Meter` | 개수를 아는 진행 · 사용량 | `role="progressbar"`, 0~100%로 자른다 |
+| `Sparkline` | 시간에 따른 값의 작은 선 그래프(서비스 CPU · 메모리) | 라이브러리 없는 인라인 SVG. 축 대신 최저 · 최고 · 지금 값을 글자로 두고 요약을 `aria-label`에 넣는다. `null`인 자리는 선을 끊고(없는 값을 지어내지 않는다), 값이 하나도 없으면 선 없이 `emptyText`만 보인다. 선 색은 `accent-ui`라 `bg` · `raise` 위에 둔다 |
 
 로딩 선택: 목록 · 카드 첫 로딩은 `Skeleton`, 버튼 처리 중과 단계 진행은 `Spinner` + 문구, 개수를 아는 진행은 `Meter`, 300ms 안에 끝나는 일은 표시하지 않는다. 키프레임과 색 섞기가 필요한 `Skeleton` · `Spinner`는 임의값 클래스가 막혀 있어서 `theme.css`의 `@utility`(`skeleton`, `spinner`)로 둔다.
 
