@@ -39,6 +39,17 @@ export function podSignal(pod: Obj): Signal | null {
   return null
 }
 
+/**
+ * 스케줄러가 노드를 찾지 못해 Pending인 Pod(`PodScheduled=False`, reason `Unschedulable`)의 그 조건, 아니면 null.
+ * 이벤트는 만료될 수 있어 Pod 상태로 본다. 프로젝트 쿼터(CPU 요청 4 · 메모리 16Gi)는 워커 하나보다 작아서,
+ * 쿼터 안의 Pod가 스케줄되지 않으면 노드가 꽉 찬 것이다(쿼터 초과는 FailedCreate로 따로 잡는다).
+ */
+export function unschedulable(pod: Obj): Obj | null {
+  const status = isRecord(pod.status) ? pod.status : {}
+  if (status.phase !== 'Pending') return null
+  return arr(status.conditions).find((c) => c.type === 'PodScheduled' && c.status === 'False' && c.reason === 'Unschedulable') ?? null
+}
+
 /** 이 서비스(`<서비스>-<슬롯>`)의 ReplicaSet이 쿼터 때문에 Pod를 못 만든 이벤트. */
 export function quotaEvent(events: Obj[], fullName: string): Obj | null {
   return (
@@ -133,6 +144,12 @@ export async function runApply(input: DeployInput, slot: Slot, manifest: string,
         if (signaled?.signal === 'ImagePullBackOff' || signaled?.signal === 'ErrImagePull') {
           // 이미지는 공개 GHCR에 있다. 받지 못하는 것은 학생 spec으로 고칠 수 없는 플랫폼 문제다.
           return { kind: 'platform', code: 'IMAGE_PULL_FAILED', service: svc.name, message: `${fullName}: ${signaled.signal}`, detail: raw }
+        }
+        // 한도까지 기다렸는데 노드에 자리가 없어 Pending이면 학생이 고칠 것이 아니다(노드 자원 부족, AIagent.md §8). 풀릴 수 있어서 한도가 됐을 때만 본다.
+        const stuck = signaled || quota ? undefined : pods.map((p) => ({ pod: p, cond: unschedulable(p) })).find((x) => x.cond !== null)
+        if (stuck) {
+          const reason = typeof stuck.cond!.message === 'string' ? `: ${stuck.cond!.message}` : ''
+          return { kind: 'platform', code: 'SCHEDULING_FAILED', service: svc.name, message: `${fullName}: Unschedulable for ${waitLimitSeconds(svc)}s${reason}`, detail: { ...raw, pod: stripManaged(stuck.pod) } }
         }
         const why = signaled ? signaled.signal : quota ? `FailedCreate: ${String(quota.message)}` : `not Ready in ${waitLimitSeconds(svc)}s`
         return { kind: 'student', service: svc.name, errorMessage: `${fullName}: ${why}`, raw }

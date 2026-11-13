@@ -41,6 +41,7 @@ const INTERNAL_MESSAGES: Record<InternalCode, string> = {
 const PLATFORM_MESSAGES: Record<string, string> = {
   CODEBUILD_API_ERROR: '빌드 서비스(CodeBuild)에 문제가 있어 배포하지 못했습니다. 잠시 뒤 다시 시도해 주세요.',
   IMAGE_PULL_FAILED: '이미지를 클러스터로 받아 오지 못했습니다. 잠시 뒤 다시 시도해 주세요.',
+  SCHEDULING_FAILED: '클러스터에 자리가 없어 앱을 띄우지 못했습니다. 잠시 뒤 다시 시도해 주세요.',
   LIVE_SLOT_PROTECTED: '서비스 중인 슬롯을 보호하기 위해 배포를 중단했습니다. 운영자에게 알려 주세요.',
   UNEXPECTED_REFUSAL: '클러스터가 예상하지 못한 이유로 요청을 거절해 배포를 중단했습니다. 운영자에게 알려 주세요.',
   TRAEFIK_UNREACHABLE: '동작 확인 중 공개 진입점(Traefik)에 닿지 못했습니다. 잠시 뒤 다시 시도해 주세요.',
