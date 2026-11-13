@@ -9,6 +9,7 @@ import { ApiError, apiFetch } from '../lib/api.ts'
 import DeployStages from './DeployStages.tsx'
 import { isActive, isPlatformProblem, POLL_MS, stageStatesOf } from './progress.ts'
 import type { Progress } from './progress.ts'
+import ServiceStatus from './ServiceStatus.tsx'
 import StatusBadge from './StatusBadge.tsx'
 import { STAGES } from './stages.ts'
 import { useCopy } from './useCopy.ts'
@@ -293,6 +294,7 @@ function DeployProgress({ deployId }: { deployId: string }) {
             </div>
           </Card>
         )}
+        {progress.status === 'succeeded' && <ServiceStatus deployId={deployId} />}
       </div>
     </section>
   )

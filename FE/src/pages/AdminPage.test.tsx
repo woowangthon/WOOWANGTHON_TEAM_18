@@ -44,15 +44,18 @@ const running: AdminProject = {
   url: 'https://my-app.stairnoworks.com',
   lastStop: null,
   clusterError: null,
+  usageStatus: 'collected',
   services: [
     {
       name: 'fe-a',
       slot: 'a',
       replicas: 1,
       readyReplicas: 0,
+      restarts: 2,
+      usage: null,
       pods: [{ name: 'fe-a-6d9f-xk2', phase: 'Pending', ready: false, node: 'worker-1', restarts: 2 }],
     },
-    { name: 'be-a', slot: 'a', replicas: 1, readyReplicas: 1, pods: [] },
+    { name: 'be-a', slot: 'a', replicas: 1, readyReplicas: 1, restarts: 0, usage: { cpuMillicores: 40, memoryBytes: 73_400_320 }, pods: [] },
   ],
 }
 const stopped: AdminProject = {
@@ -61,7 +64,7 @@ const stopped: AdminProject = {
   url: null,
   liveSlot: null,
   lastStop: { at: '2026-11-11T01:00:00.000Z', by: 'operator' },
-  services: [{ name: 'fe-a', slot: 'a', replicas: 0, readyReplicas: 0, pods: [] }],
+  services: [{ name: 'fe-a', slot: 'a', replicas: 0, readyReplicas: 0, restarts: 0, usage: null, pods: [] }],
 }
 const noSpace: AdminProject = { ...running, slug: 'new-app', url: null, liveSlot: null, services: [] }
 const projectsOf = (projects: AdminProject[] = [running, stopped, noSpace]): ProjectsResponse => ({ projects })
@@ -184,6 +187,38 @@ it('shows each project with its services, pods, owner and an https address as a 
   expect(project.getByText(/Pending · 준비 안 됨 · 노드 worker-1 · 재시작 2회/)).toBeTruthy()
 })
 
+it('shows each service with its restarts and current usage, and says so when there is no usage yet', async () => {
+  await show()
+  const project = within(card('my-app'))
+  expect(project.getByText('재시작 0회 · CPU 0.04코어 · 메모리 70MiB')).toBeTruthy()
+  // 수집은 됐지만 이 서비스의 사용량이 아직 없다(새로 뜬 Pod). 0으로 보이지 않는다.
+  expect(project.getByText('재시작 2회 · 사용량 아직 없음')).toBeTruthy()
+})
+
+it('says usage is not collected for a project the server could not read usage for, never a zero', async () => {
+  const notCollected: AdminProject = {
+    ...running,
+    usageStatus: 'not_collected',
+    services: running.services.map((s) => ({ ...s, usage: null })),
+  }
+  serve({ [PROJECTS]: projectsOf([notCollected]) })
+  await show()
+  const project = within(card('my-app'))
+  expect(project.getAllByText(/사용량 수집 전/)).toHaveLength(2)
+  expect(project.queryByText(/CPU|MiB/)).toBeNull()
+})
+
+it('links every node to Grafana in a new tab without embedding it', async () => {
+  const { container } = await show()
+  for (const name of ['leader', 'worker-1']) {
+    const link = within(card(name)).getByRole('link', { name: 'Grafana에서 자세히 보기' })
+    expect(link.getAttribute('href')).toBe('https://grafana.stairnoworks.com')
+    expect(link.getAttribute('target')).toBe('_blank')
+    expect(link.getAttribute('rel')).toContain('noopener')
+  }
+  expect(container.querySelector('iframe')).toBeNull()
+})
+
 it('does not turn an address that is not https into a link', async () => {
   serve({ [PROJECTS]: projectsOf([{ ...running, url: 'http://my-app.stairnoworks.com' }]) })
   await show()
@@ -205,8 +240,8 @@ it('treats a project as running while any of its services still has replicas, an
   const partial: AdminProject = {
     ...running,
     services: [
-      { name: 'fe-a', slot: 'a', replicas: 0, readyReplicas: 0, pods: [] },
-      { name: 'be-a', slot: 'a', replicas: 2, readyReplicas: 2, pods: [] },
+      { name: 'fe-a', slot: 'a', replicas: 0, readyReplicas: 0, restarts: 0, usage: null, pods: [] },
+      { name: 'be-a', slot: 'a', replicas: 2, readyReplicas: 2, restarts: 0, usage: null, pods: [] },
     ],
   }
   serve({ [PROJECTS]: projectsOf([partial]) })

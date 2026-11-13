@@ -13,6 +13,9 @@ vi.mock('../lib/api.ts', async (importOriginal) => ({
   apiFetch: api.apiFetch,
 }))
 
+// 서비스 상태 카드는 자기 시험(ServiceStatus.test.tsx)이 있다. 여기서는 어느 상태에서 나오는지만 본다.
+vi.mock('./ServiceStatus.tsx', () => ({ default: ({ deployId }: { deployId: string }) => <p>서비스 상태 카드 {deployId}</p> }))
+
 const ID = '0b6f0c1e-4a52-4d8e-9a1b-3f7d2c5e8a90'
 const STATUS = `/api/deploys/${ID}/status`
 const START = `/api/deploys/${ID}/start`
@@ -425,4 +428,15 @@ it('does not turn an address that is not https into a link', async () => {
   api.apiFetch.mockResolvedValue(progressOf('succeeded', null, { url: 'javascript:alert(1)' }))
   await show()
   expect(screen.queryByRole('link', { name: /javascript/ })).toBeNull()
+})
+
+it('shows the service status card only for a succeeded deploy', async () => {
+  api.apiFetch.mockResolvedValue(progressOf('running', 'build'))
+  const { unmount } = await show()
+  expect(screen.queryByText(/서비스 상태 카드/)).toBeNull()
+  unmount()
+
+  api.apiFetch.mockResolvedValue(progressOf('succeeded', null, { url: 'https://my-app.example.com' }))
+  await show()
+  expect(screen.getByText(`서비스 상태 카드 ${ID}`)).toBeTruthy()
 })

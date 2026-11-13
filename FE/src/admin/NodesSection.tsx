@@ -1,12 +1,14 @@
 import { Badge } from '../components/ui/Badge.tsx'
 import { Meter } from '../components/ui/Meter.tsx'
+import { bytesText, cpuText } from '../lib/format.ts'
 import AdminSection from './AdminSection.tsx'
-import { bytesText, cpuText } from './format.ts'
 import Row from './Row.tsx'
 import type { AdminRead } from './useAdminRead.ts'
 import type { AdminNode, NodesResponse } from './types.ts'
 
 const USAGE_NOT_COLLECTED = '수집 전'
+// 운영자만 보는 지표 화면. 학생 화면에는 넣지 않는다. 새 탭으로 열고 이 화면에 끼워 넣지(iframe) 않는다.
+const GRAFANA_URL = 'https://grafana.stairnoworks.com'
 
 // 사용량 막대. 할당 가능량을 읽지 못했거나 0이면 비율을 말할 수 없어서 그리지 않는다(값을 지어내지 않는다).
 function UsageMeter({ label, used, allocatable }: { label: string; used: number; allocatable: number | null }) {
@@ -48,6 +50,9 @@ function NodeCard({ node, collected }: { node: AdminNode; collected: boolean }) 
           <UsageMeter label="메모리" used={usage.memoryBytes} allocatable={node.memory.allocatableBytes} />
         </div>
       )}
+      <a href={GRAFANA_URL} target="_blank" rel="noopener noreferrer" className="self-start text-sm text-accent-text underline">
+        Grafana에서 자세히 보기
+      </a>
     </li>
   )
 }
