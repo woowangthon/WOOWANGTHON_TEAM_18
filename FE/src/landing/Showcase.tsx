@@ -47,7 +47,7 @@ function Showcase() {
     <section id="showcase" className="border-t border-line">
       <div className="mx-auto flex max-w-300 flex-col gap-16 px-4 py-16 sm:px-8">
         <div className="flex max-w-2xl flex-col gap-3">
-          <h2 className="text-2xl">배포 하나에 필요한 것을 다 만들었어요</h2>
+          <h2 className="text-2xl">처음이라 어려운 배포, AI 동료가 도와줘요</h2>
           <p className="text-lg text-muted">아래 화면은 모두 예시 데이터로 그린 것이에요. 모양과 흐름은 실제 서비스와 같아요.</p>
         </div>
         {FEATURES.map((f, i) => (

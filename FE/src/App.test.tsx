@@ -89,7 +89,7 @@ it('shows the landing at the root path when signed in, with a link to the dashbo
 it('shows the public landing at the root path when signed out', () => {
   renderApp('/', 'out')
   expect(h1()).toBe('GitHub 레포 하나로, 학교 PC에 배포까지')
-  expect(screen.getByRole('link', { name: '로그인' }).getAttribute('href')).toBe('/login')
+  expect(screen.getAllByRole('link', { name: '로그인' })[0]?.getAttribute('href')).toBe('/login')
   expect(screen.getAllByRole('link', { name: '시작하기' })[0]?.getAttribute('href')).toBe('/signup')
 })
 

@@ -3,9 +3,10 @@ import { isAdmin } from '../auth/isAdmin.ts'
 import { useAuth } from '../auth/useAuth.ts'
 import { primaryLinkClass } from '../components/primaryLinkClass.ts'
 import { Card } from '../components/ui/Card.tsx'
-import { Table, Td, Th, THead } from '../components/ui/Table.tsx'
 import HeroCarousel from '../landing/HeroCarousel.tsx'
+import ProjectTypes from '../landing/ProjectTypes.tsx'
 import Showcase from '../landing/Showcase.tsx'
+import Survey from '../landing/Survey.tsx'
 
 const outlineLinkClass =
   'inline-flex h-8 items-center rounded-sm border border-line-strong px-3 text-sm font-bold text-fg hover:border-fg'
@@ -37,6 +38,9 @@ function LandingPage() {
               />
             </Link>
             <nav aria-label="페이지 바로가기" className="flex gap-4 text-sm text-muted">
+              <a href="#survey" className="py-2 hover:text-fg">
+                설문
+              </a>
               <a href="#showcase" className="py-2 hover:text-fg">
                 기능 소개
               </a>
@@ -70,7 +74,7 @@ function LandingPage() {
       <main className="flex-1">
         <section className="mx-auto grid max-w-300 items-center gap-10 px-4 py-16 sm:px-8 sm:py-24 lg:grid-cols-2 lg:gap-16">
           <div className="flex flex-col gap-6">
-            <h1 className="max-w-2xl text-2xl">GitHub 레포 하나로, 학교 PC에 배포까지</h1>
+            <h1 className="max-w-2xl text-2xl sm:text-3xl">GitHub 레포 하나로, 학교 PC에 배포까지</h1>
             <p className="max-w-2xl text-lg text-muted">
               공개 레포를 제출하면 학교 PC 클러스터에 배포해 줘요. 배포가 막히면 AI 동료가 원인을
               찾아 고쳐 보고, 끝나면 접속 주소를 받아요.
@@ -88,36 +92,11 @@ function LandingPage() {
           <HeroCarousel />
         </section>
 
+        <Survey />
+
         <Showcase />
 
-        <section id="types" className="border-t border-line bg-surface">
-          <div className="mx-auto flex max-w-300 flex-col gap-4 px-4 py-16 sm:px-8">
-            <h2 className="text-xl">어떤 프로젝트를 올릴 수 있나요</h2>
-            <p className="text-muted">서비스 유형은 레포를 제출할 때 직접 골라요.</p>
-            <Table aria-label="지원하는 서비스 유형">
-              <THead>
-                <tr>
-                  <Th>유형</Th>
-                  <Th>받는 것</Th>
-                </tr>
-              </THead>
-              <tbody>
-                <tr>
-                  <Td>정적 웹</Td>
-                  <Td>웹 주소</Td>
-                </tr>
-                <tr>
-                  <Td>서버</Td>
-                  <Td>API 주소</Td>
-                </tr>
-                <tr>
-                  <Td>웹 + 서버</Td>
-                  <Td>웹 주소와 API 경로</Td>
-                </tr>
-              </tbody>
-            </Table>
-          </div>
-        </section>
+        <ProjectTypes />
 
         <section id="how" className="border-t border-line">
           <div className="mx-auto flex max-w-300 flex-col gap-6 px-4 py-16 sm:px-8">
@@ -141,6 +120,29 @@ function LandingPage() {
           </div>
         </section>
 
+
+        <section className="border-t border-line bg-surface">
+          <div className="mx-auto flex max-w-300 flex-col items-start gap-6 px-4 py-20 sm:px-8">
+            <h2 className="max-w-2xl text-2xl sm:text-3xl">첫 배포, 지금 해 보세요</h2>
+            <p className="max-w-2xl text-lg text-muted">GitHub 레포 주소만 있으면 돼요. 막히면 AI 동료가 도와줘요.</p>
+            <div className="flex flex-wrap items-center gap-3">
+              {home ? (
+                <Link to={home} className={primaryLinkClass}>
+                  대시보드로
+                </Link>
+              ) : (
+                <>
+                  <Link to="/signup" className={primaryLinkClass}>
+                    시작하기
+                  </Link>
+                  <Link to="/login" className={outlineLinkClass}>
+                    로그인
+                  </Link>
+                </>
+              )}
+            </div>
+          </div>
+        </section>
       </main>
 
       <footer className="border-t border-line">

@@ -109,7 +109,7 @@ const renderLanding = (state: AuthState) =>
 
 it('shows login and start links to a signed-out visitor', () => {
   renderLanding({ status: 'signedOut', expired: false })
-  expect(screen.getByRole('link', { name: '로그인' }).getAttribute('href')).toBe('/login')
+  expect(screen.getAllByRole('link', { name: '로그인' })[0]?.getAttribute('href')).toBe('/login')
   expect(screen.queryByRole('link', { name: '대시보드로' })).toBeNull()
 })
 
@@ -133,4 +133,40 @@ it('draws nothing while the session is loading', () => {
 it('labels every preview as an example', () => {
   renderLanding({ status: 'signedOut', expired: false })
   expect(screen.getAllByText('예시 화면')).toHaveLength(5)
+})
+
+it('explains each service type in plain words with examples and what you get', () => {
+  renderLanding({ status: 'signedOut', expired: false })
+  expect(screen.getByRole('heading', { name: '정적 웹' })).toBeTruthy()
+  expect(screen.getByText(/서버 없이 브라우저가 그대로 보여 줘요/)).toBeTruthy()
+  expect(screen.getByText('동아리 홈페이지 + API')).toBeTruthy()
+  expect(screen.getByText('웹 주소와 API 경로')).toBeTruthy()
+})
+
+it('says only React (Vite) and Next.js work without a Dockerfile, and does not claim a tested language list', () => {
+  renderLanding({ status: 'signedOut', expired: false })
+  expect(screen.getByText(/React\(Vite\)와 Next\.js를 올릴 수 있어요/)).toBeTruthy()
+  expect(screen.getByText(/시험해 본 목록은 아니에요/)).toBeTruthy()
+})
+
+it('shows the real survey numbers with their source and pairs each with an answer', () => {
+  renderLanding({ status: 'signedOut', expired: false })
+  expect(screen.getByText('출처: 학과 대상 구글폼 설문 · 2026-10-28~31 · 응답 37명')).toBeTruthy()
+  expect(screen.getByText('37명 중 29명 (78%)')).toBeTruthy()
+  expect(screen.getByText('37명 중 25명 (68%)')).toBeTruthy()
+  expect(screen.getByText('22명 중 7명 (32%)')).toBeTruthy()
+  expect(screen.getByText('37명 중 16명 (43%)')).toBeTruthy()
+  expect(screen.getByText('37명 중 28명 (76%)')).toBeTruthy()
+  expect(screen.getByText(/37명 모두 긍정이에요 · 사용하고 싶다 26명, 기회가 되면 쓰겠다 11명/)).toBeTruthy()
+  expect(screen.getAllByText('우리의 답')).toHaveLength(5)
+  expect(screen.getAllByRole('progressbar').length).toBeGreaterThanOrEqual(6)
+})
+
+it('closes with a call to action: start and login when signed out, dashboard when signed in', () => {
+  const { unmount } = renderLanding({ status: 'signedOut', expired: false })
+  expect(screen.getByRole('heading', { name: '첫 배포, 지금 해 보세요' })).toBeTruthy()
+  expect(screen.getAllByRole('link', { name: '시작하기' })).toHaveLength(3)
+  unmount()
+  renderLanding({ status: 'signedIn', session: sessionWith('admin') })
+  expect(screen.getAllByRole('link', { name: '대시보드로' })).toHaveLength(3)
 })
