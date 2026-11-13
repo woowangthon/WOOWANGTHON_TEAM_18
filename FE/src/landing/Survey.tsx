@@ -4,6 +4,8 @@ import { percent, SURVEY_INTEREST, SURVEY_ROWS, SURVEY_SOURCE } from './survey.t
 // 학생 설문 결과와 우리의 답을 한 줄씩 짝지어 보인다. 막대는 Meter(가로 막대)이고 숫자는 글자로도 적는다.
 function Survey() {
   const { yes, maybe, total } = SURVEY_INTEREST
+  const positive = yes + maybe
+  const summary = positive === total ? `${total}명 모두 긍정이에요` : `${total}명 중 ${positive}명이 긍정이에요`
   return (
     <section id="survey" className="border-t border-line">
       <div className="mx-auto grid max-w-300 gap-10 px-4 py-16 sm:px-8 lg:grid-cols-5 lg:gap-16">
@@ -31,9 +33,9 @@ function Survey() {
           </ul>
           <div className="flex flex-col gap-2 rounded-md bg-surface p-4">
             <p className="font-bold">이런 서비스가 있다면 쓰겠어요?</p>
-            <Meter aria-label={`${total}명 모두 긍정`} value={yes + maybe} max={total} />
+            <Meter aria-label={summary} value={positive} max={total} />
             <p className="text-sm text-muted">
-              {total}명 모두 긍정이에요 · 사용하고 싶다 {yes}명, 기회가 되면 쓰겠다 {maybe}명
+              {summary} · 사용하고 싶다 {yes}명, 기회가 되면 쓰겠다 {maybe}명
             </p>
           </div>
         </div>

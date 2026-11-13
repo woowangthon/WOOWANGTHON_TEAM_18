@@ -1,6 +1,5 @@
 // 실제 설문 결과다(샘플 아님). 출처: docs/SRS.md §1.1과 설문 CSV. 화면에는 출처 문구를 함께 보인다.
 export const SURVEY_SOURCE = '학과 대상 구글폼 설문 · 2026-10-28~31 · 응답 37명'
-export const SURVEY_TOTAL = 37
 
 export type SurveyRow = { id: string; label: string; count: number; total: number; answer: string }
 
