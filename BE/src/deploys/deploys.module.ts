@@ -9,6 +9,7 @@ import { DeployConditionService } from './deploy-condition.service.js'
 import { AgentClient } from './agent.client.js'
 import { DeployPreparer } from './deploy-preparer.js'
 import { DeployReadinessService } from './deploy-readiness.service.js'
+import { DeployMetricsService } from './deploy-metrics.service.js'
 import { DeployRunsService } from './deploy-runs.service.js'
 import { DeploysController } from './deploys.controller.js'
 import { DeploysService } from './deploys.service.js'
@@ -27,6 +28,7 @@ import { SecretsService } from './secrets.service.js'
     DeploysStore,
     DeployConditionService,
     DeployRunsService,
+    DeployMetricsService,
     PipelineClient,
     AgentClient,
     PipelineTokenGuard,

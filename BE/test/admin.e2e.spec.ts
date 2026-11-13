@@ -4,7 +4,7 @@ import request from 'supertest'
 import type { App } from 'supertest/types.js'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ClusterError } from '../src/k8s/cluster-error.js'
-import { ClusterReader, type DeploymentInfo, type NodeInfo, type NodeUsageInfo, type PodInfo } from '../src/k8s/cluster-reader.js'
+import { ClusterReader, type DeploymentInfo, type NodeInfo, type NodeUsageInfo, type PodInfo, type PodUsageInfo } from '../src/k8s/cluster-reader.js'
 import { DeploymentScaler } from '../src/k8s/deployment-scaler.js'
 import { errorBody, JWKS_URL, keySet, token } from './auth-helpers.js'
 import { startApp } from './start-app.js'
@@ -22,6 +22,9 @@ let nodesData: NodeInfo[]
 // 노드 사용량(metrics.k8s.io). usageError가 있으면 그 오류로 실패한다.
 let usageData: NodeUsageInfo[]
 let usageError: Error | undefined
+// Pod 사용량(metrics.k8s.io): 공간마다. podUsageErrors에 slug가 있으면 그 오류로 실패한다.
+let podUsageData: Record<string, PodUsageInfo[]>
+let podUsageErrors: Record<string, Error>
 let spaces: Record<string, { deployments: DeploymentInfo[]; pods: PodInfo[] }>
 let slugErrors: Record<string, ClusterError>
 let clusterError: ClusterError | undefined
@@ -38,6 +41,7 @@ const read = <T>(slug: string | null, pick: (space: (typeof spaces)[string]) => 
 const reader = {
   nodes: () => read<NodeInfo>(null, () => []),
   nodeUsage: () => (usageError ? Promise.reject(usageError) : Promise.resolve(usageData)),
+  podUsage: (slug: string) => (podUsageErrors[slug] ? Promise.reject(podUsageErrors[slug]) : Promise.resolve(podUsageData[slug] ?? [])),
   deployments: (slug: string) => read(slug, (space) => space.deployments),
   pods: (slug: string) => read(slug, (space) => space.pods),
 }
@@ -101,6 +105,8 @@ beforeEach(async () => {
   nodesData = []
   usageData = []
   usageError = undefined
+  podUsageData = {}
+  podUsageErrors = {}
   spaces = {}
   slugErrors = {}
   clusterError = undefined
@@ -258,6 +264,12 @@ describe('GET /api/admin/projects', () => {
       { slug: 'my-app', action: 'stop', actor_email: 'op@example.com', created_at: '2026-11-11T02:00:00.000Z' },
     ]
     space('my-app', [deployment('fe-a'), deployment('be-a', 0, 0), deployment('fe', 2, 1)], [pod('fe-a-6d9f8c7b5-xk2ab', 3), pod('fe-6d9f8c7b5-aaaaa', 0, false), pod('be-a-5c4d-bbbbb'), pod('fe-a-extra-6d9f8c7b5-zzzzz'), pod('fe-a-6d9f8c7b5-toolong1')])
+    // fe-a는 컨테이너 둘의 합(41m, 21Mi). fe의 Pod는 첫 수집 전이라 목록에 없다. 이름이 겹치는 다른 서비스의 Pod 값은 섞이지 않는다.
+    podUsageData['my-app'] = [
+      { name: 'fe-a-6d9f8c7b5-xk2ab', containers: [{ cpu: '40m', memory: '20Mi' }, { cpu: '1m', memory: '1Mi' }] },
+      { name: 'fe-a-extra-6d9f8c7b5-zzzzz', containers: [{ cpu: '900m', memory: '1Gi' }] },
+      { name: 'be-a-5c4d-bbbbb', containers: [{ cpu: '2m', memory: '3Mi' }] },
+    ]
 
     const res = await call('get', '/api/admin/projects', undefined)
     expect(res.status).toBe(200)
@@ -267,14 +279,39 @@ describe('GET /api/admin/projects', () => {
     expect(projects[0]).toEqual({
       slug: 'my-app', repo: 'Student/my-app', ownerId: USER, liveSlot: 'a', url: 'https://my-app.stairnoworks.com', clusterError: null,
       lastStop: { at: '2026-11-11T02:00:00.000Z', by: 'op@example.com' },
+      usageStatus: 'collected',
       services: [
-        { name: 'fe-a', slot: 'a', replicas: 1, readyReplicas: 1, pods: [{ name: 'fe-a-6d9f8c7b5-xk2ab', phase: 'Running', ready: true, node: 'worker-1', restarts: 3 }] },
-        { name: 'be-a', slot: 'a', replicas: 0, readyReplicas: 0, pods: [{ name: 'be-a-5c4d-bbbbb', phase: 'Running', ready: true, node: 'worker-1', restarts: 0 }] },
-        { name: 'fe', slot: null, replicas: 2, readyReplicas: 1, pods: [{ name: 'fe-6d9f8c7b5-aaaaa', phase: 'Running', ready: false, node: 'worker-1', restarts: 0 }] },
+        { name: 'fe-a', slot: 'a', replicas: 1, readyReplicas: 1, restarts: 3, usage: { cpuMillicores: 41, memoryBytes: 21 * 1024 ** 2 }, pods: [{ name: 'fe-a-6d9f8c7b5-xk2ab', phase: 'Running', ready: true, node: 'worker-1', restarts: 3 }] },
+        { name: 'be-a', slot: 'a', replicas: 0, readyReplicas: 0, restarts: 0, usage: { cpuMillicores: 2, memoryBytes: 3 * 1024 ** 2 }, pods: [{ name: 'be-a-5c4d-bbbbb', phase: 'Running', ready: true, node: 'worker-1', restarts: 0 }] },
+        { name: 'fe', slot: null, replicas: 2, readyReplicas: 1, restarts: 0, usage: null, pods: [{ name: 'fe-6d9f8c7b5-aaaaa', phase: 'Running', ready: false, node: 'worker-1', restarts: 0 }] },
       ],
     })
     // 공간이 없는(403) 프로젝트와 아직 전환하지 않은 프로젝트
     expect(projects[1]).toMatchObject({ slug: 'old-app', liveSlot: null, url: null, lastStop: null, services: [] })
+  })
+
+  it('keeps the services and says "not_collected" for a project whose Pod usage cannot be read, without touching the others', async () => {
+    seedProject('my-app', USER, 5)
+    seedProject('other-app', USER, 1)
+    space('my-app', [deployment('fe-a')], [pod('fe-a-6d9f8c7b5-xk2ab', 2)])
+    space('other-app', [deployment('fe-a')], [pod('fe-a-6d9f8c7b5-yyyyy')])
+    podUsageErrors['my-app'] = new ClusterError('forbidden', 403)
+    podUsageData['other-app'] = [{ name: 'fe-a-6d9f8c7b5-yyyyy', containers: [{ cpu: '5m', memory: '1Mi' }] }]
+    const { projects } = (await call('get', '/api/admin/projects', undefined)).body as { projects: Record<string, unknown>[] }
+    expect(projects[0]).toMatchObject({ slug: 'my-app', usageStatus: 'not_collected', clusterError: null, services: [{ name: 'fe-a', restarts: 2, usage: null }] })
+    expect(projects[1]).toMatchObject({ slug: 'other-app', usageStatus: 'collected', services: [{ usage: { cpuMillicores: 5, memoryBytes: 1024 ** 2 } }] })
+  })
+
+  it('never invents a usage figure: an unreadable quantity or a Pod missing from the list gives null', async () => {
+    seedProject('my-app')
+    space('my-app', [deployment('fe-a', 2, 2), deployment('be-a')], [pod('fe-a-6d9f8c7b5-aaaaa'), pod('fe-a-6d9f8c7b5-bbbbb'), pod('be-a-5c4d-ccccc')])
+    // be-a의 값이 쿠버네티스 수량이 아니다. fe-a는 Pod 하나만 목록에 있어 있는 것만 더한다.
+    podUsageData['my-app'] = [
+      { name: 'fe-a-6d9f8c7b5-aaaaa', containers: [{ cpu: '10m', memory: '2Mi' }] },
+      { name: 'be-a-5c4d-ccccc', containers: [{ cpu: 'lots', memory: '2Mi' }] },
+    ]
+    const { projects } = (await call('get', '/api/admin/projects', undefined)).body as { projects: { services: unknown[] }[] }
+    expect(projects[0].services).toMatchObject([{ name: 'fe-a', usage: { cpuMillicores: 10, memoryBytes: 2 * 1024 ** 2 } }, { name: 'be-a', usage: null }])
   })
 
   it('lists a project once even if it has several saved deploys, with the latest one\'s owner', async () => {

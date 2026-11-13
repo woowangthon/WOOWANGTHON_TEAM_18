@@ -1,6 +1,7 @@
 import { Body, Controller, Get, HttpCode, Param, Post, Put, Query } from '@nestjs/common'
 import { AccessToken, CurrentUser } from '../auth/auth.decorators.js'
 import type { AuthUser } from '../auth/auth.decorators.js'
+import { DeployMetricsService } from './deploy-metrics.service.js'
 import { DeployRunsService } from './deploy-runs.service.js'
 import { DeploysService } from './deploys.service.js'
 import { SecretsService } from './secrets.service.js'
@@ -10,6 +11,7 @@ export class DeploysController {
   constructor(
     private readonly deploys: DeploysService,
     private readonly runs: DeployRunsService,
+    private readonly metrics: DeployMetricsService,
     private readonly secrets: SecretsService,
   ) {}
 
@@ -37,6 +39,11 @@ export class DeploysController {
   @Get(':id/status')
   status(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.runs.status(user, id)
+  }
+
+  @Get(':id/metrics')
+  metricsOf(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.metrics.get(user, id)
   }
 
   @Get(':id')

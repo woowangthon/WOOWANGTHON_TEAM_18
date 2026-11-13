@@ -5,6 +5,7 @@ import { publicUrl } from '../deploys/deploy-run.js'
 import { ClusterError } from '../k8s/cluster-error.js'
 import { ClusterReader, type NodeInfo, type NodeUsageInfo, type PodInfo } from '../k8s/cluster-reader.js'
 import { DeploymentScaler } from '../k8s/deployment-scaler.js'
+import { ownsPod, readUsageByPod, serviceUsage } from '../k8s/service-metrics.js'
 import { AdminStore, type ProjectRecord } from './admin.store.js'
 import { bytes, millicores } from './quantity.js'
 
@@ -67,8 +68,6 @@ async function readList<T>(read: Promise<T[]>, goneIsEmpty = false): Promise<T[]
   }
 }
 
-const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-
 @Injectable()
 export class AdminService {
   private readonly logger = new Logger(AdminService.name)
@@ -101,45 +100,53 @@ export class AdminService {
     const [records, stops] = await Promise.all([this.store.projects(), this.store.lastStops()])
     const read = await Promise.all(
       records.map(async (p: ProjectRecord) => {
-        let services: Awaited<ReturnType<AdminService['services']>> = []
+        let read: Awaited<ReturnType<AdminService['services']>> = { services: [], usageStatus: 'not_collected' }
         let error: unknown
         try {
-          services = await this.services(p.slug)
+          read = await this.services(p.slug)
         } catch (err) {
           error = err
         }
-        return { p, services, error }
+        return { p, ...read, error }
       }),
     )
     // 모든 프로젝트를 못 읽었으면 리더 문제다(화면이 "리더 무응답"을 보여 줄 수 있게 오류로 알린다). 일부만이면 읽은 것은 보여 주고 못 읽은 것에 표시한다.
     if (read.length > 0 && read.every((r) => r.error !== undefined)) throw read[0].error
-    const projects = read.map(({ p, services, error }) => ({
+    const projects = read.map(({ p, services, usageStatus, error }) => ({
       slug: p.slug,
       repo: p.repo,
       ownerId: p.ownerId,
       liveSlot: p.liveSlot,
       url: p.liveSlot === null ? null : publicUrl(p.slug),
       lastStop: stops.get(p.slug) ?? null,
+      usageStatus,
       services,
       clusterError: error === undefined ? null : error instanceof ServiceUnavailableException ? (error.getResponse() as { code: string }).code : 'CLUSTER_UNREACHABLE',
     }))
     return { projects }
   }
 
+  /** 프로젝트 공간의 서비스. Pod 사용량을 읽지 못하면 서비스는 그대로 주고 `usage`만 null, `usageStatus`가 not_collected다. */
   private async services(slug: string) {
     // 공간이 아직 없으면 서비스가 없다.
-    const [deployments, pods] = await Promise.all([readList(this.reader.deployments(slug), true), readList(this.reader.pods(slug), true)])
-    return deployments.map(({ name, replicas, ready }) => {
-      // Pod 이름은 `<Deployment>-<ReplicaSet 해시>-<5자>`다. `fe`와 `fe-a`처럼 접두사가 겹치는 이름이 섞이지 않게 모양 전체를 본다.
-      const owns = new RegExp(`^${escapeRegExp(name)}-[a-z0-9]+-[a-z0-9]{5}$`)
+    const [deployments, pods, usages] = await Promise.all([
+      readList(this.reader.deployments(slug), true),
+      readList(this.reader.pods(slug), true),
+      readUsageByPod(this.reader, this.logger, slug),
+    ])
+    const services = deployments.map(({ name, replicas, ready }) => {
+      const own = pods.filter((p) => ownsPod(name, p.name))
       return {
         name,
         slot: /-(a|b)$/.exec(name)?.[1] ?? null,
         replicas,
         readyReplicas: ready,
-        pods: pods.filter((p) => owns.test(p.name)).map(toPod),
+        restarts: own.reduce((sum, p) => sum + p.restarts, 0),
+        usage: serviceUsage(own.map((p) => p.name), usages),
+        pods: own.map(toPod),
       }
     })
+    return { services, usageStatus: usages === null ? ('not_collected' as const) : ('collected' as const) }
   }
 
   /** 프로젝트의 Deployment를 모두 replicas 0으로 내리고, 하나라도 내렸으면 누가 했는지 기록한다. */
