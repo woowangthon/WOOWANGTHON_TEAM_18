@@ -68,7 +68,6 @@ export const waitingText = (waiting: string | null) => {
 }
 
 // 시계열을 같은 간격의 칸으로 펼친다. 점이 없는 시각은 null로 둬서 그래프가 선을 끊게 한다(없는 값을 지어내지 않는다).
-// 끝 시각은 서버가 준 series.endT다. 수집이 멈춰도 그래프가 마지막 점에서 끝나지 않고, 빈 시간은 null로 남는다.
 export function slotsOf(points: Point[], endT: number, windowSeconds: number, stepSeconds: number): (number | null)[] {
   if (points.length === 0) return []
   const count = Math.floor(windowSeconds / stepSeconds) + 1
