@@ -6,6 +6,11 @@
 #   2. API key, generated on the leader straight into a Secret, never printed or committed:
 #      ssh k3s-leader 'openssl rand -hex 32 | tr -d "\n" | sudo k3s kubectl -n vllm create secret generic vllm-api-key --from-file=key=/dev/stdin'
 #   3. ssh k3s-leader 'sudo k3s kubectl apply -f -' < Infra/vllm/vllm.yaml
+#   4. The AI server on the EC2 reaches vLLM over Tailscale (2026-11-13): tailscaled on the leader forwards the tailnet
+#      port 18000 to the Service, so nothing listens on the node or school addresses. --bg keeps it across reboots:
+#      ssh k3s-leader 'sudo tailscale serve --bg --tcp 18000 tcp://$(sudo k3s kubectl -n vllm get svc vllm -o jsonpath={.spec.clusterIP}):8000'
+#      Only tag:platform-server may open it (Infra/tailscale/acl.hujson). The AI server uses
+#      LOCAL_MODEL_URL=http://<leader tailnet address>:18000/v1 (SSM /wcp/ai). Undo: sudo tailscale serve --tcp 18000 off
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -36,7 +41,8 @@ spec:
     requests:
       storage: 30Gi
 ---
-# Only Pods in this namespace may reach vLLM for now. The EC2 path over Tailscale is added once the EC2 has joined the tailnet.
+# Only Pods in this namespace may reach vLLM. The EC2 path (step 4 above) comes from tailscaled, a process on the leader
+# host, which this policy does not filter: the leader host reached the Service (/health 200) with this policy in place, 2026-11-13.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

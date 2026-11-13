@@ -51,6 +51,13 @@
 			"src": ["k3s-leader"],
 			"dst": ["tag:platform-server:8153"],
 		},
+		// The AI server on the EC2 -> the local model, through `tailscale serve` on the leader (port 18000, forwarded
+		// to the vLLM Service; Infra/vllm/base.yaml step 4). vLLM still asks for its API key. Added 2026-11-13.
+		{
+			"action": "accept",
+			"src": ["tag:platform-server"],
+			"dst": ["k3s-leader:18000"],
+		},
 		// Teammates the three nodes are shared with (Machines -> Share), all ports, for the operator's
 		// absence in 2026-11 (cluster.md §8), in the admin console since 2026-11-11. Removed at the return
 		// (cluster.md §13) together with the shares; restoring the disks does not remove either.
@@ -72,7 +79,7 @@
 		},
 		{
 			"src": "tag:platform-server",
-			"accept": ["k3s-leader:6443"],
+			"accept": ["k3s-leader:6443", "k3s-leader:18000"],
 			"deny": ["k3s-leader:22", "k3s-w1:22", "k3s-w2:6443", "operator-desktop:22"],
 		},
 		{
