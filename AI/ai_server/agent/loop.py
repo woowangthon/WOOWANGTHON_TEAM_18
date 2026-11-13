@@ -6,6 +6,7 @@
 
 import asyncio
 import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -41,6 +42,7 @@ from ai_server.agent.models import (
 )
 from ai_server.agent.redact import RedactingModel
 from ai_server.agent.runs import Runner, TicketRun
+from ai_server.agent.trace import clean, exc_shape, trace
 from ai_server.config import Settings
 
 log = logging.getLogger(__name__)
@@ -145,7 +147,9 @@ async def _llm_classify(
     return case
 
 
-async def _act(model: Model, prompt: str, gateway: GatewayToolset, memory: CaseMemory) -> Outcome:
+async def _act(
+    model: Model, label: str, prompt: str, gateway: GatewayToolset, memory: CaseMemory
+) -> Outcome:
     agent = Agent(
         model,
         output_type=Outcome,
@@ -156,7 +160,13 @@ async def _act(model: Model, prompt: str, gateway: GatewayToolset, memory: CaseM
         # 가장 최근 도구 결과만 전체로 두고 그 이전 결과는 한 줄 요약으로 바꾼다(컨텍스트 예산).
         capabilities=[ProcessHistory(budget.compact_history)],
     )
-    return (await agent.run(prompt)).output
+    # 어느 모델이 돌았는지 남긴다. planner는 추론 API가 안 되면 로컬로 넘어가므로
+    # 실제로 응답한 모델 이름(ran)도 함께 남긴다.
+    trace(gateway.trace_id, f"act model={label} name={clean(model.model_name)}")
+    result = await agent.run(prompt)
+    ran = result.response.model_name
+    trace(gateway.trace_id, f"act done model={label} ran={clean(ran) if ran else '-'}")
+    return result.output
 
 
 # 제출이 전송 오류로 실패하면 이만큼 기다렸다 다시 낸다(초).
@@ -252,11 +262,19 @@ def make_agent_runner(
     async def solve(run: TicketRun, memory: CaseMemory) -> None:
         # 코드 분류는 원본으로, 모델에는 받는 쪽에서 예산 안으로 자른 티켓을 준다.
         ticket, notes = budget.trim_ticket(run.ticket)
+        started = time.monotonic()
         gateway = gateway_for(run.gateway.token)
+        gateway.trace_id = ticket.ticket_id
         case = memory.classify(run.ticket)
         method: ClassifyMethod = "code" if case else "llm"
         path: ResultPath = "playbook" if case else "plan"
         run.case_id = case.case_id if case else None
+        trace(
+            ticket.ticket_id,
+            f"classify case={clean(case.case_id) if case else 'none'} method=code "
+            f"matched={case is not None}",
+        )
+        raised = "-"
         try:
             if models is None:
                 method = "code"
@@ -267,28 +285,41 @@ def make_agent_runner(
                         case = await _llm_classify(ticket, notes, memory, models.local)
                         path = "playbook" if case else "plan"
                         run.case_id = case.case_id if case else None
+                        trace(
+                            ticket.ticket_id,
+                            f"classify case={clean(case.case_id) if case else 'none'} method=llm "
+                            f"matched={case is not None}",
+                        )
                     if case is None:
                         prompt = prompts.plan_prompt(ticket, notes)
-                        outcome = await _act(models.planner, prompt, gateway, memory)
+                        outcome = await _act(models.planner, "planner", prompt, gateway, memory)
                     else:
                         prompt = prompts.playbook_prompt(ticket, notes, case)
-                        outcome = await _act(models.local, prompt, gateway, memory)
+                        outcome = await _act(models.local, "local", prompt, gateway, memory)
                         if outcome.status == "gave_up":
                             path = "replan_after_playbook"
+                            trace(ticket.ticket_id, f"path={path} (playbook gave up)")
                             prompt = prompts.replan_prompt(
                                 ticket, notes, case, gateway.actions, outcome.summary
                             )
-                            outcome = await _act(models.planner, prompt, gateway, memory)
+                            outcome = await _act(models.planner, "planner", prompt, gateway, memory)
         except GatewayStop as stop:
+            raised = f"GatewayStop code={clean(stop.code)}"
             if stop.code == "TICKET_CLOSED":
                 log.info("ticket %s closed by the gateway; no result", ticket.ticket_id)
+                trace(
+                    ticket.ticket_id,
+                    f"outcome closed elapsed={time.monotonic() - started:.1f}s exc={raised}",
+                )
                 return
             outcome = Outcome(status="gave_up", summary=_STOP_SUMMARY[stop.code])
         except GatewayUnreachable as e:
+            raised = exc_shape(e)
             log.warning("ticket %s gateway unreachable: %s", ticket.ticket_id, e)
             outcome = Outcome(status="gave_up", summary=_GATEWAY_DOWN)
         except (AgentRunError, FallbackExceptionGroup) as e:
             # 그럴듯한 결과로 꾸미지 않고 해결 못 함과 그 이유를 알린다(F-1).
+            raised = exc_shape(e)
             log.warning("ticket %s model failure: %r", ticket.ticket_id, e)
             outcome = Outcome(status="gave_up", summary=_model_failure(e, gateway.actions))
         result = AgentResult(
@@ -299,6 +330,11 @@ def make_agent_runner(
                 method=method, case_id=case.case_id if case else None, path=path
             ),
             actions=gateway.actions,
+        )
+        trace(
+            ticket.ticket_id,
+            f"outcome status={outcome.status} path={path} actions={len(gateway.actions)} "
+            f"elapsed={time.monotonic() - started:.1f}s exc={raised}",
         )
         await _submit(gateway, result)
 
