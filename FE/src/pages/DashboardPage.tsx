@@ -2,6 +2,7 @@ import { Link } from 'react-router'
 import { isAdmin } from '../auth/isAdmin.ts'
 import { useAuth } from '../auth/useAuth.ts'
 import { Card } from '../components/ui/Card.tsx'
+import { primaryLinkClass } from '../components/primaryLinkClass.ts'
 
 // 로그인 뒤에 도착하는 곳. 프로젝트 목록은 아직 없어서(대시보드 이슈에서 채운다) 다음에 할 일만 안내한다.
 function DashboardPage() {
@@ -20,7 +21,7 @@ function DashboardPage() {
           <p className="text-sm text-muted">레포를 정해 배포를 요청하면 여기에서 볼 수 있어요.</p>
           <Link
             to="/deploy/new"
-            className="inline-flex h-8 items-center rounded-sm bg-accent px-3 text-sm font-bold text-accent-fg hover:brightness-95"
+            className={primaryLinkClass}
           >
             새 배포 요청하기
           </Link>

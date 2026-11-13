@@ -7,6 +7,7 @@ import { Button } from '../components/ui/Button.tsx'
 import { Badge } from '../components/ui/Badge.tsx'
 import { Card } from '../components/ui/Card.tsx'
 import { Skeleton } from '../components/ui/Skeleton.tsx'
+import { primaryLinkClass } from '../components/primaryLinkClass.ts'
 import { supabase } from '../lib/supabase.ts'
 
 type LinkState =
@@ -156,7 +157,7 @@ function GithubLinkCard() {
         {showDeployLink && (
           <Link
             to="/deploy/new"
-            className="inline-flex h-8 items-center rounded-sm bg-accent px-3 text-sm font-bold text-accent-fg hover:brightness-95"
+            className={primaryLinkClass}
           >
             새 배포 요청하기
           </Link>

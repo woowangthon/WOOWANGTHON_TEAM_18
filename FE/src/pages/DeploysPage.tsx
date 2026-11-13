@@ -4,6 +4,7 @@ import NoticeBanner from '../components/NoticeBanner.tsx'
 import { Button } from '../components/ui/Button.tsx'
 import { Card } from '../components/ui/Card.tsx'
 import { Skeleton } from '../components/ui/Skeleton.tsx'
+import { primaryLinkClass } from '../components/primaryLinkClass.ts'
 import { Table, Td, Th, THead } from '../components/ui/Table.tsx'
 import type { DeployListItem } from '../deploy/progress.ts'
 import StatusBadge from '../deploy/StatusBadge.tsx'
@@ -68,7 +69,7 @@ function DeploysPage() {
             <p className="font-bold">아직 배포가 없어요.</p>
             <Link
               to="/deploy/new"
-              className="inline-flex h-8 items-center rounded-sm bg-accent px-3 text-sm font-bold text-accent-fg hover:brightness-95"
+              className={primaryLinkClass}
             >
               새 배포 요청하기
             </Link>
