@@ -188,6 +188,11 @@ it('blocks the confirm button for an empty repo and never asks for a draft', asy
   submit('https://github.com/student/my-app')
   expect(await screen.findByText('이 레포에는 아직 commit이 없어요')).toBeTruthy()
   expect(screen.getByText('없음 (빈 레포)')).toBeTruthy()
+  // 빈 레포의 commit 줄은 통과가 아니라 주의로 읽힌다. 나머지 두 줄은 통과다.
+  const commitRow = screen.getByText('없음 (빈 레포)').closest('li')
+  expect(commitRow?.textContent).toContain('주의')
+  expect(commitRow?.textContent).not.toContain('통과')
+  expect(screen.getAllByText('통과')).toHaveLength(2)
   expect(screen.getByRole<HTMLButtonElement>('button', { name: '배포 설정 확정' }).disabled).toBe(true)
   expect(callsTo('/api/repos/deploy-spec')).toHaveLength(0)
 })

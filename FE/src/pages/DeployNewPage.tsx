@@ -3,7 +3,7 @@ import type { FormEvent, ReactNode } from 'react'
 import { Button } from '../components/ui/Button.tsx'
 import { Card } from '../components/ui/Card.tsx'
 import { Field } from '../components/ui/Field.tsx'
-import { CheckIcon } from '../components/ui/Icons.tsx'
+import { CheckIcon, WarnIcon } from '../components/ui/Icons.tsx'
 import { Spinner } from '../components/ui/Spinner.tsx'
 import CommitRef from '../deploy/CommitRef.tsx'
 import DeployConfirm from '../deploy/DeployConfirm.tsx'
@@ -15,14 +15,12 @@ import type { Failure } from './repo-failure.ts'
 
 const URL_FORMAT_HINT = '올바른 GitHub 레포 주소가 아니에요. 예: https://github.com/소유자/레포'
 
-// 사전 확인을 통과한 항목 한 줄. 기호는 색만으로 뜻을 전하지 않게 글자('통과')를 함께 둔다.
-function PassItem({ children }: { children: ReactNode }) {
+// 사전 확인 항목 한 줄. 기호는 색만으로 뜻을 전하지 않게 글자('통과' · '주의')를 함께 둔다.
+function CheckItem({ warn = false, children }: { warn?: boolean; children: ReactNode }) {
   return (
     <li className="flex flex-wrap items-center gap-2">
-      <span className="text-ok">
-        <CheckIcon />
-      </span>
-      <span className="sr-only">통과</span>
+      <span className={warn ? 'text-warn' : 'text-ok'}>{warn ? <WarnIcon /> : <CheckIcon />}</span>
+      <span className="sr-only">{warn ? '주의' : '통과'}</span>
       {children}
     </li>
   )
@@ -113,12 +111,12 @@ function DeployNewPage() {
           <div className="flex flex-col gap-3 border-t border-line pt-6">
             <h2 className="text-lg">{checked.repo}</h2>
             <ul className="flex flex-col gap-2 text-sm">
-              <PassItem>공개 레포예요</PassItem>
-              <PassItem>내 계정의 레포예요</PassItem>
-              <PassItem>
+              <CheckItem>공개 레포예요</CheckItem>
+              <CheckItem>내 계정의 레포예요</CheckItem>
+              <CheckItem warn={!checked.commit}>
                 배포할 commit
                 {checked.commit ? <CommitRef commit={checked.commit} /> : <span>없음 (빈 레포)</span>}
-              </PassItem>
+              </CheckItem>
             </ul>
           </div>
         )}
