@@ -3,6 +3,7 @@ import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { AdminNode, AdminProject, NodesResponse, ProjectsResponse } from '../admin/types.ts'
 import { ApiError } from '../lib/api.ts'
+import { WithQuery } from '../test-utils.tsx'
 import AdminPage from './AdminPage.tsx'
 
 // 실제 BE를 부르지 않는다. 테스트 전용 대역이라 MOCK 표식은 필요 없다(conventions §6).
@@ -94,9 +95,11 @@ const advance = (ms: number) =>
 const reads = (path: string) => api.apiFetch.mock.calls.filter((c) => c[0] === path).length
 const show = async () => {
   const view = render(
-    <MemoryRouter>
-      <AdminPage />
-    </MemoryRouter>,
+    <WithQuery>
+      <MemoryRouter>
+        <AdminPage />
+      </MemoryRouter>
+    </WithQuery>,
   )
   await advance(0)
   return view
@@ -300,6 +303,8 @@ it.each([
   await show()
   replies[NODES] = error
   await advance(10_000)
+  // react-query는 새로 읽은 결과를 타이머가 돈 직후가 아니라 한 박자 뒤에 화면에 알린다.
+  await advance(1_000)
   expect(screen.getByText(title, { selector: 'p' })).toBeTruthy()
   expect(screen.getByText(/아래는 마지막으로 읽은 값이에요/)).toBeTruthy()
   expect(screen.getByText('leader', { selector: 'span' })).toBeTruthy()
@@ -340,6 +345,7 @@ it('clears the result of an earlier stop when the project is running again after
   expect(within(card('my-app')).getByText('중지했어요')).toBeTruthy()
   replies[PROJECTS] = projectsOf([running])
   await advance(10_000)
+  await advance(1_000)
   expect(within(card('my-app')).getByText('실행 중')).toBeTruthy()
   expect(within(card('my-app')).queryByText('중지했어요')).toBeNull()
   expect(screen.getByRole('button', { name: 'my-app 강제 중지' })).toBeTruthy()

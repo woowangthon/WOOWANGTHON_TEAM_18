@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { MemoryRouter } from 'react-router'
 import { beforeEach, expect, it, vi } from 'vitest'
 import type { DeployListItem } from '../deploy/progress.ts'
+import { WithQuery } from '../test-utils.tsx'
 import DashboardPage from './DashboardPage.tsx'
 
 // 실제 BE · Supabase를 부르지 않는다. 테스트 전용 대역이라 MOCK 표식은 필요 없다(conventions §6).
@@ -31,9 +32,11 @@ beforeEach(() => {
 
 const show = () =>
   render(
-    <MemoryRouter>
-      <DashboardPage />
-    </MemoryRouter>,
+    <WithQuery>
+      <MemoryRouter>
+        <DashboardPage />
+      </MemoryRouter>
+    </WithQuery>,
   )
 const tile = (label: string) =>
   [...document.querySelectorAll('dt')].find((dt) => dt.textContent === label)?.parentElement?.textContent
