@@ -58,7 +58,9 @@ git fetch --quiet origin
 image=wcp-ai:$(git rev-parse --short "$ref^{commit}")
 # Unpacked into a folder: a tar on stdin fails on the EC2's docker 25 + buildx 0.17 ("no http response from session").
 src=$(mktemp -d)
-git archive "$ref:AI" | tar -x -C "$src"
+# umask 022 for the unpacking only: a non-root tar applies the umask 077 set above for the env file, and files the image
+# copies straight from the context would then be unreadable to its non-root user.
+git archive "$ref:AI" | (umask 022; tar -x -C "$src")
 docker build -t "$image" "$src" || { rm -rf "$src"; exit 1; }
 rm -rf "$src"
 mv "$env_file.new" "$env_file"
