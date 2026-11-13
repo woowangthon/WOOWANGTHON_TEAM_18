@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes } from 'react-router'
+import { Route, Routes } from 'react-router'
 import RequireAdmin from './admin/RequireAdmin.tsx'
 import AuthProvider from './auth/AuthProvider.tsx'
 import RequireAuth from './auth/RequireAuth.tsx'
@@ -9,18 +9,19 @@ import DeployNewPage from './pages/DeployNewPage.tsx'
 import DeployProgressPage from './pages/DeployProgressPage.tsx'
 import DeploySecretsPage from './pages/DeploySecretsPage.tsx'
 import DeploysPage from './pages/DeploysPage.tsx'
+import LandingPage from './pages/LandingPage.tsx'
 import LoginPage from './pages/LoginPage.tsx'
 import ProfilePage from './pages/ProfilePage.tsx'
 import ResetPasswordPage from './pages/ResetPasswordPage.tsx'
 import SignupPage from './pages/SignupPage.tsx'
 
-// `/`는 대시보드로 보낸다(로그인하지 않았으면 RequireAuth가 로그인 화면으로 보낸다). 정의하지 않은 다른 경로는 아무것도 그리지 않는다. 404 화면은 아직 없다.
-// /login, /signup, /reset-password는 공개이고 나머지는 로그인해야 열린다.
+// `/`는 공개 랜딩이고, 로그인한 사용자는 LandingPage가 대시보드로 보낸다. 정의하지 않은 다른 경로는 아무것도 그리지 않는다. 404 화면은 아직 없다.
+// /, /login, /signup, /reset-password는 공개이고 나머지는 로그인해야 열린다.
 function App() {
   return (
     <AuthProvider>
       <Routes>
-        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/" element={<LandingPage />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/signup" element={<SignupPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />

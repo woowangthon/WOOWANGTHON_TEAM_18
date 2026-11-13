@@ -84,9 +84,16 @@ it('sends the root path to the dashboard when signed in', () => {
   expect(h1()).toBe('대시보드')
 })
 
-it('sends the root path to the login page when signed out', () => {
+it('shows the public landing at the root path when signed out', () => {
   renderApp('/', 'out')
-  expect(h1()).toBe('로그인')
+  expect(h1()).toBe('GitHub 레포 하나로, 학교 PC에 배포까지')
+  expect(screen.getByRole('link', { name: '로그인' }).getAttribute('href')).toBe('/login')
+  expect(screen.getAllByRole('link', { name: '시작하기' })[0]?.getAttribute('href')).toBe('/signup')
+})
+
+it('draws nothing at the root path while the stored session is being read', () => {
+  renderApp('/', 'restoring')
+  expect(document.body.textContent).toBe('')
 })
 
 it('draws nothing while the stored session is being read', () => {
