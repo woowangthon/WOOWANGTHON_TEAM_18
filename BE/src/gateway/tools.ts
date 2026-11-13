@@ -382,6 +382,8 @@ export class GatewayTools {
     if (!checked.ok) return reject('INVALID_RESULT', checked.message)
     const { result } = checked
     const run = await this.store.findRun(ticket.deployId)
+    // endTicket이 지우기 전에 읽는다.
+    const deployTried = this.trials.attemptedDeploy(ticket.ticketId)
     // 학생에게 보일 칸만 남긴다(도구 호출 원본 · 로그는 버린다). 외부에서 온 글이라 한 번 더 가린다.
     // tickets: 이 실행 기록에서 몇 번째 티켓의 결과인가(실행 기록당 3개, api.md 5번). 학생에게 보이는 칸은 아니다.
     const agentResult = { ...(redact(storedResult(result)) as Record<string, unknown>), tickets: ticketCount(run) }
@@ -403,9 +405,18 @@ export class GatewayTools {
     await this.trials.endTicket(ticket.ticketId)
     if (!applied) return reject('TICKET_CLOSED', 'the ticket is no longer open')
     // 에이전트가 포기했다: 더 읽을 사람이 없으니 대상 슬롯의 Pod가 계속 재시작하지 않게 내린다.
-    if (result.status === 'gave_up' && run) await this.slots.afterFailure(run, ticket.failure?.stage ?? null)
+    if (result.status === 'gave_up' && run) await this.cleanSlot(run, ticket.failure?.stage ?? null, deployTried)
     this.logger.log(`ticket ${ticket.ticketId} result ${result.status}`)
     return { ok: true, content: { accepted: true } }
+  }
+
+  /** 포기한 티켓의 대상 슬롯 정리. 이 티켓의 시험이 아직 도는지 확인되지 않으면 그 시험과 겹칠 수 있어 건너뛴다. */
+  private async cleanSlot(run: DeployRunRow, stage: string | null, slotTouched: boolean): Promise<void> {
+    if (!(await this.trials.settled(run.slug))) {
+      this.logger.warn(`failed slot: ${run.slug} not scaled down, an earlier trial could not be confirmed stopped`)
+      return
+    }
+    await this.slots.afterFailure(run, stage, slotTouched)
   }
 
   /**

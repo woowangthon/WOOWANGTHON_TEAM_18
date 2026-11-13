@@ -55,6 +55,8 @@ export class GatewayTrials implements OnApplicationBootstrap {
   private readonly trials = new Map<string, Trial>()
   /** 티켓마다 마지막으로 성공한 run_deploy의 입력(run_verify가 쓴다). 그 뒤 run_deploy를 부르면 지운다. */
   private readonly lastDeploy = new Map<string, Record<string, unknown>>()
+  /** run_deploy를 시도한 티켓(성공 · 실패 모두). 시험 배포가 대상 슬롯에 Pod를 올렸을 수 있다는 표시다. */
+  private readonly deployAttempted = new Set<string>()
   /** 티켓마다 마지막 run_deploy의 입력으로 run_verify까지 통과한 입력(`verified`를 받는 조건, api.md 5번). 그 뒤 run_deploy를 부르면 지운다. */
   private readonly verified = new Map<string, Record<string, unknown>>()
   /** 티켓마다 run_build가 통과(또는 재사용)한 이미지: `<서비스>\n<빌드 입력 해시>` → digest. 시험 입력과 verified가 쓴다. */
@@ -162,6 +164,7 @@ export class GatewayTrials implements OnApplicationBootstrap {
     }
     try {
       await this.pipeline.runTrial(ticket.deployId, id, STAGES[tool])
+      if (tool === 'run_deploy') this.deployAttempted.add(ticket.ticketId)
     } catch {
       this.trials.delete(id)
       return { failure: { stage: null, code: 'PIPELINE_UNAVAILABLE', message: 'could not start the trial pipeline' } }
@@ -182,11 +185,17 @@ export class GatewayTrials implements OnApplicationBootstrap {
     return outcome
   }
 
+  /** 이 티켓이 run_deploy를 시작한 적이 있는가(결과와 무관). endTicket 전에 읽는다. */
+  attemptedDeploy(ticketId: string): boolean {
+    return this.deployAttempted.has(ticketId)
+  }
+
   /** 티켓이 끝났다(결과 제출 · 종료). 기다리는 시험이 있으면 취소한다. */
   async endTicket(ticketId: string): Promise<void> {
     this.closed.add(ticketId)
     this.lastDeploy.delete(ticketId)
     this.verified.delete(ticketId)
+    this.deployAttempted.delete(ticketId)
     this.images.delete(ticketId)
     for (const t of [...this.trials.values()]) {
       if (t.ticketId === ticketId && t.state === 'waiting') {

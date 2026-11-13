@@ -37,10 +37,12 @@ export class SlotScaleDown {
    * 실패로 끝난 배포의 대상 슬롯을 내린다. 아래는 건드리지 않는다:
    * - apply · verify가 아닌 단계의 실패: 대상 슬롯에 이 실행이 띄운 것이 없거나(build · prepare · render), 전환이 중간에 끊겼을 수 있다(switch).
    * - live 슬롯, 그리고 같은 프로젝트에서 다른 실행이 이미 시작됐을 때(그 실행이 같은 슬롯을 쓸 수 있다).
+   * `slotTouched`: 앞 단계(build · prepare · render)에서 실패했어도 AI 에이전트의 시험 배포(run_deploy)가 이 슬롯에 Pod를 올렸으면 true다. switch는 그래도 건드리지 않는다.
    * AI 에이전트가 고치는 동안(`fixing`)은 부르지 않는다: 에이전트가 이 슬롯의 Pod 로그 · 이벤트를 읽는다.
    */
-  async afterFailure(run: { slug: string; target_slot: Slot }, stage: string | null): Promise<void> {
-    if (stage !== 'apply' && stage !== 'verify') return
+  async afterFailure(run: { slug: string; target_slot: Slot }, stage: string | null, slotTouched = false): Promise<void> {
+    const ran = stage === 'apply' || stage === 'verify'
+    if (!ran && !(slotTouched && (stage === 'build' || stage === 'prepare' || stage === 'render'))) return
     try {
       const [live, active] = await Promise.all([this.store.liveSlot(run.slug), this.store.findActiveRun(run.slug)])
       if (live === run.target_slot || active) return
