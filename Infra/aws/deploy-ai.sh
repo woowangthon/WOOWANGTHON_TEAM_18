@@ -12,6 +12,10 @@ env_file=${ENV_FILE:-$HOME/.config/wcp/ai.env}
 network=wcp
 cd "$(dirname "$0")/../.."
 
+# One deploy at a time: two runs would race on wcp-ai / wcp-ai-prev and the env file.
+exec 9>"${XDG_RUNTIME_DIR:-/tmp}/wcp-ai-deploy.lock"
+flock -n 9 || { echo "another deploy-ai.sh is running" >&2; exit 1; }
+
 answers() { curl -fsS --max-time 5 http://127.0.0.1:8000/health >/dev/null; }
 healthy() {
   for _ in $(seq 30); do
@@ -21,6 +25,19 @@ healthy() {
   return 1
 }
 ssm() { aws ssm get-parameters-by-path --path "$ssm_path" --with-decryption --recursive --output text --query "$1"; }
+
+# A run that stopped half way leaves wcp-ai-prev behind (stopped). Drop it only if wcp-ai is answering; otherwise it
+# is the last good container, so it becomes wcp-ai again and is started. This comes before the settings and the build,
+# so a later failure there still leaves the AI server running.
+if docker container inspect wcp-ai-prev >/dev/null 2>&1; then
+  if answers; then docker rm -f wcp-ai-prev >/dev/null
+  else
+    docker rm -f wcp-ai >/dev/null 2>&1 || true
+    docker rename wcp-ai-prev wcp-ai
+    if docker start wcp-ai >/dev/null && healthy; then echo "restored wcp-ai from an earlier run that stopped half way" >&2
+    else echo "wcp-ai from an earlier run did not come back; deploying anyway" >&2; fi
+  fi
+fi
 
 # Settings first, so a missing value stops the script before a build.
 # docker --env-file cannot carry a multi-line value, so one is refused here.
@@ -47,13 +64,6 @@ rm -rf "$src"
 mv "$env_file.new" "$env_file"
 
 docker network inspect "$network" >/dev/null 2>&1 || docker network create "$network" >/dev/null
-
-# A run that stopped half way leaves wcp-ai-prev behind. Drop it only if wcp-ai is answering; otherwise it is the
-# last good container, so it becomes wcp-ai again.
-if docker container inspect wcp-ai-prev >/dev/null 2>&1; then
-  if answers; then docker rm -f wcp-ai-prev >/dev/null
-  else docker rm -f wcp-ai >/dev/null 2>&1 || true; docker rename wcp-ai-prev wcp-ai; fi
-fi
 
 # Keep the old container (its image and settings) until the new one is healthy. Port 8000 is freed by stopping it.
 had_previous=false

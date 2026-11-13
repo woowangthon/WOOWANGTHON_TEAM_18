@@ -105,7 +105,7 @@ EC2 ── gocd-server (GoCD 26.1.0, JVM -Xmx1g, 8153은 Tailscale 주소에만 
 | 설정값 | SSM `/wcp/ai/<이름>`(SecureString, 한 줄). 이름은 [`AI/.env.example`](../../AI/.env.example)과 같다. **필수**: `AGENT_API_TOKEN`(32자 이상, `openssl rand -hex 32`), `GATEWAY_URL=http://wcp-be:<GATEWAY_PORT>/mcp`. 선택: `LOCAL_MODEL_URL` · `LOCAL_MODEL_NAME` · `LOCAL_MODEL_API_KEY`, `PLANNER_MODEL_URL` · `PLANNER_MODEL_NAME` · `PLANNER_MODEL_API_KEY`, `AGENT_MAX_RUNS`. `HOST` · `PORT`는 넣지 않는다(이미지가 `0.0.0.0`, 스크립트가 `8000`으로 둔다). 모델 값이 없으면 서버는 뜨고 티켓마다 "AI 모델 설정이 없어 문제 해결을 하지 않았습니다" `gave_up`을 낸다(지금은 모델 없이 올린다) |
 | BE 쪽 값 | SSM `/wcp/be`에 `AI_SERVER_URL=http://wcp-ai:8000`, `AGENT_API_TOKEN`(위 `/wcp/ai/AGENT_API_TOKEN`과 **같은 값**), `GATEWAY_PORT`(`3000`이 아닌 포트, 예 `3100`)를 넣는다 |
 | 권한 | 인스턴스 역할에 `/wcp/ai` 경로의 `ssm:GetParametersByPath`를 더한다(`kms:Decrypt`는 이미 있다) |
-| 올리기 | 처음 한 번은 `deploy-be.sh`를 먼저(네트워크 `wcp`가 생기고 `wcp-be`가 그 네트워크에 붙는다, 위 BE 쪽 값도 이때 들어간다), 그다음 [`Infra/aws/deploy-ai.sh`](../../Infra/aws/deploy-ai.sh) `[git-ref]`. 새 컨테이너가 `/health`에 답하지 않으면 이전 컨테이너(이미지 · 설정 그대로)를 다시 띄운다. 그 뒤로는 바뀐 쪽만 다시 돌린다 |
+| 올리기 | 처음 한 번은 `deploy-be.sh`를 먼저(네트워크 `wcp`가 생기고 `wcp-be`가 그 네트워크에 붙는다, 위 BE 쪽 값도 이때 들어간다), 그다음 [`Infra/aws/deploy-ai.sh`](../../Infra/aws/deploy-ai.sh) `[git-ref]`. 새 컨테이너가 `/health`에 답하지 않으면 이전 컨테이너(이미지 · 설정 그대로)를 다시 띄운다. 앞선 실행이 중간에 멈춰 멈춘 `wcp-ai-prev`만 남았으면, 설정을 읽기 전에 그것을 `wcp-ai`로 되살린다. 한 번에 하나만 돈다(`flock`, util-linux. Amazon Linux 2023에는 기본으로 있다, `command -v flock`으로 확인). 그 뒤로는 바뀐 쪽만 다시 돌린다 |
 
 ### 함께 바꿀 바깥 설정
 
@@ -125,6 +125,7 @@ EC2 ── gocd-server (GoCD 26.1.0, JVM -Xmx1g, 8153은 Tailscale 주소에만 
 
 - BE는 컨테이너 하나다. 배포하는 몇 초 동안 API가 응답하지 않는다.
 - AI 서버도 컨테이너 하나다. 다시 배포하는 동안 도는 에이전트 실행은 끊긴다(그 티켓은 결과 없이 시간 초과로 끝난다). `deploy-ai.sh`와 `wcp` 네트워크는 로컬 docker로만 확인했다(2026-11-13, 가짜 설정값): 두 컨테이너가 같은 네트워크에 뜨고, AI → `http://wcp-be:<GATEWAY_PORT>/mcp`, BE → `http://wcp-ai:8000/health`가 닿고, 게이트웨이 포트는 호스트에 열리지 않으며, 잘못된 설정이면 이전 컨테이너로 되돌아간다. 실제 EC2에서는 돌려 보지 않았다.
+- `deploy-be.sh`에는 아직 동시 실행 잠금이 없고, 중간에 멈춘 `wcp-be-prev`를 되살리는 일도 빌드 뒤에 하며 rename만 한다(`deploy-ai.sh`는 CodeRabbit 리뷰를 받아 고쳤다). BE 배포에 주는 영향을 줄이려고 이번에는 네트워크 줄만 바꿨다. 후속에서 같은 모양으로 맞춘다.
 - 스크립트는 실제 AWS에서 아직 돌려 보지 않았다(2026-11-11). `start-gocd.sh`와 AWS 실행기도 EC2에서는 돌려 보지 않았다(로컬 docker에서 서버 기동 · 로그인 · 설정 저장소 등록 · 접근 토큰 발급까지만 확인했다).
 - GoCD 서버와 AWS 실행기가 죽으면 새 배포가 시작되지 않는다(BE가 `503 PIPELINE_UNAVAILABLE`). (`setup`이나 artifact 받기가 실패한 job은 `job.sh`가 `STAGE_NO_REPORT`를 curl로 알린다.) 실행 중이던 job이 GoCD의 시간 제한이나 실행기가 죽어서 끝나면 알림을 보내는 task가 돌지 못해 그 배포는 `running`으로 남는다. 같은 프로젝트의 다음 시작이 그 기록을 시간 초과(`TIMED_OUT`)로 마감하지만(BE의 `STALE_RUN_MS`, 1시간), 그 전까지 학생에게는 진행 중으로 보인다.
 - BE 컨테이너가 Tailscale 주소의 8153에 닿는지(`GOCD_URL`)는 EC2에서 확인하지 않았다.
