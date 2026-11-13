@@ -11,6 +11,8 @@ on:
       - 'Infra/charts/**'
       # src/gocd-trial.spec.ts runs Infra/gocd/job.sh's trial steps and reads student-trial.gocd.yaml.
       - 'Infra/gocd/**'
+      # src/deploy-scripts.spec.ts runs Infra/aws/deploy-ai.sh and deploy-be.sh with fake aws, docker and curl.
+      - 'Infra/aws/**'
       - 'BE/src/deploys/deploy-condition.ts'
       # 파이프라인 시험이 BE의 받는 쪽 검사(validateNotice · checkTrialResult)를 import해 보내는 본문을 대 본다. 그 파일이 바뀌면 다시 돌린다.
       - 'BE/src/deploys/deploy-run.ts'

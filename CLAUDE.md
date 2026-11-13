@@ -68,4 +68,6 @@ The mutation-test command: TBD.
 - **`pkill -f <word>` kills the agent's own shell.** The word is in the shell's own command line, so the shell dies (exit 144). Stop a process by port or pid, or use a `[n]est`-style pattern.
 - **Edit draw.io diagrams through the model embedded in the SVG.** Pull the `content` attribute out as a `.drawio`, change cells by id and re-export with `draw.io -x -f svg -e`; the CLI export rewrites the whole file, and a web save renames cell ids and can rename tabs. Scripted edits find cells by their whole text and assert how many matched.
 
+- **A non-root `tar` applies the umask when it unpacks.** `Infra/aws/deploy-*.sh` set `umask 077` for the env file, so a build context unpacked under it was 0600 and the images' non-root users could not read what they `COPY` straight from it (the AI server crashed on EC2 with `PermissionError`; BE's `security/gitleaks.toml` was unreadable too). The scripts now unpack under `umask 022`. Rehearse a deploy script as the same kind of user as production (root keeps the archive modes and hides this).
+
 Add more lessons everyone should know as they come up ([CONTRIBUTING.md §1 step 8](CONTRIBUTING.md#1-how-we-work-sdd--task-workflow)); stack-specific ones go to [`FE/CLAUDE.md`](FE/CLAUDE.md), [`BE/CLAUDE.md`](BE/CLAUDE.md) or [`AI/CLAUDE.md`](AI/CLAUDE.md).
