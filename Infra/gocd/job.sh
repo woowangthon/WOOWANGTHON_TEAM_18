@@ -67,9 +67,10 @@ case ${1:?usage: job.sh <step> [stage]} in
   setup)
     export COREPACK_ENABLE_DOWNLOAD_PROMPT=0 CI=true
     cd "$pipeline"
-    pnpm install --frozen-lockfile
+    # The leader agent has node and corepack (from the tools volume) but no pnpm shim, so call pnpm through corepack; it reads packageManager from Infra/pipeline/package.json.
+    corepack pnpm install --frozen-lockfile
     # The tests are not run here (CI does); only the build output is needed.
-    pnpm exec tsc -p tsconfig.build.json
+    corepack pnpm exec tsc -p tsconfig.build.json
     ;;
   fetch-input)
     : "${DEPLOY_ID:?DEPLOY_ID is empty: this pipeline is started by the platform server (schedule API), not by hand}"
