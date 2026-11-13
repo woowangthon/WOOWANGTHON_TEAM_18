@@ -21,5 +21,5 @@ Contract: `docs/design/api.md` "파이프라인 ↔ 플랫폼 서버" 3 (`failur
 
 ## Done when
 
-- [ ] `pnpm verify` in `BE/` — from the test session
-- [ ] mutation testing — hand mutants run by the test session
+- [x] `pnpm verify` in `BE/` — test session at bbf2fe3: 1627 passed, 1 skipped; the one failure is `source-scanner.spec` under root (same on main)
+- [x] mutation testing — 7 hand mutants; 6 caught, the per-line `redactString` in `slotLogs` is an equivalent mutant (the whole ticket goes through `redact()` right after), kept as asked
