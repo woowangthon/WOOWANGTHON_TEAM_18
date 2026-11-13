@@ -59,7 +59,7 @@ interface Service {
 
 // 공개 주소 <slug>.<도메인>의 예약 이름. 목록의 정본은 docs/design/cluster.md §9(예약 이름)이고, 그 목록과 같게 둔다.
 const RESERVED_SLUGS = new Set([
-  ...['app', 'api', 'www', 'admin', 'account', 'auth', 'login', 'platform', 'dashboard', 'status', 'docs', 'blog', 'cdn', 'static', 'grafana'],
+  ...['app', 'api', 'www', 'admin', 'account', 'auth', 'login', 'platform', 'dashboard', 'status', 'docs', 'blog', 'cdn', 'static', 'grafana', 'llm'],
   ...['mail', 'smtp', 'demo', 'test', 'dev', 'staging', 'default', 'kube-system'],
 ])
 const MAX_SERVICES = 3

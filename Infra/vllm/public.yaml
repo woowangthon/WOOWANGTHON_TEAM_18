@@ -1,0 +1,49 @@
+# Public path to the local model for the AI server on the EC2 (docs/design/cluster.md §11), 2026-11-13.
+# The planned path (EC2 -> Tailscale -> leader) needs a tailnet ACL rule only the tailnet owner can add, and the
+# demo is 2026-11-15. Until then the AI server calls https://llm.stairnoworks.com/v1 through the same tunnel and
+# Traefik as every student address (cluster.md §9). vLLM answers /v1 only with its API key (Secret vllm-api-key),
+# and only /v1 is routed: /health, /metrics and /docs stay inside the cluster. `llm` is a reserved slug, so no
+# student address can take this name.
+# Apply (from the operator's machine):  ssh k3s-leader 'sudo k3s kubectl apply -f -' < Infra/vllm/public.yaml
+# Remove once the Tailscale path is open: ssh k3s-leader 'sudo k3s kubectl delete -f -' < Infra/vllm/public.yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: vllm-from-traefik
+  namespace: vllm
+spec:
+  podSelector:
+    matchLabels:
+      app: vllm
+  policyTypes: ["Ingress"]
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: traefik
+    ports:
+    - port: 8000
+      protocol: TCP
+---
+# HTTPS ends at Cloudflare and the tunnel hands plain HTTP to Traefik, like every student address.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: vllm
+  namespace: vllm
+spec:
+  ingressClassName: traefik
+  rules:
+  - host: llm.stairnoworks.com
+    http:
+      paths:
+      - path: /v1
+        pathType: Prefix
+        backend:
+          service:
+            name: vllm
+            port:
+              number: 8000

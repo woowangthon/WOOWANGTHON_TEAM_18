@@ -190,7 +190,7 @@ describe('project', () => {
 
   // docs/design/cluster.md §9의 목록을 그대로 옮겼다(코드의 집합을 가져오지 않는 이유: 같은 값을 같은 값과 비교하게 된다).
   const reserved = [
-    ...['app', 'api', 'www', 'admin', 'account', 'auth', 'login', 'platform', 'dashboard', 'status', 'docs', 'blog', 'cdn', 'static', 'grafana'],
+    ...['app', 'api', 'www', 'admin', 'account', 'auth', 'login', 'platform', 'dashboard', 'status', 'docs', 'blog', 'cdn', 'static', 'grafana', 'llm'],
     ...['mail', 'smtp', 'demo', 'test', 'dev', 'staging', 'default', 'kube-system'],
   ]
   it.each(reserved)('rejects the reserved slug "%s"', (slug) => {
