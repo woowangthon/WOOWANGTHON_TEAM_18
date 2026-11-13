@@ -131,6 +131,29 @@ it('shows the usage numbers once the server collects them', async () => {
   expect(screen.queryByText('수집 전')).toBeNull()
 })
 
+it('draws usage meters against allocatable capacity only once usage is collected', async () => {
+  serve({ [NODES]: nodesOf([{ ...leader, usage: { cpuMillicores: 975, memoryBytes: 3 * 1024 ** 3 } }], 'collected') })
+  await show()
+  const cpu = within(card('leader')).getByRole('progressbar', { name: 'CPU 사용량' })
+  expect(cpu.getAttribute('aria-valuenow')).toBe('975')
+  expect(cpu.getAttribute('aria-valuemax')).toBe('3900')
+  expect(within(card('leader')).getByRole('progressbar', { name: '메모리 사용량' }).getAttribute('aria-valuemax')).toBe(String(15 * 1024 ** 3))
+})
+
+it('draws no meter while usage is not collected, even if a usage object came along', async () => {
+  serve({ [NODES]: nodesOf([{ ...leader, usage: { cpuMillicores: 500, memoryBytes: 1 } }]) })
+  await show()
+  expect(within(card('leader')).getByText('수집 전')).toBeTruthy()
+  expect(screen.queryByRole('progressbar')).toBeNull()
+})
+
+it('draws no meter for a node whose allocatable amount is unreadable', async () => {
+  serve({ [NODES]: nodesOf([{ ...worker, usage: { cpuMillicores: 500, memoryBytes: 1 } }], 'collected') })
+  await show()
+  expect(within(card('worker-1')).getByText('CPU 0.5코어 · 메모리 0.0 GiB')).toBeTruthy()
+  expect(screen.queryByRole('progressbar')).toBeNull()
+})
+
 it('rounds a CPU figure to one decimal place for reading', async () => {
   serve({ [NODES]: nodesOf([{ ...leader, cpu: { capacityMillicores: 3333, allocatableMillicores: 3333 } }]) })
   await show()

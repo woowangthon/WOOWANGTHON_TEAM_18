@@ -1,4 +1,5 @@
 import { Badge } from '../components/ui/Badge.tsx'
+import { Meter } from '../components/ui/Meter.tsx'
 import AdminSection from './AdminSection.tsx'
 import { bytesText, cpuText } from './format.ts'
 import Row from './Row.tsx'
@@ -7,10 +8,21 @@ import type { AdminNode, NodesResponse } from './types.ts'
 
 const USAGE_NOT_COLLECTED = '수집 전'
 
+// 사용량 막대. 할당 가능량을 읽지 못했거나 0이면 비율을 말할 수 없어서 그리지 않는다(값을 지어내지 않는다).
+function UsageMeter({ label, used, allocatable }: { label: string; used: number; allocatable: number | null }) {
+  if (allocatable === null || allocatable <= 0) return null
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="text-xs text-muted">{label} (할당 가능량 대비)</span>
+      <Meter aria-label={`${label} 사용량`} value={used} max={allocatable} />
+    </div>
+  )
+}
+
 function NodeCard({ node, collected }: { node: AdminNode; collected: boolean }) {
   const { usage } = node
   return (
-    <li className="flex flex-col gap-2 rounded-md border border-line p-3">
+    <li className="flex flex-col gap-3 rounded-md border border-line p-4">
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-mono font-bold">{node.name}</span>
         <Badge variant="info">{node.role === 'leader' ? '리더' : '워커'}</Badge>
@@ -30,6 +42,12 @@ function NodeCard({ node, collected }: { node: AdminNode; collected: boolean }) 
           {collected && usage ? `CPU ${cpuText(usage.cpuMillicores)} · 메모리 ${bytesText(usage.memoryBytes)}` : USAGE_NOT_COLLECTED}
         </Row>
       </dl>
+      {collected && usage && (
+        <div className="flex flex-col gap-2">
+          <UsageMeter label="CPU" used={usage.cpuMillicores} allocatable={node.cpu.allocatableMillicores} />
+          <UsageMeter label="메모리" used={usage.memoryBytes} allocatable={node.memory.allocatableBytes} />
+        </div>
+      )}
     </li>
   )
 }
