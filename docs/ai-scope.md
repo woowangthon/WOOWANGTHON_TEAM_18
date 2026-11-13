@@ -81,6 +81,7 @@
 | `demo-accounts` | 테스트 계정 | Supabase 대시보드에서 만든 계정 | 학생 `test@example.com`(GitHub 연동됨) · 운영자 `admin@example.com`. 가입 메일을 거치지 않고 만들었다 | 예 → 영상에 `테스트 계정` 표시 |
 | `demo-secret` | SAMPLE | 데모 레포 `TaeTaeJin/WOOWANGTHON_TEST`의 `.env` | 보안 검사 경고를 보이려고 일부러 올린 가짜 `DEMO_API_KEY`. 어떤 서비스의 키도 아니고 앱은 `.env`를 읽지 않는다 | 예 → 영상에 `샘플` 표시 |
 | `demo-broken-port` | SAMPLE | 데모 레포 `TaeTaeJin/WOOWANGTHON_TEST_2` | README와 Dockerfile은 포트 8080이라 하지만 앱은 3000번에서 뜨도록 일부러 틀린 레포. AI 동료가 고치는 장면(SRS §6 7단계)에 쓴다 | 예 → 영상에 `샘플` 표시 |
+| `landing-preview` | SAMPLE | `FE/src/landing/sample.ts` | 랜딩 기능 소개의 예시 화면 데이터 | 예 → `샘플` 표시 |
 
 테스트 계정의 비밀번호는 여기 적지 않는다 — README와 제출 폼에만.
 

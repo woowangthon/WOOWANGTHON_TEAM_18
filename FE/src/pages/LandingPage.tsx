@@ -1,8 +1,11 @@
-import { Link, Navigate } from 'react-router'
+import { Link } from 'react-router'
+import { isAdmin } from '../auth/isAdmin.ts'
 import { useAuth } from '../auth/useAuth.ts'
 import { primaryLinkClass } from '../components/primaryLinkClass.ts'
 import { Card } from '../components/ui/Card.tsx'
 import { Table, Td, Th, THead } from '../components/ui/Table.tsx'
+import HeroCarousel from '../landing/HeroCarousel.tsx'
+import Showcase from '../landing/Showcase.tsx'
 
 const outlineLinkClass =
   'inline-flex h-8 items-center rounded-sm border border-line-strong px-3 text-sm font-bold text-fg hover:border-fg'
@@ -14,17 +17,11 @@ const steps = [
   { title: '배포하고 주소를 받아요', desc: '진행 상황이 화면에 보이고, 끝나면 접속 주소가 나와요.' },
 ]
 
-const features = [
-  { title: '학교 PC에 무료로', desc: '클라우드 비용 없이 과목이 끝난 뒤에도 서비스를 이어 갈 수 있어요.' },
-  { title: '막히면 AI 동료가', desc: '빌드나 배포가 실패하면 AI가 원인을 찾아 고쳐 보고 결과를 알려 줘요.' },
-  { title: '한 화면에서', desc: '배포 진행 상황과 내 배포 목록을 한곳에서 확인해요.' },
-]
-
-// 공개 첫 화면. 로그인한 사용자는 대시보드로 보낸다. 세션을 읽는 동안에는 아무것도 그리지 않는다.
+// 공개 첫 화면. 로그인한 사용자도 볼 수 있고, 그때는 로그인 · 시작하기 대신 대시보드로 가는 링크가 보인다(관리자는 /admin). 세션을 읽는 동안에는 아무것도 그리지 않는다.
 function LandingPage() {
   const { state } = useAuth()
   if (state.status === 'loading') return null
-  if (state.status === 'signedIn') return <Navigate to="/dashboard" replace />
+  const home = state.status === 'signedIn' ? (isAdmin(state.session) ? '/admin' : '/dashboard') : null
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -40,48 +37,61 @@ function LandingPage() {
               />
             </Link>
             <nav aria-label="페이지 바로가기" className="flex gap-4 text-sm text-muted">
+              <a href="#showcase" className="py-2 hover:text-fg">
+                기능 소개
+              </a>
               <a href="#types" className="py-2 hover:text-fg">
                 지원 범위
               </a>
               <a href="#how" className="py-2 hover:text-fg">
                 사용 방법
               </a>
-              <a href="#features" className="py-2 hover:text-fg">
-                기능
-              </a>
             </nav>
           </div>
           <div className="flex items-center gap-2 py-2">
-            <Link to="/login" className={outlineLinkClass}>
-              로그인
-            </Link>
-            <Link to="/signup" className={primaryLinkClass}>
-              시작하기
-            </Link>
+            {home ? (
+              <Link to={home} className={primaryLinkClass}>
+                대시보드로
+              </Link>
+            ) : (
+              <>
+                <Link to="/login" className={outlineLinkClass}>
+                  로그인
+                </Link>
+                <Link to="/signup" className={primaryLinkClass}>
+                  시작하기
+                </Link>
+              </>
+            )}
           </div>
         </div>
       </header>
 
       <main className="flex-1">
-        <section className="mx-auto flex max-w-300 flex-col gap-6 px-4 py-16 sm:px-8 sm:py-24">
-          <h1 className="max-w-2xl text-2xl">GitHub 레포 하나로, 학교 PC에 배포까지</h1>
-          <p className="max-w-2xl text-lg text-muted">
-            공개 레포를 제출하면 학교 PC 클러스터에 배포해 줘요. 배포가 막히면 AI 동료가 원인을
-            찾아 고쳐 보고, 끝나면 접속 주소를 받아요.
-          </p>
-          <div className="flex flex-wrap items-center gap-3">
-            <Link to="/signup" className={primaryLinkClass}>
-              시작하기
-            </Link>
-            <a href="#how" className={outlineLinkClass}>
-              사용 방법 보기
-            </a>
+        <section className="mx-auto grid max-w-300 items-center gap-10 px-4 py-16 sm:px-8 sm:py-24 lg:grid-cols-2 lg:gap-16">
+          <div className="flex flex-col gap-6">
+            <h1 className="max-w-2xl text-2xl">GitHub 레포 하나로, 학교 PC에 배포까지</h1>
+            <p className="max-w-2xl text-lg text-muted">
+              공개 레포를 제출하면 학교 PC 클러스터에 배포해 줘요. 배포가 막히면 AI 동료가 원인을
+              찾아 고쳐 보고, 끝나면 접속 주소를 받아요.
+            </p>
+            <div className="flex flex-wrap items-center gap-3">
+              <Link to={home ?? '/signup'} className={primaryLinkClass}>
+                {home ? '대시보드로' : '시작하기'}
+              </Link>
+              <a href="#showcase" className={outlineLinkClass}>
+                기능 둘러보기
+              </a>
+            </div>
+            <p className="text-sm text-muted">공개 개인 레포만 지원해요 · GitHub 연동이 필요해요</p>
           </div>
-          <p className="text-sm text-muted">공개 개인 레포만 지원해요 · GitHub 연동이 필요해요</p>
+          <HeroCarousel />
         </section>
 
-        <section id="types" className="border-t border-line">
-          <div className="mx-auto flex max-w-300 flex-col gap-4 px-4 py-12 sm:px-8">
+        <Showcase />
+
+        <section id="types" className="border-t border-line bg-surface">
+          <div className="mx-auto flex max-w-300 flex-col gap-4 px-4 py-16 sm:px-8">
             <h2 className="text-xl">어떤 프로젝트를 올릴 수 있나요</h2>
             <p className="text-muted">서비스 유형은 레포를 제출할 때 직접 골라요.</p>
             <Table aria-label="지원하는 서비스 유형">
@@ -110,11 +120,12 @@ function LandingPage() {
         </section>
 
         <section id="how" className="border-t border-line">
-          <div className="mx-auto flex max-w-300 flex-col gap-6 px-4 py-12 sm:px-8">
+          <div className="mx-auto flex max-w-300 flex-col gap-6 px-4 py-16 sm:px-8">
             <h2 className="text-xl">이렇게 배포돼요</h2>
             <ol className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               {steps.map((step, index) => (
-                <li key={step.title} className="flex flex-col gap-2">
+                <li key={step.title}>
+                  <Card className="flex h-full flex-col gap-2 p-6">
                   <span
                     aria-hidden="true"
                     className="flex size-7 items-center justify-center rounded-full bg-accent text-sm font-bold text-accent-fg"
@@ -123,27 +134,13 @@ function LandingPage() {
                   </span>
                   <h3 className="font-bold">{step.title}</h3>
                   <p className="text-sm text-muted">{step.desc}</p>
+                  </Card>
                 </li>
               ))}
             </ol>
           </div>
         </section>
 
-        <section id="features" className="border-t border-line">
-          <div className="mx-auto flex max-w-300 flex-col gap-6 px-4 py-12 sm:px-8">
-            <h2 className="text-xl">배포 전에도, 배포 후에도</h2>
-            <ul className="grid gap-4 sm:grid-cols-3">
-              {features.map((feature) => (
-                <li key={feature.title}>
-                  <Card className="flex h-full flex-col gap-2 p-6">
-                    <h3 className="font-bold">{feature.title}</h3>
-                    <p className="text-sm text-muted">{feature.desc}</p>
-                  </Card>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </section>
       </main>
 
       <footer className="border-t border-line">
