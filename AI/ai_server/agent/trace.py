@@ -23,6 +23,14 @@ _OPS = frozenset({"add", "replace", "remove", "move", "copy", "test"})
 # 경로 · 코드 · 이름에 쓰는 글자만 남긴다. `=` `,` 같은 기호를 빼서
 # "KEY=값"이 경로 칸에 들어와도 그대로 남지 않게 한다.
 _UNSAFE = re.compile(r"[^\w./\[\]{}:\-]")
+_TYPE_NAMES: dict[type, str] = {
+    bool: "bool",
+    int: "int",
+    float: "float",
+    str: "str",
+    list: "list",
+    dict: "obj",
+}
 _NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,39}")
 
 
@@ -36,19 +44,8 @@ def value_type(value: Any) -> str:
     """값 자체는 싣지 않고 타입만 알린다."""
     if value is None:
         return "null"
-    if isinstance(value, bool):  # bool은 int의 하위 타입이라 먼저 가른다.
-        return "bool"
-    if isinstance(value, int):
-        return "int"
-    if isinstance(value, float):
-        return "float"
-    if isinstance(value, str):
-        return "str"
-    if isinstance(value, list):
-        return "list"
-    if isinstance(value, dict):
-        return "obj"
-    return "other"
+    # bool은 int의 하위 타입이라 type()으로 정확히 가른다.
+    return _TYPE_NAMES.get(type(value), "other")
 
 
 def patch_shape(patch: Any) -> str:
@@ -107,6 +104,12 @@ def exc_shape(e: BaseException) -> str:
     if isinstance(e, BaseExceptionGroup):
         out += " inner=" + ",".join(type(x).__name__ for x in e.exceptions)
     return out
+
+
+def classification(case_id: str | None, method: str) -> str:
+    """분류 한 줄. 마지막 `classify` 줄이 최종 결과다(코드 분류 뒤 LLM 분류가 이어질 수 있다)."""
+    case = clean(case_id) if case_id else "none"
+    return f"classify case={case} method={method} matched={case_id is not None}"
 
 
 def trace(ticket_id: str, message: str) -> None:

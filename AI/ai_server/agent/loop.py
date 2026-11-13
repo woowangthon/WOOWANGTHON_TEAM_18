@@ -42,7 +42,7 @@ from ai_server.agent.models import (
 )
 from ai_server.agent.redact import RedactingModel
 from ai_server.agent.runs import Runner, TicketRun
-from ai_server.agent.trace import clean, exc_shape, trace
+from ai_server.agent.trace import classification, clean, exc_shape, trace
 from ai_server.config import Settings
 
 log = logging.getLogger(__name__)
@@ -269,11 +269,7 @@ def make_agent_runner(
         method: ClassifyMethod = "code" if case else "llm"
         path: ResultPath = "playbook" if case else "plan"
         run.case_id = case.case_id if case else None
-        trace(
-            ticket.ticket_id,
-            f"classify case={clean(case.case_id) if case else 'none'} method=code "
-            f"matched={case is not None}",
-        )
+        trace(ticket.ticket_id, classification(case.case_id if case else None, "code"))
         raised = "-"
         try:
             if models is None:
@@ -286,9 +282,7 @@ def make_agent_runner(
                         path = "playbook" if case else "plan"
                         run.case_id = case.case_id if case else None
                         trace(
-                            ticket.ticket_id,
-                            f"classify case={clean(case.case_id) if case else 'none'} method=llm "
-                            f"matched={case is not None}",
+                            ticket.ticket_id, classification(case.case_id if case else None, "llm")
                         )
                     if case is None:
                         prompt = prompts.plan_prompt(ticket, notes)
