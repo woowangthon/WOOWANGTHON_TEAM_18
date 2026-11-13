@@ -68,6 +68,14 @@ it('shows the source of a detected value and asks the user to choose when it cou
   expect(service(1).getAllByText('출처: 락 파일').length).toBeGreaterThan(0)
   expect(service(1).getAllByText(/자동으로 정하지 못했어요. 골라 주세요/).length).toBeGreaterThan(0)
   expect(service(1).getByText(/package.json의 engines.node/)).toBeTruthy()
+  expect(screen.getByText('자동으로 정하지 못한 칸이 있어요. 칸 아래 안내를 보고 골라 주세요.')).toBeTruthy()
+})
+
+it('shows no pick-a-value banner when the draft decided every field', async () => {
+  respond([feProject])
+  renderConfirm()
+  await ready()
+  expect(screen.queryByText(/자동으로 정하지 못한 칸이 있어요/)).toBeNull()
 })
 
 it('hides the build fields when a Dockerfile is chosen and shows them again without one', async () => {
