@@ -2,11 +2,13 @@
 # Build BE/ at a git ref and run it as the container wcp-be on the platform EC2 (docs/design/platform-hosting.md):
 #   bash Infra/aws/deploy-be.sh [git-ref]        (default: origin/main; the user must be in the docker group)
 # Settings are read from SSM Parameter Store under $SSM_PATH (default /wcp/be), one single-line value per variable.
+# It joins the docker network wcp, where the AI server runs as wcp-ai (Infra/aws/deploy-ai.sh).
 # If the new container fails its health check, the previous container (same image and settings) is started again.
 set -euo pipefail
 ref=${1:-origin/main}
 ssm_path=${SSM_PATH:-/wcp/be}
 env_file=${ENV_FILE:-$HOME/.config/wcp/be.env}
+network=wcp
 cd "$(dirname "$0")/../.."
 
 answers() { curl -fsS --max-time 5 http://127.0.0.1:3000/api/health >/dev/null; }
@@ -47,6 +49,8 @@ docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp --entrypoint trivy -v "$
   fs --download-db-only --cache-dir /trivy --quiet --skip-version-check --disable-telemetry ||
   echo "could not refresh the Trivy DB in $trivy_dir; the security scan uses the one it has" >&2
 
+docker network inspect "$network" >/dev/null 2>&1 || docker network create "$network" >/dev/null
+
 # A run that stopped half way leaves wcp-be-prev behind. Drop it only if wcp-be is answering; otherwise it is the
 # last good container, so it becomes wcp-be again.
 if docker container inspect wcp-be-prev >/dev/null 2>&1; then
@@ -59,7 +63,7 @@ fi
 had_previous=false
 if docker stop wcp-be >/dev/null 2>&1; then docker rename wcp-be wcp-be-prev; had_previous=true; fi
 
-if docker run -d --name wcp-be --restart unless-stopped -p 127.0.0.1:3000:3000 --env-file "$env_file" -e PORT=3000 \
+if docker run -d --name wcp-be --restart unless-stopped --network "$network" -p 127.0.0.1:3000:3000 --env-file "$env_file" -e PORT=3000 \
   -v "$trivy_dir:/var/cache/trivy:ro" -e TRIVY_CACHE_DIR=/var/cache/trivy "$image" >/dev/null && healthy; then
   docker rm wcp-be-prev >/dev/null 2>&1 || true
   docker images wcp-be --format '{{.Repository}}:{{.Tag}}' | grep -vx "$image" | xargs -r docker rmi >/dev/null 2>&1 || true
