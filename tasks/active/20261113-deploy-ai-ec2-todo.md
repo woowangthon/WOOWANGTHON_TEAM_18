@@ -18,6 +18,6 @@
 
 ## Done when
 
-- [ ] `bash -n` and shellcheck on both scripts — from the test session
+- [x] `bash -n` (test session) and shellcheck (this session; the test session has no docker): SC2016 info only, same line as main
 - [x] Local: both containers on `wcp`; AI `/health` 200; `wcp-ai` → `wcp-be:<GATEWAY_PORT>/mcp` answers (400 for an empty JSON-RPC body); `wcp-be` → `wcp-ai:8000/health` 200; gateway port not on the host; missing `GATEWAY_URL` stops before the build; a bad token rolls back to the previous container; a BE redeploy keeps the AI reaching it
 - [ ] Real EC2 — by the user (not verified here)
