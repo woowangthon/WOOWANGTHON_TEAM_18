@@ -27,7 +27,7 @@ export function Steps({ steps, 'aria-label': ariaLabel }: { steps: Step[]; 'aria
         return (
           <li
             key={i}
-            aria-current={s.state === 'run' ? 'step' : undefined}
+            aria-current={s.state === 'run' || s.state === 'wait' ? 'step' : undefined}
             className="relative flex items-start gap-3 pb-4 last:pb-0"
           >
             {!last && (

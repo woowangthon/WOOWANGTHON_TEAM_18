@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
 import { Alert } from '../components/ui/Alert.tsx'
 import { Button } from '../components/ui/Button.tsx'
+import { Card } from '../components/ui/Card.tsx'
+import { Spinner } from '../components/ui/Spinner.tsx'
 import { ApiError, apiFetch } from '../lib/api.ts'
 import { failureOf } from '../pages/repo-failure.ts'
 import SecretForm from './SecretForm.tsx'
@@ -51,7 +53,8 @@ function DeploySecrets({ deployId }: { deployId: string }) {
 
   if (load.status === 'loading') {
     return (
-      <p role="status" className="text-sm text-muted">
+      <p role="status" className="flex items-center gap-2 text-sm text-muted">
+        <Spinner size="sm" aria-hidden="true" />
         비밀값 상태를 불러오는 중…
       </p>
     )
@@ -83,7 +86,7 @@ function DeploySecrets({ deployId }: { deployId: string }) {
   // 비밀값이 필요 없는 배포는 안내 하나로 끝낸다("빌드 준비됨"을 또 보이지 않는다). 다음 길은 그 안내 안에 둔다.
   const noSecrets = secrets.services.length === 0
   const startLink = (
-    <Link to={`/deploys/${deployId}`} className="mt-2 inline-block underline">
+    <Link to={`/deploys/${deployId}`} className="mt-2 inline-block text-accent-text underline">
       배포 시작하러 가기
     </Link>
   )
@@ -95,7 +98,9 @@ function DeploySecrets({ deployId }: { deployId: string }) {
           {startLink}
         </Alert>
       ) : (
-        <SecretForm services={targetsOf(secrets)} onSubmit={save} />
+        <Card className="p-6">
+          <SecretForm services={targetsOf(secrets)} onSubmit={save} />
+        </Card>
       )}
       {!noSecrets &&
         (secrets.ready ? (

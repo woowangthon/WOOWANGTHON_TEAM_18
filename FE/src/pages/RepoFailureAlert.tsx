@@ -11,7 +11,7 @@ function RepoFailureAlert({ failure, title }: { failure: Failure; title?: string
       <div className="flex flex-col gap-2">
         <p>{body}</p>
         {failure === 'not-linked' && (
-          <Link to="/profile" className="font-bold underline">
+          <Link to="/profile" className="font-bold text-accent-text underline">
             프로필로 이동
           </Link>
         )}

@@ -4,6 +4,7 @@ import PasswordField from '../components/PasswordField.tsx'
 import { Alert } from '../components/ui/Alert.tsx'
 import { Badge } from '../components/ui/Badge.tsx'
 import { Button } from '../components/ui/Button.tsx'
+import { Spinner } from '../components/ui/Spinner.tsx'
 import { ApiError } from '../lib/api.ts'
 import { failureOf } from '../pages/repo-failure.ts'
 import { secretIssueText } from './secrets.ts'
@@ -120,7 +121,7 @@ function SecretForm({ services, onSubmit }: SecretFormProps) {
       {services.map(({ service, keys, done }) => {
         const open = !done || editing.includes(service)
         return (
-          <fieldset key={service} className="flex flex-col gap-3 rounded-md border border-line p-3">
+          <fieldset key={service} className="flex flex-col gap-3 rounded-md border border-line p-4">
             <legend className="flex items-center gap-2 px-1 text-sm font-bold">
               <span className="font-mono">{service}</span>
               {done && <Badge variant="ok">들어감</Badge>}
@@ -168,7 +169,8 @@ function SecretForm({ services, onSubmit }: SecretFormProps) {
         )
       })}
       {pending.length > 0 && (
-        <Button type="submit" className="self-start" disabled={submitting} aria-busy={submitting}>
+        <Button type="submit" className="gap-2 self-start" disabled={submitting} aria-busy={submitting}>
+          {submitting && <Spinner size="sm" aria-hidden="true" />}
           {submitting ? '저장하는 중…' : '비밀값 저장'}
         </Button>
       )}

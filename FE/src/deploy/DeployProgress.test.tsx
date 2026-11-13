@@ -64,16 +64,17 @@ const clickStart = async () => {
   fireEvent.click(screen.getByRole('button', { name: '배포 시작' }))
   await advance(0)
 }
+// 마지막 칸이 이름과 상태 글자다(앞 칸은 단계 번호 점). 이름은 그 칸의 첫 글자 덩어리다.
 const stage = (name: string) =>
-  screen.getAllByRole('listitem').find((li) => li.firstElementChild?.textContent === name)?.textContent
+  screen.getAllByRole('listitem').find((li) => li.lastElementChild?.firstChild?.textContent === name)?.lastElementChild?.textContent
 
 it('reads the status of this deploy and draws the stages from it', async () => {
   api.apiFetch.mockResolvedValue(progressOf('running', 'deploy'))
   await show()
   expect(api.apiFetch).toHaveBeenCalledWith(STATUS)
-  expect(stage('빌드')).toBe('빌드끝남')
+  expect(stage('빌드')).toBe('빌드 (완료)')
   expect(stage('배포')).toBe('배포진행 중')
-  expect(stage('완료')).toBe('완료대기')
+  expect(stage('완료')).toBe('완료 (예정)')
 })
 
 it('shows a loading note until the first answer arrives', () => {
@@ -94,7 +95,7 @@ it('reads again every 3 seconds while running and shows the change', async () =>
   expect(reads()).toBe(1)
   await advance(1)
   expect(reads()).toBe(2)
-  expect(stage('빌드')).toBe('빌드끝남')
+  expect(stage('빌드')).toBe('빌드 (완료)')
 })
 
 it('keeps reading while a problem is being fixed', async () => {
@@ -102,7 +103,7 @@ it('keeps reading while a problem is being fixed', async () => {
   await show()
   await advance(3000)
   expect(reads()).toBe(2)
-  expect(stage('배포')).toBe('배포문제 해결 중')
+  expect(stage('배포')).toBe('배포진행 중문제 해결 중')
   expect(screen.getByText('문제를 해결하는 중이에요')).toBeTruthy()
   expect(screen.getByText('문제를 살펴보는 중이에요')).toBeTruthy()
 })
@@ -193,7 +194,7 @@ it('starts the deploy from the button, then reads the status again and follows i
     return Promise.resolve(reads() <= 1 ? progressOf('not_started', 'secrets') : progressOf('running', 'build'))
   })
   await show()
-  expect(stage('비밀값')).toBe('비밀값사용자 조치 필요')
+  expect(stage('비밀값')).toBe('비밀값입력 대기사용자 조치 필요')
   await clickStart()
   expect(api.apiFetch).toHaveBeenCalledWith(START, {})
   expect(reads()).toBe(2)
@@ -393,7 +394,7 @@ it('asks the user to act when the server says so', async () => {
   await show()
   expect(screen.getByText('사용자 조치가 필요해요')).toBeTruthy()
   expect(screen.getByText('환경변수를 확인해 주세요')).toBeTruthy()
-  expect(stage('배포')).toBe('배포사용자 조치 필요')
+  expect(stage('배포')).toBe('배포입력 대기사용자 조치 필요')
 })
 
 it('shows the public address as a link and copies it', async () => {
@@ -404,7 +405,7 @@ it('shows the public address as a link and copies it', async () => {
   const link = screen.getByRole('link', { name: 'https://my-app.stairnoworks.com' })
   expect(link.getAttribute('href')).toBe('https://my-app.stairnoworks.com')
   expect(link.getAttribute('rel')).toContain('noopener')
-  expect(screen.getAllByRole('listitem').every((li) => li.textContent.endsWith('끝남'))).toBe(true)
+  expect(screen.getAllByRole('listitem').every((li) => li.lastElementChild?.textContent?.endsWith('(완료)'))).toBe(true)
   fireEvent.click(screen.getByRole('button', { name: '주소 복사' }))
   await advance(0)
   expect(writeText).toHaveBeenCalledWith('https://my-app.stairnoworks.com')

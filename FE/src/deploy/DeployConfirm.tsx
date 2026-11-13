@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Alert } from '../components/ui/Alert.tsx'
+import { Banner } from '../components/ui/Banner.tsx'
 import { Button } from '../components/ui/Button.tsx'
+import { Skeleton } from '../components/ui/Skeleton.tsx'
+import { Spinner } from '../components/ui/Spinner.tsx'
 import { ApiError, apiFetch } from '../lib/api.ts'
 import RepoFailureAlert from '../pages/RepoFailureAlert.tsx'
 import { failureOf, isRetryable } from '../pages/repo-failure.ts'
@@ -103,9 +106,13 @@ function DeployConfirm({ repoUrl, repo, commit, dockerfiles, onRecheck }: Props)
   return (
     <Section>
       {load.status === 'loading' && (
-        <p role="status" className="text-sm text-muted">
-          배포 설정 초안을 만드는 중…
-        </p>
+        <div className="flex flex-col gap-3">
+          <p role="status" className="flex items-center gap-2 text-sm text-muted">
+            <Spinner size="sm" aria-hidden="true" />
+            배포 설정 초안을 만드는 중…
+          </p>
+          <Skeleton block />
+        </div>
       )}
 
       {load.status === 'failed' && (
@@ -203,8 +210,12 @@ type EditorProps = {
 function Editor({ draft, form, dockerfiles, issues, saving, saveFailure, onEdit, onRecheck, onConfirm }: EditorProps) {
   const map = issueMap(issues)
   const extra = withoutField(issues)
+  // 초안이 자동으로 정하지 못해 사용자가 골라야 하는 칸이 있는지. 초안은 규칙 코드가 채운다.
+  const needsPick = form.services.some((s) => Object.values(s.hints).some((hint) => hint?.review))
   return (
     <>
+      <p className="text-sm text-muted">읽어 낸 값으로 미리 채웠어요. 틀린 칸은 직접 고칠 수 있어요.</p>
+      {needsPick && <Banner variant="warn">자동으로 정하지 못한 칸이 있어요. 칸 아래 안내를 보고 골라 주세요.</Banner>}
       {draft.truncated && (
         <Alert variant="warn" title="레포가 커서 일부만 확인했어요">
           찾은 폴더가 전부가 아닐 수 있어요. 락 파일이나 Dockerfile이 없다고 말할 수 없으니 아래 값을 꼭 확인해 주세요.
