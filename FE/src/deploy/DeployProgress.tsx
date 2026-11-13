@@ -6,6 +6,7 @@ import { Card } from '../components/ui/Card.tsx'
 import { CheckIcon } from '../components/ui/Icons.tsx'
 import { Spinner } from '../components/ui/Spinner.tsx'
 import { ApiError, apiFetch } from '../lib/api.ts'
+import AgentSection from './AgentSection.tsx'
 import DeployStages from './DeployStages.tsx'
 import { isActive, isPlatformProblem, POLL_MS, stageStatesOf } from './progress.ts'
 import type { Progress } from './progress.ts'
@@ -264,6 +265,8 @@ function DeployProgress({ deployId }: { deployId: string }) {
           </Alert>
         )}
 
+        {progress.agent && <AgentSection agent={progress.agent} />}
+
         {progress.warnings.length > 0 && (
           <Alert variant="warn" title="보안 검사 경고가 있어요">
             <p>배포를 막지는 않았어요.</p>
@@ -292,6 +295,8 @@ function DeployProgress({ deployId }: { deployId: string }) {
               </a>
               <CopyButton text={progress.url} />
             </div>
+            {/* 서버는 검사가 끝나고 문제가 없을 때만 빈 배열을 준다(검사 중 · 실패 · 미설정은 항목으로 온다). 그래서 빈 배열은 "찾은 문제가 없다"는 뜻이다. */}
+            {progress.warnings.length === 0 && <p className="text-sm text-muted">보안 검사: 찾은 문제가 없어요</p>}
           </Card>
         )}
         {progress.status === 'succeeded' && <ServiceStatus deployId={deployId} />}
