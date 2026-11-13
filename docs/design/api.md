@@ -477,6 +477,63 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
 
 오류: `401`, `404 DEPLOY_NOT_FOUND`(없는 id · 남의 id · UUID가 아닌 id 모두), `503 DATABASE_UNAVAILABLE`.
 
+### `GET /api/deploys/:id/metrics` — 내 서비스의 실행 지표 (소유자만, UC-15 · FR-091 · FR-092)
+
+학생이 자기 배포의 서비스별 현재 CPU · 메모리 · 재시작 횟수 · 실행 상태와 최근 1시간 시계열을 읽는다. Grafana는 학생에게 열지 않고 운영자 전용이며, 학생 화면은 이 응답으로 직접 그린다. 읽기만 한다(부작용 없음).
+
+**어느 것의 값인가**: 이 배포가 **프로젝트의 지금 공개 중인 배포**일 때만 값을 준다. 프로젝트의 live 슬롯(`projects.live_slot`)의 Deployment · Pod만 읽고, 다른 슬롯은 보지 않는다. "지금 공개 중인 배포"는 그 프로젝트의 실행 기록 중 `succeeded`인 가장 최근 것(`created_at` 내림차순 첫 줄, 서버의 `findLastSucceededRun`)이다. **가정**: 배포 때 슬롯 줄(`deploy_state`)을 BE가 읽거나 쓰는 곳이 아직 없어서 live 슬롯의 배포 id를 가리키는 정본이 DB에 없다. 있으면 그것이 정본이므로 그때 이 판정을 바꾼다. 그 사이 새 배포가 진행 중이어도(대상 슬롯에서 도는 중) live 슬롯의 배포는 `succeeded`인 채로 남으므로 이 판정은 바뀌지 않는다. 읽는 슬롯은 DB의 `live_slot`이다.
+
+응답 `200`:
+
+```json
+{
+  "deployId": "…",
+  "slug": "my-app",
+  "state": "live",
+  "reason": null,
+  "slot": "a",
+  "services": [
+    {
+      "name": "fe", "deployment": "fe-a",
+      "state": "running", "waiting": null,
+      "replicas": 1, "readyReplicas": 1, "restarts": 0,
+      "usage": { "cpuMillicores": 40, "memoryBytes": 73400320 }
+    }
+  ],
+  "usageStatus": "collected",
+  "series": {
+    "status": "collected",
+    "windowSeconds": 3600,
+    "stepSeconds": 60,
+    "services": [
+      {
+        "name": "fe",
+        "cpuMillicores": [{ "t": 1794540000, "v": 38 }, { "t": 1794540060, "v": 41 }],
+        "memoryBytes": [{ "t": 1794540000, "v": 73400320 }, { "t": 1794540060, "v": 73465856 }]
+      }
+    ]
+  }
+}
+```
+
+- `state`: `"live"` 또는 `"not_live"`. `not_live`면 값을 주지 않는다: `reason`이 `"not_succeeded"`(이 배포가 `succeeded`가 아니다: 시작 전 · 진행 중 · 실패 · 해결 중 · 사용자 조치 필요) 또는 `"superseded"`(이 배포는 성공했지만 더 새 성공 배포가 있다)이고, `slot` · `usageStatus` · `series`는 `null`, `services`는 `[]`다. `live`면 `reason`은 `null`이다.
+- `slot`: live 슬롯 `"a"` · `"b"`.
+- `services[]`: live 슬롯의 Deployment 하나(`<서비스>-<슬롯>`)마다 하나. 순서는 서버가 읽은 순서 그대로다.
+  - `name`: 서비스 이름(`fe` · `be` · `ai`, Deployment 이름에서 `-<슬롯>`을 뺀 것). `deployment`: Deployment 이름.
+  - `state`: `"running"`(원하는 개수가 1 이상이고 모두 준비됨) · `"starting"`(원하는 개수가 1 이상이고 준비 안 된 것이 있다) · `"stopped"`(원하는 개수 0: 운영자가 끈 경우 등). `waiting`: `starting`일 때 기다리는 컨테이너의 이유(`CrashLoopBackOff` · `ImagePullBackOff` 등), 모르거나 `starting`이 아니면 `null`. 학생이 그 말뜻을 알도록 풀어 주는 것은 FE의 일이다.
+  - `replicas` · `readyReplicas` · `restarts`: 운영자 API와 같다. `restarts`는 **지금 떠 있는 Pod 기준**이라, 새 배포나 Pod 교체(재시작이 아니라 Pod가 새로 뜬 경우) 뒤에는 0으로 돌아간다. "누적 재시작"으로 읽으면 안 된다.
+  - `usage`: 운영자 API의 서비스 `usage`와 같다(합, 정수, 없으면 `null`).
+- `usageStatus`: 운영자 API 프로젝트의 `usageStatus`와 같다. `"not_collected"`면 모든 `usage`가 `null`이다.
+- 단위: CPU는 밀리코어, 메모리는 바이트, 모두 정수다. 시각 `t`는 유닉스 초다.
+- **`series`** (C): 최근 1시간(`windowSeconds` 3600), 1분 간격(`stepSeconds` 60)의 시계열이다. 서비스마다 그 서비스 Pod들의 합이고, 점은 시각 오름차순이다(최대 61개). Prometheus(`query_range`)에서 읽는다([클러스터](cluster.md) §10). 값은 `cpuMillicores` = 컨테이너 CPU 사용 시간의 증가율(`container_cpu_usage_seconds_total`의 2분 `rate`) × 1000, `memoryBytes` = `container_memory_working_set_bytes`다. 두 메트릭 모두 `namespace="proj-<slug>"`, `container!=""`(Pod 전체를 세는 줄 제외), `container!="POD"`(환경에 따라 생기는 pause 컨테이너 줄 제외)로 고르고 Pod별로 읽는다. 이 이름과 셀렉터는 실제 리더에서 확인하지 못했다(미검증).
+  - `status`: `"collected"` 또는 `"not_collected"`. Prometheus에 닿지 못했거나 응답을 읽지 못하면 `"not_collected"`이고 `services`는 `[]`다(오류로 답하지 않는다. 현재 값은 위 `services[]`가 따로 준다).
+  - `collected`면 `series.services`는 위 `services[]`와 **같은 이름을 모두, 같은 순서로** 담는다(FE가 이름으로 찾다가 빠진 서비스를 오류로 보지 않게). 그 서비스에 점이 없으면(방금 떠서 아직 수집 전, 원하는 개수 0) 그 서비스의 두 배열이 `[]`다. 점이 없는 시각을 메워 넣지 않는다(`v`는 항상 숫자이고, 빠진 시각은 점이 없다).
+  - 한 서비스의 Pod가 중간에 바뀌어도(재시작 · 새 배포) 그 시각의 합이다. 서비스 이름에 해당하는 Pod는 `<Deployment>-<ReplicaSet 해시>-<5자>` 이름으로 가른다(운영자 API와 같은 규칙).
+- 서버가 PromQL에 넣는 값은 공간 이름 `proj-<slug>`뿐이다. slug는 DB에서 읽은 값이고 슬러그 모양(`^[a-z0-9]…`)을 한 번 더 검사한다. 사용자 입력(쿼리 · 본문)은 PromQL에 들어가지 않는다. 이 API는 쿼리 인자를 받지 않는다.
+- 갱신: FE가 화면에 있는 동안 15초 이상 간격으로 다시 읽는다(제안. 서버는 캐시하지 않는다).
+
+오류: `401`, `404 DEPLOY_NOT_FOUND`(없는 id · 남의 id · UUID가 아닌 id), `503 CLUSTER_UNAVAILABLE`(live 슬롯의 Deployment · Pod 목록을 읽지 못했다. 학생에게 서버 계정 권한 같은 내부 이유를 나누어 알리지 않는다), `503 DATABASE_UNAVAILABLE`. 아직 한 번도 성공한 배포가 없는 프로젝트의 배포는 `state: "not_live"`(`not_succeeded`)다.
+
 ### `GET /api/deploys` — 내 배포 목록
 
 내 배포를 최신순(`createdAt` 내림차순)으로 돌려준다. 쿼리 `limit`(1~50, 기본 20). 화면이 새로 고침 뒤에도 진행 중인 배포를 찾게 하려는 것이다.
@@ -632,9 +689,12 @@ DB에 배포가 있는 프로젝트(`slug`)마다 공간 `proj-<slug>`를 읽어
       "url": "https://my-app.stairnoworks.com",
       "lastStop": { "at": "2026-11-11T01:00:00.000Z", "by": "operator@example.com" },
       "clusterError": null,
+      "usageStatus": "collected",
       "services": [
         {
           "name": "fe-a", "slot": "a", "replicas": 1, "readyReplicas": 1,
+          "restarts": 0,
+          "usage": { "cpuMillicores": 40, "memoryBytes": 73400320 },
           "pods": [{ "name": "fe-a-6d9f-xk2", "phase": "Running", "ready": true, "node": "worker-1", "restarts": 0 }]
         }
       ]
@@ -644,6 +704,9 @@ DB에 배포가 있는 프로젝트(`slug`)마다 공간 `proj-<slug>`를 읽어
 ```
 
 - `services[]`는 공간의 Deployment 하나(`<서비스>-<슬롯>`)다. `slot`은 이름 끝의 `a` · `b`(아니면 `null`). `replicas`는 원하는 개수(`spec.replicas`), `readyReplicas`는 준비된 개수.
+- `restarts`: 그 서비스 Pod들의 컨테이너 재시작 횟수의 합(`pods[].restarts`의 합. 지금 떠 있는 Pod의 값이라 Pod가 새로 뜨면 0으로 돌아간다).
+- `usage`: 그 서비스 Pod들의 실제 사용량의 합 `{ "cpuMillicores", "memoryBytes" }`(정수, 밀리코어 · 바이트). `metrics.k8s.io`의 Pod 사용량(`GET /apis/metrics.k8s.io/v1beta1/namespaces/proj-<slug>/pods`)을 읽는다. Pod가 없거나(replicas 0 포함), 그 서비스의 Pod가 하나도 목록에 없으면(첫 수집 전, 수십 초) `null`이다. 일부 Pod만 목록에 있으면 있는 것의 합이다(새로 뜬 Pod는 수십 초 늦게 들어온다). 값을 지어내지 않는다.
+- `usageStatus`(프로젝트마다): `"collected"` 또는 `"not_collected"`. 그 프로젝트의 Pod 사용량을 읽지 못하면(권한 · 시간 초과 · 그 API가 없음) `"not_collected"`이고 그 프로젝트의 모든 서비스의 `usage`가 `null`이다(오류로 답하지 않는다. 공간을 읽지 못한 `clusterError`와 별개다). 노드의 `usageStatus`와 같은 방식이다.
 - `liveSlot` · `url`: 아직 한 번도 전환하지 않았으면 `null`.
 - `lastStop`: 가장 최근 강제 중지 기록(없으면 `null`). 그 뒤에 다시 배포했는지는 `replicas`로 본다.
 - `ownerId`: 소유자의 사용자 id(이메일은 배포 테이블에 없다).
