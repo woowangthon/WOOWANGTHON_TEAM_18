@@ -79,15 +79,17 @@ it.each(protectedRoutes)('%s sends a signed-out visitor to the login page', (pat
   expect(h1()).toBe('로그인')
 })
 
-it('sends the root path to the dashboard when signed in', () => {
+it('shows the landing at the root path when signed in, with a link to the dashboard', () => {
   renderApp('/')
-  expect(h1()).toBe('대시보드')
+  expect(h1()).toBe('GitHub 레포 하나로, 학교 PC에 배포까지')
+  expect(screen.getAllByRole('link', { name: '대시보드로' })[0]?.getAttribute('href')).toBe('/dashboard')
+  expect(screen.queryByRole('link', { name: '로그인' })).toBeNull()
 })
 
 it('shows the public landing at the root path when signed out', () => {
   renderApp('/', 'out')
   expect(h1()).toBe('GitHub 레포 하나로, 학교 PC에 배포까지')
-  expect(screen.getByRole('link', { name: '로그인' }).getAttribute('href')).toBe('/login')
+  expect(screen.getAllByRole('link', { name: '로그인' })[0]?.getAttribute('href')).toBe('/login')
   expect(screen.getAllByRole('link', { name: '시작하기' })[0]?.getAttribute('href')).toBe('/signup')
 })
 

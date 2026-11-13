@@ -64,6 +64,9 @@
   --text-xl--line-height: 1.75rem;
   --text-2xl: 1.75rem;
   --text-2xl--line-height: 2.25rem;
+  /* 랜딩 첫 화면 제목과 마지막 행동 유도 문구에만 쓴다. 앱 화면의 제목은 2xl까지다. */
+  --text-3xl: 2.5rem;
+  --text-3xl--line-height: 3rem;
 
   --radius-sm: 4px;
   --radius-md: 6px;
