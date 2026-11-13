@@ -4,7 +4,7 @@ import http from 'node:http'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { FakeK8s } from '../../test/fake-k8s.js'
 import type { Env } from '../config/env.js'
-import { ClusterReader } from './cluster-reader.js'
+import { ClusterReader, newestPod } from './cluster-reader.js'
 import { K8sClient } from './k8s.client.js'
 
 const NS = '/api/v1/namespaces/proj-my-app'
@@ -147,6 +147,7 @@ describe('ClusterReader', () => {
     [{ tailLines: 2000 }, 'tailLines=2000&limitBytes=262144'],
     [{ tailLines: 2001 }, 'tailLines=2000&limitBytes=262144'],
     [{ container: 'side' }, 'tailLines=200&limitBytes=262144&container=side'],
+    [{ sinceSeconds: 600 }, 'tailLines=200&limitBytes=262144&sinceSeconds=600'],
   ])('log options %j become the query %s', async (options, query) => {
     await reader.logs('my-app', 'p', options)
     expect(fake.paths).toEqual([`${NS}/pods/p/log?${query}`])
@@ -156,6 +157,8 @@ describe('ClusterReader', () => {
     ['p', { tailLines: 0 }],
     ['p', { tailLines: 1.5 }],
     ['p', { tailLines: Number.NaN }],
+    ['p', { sinceSeconds: 0 }],
+    ['p', { sinceSeconds: 1.5 }],
     ['p', { container: 'a&follow=true' }],
     ['p', { container: '' }],
     ['', {}],
@@ -288,5 +291,28 @@ describe('ClusterReader', () => {
       }
       expect(fake.paths).toEqual([])
     })
+  })
+})
+
+describe('newestPod', () => {
+  const pod = (name: unknown, created: unknown, restarts: number[] = []) => ({
+    metadata: { name, creationTimestamp: created },
+    status: { containerStatuses: restarts.map((restartCount) => ({ restartCount })) },
+  })
+
+  it('picks the most recently created Pod and sums its container restarts', () => {
+    expect(newestPod([pod('be-a-old', '2026-11-13T01:00:00Z', [9]), pod('be-a-new', '2026-11-13T02:00:00Z', [1, 2]), pod('be-a-mid', '2026-11-13T01:30:00Z')])).toEqual({
+      name: 'be-a-new',
+      restarts: 3,
+    })
+  })
+
+  it('counts no restarts when the Pod has no container status yet', () => {
+    expect(newestPod([{ metadata: { name: 'p', creationTimestamp: '2026-11-13T01:00:00Z' } }])).toEqual({ name: 'p', restarts: 0 })
+  })
+
+  it('is null for no Pod or a newest Pod without a name', () => {
+    expect(newestPod([])).toBeNull()
+    expect(newestPod([pod('old', '2026-11-13T01:00:00Z'), pod(undefined, '2026-11-13T02:00:00Z')])).toBeNull()
   })
 })

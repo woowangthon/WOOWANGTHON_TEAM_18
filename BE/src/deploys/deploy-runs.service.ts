@@ -4,6 +4,7 @@ import type { AuthUser } from '../auth/auth.decorators.js'
 import { isRecord } from '../common/is-record.js'
 import { parseUuid } from '../common/uuid.js'
 import { redact, redactString } from '../common/redact.js'
+import { ClusterReader, newestPod } from '../k8s/cluster-reader.js'
 import type { DeployWarning } from '../security/findings.js'
 import { SecurityScanService } from '../security/security-scan.service.js'
 import { AgentClient } from './agent.client.js'
@@ -31,6 +32,11 @@ import { PipelineClient } from './pipeline.client.js'
 import { SlotScaleDown } from './slot-scale-down.js'
 
 const TICKET_MINUTES = 15
+// 문제 티켓의 로그를 BE가 대상 슬롯 Pod에서 읽을 때(apply · verify): 최근 10분, 마지막 200줄. 알림 요청(파이프라인 제한 10초) 안에서
+// 동기로 보내므로 읽기 전체에 상한을 둔다. 넘거나 실패하면 빈 로그로 티켓을 그대로 보낸다.
+const TICKET_LOG_SECONDS = 600
+const TICKET_LOG_LINES = 200
+const TICKET_LOG_TIMEOUT_MS = 3_000
 // 파이프라인(빌드 포함)이 이보다 오래 걸리지 않는다고 본다. 이 시간 동안 아무 알림도 없던 진행 중인 실행은 끝난 것으로 본다.
 const STALE_RUN_MS = 60 * 60_000
 const DEFAULT_LIMIT = 20
@@ -105,6 +111,7 @@ export class DeployRunsService {
     private readonly agent: AgentClient,
     private readonly slots: SlotScaleDown,
     private readonly scans: SecurityScanService,
+    private readonly reader: ClusterReader,
   ) {}
 
   /** 내 배포 하나. 없는 id · 남의 id · UUID가 아닌 id는 모두 404다. */
@@ -292,6 +299,35 @@ export class DeployRunsService {
     return true
   }
 
+  /**
+   * 문제 티켓의 로그(api.md 3번 `failure.logs`): 대상 슬롯의 그 서비스 Pod 중 가장 최근 것(게이트웨이 `read_pod_logs`와 같은 Pod)의 최근 10분, 마지막 200줄.
+   * 컨테이너가 재시작했으면 직전 컨테이너(죽은 쪽)의 로그다. 줄마다 비밀값 필터를 거친다. Pod가 없으면 빈 줄,
+   * 읽지 못하거나 상한(3초)을 넘으면 null(부른 쪽이 빈 로그로 보낸다. 로그 때문에 티켓이 늦거나 빠지지 않는다).
+   */
+  private async slotLogs(run: DeployRunRow, service: string): Promise<{ from: string; to: string; lines: string[] } | null> {
+    const to = new Date()
+    const from = new Date(to.getTime() - TICKET_LOG_SECONDS * 1000)
+    const read = async () => {
+      const pod = newestPod(await this.reader.rawObjects(run.slug, 'pods', `app=${service},slot=${run.target_slot}`))
+      if (!pod) return []
+      const text = await this.reader.logs(run.slug, pod.name, { container: service, tailLines: TICKET_LOG_LINES, previous: pod.restarts > 0, sinceSeconds: TICKET_LOG_SECONDS })
+      return lines(text).slice(-TICKET_LOG_LINES).map(redactString)
+    }
+    // 상한을 넘긴 뒤 읽기가 늦게 실패해도 처리되지 않은 거절이 남지 않게 여기서 받는다. 값(로그 · 원본)은 남기지 않는다.
+    const reading = read().catch((err: unknown) => {
+      this.logger.error(`ticket logs: could not read ${run.slug} ${service}: ${err instanceof Error ? err.name : 'unknown'}`)
+      return 'failed' as const
+    })
+    let timer: NodeJS.Timeout | undefined
+    const timeout = new Promise<'timeout'>((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), TICKET_LOG_TIMEOUT_MS)
+    })
+    const got = await Promise.race([reading, timeout])
+    clearTimeout(timer)
+    if (got === 'timeout') this.logger.error(`ticket logs: no answer from the cluster in ${TICKET_LOG_TIMEOUT_MS} ms for ${run.slug} ${service}`)
+    return typeof got === 'string' ? null : { from: from.toISOString(), to: to.toISOString(), lines: got }
+  }
+
   /** 외부로 나가는 값을 가려 문제 티켓을 만들어 AI 서버에 보낸다. 받았으면 true. */
   private async sendTicket(
     run: DeployRunRow,
@@ -304,7 +340,9 @@ export class DeployRunsService {
     // 이 함수는 티켓으로 가는 실패에서만 불린다(classifyFailure → callAgent). 그때 validateNotice가 증거를 채워 둔다.
     const { raw, logs: given } = failure.evidence!
     const now = new Date().toISOString()
-    const logs = given ?? { from: now, to: now, lines: [] }
+    // 파이프라인이 로그를 보냈으면 그것을 쓴다. apply · verify에서 줄이 없으면(실행기에 Pod 로그 권한이 없다) 대상 슬롯 Pod에서 읽는다.
+    const read = !given?.lines.length && (notice.stage === 'apply' || notice.stage === 'verify') && failure.service ? await this.slotLogs(run, failure.service) : null
+    const logs = read ?? given ?? { from: now, to: now, lines: [] }
     // 외부(AI 서버 · 외부 추론 API)로 나가는 값은 모두 비밀값 필터를 거친다(FR-102).
     const ticket = redact({
       ticketId,
@@ -322,6 +360,8 @@ export class DeployRunsService {
     return this.agent.sendTicket({ ticket, gateway: { token: gatewayToken, expiresAt: expiresAt.toISOString() } })
   }
 }
+
+const lines = (text: string) => text.split('\n').filter((line, i, all) => !(i === all.length - 1 && line === ''))
 
 const alreadyStarted = () => new ConflictException({ code: 'ALREADY_STARTED', message: 'This deploy was already started' })
 const inProgress = () => new ConflictException({ code: 'DEPLOY_IN_PROGRESS', message: 'Another deploy of this project is in progress' })
