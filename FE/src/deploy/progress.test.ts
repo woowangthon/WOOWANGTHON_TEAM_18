@@ -72,3 +72,8 @@ it('counts a failure as the platform fault unless the code is one of the student
     expect(isPlatformProblem(code)).toBe(true)
   }
 })
+
+it('does not count AGENT_GAVE_UP as a platform problem, since the AI looked at the student failure and could not fix it', () => {
+  expect(isPlatformProblem('AGENT_GAVE_UP')).toBe(false)
+  expect(isPlatformProblem('AGENT_UNAVAILABLE')).toBe(true)
+})
