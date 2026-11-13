@@ -203,7 +203,7 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 
 ### 11. 리더 GPU · 로컬 모델 (구현됨, 2026-11-09)
 
-팀 일정상 후순위(2026-11-09 회의)라 데모 경로 밖이다. AI 서버가 부르는 길(EC2 → Tailscale → 리더)은 EC2가 사설망에 들어온 뒤 연다(후순위). 매니페스트는 [`Infra/gpu/`](../../Infra/gpu/) · [`Infra/vllm/`](../../Infra/vllm/)이다.
+AI 서버(UC-14)의 로컬 모델이다(2026-11-09에는 후순위였고, 2026-11-13에 데모 경로에 넣었다). AI 서버가 부르는 길은 EC2 → Tailscale → 리더다(아래 접근). 매니페스트는 [`Infra/gpu/`](../../Infra/gpu/) · [`Infra/vllm/`](../../Infra/vllm/)이다.
 
 - GPU: 리더의 RTX 3080(10GB). nvidia-container-toolkit은 받은 PC에 있었고 k3s가 설치 때 `nvidia` 런타임을 잡았다(§4). NVIDIA device plugin v0.20.1을 리더에만 띄워(`runtimeClassName: nvidia`, 리더 taint toleration) 노드에 `nvidia.com/gpu: 1`이 생긴다. 워커 GPU는 학생 Pod가 쓰지 않아 손대지 않는다.
 - 모델: Qwen/Qwen3-8B-AWQ(4bit AWQ, 가중치 6.1GB, Apache-2.0), Hugging Face 커밋 `4da05a8`에 고정. 공간 `vllm`의 local-path 볼륨(30Gi)에 Job으로 한 번 받고(학교망 약 47MB/s, 69초), vLLM은 오프라인(`HF_HUB_OFFLINE=1`)으로 읽는다.
@@ -211,7 +211,7 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 - KV 캐시가 FP8인 이유: 가중치 5.71GiB를 올리고 나면 fp16 KV 자리가 1.66GiB라 16K 한 요청(약 2.25GiB, 토큰당 약 144KiB)을 못 담아 vLLM이 시작에서 멈춘다. FP8은 토큰당 약 72KiB라 24,352토큰이 들어간다. 동시 요청 수를 줄여도 "최대 길이 요청 하나" 검사는 그대로라 FP8이 필요하다.
 - `enableServiceLinks: false`: Service 이름이 `vllm`이라 쿠버네티스가 Pod에 `VLLM_PORT=tcp://…`를 넣고, vLLM이 그걸 자기 설정으로 읽어 시작에서 멈춘다.
 - 자리 잡기: 리더 nodeSelector · taint toleration, PriorityClass `wanggane-low`(-100, 남을 밀어내지 않음), CPU 요청 2 · 상한 8, 메모리 요청 12Gi · 상한 32Gi(모델을 올릴 때 컨트롤 플레인이 굶지 않게), `/dev/shm` 4Gi.
-- 접근: ClusterIP만. NetworkPolicy로 8000번은 같은 공간에서만 받는다. 공개 주소(터널)에는 붙이지 않는다. API 키는 리더에서 만들어 Secret `vllm-api-key`에 바로 넣는다(값은 화면 · 레포에 남지 않는다).
+- 접근: ClusterIP만. NetworkPolicy로 8000번은 같은 공간에서만 받는다. 공개 주소(터널)에는 붙이지 않는다. EC2의 AI 서버는 Tailscale로 부른다(2026-11-13): 리더의 tailscaled가 tailnet 포트 18000을 vLLM Service로 넘긴다(`tailscale serve --bg --tcp 18000`, [`Infra/vllm/base.yaml`](../../Infra/vllm/base.yaml) 4번). 그래서 노드 주소 · 학교 주소에는 아무것도 열리지 않고, 접근 규칙이 `tag:platform-server` → `k3s-leader:18000`만 들인다([`Infra/tailscale/acl.hujson`](../../Infra/tailscale/acl.hujson)). tailscaled는 호스트 프로세스라 위 NetworkPolicy에 걸리지 않는다(리더 호스트에서 Service `/health` 200을 확인했다). AI 서버의 `LOCAL_MODEL_URL`은 `http://<리더 Tailscale 주소>:18000/v1`이다. API 키는 리더에서 만들어 Secret `vllm-api-key`에 바로 넣는다(값은 화면 · 레포에 남지 않는다).
 - 잰 값(2026-11-09, `Infra/vllm/check.yaml`): 키 없음 · 틀린 키 401, 요청 하나 0.4초, 생각 끈 도구 호출 29토큰, 300토큰 요청 셋을 한꺼번에 보내면 2.6 · 5.2 · 7.8초에 차례로, 15.1K 토큰 입력 5.1초(같은 입력을 바로 다시 보내면 앞부분 캐시로 2.4초), 16,385토큰 400, GPU 8.3~8.6GB, 부하 중 API 서버 응답 최대 91ms, 시작 약 52초.
 
 ### 12. 비밀값을 두는 곳
