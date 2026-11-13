@@ -27,7 +27,7 @@ export type Progress = {
   // 결과를 낸 에이전트가 없으면 null. 이 칸이 없던 응답도 같은 뜻으로 읽는다.
   agent?: AgentResult | null
   url: string | null
-  // 보안 검사 경고(#45). 배포를 막지 않는다. message는 그대로 보여 줘도 되는 문장이다. 지금은 항상 빈 배열이다.
+  // 보안 검사 경고(#45). 배포를 막지 않는다. message는 그대로 보여 줘도 되는 문장이다. 빈 배열은 검사가 끝나고 문제가 없다는 뜻이다(검사 중 · 실패 · 미설정은 항목으로 온다).
   warnings: DeployWarning[]
   updatedAt: string
 }
