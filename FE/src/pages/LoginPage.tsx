@@ -6,7 +6,7 @@ import { emailError } from '../auth/form-rules.ts'
 import { readLoginState } from '../auth/login-state.ts'
 import { verifyRedirectTo } from '../auth/redirects.ts'
 import PasswordField from '../components/PasswordField.tsx'
-import { Alert } from '../components/ui/Alert.tsx'
+import NoticeBanner from '../auth/NoticeBanner.tsx'
 import { Button } from '../components/ui/Button.tsx'
 import { Field } from '../components/ui/Field.tsx'
 import { supabase } from '../lib/supabase.ts'
@@ -107,32 +107,35 @@ function LoginPage() {
 
   return (
     <AuthCard>
-      <h1 className="text-xl">{expired ? '다시 로그인해 주세요' : '로그인'}</h1>
+      <div className="flex flex-col gap-1">
+        <h1 className="text-xl">{expired ? '다시 로그인해 주세요' : '로그인'}</h1>
+        {!expired && <p className="text-sm text-muted">이메일과 비밀번호로 로그인해요.</p>}
+      </div>
 
       {expired && (
-        <Alert variant="info" title="로그인 시간이 지났어요">
+        <NoticeBanner variant="info" title="로그인 시간이 지났어요">
           안전을 위해 오랫동안 쓰지 않으면 로그인이 풀려요. 다시 로그인하면 하던 곳으로
           돌아가요.
-        </Alert>
+        </NoticeBanner>
       )}
 
       {notice === 'invalid' && (
-        <Alert title="이메일 또는 비밀번호가 올바르지 않아요">
+        <NoticeBanner title="이메일 또는 비밀번호가 올바르지 않아요">
           입력한 내용을 다시 확인해 주세요. 계속 안 되면 비밀번호를 다시 설정할 수 있어요.
-        </Alert>
+        </NoticeBanner>
       )}
       {notice === 'rate' && (
-        <Alert variant="warn" title="시도가 많아서 잠시 쉬어요">
+        <NoticeBanner variant="warn" title="시도가 많아서 잠시 쉬어요">
           약 1분 뒤에 다시 시도해 주세요. 그동안 버튼이 잠겨요.
-        </Alert>
+        </NoticeBanner>
       )}
       {notice === 'failed' && (
-        <Alert title="로그인 서버에 연결하지 못했어요">
+        <NoticeBanner title="로그인 서버에 연결하지 못했어요">
           잠시 후 다시 시도해 주세요.
-        </Alert>
+        </NoticeBanner>
       )}
       {notice === 'unverified' && (
-        <Alert variant="info" title="이메일 인증이 아직 안 됐어요">
+        <NoticeBanner variant="info" title="이메일 인증이 아직 안 됐어요">
           <div className="flex flex-col gap-2">
             <p>
               가입할 때 보낸 메일의 링크를 눌러 주세요. 몇 분 걸릴 수 있어요. 스팸함도 확인해
@@ -157,7 +160,7 @@ function LoginPage() {
               <p role="status">메일을 보내지 못했어요. 잠시 후 다시 시도해 주세요.</p>
             )}
           </div>
-        </Alert>
+        </NoticeBanner>
       )}
 
       <form
@@ -189,7 +192,7 @@ function LoginPage() {
             error={errors.password}
             disabled={submitting}
           />
-          <Link to="/reset-password" className="self-start text-sm underline">
+          <Link to="/reset-password" className="self-start text-sm text-accent-text underline">
             비밀번호를 잊으셨나요?
           </Link>
         </div>
@@ -202,15 +205,15 @@ function LoginPage() {
           {submitting ? '로그인하는 중…' : expired ? '로그인하고 돌아가기' : '로그인'}
         </Button>
         {submitting && (
-          <p role="status" className="text-sm text-muted">
+          <p role="status" className="text-center text-xs text-muted">
             입력은 잠겨 있어요. 보통 1~2초 걸려요.
           </p>
         )}
       </form>
 
-      <p className="text-sm text-muted">
+      <p className="text-center text-sm text-muted">
         계정이 없으신가요?{' '}
-        <Link to="/signup" className="font-bold text-fg underline">
+        <Link to="/signup" className="font-bold text-accent-text underline">
           회원가입
         </Link>
       </p>

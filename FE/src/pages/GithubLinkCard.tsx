@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useLocation } from 'react-router'
 import { isAdmin } from '../auth/isAdmin.ts'
 import { useAuth } from '../auth/useAuth.ts'
-import { Alert } from '../components/ui/Alert.tsx'
+import NoticeBanner from '../auth/NoticeBanner.tsx'
 import { Button } from '../components/ui/Button.tsx'
 import { Card } from '../components/ui/Card.tsx'
 import { supabase } from '../lib/supabase.ts'
@@ -124,7 +124,7 @@ function GithubLinkCard() {
   if (link.status === 'failed') {
     return (
       <Card className="flex flex-col items-start gap-4">
-        <Alert title="연동 상태를 확인하지 못했어요">잠시 후 다시 시도해 주세요.</Alert>
+        <NoticeBanner title="연동 상태를 확인하지 못했어요">잠시 후 다시 시도해 주세요.</NoticeBanner>
         <Button
           variant="outline"
           onClick={() => {
@@ -147,7 +147,7 @@ function GithubLinkCard() {
           새 배포를 요청할 수 있어요.
         </p>
         {showDeployLink && (
-          <Link to="/deploy/new" className="text-sm font-bold underline">
+          <Link to="/deploy/new" className="text-sm font-bold text-accent-text underline">
             새 배포 요청하기
           </Link>
         )}
@@ -162,7 +162,7 @@ function GithubLinkCard() {
         <p className="text-sm text-muted">배포를 요청하려면 한 번만 연동해 주세요.</p>
       </div>
       {failure && !redirecting && (
-        <Alert title="GitHub 연동에 실패했어요">{failureText[failure]}</Alert>
+        <NoticeBanner title="GitHub 연동에 실패했어요">{failureText[failure]}</NoticeBanner>
       )}
       <ul className="flex list-disc flex-col gap-1 pl-5 text-sm">
         <li>내가 올린 레포가 내 계정 것인지 확인하는 데만 써요.</li>
