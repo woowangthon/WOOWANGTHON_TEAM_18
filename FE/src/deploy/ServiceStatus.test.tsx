@@ -91,7 +91,7 @@ it('shows a running service with its restarts since now, current use and two gra
   // "최근 1시간 동안"이 아니다. 새 배포나 교체 뒤에는 0으로 돌아가는 값이다.
   expect(card().getByText(/다시 시작된 횟수/).textContent).toBe('다시 시작된 횟수 0번 (지금 실행 이후)')
   expect(card().getByText('0.04코어')).toBeTruthy()
-  expect(card().getByText('70MB')).toBeTruthy()
+  expect(card().getByText('70MiB')).toBeTruthy()
   expect(card().getByRole('img', { name: /^fe CPU 사용량\(최근 1시간\): 최저 0.04코어 · 최고 0.04코어 · 지금 0.04코어$/ })).toBeTruthy()
   expect(card().getByRole('img', { name: /^fe 메모리 사용량\(최근 1시간\)/ })).toBeTruthy()
 })
@@ -141,7 +141,7 @@ it('shows not collected, with no zero and no fake line, when usage and series we
   expect(card().getByText(`지금 사용량: ${NOT_COLLECTED}`)).toBeTruthy()
   expect(card().getByText(`최근 1시간 그래프: ${NOT_COLLECTED}`)).toBeTruthy()
   expect(card().queryByRole('img')).toBeNull()
-  expect(card().queryByText(/코어|MB/)).toBeNull()
+  expect(card().queryByText(/코어|MiB/)).toBeNull()
 })
 
 it('shows not collected for a service with no points yet instead of drawing a line', async () => {

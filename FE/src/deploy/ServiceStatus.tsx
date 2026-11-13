@@ -4,9 +4,9 @@ import { Alert } from '../components/ui/Alert.tsx'
 import { Badge } from '../components/ui/Badge.tsx'
 import { Card } from '../components/ui/Card.tsx'
 import { Skeleton } from '../components/ui/Skeleton.tsx'
-import { NOT_COLLECTED, Sparkline } from '../components/ui/Sparkline.tsx'
+import { Sparkline } from '../components/ui/Sparkline.tsx'
 import { ApiError, apiFetch } from '../lib/api.ts'
-import { cpuText, latestT, memoryText, METRICS_POLL_MS, slotsOf, stateText, waitingText } from './metrics.ts'
+import { cpuText, latestT, memoryText, METRICS_POLL_MS, NOT_COLLECTED, slotsOf, stateText, waitingText } from './metrics.ts'
 import type { Metrics, MetricsService, Series } from './metrics.ts'
 
 type Load = { status: 'loading' } | { status: 'ready'; metrics: Metrics } | { status: 'not-found' }
@@ -28,12 +28,11 @@ function Usage({ service }: { service: MetricsService }) {
   )
 }
 
-function ServiceRow({ service, series }: { service: MetricsService; series: Series | null }) {
+function ServiceRow({ service, series, endT }: { service: MetricsService; series: Series | null; endT: number }) {
   const found = series?.services.find((s) => s.name === service.name)
-  // 모든 서비스의 그래프가 같은 시간 눈금을 쓰도록 끝 시각은 시계열 전체에서 정한다.
-  const endT = series && latestT(series)
+  // 모든 서비스의 그래프가 같은 시간 눈금(endT)을 쓴다. 점이 없는 서비스는 칸이 없다([]).
   const slots = (key: 'cpuMillicores' | 'memoryBytes') =>
-    series && endT !== null && found ? slotsOf(found[key], endT, series.windowSeconds, series.stepSeconds) : []
+    series ? slotsOf(found?.[key] ?? [], endT, series.windowSeconds, series.stepSeconds) : []
   return (
     <div className="flex flex-col gap-2 border-t border-line pt-4 first:border-t-0 first:pt-0">
       <div className="flex flex-wrap items-center gap-2">
@@ -47,8 +46,8 @@ function ServiceRow({ service, series }: { service: MetricsService; series: Seri
       <Usage service={service} />
       {series?.status === 'collected' && (
         <div className="grid gap-4 sm:grid-cols-2">
-          <Sparkline values={slots('cpuMillicores')} label={`${service.name} CPU 사용량(최근 1시간)`} format={cpuText} />
-          <Sparkline values={slots('memoryBytes')} label={`${service.name} 메모리 사용량(최근 1시간)`} format={memoryText} />
+          <Sparkline values={slots('cpuMillicores')} label={`${service.name} CPU 사용량(최근 1시간)`} format={cpuText} emptyText={NOT_COLLECTED} />
+          <Sparkline values={slots('memoryBytes')} label={`${service.name} 메모리 사용량(최근 1시간)`} format={memoryText} emptyText={NOT_COLLECTED} />
         </div>
       )}
     </div>
@@ -68,13 +67,16 @@ function Body({ metrics }: { metrics: Metrics }) {
       <p className="text-sm text-muted">이 배포는 아직 공개 중이 아니에요.</p>
     )
   }
+  const endT = metrics.series ? latestT(metrics.series) : 0
   return (
     <>
       {metrics.series?.status === 'not_collected' && <p className="text-sm text-muted">최근 1시간 그래프: {NOT_COLLECTED}</p>}
       {metrics.services.length === 0 && <p className="text-sm text-muted">실행 중인 서비스가 없어요.</p>}
-      {metrics.services.map((service) => (
-        <ServiceRow key={service.deployment} service={service} series={metrics.series} />
-      ))}
+      <div className="flex flex-col gap-4">
+        {metrics.services.map((service) => (
+          <ServiceRow key={service.deployment} service={service} series={metrics.series} endT={endT} />
+        ))}
+      </div>
     </>
   )
 }

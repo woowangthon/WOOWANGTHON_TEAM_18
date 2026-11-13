@@ -6,6 +6,8 @@ type SparklineProps = {
   label: string
   // 값을 글자로 바꾸는 함수(단위 붙이기 등).
   format?: (value: number) => string
+  // 값이 없을 때(전부 null이거나 비었을 때, 그리고 가장 최근 값이 null일 때) 보일 말. 호출하는 쪽의 문구다.
+  emptyText: string
   className?: string
 }
 
@@ -13,11 +15,9 @@ const W = 120
 const H = 32
 const PAD = 3
 
-export const NOT_COLLECTED = '아직 수집하지 못했어요'
-
 // null에서 끊어 이어진 구간(점 목록)으로 나눈다.
 function segmentsOf(values: (number | null)[], min: number, max: number) {
-  const range = max - min || 1
+  const range = max - min
   const last = values.length - 1
   const segments: [number, number][][] = []
   let open: [number, number][] | null = null
@@ -38,35 +38,38 @@ function segmentsOf(values: (number | null)[], min: number, max: number) {
   return segments
 }
 
-export function Sparkline({ values, label, format = String, className = '' }: SparklineProps) {
+export function Sparkline({ values, label, format = String, emptyText, className = '' }: SparklineProps) {
   const present = values.filter((v): v is number => v !== null)
   if (present.length === 0) {
     return (
       <p role="status" className={`text-sm text-muted ${className}`}>
-        {label}: {NOT_COLLECTED}
+        {label}: {emptyText}
       </p>
     )
   }
   const min = Math.min(...present)
   const max = Math.max(...present)
   const current = values[values.length - 1]
-  const summary = `최저 ${format(min)} · 최고 ${format(max)} · 지금 ${current === null ? NOT_COLLECTED : format(current)}`
+  const summary = `최저 ${format(min)} · 최고 ${format(max)} · 지금 ${current === null ? emptyText : format(current)}`
   return (
     <figure role="img" aria-label={`${label}: ${summary}`} className={`m-0 flex flex-col gap-1 ${className}`}>
       <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true" className="h-8 w-full overflow-visible">
-        {segmentsOf(values, min, max).map((points, i) => (
+        {segmentsOf(values, min, max).map((points, i) => {
           // 점 하나짜리 구간은 길이 0인 선에 둥근 끝을 줘서 점으로 보인다.
+          const dot = points.length === 1
+          return (
           <path
             key={i}
-            d={points.length === 1 ? `M${points[0][0]} ${points[0][1]}h0` : `M${points.map(([x, y]) => `${x} ${y}`).join('L')}`}
+            d={dot ? `M${points[0][0]} ${points[0][1]}h0` : `M${points.map(([x, y]) => `${x} ${y}`).join('L')}`}
             fill="none"
-            strokeWidth={points.length === 1 ? 5 : 2}
+            strokeWidth={dot ? 5 : 2}
             strokeLinecap="round"
             strokeLinejoin="round"
             vectorEffect="non-scaling-stroke"
             className="stroke-accent-ui"
           />
-        ))}
+          )
+        })}
       </svg>
       <figcaption aria-hidden="true" className="text-xs text-muted">
         {summary}

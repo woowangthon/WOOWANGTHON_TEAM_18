@@ -41,7 +41,7 @@ it('uses the latest time of any service as the common end of the grid', () => {
     ],
   }
   expect(latestT(series)).toBe(220)
-  expect(latestT({ ...series, services: [{ name: 'fe', cpuMillicores: [], memoryBytes: [] }] })).toBeNull()
+  expect(latestT({ ...series, services: [{ name: 'fe', cpuMillicores: [], memoryBytes: [] }] })).toBe(0)
 })
 
 it('says each state in plain words and unknown ones as getting ready', () => {
@@ -58,8 +58,8 @@ it('explains the known waiting reasons and falls back to getting ready', () => {
   expect(waitingText(null)).toBe('준비 중이에요')
 })
 
-it('shows cpu in cores and memory in megabytes', () => {
+it('shows cpu in cores and memory in MiB', () => {
   expect(cpuText(40)).toBe('0.04코어')
   expect(cpuText(1500)).toBe('1.50코어')
-  expect(memoryText(73_400_320)).toBe('70MB')
+  expect(memoryText(73_400_320)).toBe('70MiB')
 })
