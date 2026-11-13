@@ -44,10 +44,10 @@ export interface ToolDef {
 const DEFAULT_LINES = 100
 const MAX_LINES = 200
 
-// run_build의 buildOverrides 상한(AIagent.md §3 표). CodeBuild 프로젝트 기본은 MEDIUM이고 한 단계 위(LARGE)까지 받는다.
-// 이미지는 privileged 모드에서 docker가 도는 CodeBuild 표준 이미지만(빌드가 docker build로 돈다). 시험 빌드 대기 = timeoutMinutes + 5분이 30분 안에 들게 20분까지.
-export const OVERRIDE_COMPUTE_TYPES = ['BUILD_GENERAL1_SMALL', 'BUILD_GENERAL1_MEDIUM', 'BUILD_GENERAL1_LARGE']
-export const OVERRIDE_IMAGES = ['aws/codebuild/standard:7.0']
+// run_build의 buildOverrides 상한(AIagent.md §3 표). CodeBuild 프로젝트 기본은 SMALL(무료 티어가 적용되는 크기)이고 한 단계 위(MEDIUM)까지 받는다.
+// 이미지는 프로젝트와 같은 이미지만 받는다(privileged 모드에서 docker가 돈다). 다른 OS 이미지로 시험하면 통과해도 실제 빌드와 같다고 볼 수 없다. 시험 빌드 대기 = timeoutMinutes + 5분이 30분 안에 들게 20분까지.
+export const OVERRIDE_COMPUTE_TYPES = ['BUILD_GENERAL1_SMALL', 'BUILD_GENERAL1_MEDIUM']
+export const OVERRIDE_IMAGES = ['aws/codebuild/amazonlinux-x86_64-standard:5.0']
 export const OVERRIDE_MAX_MINUTES = 20
 
 export const TOOLS: ToolDef[] = [

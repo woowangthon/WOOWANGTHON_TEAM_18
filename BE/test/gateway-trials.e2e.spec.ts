@@ -454,8 +454,9 @@ describe('MCP gateway trial tools', () => {
     it.each([
       ['a timeout over 20 minutes', { timeoutMinutes: 21 }, 'OVERRIDE_LIMIT'],
       ['a zero timeout', { timeoutMinutes: 0 }, 'OVERRIDE_LIMIT'],
-      ['a compute type two steps up', { computeType: 'BUILD_GENERAL1_2XLARGE' }, 'OVERRIDE_LIMIT'],
+      ['a compute type two steps up', { computeType: 'BUILD_GENERAL1_LARGE' }, 'OVERRIDE_LIMIT'],
       ['an image outside the list', { image: 'ubuntu:24.04' }, 'OVERRIDE_LIMIT'],
+      ['a standard image with another OS than the project', { image: 'aws/codebuild/standard:7.0' }, 'OVERRIDE_LIMIT'],
       ['a fractional timeout', { timeoutMinutes: 5.5 }, 'INVALID_ARGUMENT'],
       ['a cache that is not a boolean', { cache: 'no' }, 'INVALID_ARGUMENT'],
       ['an unknown key (buildspec)', { buildspec: 'x' }, 'INVALID_ARGUMENT'],
@@ -469,7 +470,7 @@ describe('MCP gateway trial tools', () => {
     it('takes buildOverrides at the edge of the limits', async () => {
       behave = answering('build', buildOk)
       const client = await connect()
-      const buildOverrides = { computeType: 'BUILD_GENERAL1_LARGE', timeoutMinutes: 1, image: 'aws/codebuild/standard:7.0', cache: true }
+      const buildOverrides = { computeType: 'BUILD_GENERAL1_MEDIUM', timeoutMinutes: 1, image: 'aws/codebuild/amazonlinux-x86_64-standard:5.0', cache: true }
       expect(rejected(await call(client, 'run_build', { service: 'fe', specPatch: outputDir, buildOverrides }))).toBeNull()
       expect((readInputs[0] as { buildOverrides: unknown }).buildOverrides).toEqual(buildOverrides)
       await client.close()
