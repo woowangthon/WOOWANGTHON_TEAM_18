@@ -1,4 +1,4 @@
-import { Alert } from '../components/ui/Alert.tsx'
+import NoticeBanner from '../components/NoticeBanner.tsx'
 import { ApiError } from '../lib/api.ts'
 import { clusterAlert } from './clusterAlert.tsx'
 
@@ -12,10 +12,10 @@ export function ClusterProblem({ error, stale = false, retries = true, fallback 
   if (cluster) return cluster
   if (error instanceof ApiError && (error.status === 503 || code === 'NETWORK_ERROR')) {
     return (
-      <Alert variant="warn" title="서버와 연결하지 못했어요">
+      <NoticeBanner variant="warn" title="서버와 연결하지 못했어요">
         {retries ? '자동으로 다시 시도해요.' : '잠시 뒤에 다시 시도해 주세요.'} {note}
-      </Alert>
+      </NoticeBanner>
     )
   }
-  return <Alert title={fallback}>잠시 뒤에 다시 시도해 주세요. {note}</Alert>
+  return <NoticeBanner title={fallback}>잠시 뒤에 다시 시도해 주세요. {note}</NoticeBanner>
 }

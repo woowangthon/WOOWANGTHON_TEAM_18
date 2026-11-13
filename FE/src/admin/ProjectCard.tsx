@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Alert } from '../components/ui/Alert.tsx'
+import NoticeBanner from '../components/NoticeBanner.tsx'
 import { Badge } from '../components/ui/Badge.tsx'
 import { Button } from '../components/ui/Button.tsx'
 import { ApiError, apiFetch } from '../lib/api.ts'
@@ -80,7 +80,7 @@ function StopPanel({ slug, running, onStopped, onForbidden }: { slug: string; ru
         </Button>
       )}
       {(stop.step === 'confirm' || stop.step === 'stopping') && (
-        <Alert variant="warn" title={`${slug}를 강제로 중지할까요?`}>
+        <NoticeBanner variant="warn" title={`${slug}를 강제로 중지할까요?`}>
           <div className="flex flex-col gap-2">
             <p>모든 서비스를 0개로 내려요. 공개 주소가 더는 응답하지 않아요. 다시 켜는 기능은 아직 없고, 학생이 새로 배포하면 다시 떠요.</p>
             <div className="flex gap-2">
@@ -103,17 +103,17 @@ function StopPanel({ slug, running, onStopped, onForbidden }: { slug: string; ru
               </Button>
             </div>
           </div>
-        </Alert>
+        </NoticeBanner>
       )}
       {stop.step === 'done' && (
-        <Alert variant="info" title={stop.result.failed.length === 0 ? '중지했어요' : '일부만 중지했어요'}>
+        <NoticeBanner variant="info" title={stop.result.failed.length === 0 ? '중지했어요' : '일부만 중지했어요'}>
           <div className="flex flex-col gap-1">
             {stop.result.scaled.length > 0 && <p>내린 서비스: {stop.result.scaled.join(', ')}</p>}
             {stop.result.failed.length > 0 && (
               <p>내리지 못한 서비스: {stop.result.failed.join(', ')}. 다시 중지하면 이어서 내려요.</p>
             )}
           </div>
-        </Alert>
+        </NoticeBanner>
       )}
       {stop.step === 'failed' && <StopProblem error={stop.error} />}
     </div>
@@ -123,28 +123,28 @@ function StopPanel({ slug, running, onStopped, onForbidden }: { slug: string; ru
 function StopProblem({ error }: { error: unknown }) {
   if (error instanceof ApiError && error.code === 'NOT_RUNNING') {
     return (
-      <Alert variant="info" title="이미 꺼져 있어요">
+      <NoticeBanner variant="info" title="이미 꺼져 있어요">
         실행 중인 서비스가 없어서 아무것도 바뀌지 않았어요.
-      </Alert>
+      </NoticeBanner>
     )
   }
   if (error instanceof ApiError && error.code === 'PROJECT_NOT_FOUND') {
-    return <Alert title="프로젝트를 찾을 수 없어요">목록에서 사라졌을 수 있어요. 새로 읽으면 보여요.</Alert>
+    return <NoticeBanner title="프로젝트를 찾을 수 없어요">목록에서 사라졌을 수 있어요. 새로 읽으면 보여요.</NoticeBanner>
   }
   // 중지는 POST라서 읽기와 달리 자동으로 다시 시도하지 않는다. 공용 안내에는 retries={false}를 넘겨 "자동으로 다시 시도해요"를 빼고, 이 호출에만 있는 뜻만 따로 둔다.
   if (error instanceof ApiError && error.code === 'CLUSTER_FORBIDDEN') {
     // 서버의 scale 호출이 아직 붙지 않아 지금은 늘 이 오류다(docs/design/api.md "강제 중지"). 운영자가 잘못한 것이 아니다.
     return (
-      <Alert variant="warn" title="아직 강제 중지를 쓸 수 없어요">
+      <NoticeBanner variant="warn" title="아직 강제 중지를 쓸 수 없어요">
         운영자 잘못이 아니에요. 서버가 서비스를 내릴 권한이 아직 없어요. 인프라 담당이 권한을 주고 서버에 연결하면 쓸 수 있어요.
-      </Alert>
+      </NoticeBanner>
     )
   }
   if (error instanceof ApiError && error.code === 'DATABASE_UNAVAILABLE') {
     return (
-      <Alert variant="warn" title="저장소에 닿지 못했어요">
+      <NoticeBanner variant="warn" title="저장소에 닿지 못했어요">
         서비스를 내리기 전에 실패했는지, 내린 뒤 기록하다 실패했는지는 알 수 없어요. 새로 읽은 목록에서 상태를 확인하세요. 같은 중지를 다시 해도 안전해요.
-      </Alert>
+      </NoticeBanner>
     )
   }
   return <ClusterProblem error={error} retries={false} fallback="중지하지 못했어요" />
@@ -154,7 +154,7 @@ function StopProblem({ error }: { error: unknown }) {
 function ProjectCard({ project, onStopped, onForbidden }: { project: AdminProject } & StopHandlers) {
   const state = stateOf(project)
   return (
-    <li className="flex flex-col gap-3 rounded-md border border-line p-3">
+    <li className="flex flex-col gap-3 rounded-md border border-line p-4">
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-mono font-bold">{project.slug}</span>
         <StateBadge state={state} />
@@ -169,7 +169,7 @@ function ProjectCard({ project, onStopped, onForbidden }: { project: AdminProjec
         </Row>
         <Row label="주소">
           {project.url?.startsWith('https://') ? (
-            <a href={project.url} target="_blank" rel="noopener noreferrer" className="font-mono break-all underline">
+            <a href={project.url} target="_blank" rel="noopener noreferrer" className="font-mono break-all text-accent-text underline">
               {project.url}
             </a>
           ) : (

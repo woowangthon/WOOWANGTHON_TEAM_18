@@ -10,7 +10,7 @@ import { resetRedirectTo } from '../auth/redirects.ts'
 import ResendControls from '../auth/ResendControls.tsx'
 import { useAuth } from '../auth/useAuth.ts'
 import PasswordField from '../components/PasswordField.tsx'
-import { Alert } from '../components/ui/Alert.tsx'
+import NoticeBanner from '../components/NoticeBanner.tsx'
 import { Button } from '../components/ui/Button.tsx'
 import { Field } from '../components/ui/Field.tsx'
 import { supabase } from '../lib/supabase.ts'
@@ -49,7 +49,7 @@ const sendResetMail = (to: string) =>
 function BackToLogin() {
   return (
     <p className="text-sm text-muted">
-      <Link to="/login" className="underline">
+      <Link to="/login" className="text-accent-text underline">
         ← 로그인으로 돌아가기
       </Link>
     </p>
@@ -219,7 +219,7 @@ function ResetPasswordPage() {
         </div>
 
         {saveFailed && (
-          <Alert title="비밀번호를 바꾸지 못했어요">잠시 후 다시 시도해 주세요.</Alert>
+          <NoticeBanner title="비밀번호를 바꾸지 못했어요">잠시 후 다시 시도해 주세요.</NoticeBanner>
         )}
 
         <form
@@ -268,9 +268,9 @@ function ResetPasswordPage() {
           </p>
         </div>
 
-        <Alert variant="info" title="메일이 안 오나요?">
+        <NoticeBanner variant="info" title="메일이 안 오나요?">
           스팸함을 확인하거나, 이메일 주소가 맞는지 다시 확인해 보세요.
-        </Alert>
+        </NoticeBanner>
 
         <ResendControls
           label="메일 다시 보내기"
@@ -294,16 +294,16 @@ function ResetPasswordPage() {
       </div>
 
       {notice && (
-        <Alert title={mailFailureCopy[notice].title}>
+        <NoticeBanner title={mailFailureCopy[notice].title}>
           <div className="flex flex-col gap-2">
             <p>{mailFailureCopy[notice].body}</p>
             {notice === 'not-authorized' && (
-              <Link to="/login" className="font-bold underline">
+              <Link to="/login" className="font-bold text-accent-text underline">
                 로그인으로 이동
               </Link>
             )}
           </div>
-        </Alert>
+        </NoticeBanner>
       )}
 
       <form
