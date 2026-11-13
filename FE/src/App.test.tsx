@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { beforeEach, expect, it, vi } from 'vitest'
 import App from './App.tsx'
+import { WithQuery } from './test-utils.tsx'
 
 // 실제 Supabase를 부르지 않는다. 테스트 전용 대역이라 MOCK 표식은 필요 없다(conventions §6).
 type Listener = (event: string, session: unknown) => void
@@ -41,13 +42,26 @@ beforeEach(() => {
 
 const renderApp = (path: string, initial: 'in' | 'out' | 'restoring' = 'in', signedInAs: unknown = session) => {
   render(
-    <MemoryRouter initialEntries={[path]}>
-      <App />
-    </MemoryRouter>,
+    <WithQuery>
+      <MemoryRouter initialEntries={[path]}>
+        <App />
+      </MemoryRouter>
+    </WithQuery>,
   )
   if (initial !== 'restoring') emit('INITIAL_SESSION', initial === 'in' ? signedInAs : null)
 }
 const h1 = () => screen.getByRole('heading', { level: 1 }).textContent
+// 운영자 화면은 코드를 따로 받아 오므로 제목이 조금 늦게 뜬다.
+const h1Is = (title: string) => screen.findByRole('heading', { level: 1, name: title })
+
+// 같은 화면 코드는 한 번 내려받으면 이 파일의 뒤 시험에서는 이미 있으므로, 이 시험이 파일의 첫 번째 지연 화면 시험이어야 한다.
+it('keeps the top bar and shows a skeleton while the admin screen is being downloaded', async () => {
+  renderApp('/admin', 'in', sessionWith({ role: 'admin' }))
+  expect(screen.getByText('불러오는 중…')).toBeTruthy()
+  expect(screen.getByRole('link', { name: '관리자' })).toBeTruthy()
+  expect(await h1Is('관리자')).toBeTruthy()
+  expect(screen.queryByText('불러오는 중…')).toBeNull()
+})
 
 // 화면을 채우는 이슈(#51~#57)는 각자 자기 페이지 파일을 고치므로, 여기서는 경로와 페이지의 연결만 본다.
 const publicRoutes = [
@@ -187,9 +201,9 @@ it('shows the expired-session screen and returns to the same page after logging 
 })
 
 // Admin Page(#101): 관리자는 토큰의 app_metadata.role이 admin일 때뿐이다. 판단은 서버가 하고, 화면은 편의로 막는다.
-it('opens the Admin Page for an admin and shows the menu link', () => {
+it('opens the Admin Page for an admin and shows the menu link', async () => {
   renderApp('/admin', 'in', sessionWith({ role: 'admin' }))
-  expect(h1()).toBe('관리자')
+  expect(await h1Is('관리자')).toBeTruthy()
   expect(screen.getByRole('link', { name: '관리자' })).toBeTruthy()
 })
 
@@ -220,9 +234,9 @@ it.each([
   '/deploys/0b6f0c1e-4a52-4d8e-9a1b-3f7d2c5e8a90',
   '/deploys/0b6f0c1e-4a52-4d8e-9a1b-3f7d2c5e8a90/secrets',
   '/deploy/new',
-])('sends an admin who opens %s to the Admin Page', (path) => {
+])('sends an admin who opens %s to the Admin Page', async (path) => {
   renderApp(path, 'in', sessionWith({ role: 'admin' }))
-  expect(h1()).toBe('관리자')
+  expect(await h1Is('관리자')).toBeTruthy()
 })
 
 it('does not send a non-admin whose only role is a user_metadata one away from the student pages', () => {

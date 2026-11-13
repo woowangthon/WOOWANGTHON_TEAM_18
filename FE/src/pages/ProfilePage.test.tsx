@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { MemoryRouter } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { AuthContext } from '../auth/auth-context.ts'
+import { WithQuery } from '../test-utils.tsx'
 import ProfilePage from './ProfilePage.tsx'
 
 // 실제 Supabase를 부르지 않는다. 테스트 전용 대역이라 MOCK 표식은 필요 없다(conventions §6).
@@ -45,16 +46,18 @@ const sessionOf = (appMetadata: Record<string, unknown> = {}, email = 'me@exampl
   }) as never
 const renderPage = (url = '/profile', appMetadata: Record<string, unknown> = {}, email = 'me@example.com') =>
   render(
-    <AuthContext.Provider
-      value={{
-        state: { status: 'signedIn', session: sessionOf(appMetadata, email) },
-        signOut: () => Promise.resolve(),
-      }}
-    >
-      <MemoryRouter initialEntries={[url]}>
-        <ProfilePage />
-      </MemoryRouter>
-    </AuthContext.Provider>,
+    <WithQuery>
+      <AuthContext.Provider
+        value={{
+          state: { status: 'signedIn', session: sessionOf(appMetadata, email) },
+          signOut: () => Promise.resolve(),
+        }}
+      >
+        <MemoryRouter initialEntries={[url]}>
+          <ProfilePage />
+        </MemoryRouter>
+      </AuthContext.Provider>
+    </WithQuery>,
   )
 const linkButton = () => screen.getByRole('button', { name: 'GitHub로 연동하기' })
 
