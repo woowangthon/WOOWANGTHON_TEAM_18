@@ -229,4 +229,64 @@ describe('ClusterReader', () => {
     await reader.logs('my-app', 'p', { container: 'be', tailLines: 5, previous: true })
     expect(fake.paths).toEqual([`${NS}/pods/p/log?tailLines=5&limitBytes=262144&container=be&previous=true`])
   })
+  describe('metrics', () => {
+    const PROM = '/api/v1/namespaces/monitoring/services/monitoring-prometheus:9090/proxy/api/v1/query_range'
+    const range = { start: 1000, end: 4600, step: 60 }
+    const cpuQuery = 'sum by (pod) (rate(container_cpu_usage_seconds_total{namespace="proj-my-app",container!="",container!="POD"}[2m]))'
+    const memoryQuery = 'sum by (pod) (container_memory_working_set_bytes{namespace="proj-my-app",container!="",container!="POD"})'
+    const promPath = (query: string) => `${PROM}?query=${encodeURIComponent(query)}&start=1000&end=4600&step=60`
+    const matrix = (result: unknown) => ({ status: 'success', data: { resultType: 'matrix', result } })
+    const answer = (query: string, body: unknown) => fake.answers.set(promPath(query), { status: 200, body })
+
+    it('reads Pod usage from metrics.k8s.io, summing nothing itself', async () => {
+      fake.answers.set('/apis/metrics.k8s.io/v1beta1/namespaces/proj-my-app/pods', {
+        status: 200,
+        body: { items: [{ metadata: { name: 'fe-a-1-aaaaa' }, containers: [{ name: 'fe', usage: { cpu: '3m', memory: '9Mi' } }] }, { containers: [] }] },
+      })
+      expect(await reader.podUsage('my-app')).toEqual([{ name: 'fe-a-1-aaaaa', containers: [{ cpu: '3m', memory: '9Mi' }] }])
+    })
+
+    it('asks Prometheus for CPU with a query built only from the namespace', async () => {
+      answer(cpuQuery, matrix([{ metric: { pod: 'fe-a-1-aaaaa' }, values: [[1000, '0.25'], [1060.9, '0.5']] }]))
+      expect(await reader.podRangeSeries('my-app', 'cpu', range)).toEqual([{ pod: 'fe-a-1-aaaaa', points: [{ t: 1000, v: 0.25 }, { t: 1060, v: 0.5 }] }])
+      expect(fake.paths).toEqual([promPath(cpuQuery)])
+    })
+
+    it('asks Prometheus for memory with the working set', async () => {
+      answer(memoryQuery, matrix([]))
+      expect(await reader.podRangeSeries('my-app', 'memory', range)).toEqual([])
+      expect(fake.paths).toEqual([promPath(memoryQuery)])
+    })
+
+    it('drops points that are not numbers and series without a pod label', async () => {
+      answer(
+        cpuQuery,
+        matrix([
+          { metric: { pod: 'a' }, values: [[1000, 'NaN'], [1060, '+Inf'], [1120, '1'], ['x', '1'], [1180, 2], 'junk'] },
+          { metric: {}, values: [[1000, '1']] },
+          { metric: { pod: 'b' } },
+        ]),
+      )
+      expect(await reader.podRangeSeries('my-app', 'cpu', range)).toEqual([{ pod: 'a', points: [{ t: 1120, v: 1 }] }, { pod: 'b', points: [] }])
+    })
+
+    it.each([
+      ['an error status', { status: 'error', errorType: 'bad_data' }],
+      ['a vector', { status: 'success', data: { resultType: 'vector', result: [] } }],
+      ['no data', { status: 'success' }],
+      ['not an object', 'text'],
+    ])('throws unexpected for %s', async (_name, body) => {
+      vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      answer(cpuQuery, body)
+      await expect(reader.podRangeSeries('my-app', 'cpu', range)).rejects.toMatchObject({ kind: 'unexpected' })
+    })
+
+    it('rejects an invalid slug and an invalid range before any request', async () => {
+      await expect(reader.podRangeSeries('x"} or vector(1) #', 'cpu', range)).rejects.toThrow()
+      for (const bad of [{ ...range, start: 1.5 }, { ...range, end: Number.NaN }, { ...range, step: 0 }, { ...range, start: -1 }]) {
+        await expect(reader.podRangeSeries('my-app', 'cpu', bad)).rejects.toThrow('Not a valid range')
+      }
+      expect(fake.paths).toEqual([])
+    })
+  })
 })

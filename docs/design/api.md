@@ -503,6 +503,7 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
   "usageStatus": "collected",
   "series": {
     "status": "collected",
+    "endT": 1731456000,
     "windowSeconds": 3600,
     "stepSeconds": 60,
     "services": [
@@ -525,7 +526,7 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
   - `usage`: 운영자 API의 서비스 `usage`와 같다(합, 정수, 없으면 `null`).
 - `usageStatus`: 운영자 API 프로젝트의 `usageStatus`와 같다. `"not_collected"`면 모든 `usage`가 `null`이다.
 - 단위: CPU는 밀리코어, 메모리는 바이트, 모두 정수다. 시각 `t`는 유닉스 초다.
-- **`series`** (C): 최근 1시간(`windowSeconds` 3600), 1분 간격(`stepSeconds` 60)의 시계열이다. 서비스마다 그 서비스 Pod들의 합이고, 점은 시각 오름차순이다(최대 61개). Prometheus(`query_range`)에서 읽는다([클러스터](cluster.md) §10). 값은 `cpuMillicores` = 컨테이너 CPU 사용 시간의 증가율(`container_cpu_usage_seconds_total`의 2분 `rate`) × 1000, `memoryBytes` = `container_memory_working_set_bytes`다. 두 메트릭 모두 `namespace="proj-<slug>"`, `container!=""`(Pod 전체를 세는 줄 제외), `container!="POD"`(환경에 따라 생기는 pause 컨테이너 줄 제외)로 고르고 Pod별로 읽는다. 이 이름과 셀렉터는 실제 리더에서 확인하지 못했다(미검증).
+- **`series`** (C): `endT`는 서버가 `query_range`에 넘긴 end(유닉스 초), 곧 서버가 쿼리한 "지금"이다(`collected` · `not_collected` 모두에 있고, `series`가 `null`이면 없다). 그래프의 끝은 점이 아니라 이 값이다(수집이 멈춰도 그래프가 멈춘 시점에서 끝나지 않게). 최근 1시간(`windowSeconds` 3600), 1분 간격(`stepSeconds` 60)의 시계열이다. 서비스마다 그 서비스 Pod들의 합이고, 점은 시각 오름차순이다(최대 61개). Prometheus(`query_range`)에서 읽는다([클러스터](cluster.md) §10). 값은 `cpuMillicores` = 컨테이너 CPU 사용 시간의 증가율(`container_cpu_usage_seconds_total`의 2분 `rate`) × 1000, `memoryBytes` = `container_memory_working_set_bytes`다. 두 메트릭 모두 `namespace="proj-<slug>"`, `container!=""`(Pod 전체를 세는 줄 제외), `container!="POD"`(환경에 따라 생기는 pause 컨테이너 줄 제외)로 고르고 Pod별로 읽는다. 이 이름과 셀렉터는 실제 리더에서 확인하지 못했다(미검증).
   - `status`: `"collected"` 또는 `"not_collected"`. Prometheus에 닿지 못했거나 응답을 읽지 못하면 `"not_collected"`이고 `services`는 `[]`다(오류로 답하지 않는다. 현재 값은 위 `services[]`가 따로 준다).
   - `collected`면 `series.services`는 위 `services[]`와 **같은 이름을 모두, 같은 순서로** 담는다(FE가 이름으로 찾다가 빠진 서비스를 오류로 보지 않게). 그 서비스에 점이 없으면(방금 떠서 아직 수집 전, 원하는 개수 0) 그 서비스의 두 배열이 `[]`다. 점이 없는 시각을 메워 넣지 않는다(`v`는 항상 숫자이고, 빠진 시각은 점이 없다).
   - 한 서비스의 Pod가 중간에 바뀌어도(재시작 · 새 배포) 그 시각의 합이다. 서비스 이름에 해당하는 Pod는 `<Deployment>-<ReplicaSet 해시>-<5자>` 이름으로 가른다(운영자 API와 같은 규칙).

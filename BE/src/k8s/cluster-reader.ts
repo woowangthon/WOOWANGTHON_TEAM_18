@@ -46,6 +46,18 @@ export interface NodeUsageInfo {
   usage: Record<string, string>
 }
 
+/** metrics.k8s.io가 준 Pod의 사용량: 컨테이너마다 쿠버네티스 수량 글 그대로("3m", "20Mi"). */
+export interface PodUsageInfo {
+  name: string
+  containers: { cpu?: string; memory?: string }[]
+}
+
+/** Prometheus `query_range`가 Pod별로 준 시계열. `v`는 CPU면 코어, 메모리면 바이트(Prometheus가 준 숫자 그대로). `t`는 유닉스 초. */
+export interface RangeSeries {
+  pod: string
+  points: { t: number; v: number }[]
+}
+
 const POD_NAME = /^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$/
 const CONTAINER_NAME = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/
 const DEFAULT_TAIL = 200
@@ -54,6 +66,10 @@ const MAX_TAIL = 2000
 const MAX_LOG_BYTES = 256 * 1024
 const ROLE_LABEL = 'node-role.kubernetes.io/'
 const RESOURCES = ['cpu', 'memory', 'ephemeral-storage']
+// 리더의 API 서비스 프록시로 읽는 Prometheus(kube-prometheus-stack, docs/design/cluster.md §10). GET만 된다.
+const PROMETHEUS = '/api/v1/namespaces/monitoring/services/monitoring-prometheus:9090/proxy/api/v1'
+// Pod 전체를 세는 줄(container="")과 환경에 따라 생기는 pause 컨테이너 줄(container="POD")은 뺀다.
+const CONTAINERS = 'container!="",container!="POD"'
 
 /**
  * 서버가 만든 공간 `proj-<slug>`의 Pod · 로그 · Deployment와 노드를 읽는다. 설계는 docs/design/cluster-client.md.
@@ -119,6 +135,55 @@ export class ClusterReader {
     return (await this.list('/apis/metrics.k8s.io/v1beta1/nodes'))
       .map((node) => ({ name: text(record(node.metadata).name) ?? '', usage: quantities(node.usage) }))
       .filter((u) => u.name !== '')
+  }
+
+  /**
+   * 공간의 Pod 사용량(metrics.k8s.io). 갓 뜬 Pod는 첫 수집(수십 초) 전까지 목록에 없다. 이름 없는 항목은 버린다.
+   * 이 API가 없거나 막혀 있으면 다른 읽기처럼 ClusterError다.
+   */
+  async podUsage(slug: string): Promise<PodUsageInfo[]> {
+    return (await this.list(`/apis/metrics.k8s.io/v1beta1/namespaces/${space(slug)}/pods`))
+      .map((pod) => ({ name: text(record(pod.metadata).name) ?? '', containers: records(pod.containers).map((c) => quantities(c.usage)) }))
+      .filter((p) => p.name !== '')
+  }
+
+  /**
+   * 공간의 Pod별 시계열(Prometheus `query_range`, GET). `cpu`는 컨테이너 CPU 사용 시간의 2분 증가율(코어), `memory`는 작업 집합 바이트다.
+   * PromQL은 여기서 공간 이름(검증된 slug)만으로 만든다. 호출하는 쪽이 쿼리를 넘기지 못한다.
+   * Prometheus가 오류로 답하거나 모양이 다르면 ClusterError('unexpected')다.
+   */
+  async podRangeSeries(slug: string, metric: 'cpu' | 'memory', range: { start: number; end: number; step: number }): Promise<RangeSeries[]> {
+    for (const n of [range.start, range.end, range.step]) if (!Number.isInteger(n) || n <= 0) throw new Error(`Not a valid range: ${JSON.stringify(range)}`)
+    const selector = `{namespace="${space(slug)}",${CONTAINERS}}`
+    const promql =
+      metric === 'cpu'
+        ? `sum by (pod) (rate(container_cpu_usage_seconds_total${selector}[2m]))`
+        : `sum by (pod) (container_memory_working_set_bytes${selector})`
+    const path = `${PROMETHEUS}/query_range?query=${encodeURIComponent(promql)}&start=${range.start}&end=${range.end}&step=${range.step}`
+    const body = await this.k8s.request('GET', path)
+    let result: unknown
+    try {
+      const parsed: unknown = JSON.parse(body)
+      const data = isRecord(parsed) && parsed.status === 'success' ? record(parsed.data) : {}
+      if (data.resultType === 'matrix') result = data.result
+    } catch {
+      // 아래에서 던진다.
+    }
+    if (!Array.isArray(result)) {
+      this.logger.error(`GET ${PROMETHEUS}/query_range answered 200 without a matrix`)
+      throw new ClusterError('unexpected', 200)
+    }
+    return records(result).flatMap((series) => {
+      const pod = text(record(series.metric).pod)
+      if (pod === undefined) return []
+      const points = (Array.isArray(series.values) ? series.values : []).flatMap((pair: unknown): { t: number; v: number }[] => {
+        if (!Array.isArray(pair) || typeof pair[0] !== 'number' || typeof pair[1] !== 'string') return []
+        const v = Number(pair[1])
+        // NaN · Inf는 점을 지어내지 않고 버린다.
+        return Number.isFinite(v) ? [{ t: Math.floor(pair[0]), v }] : []
+      })
+      return [{ pod, points }]
+    })
   }
 
   /**

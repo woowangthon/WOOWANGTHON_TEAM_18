@@ -25,6 +25,8 @@
 | `ClusterReader.logs(slug, pod, { container, tailLines })` | Pod 로그의 끝부분(글) | `GET /api/v1/namespaces/proj-<slug>/pods/<pod>/log?tailLines=…&limitBytes=…` |
 | `ClusterReader.deployments(slug)` | 공간의 Deployment 목록 | `GET /apis/apps/v1/namespaces/proj-<slug>/deployments` |
 | `ClusterReader.nodes()` | 노드 목록 | `GET /api/v1/nodes` |
+| `ClusterReader.podUsage(slug)` | 공간 Pod의 지금 사용량(컨테이너별 CPU · 메모리) | `GET /apis/metrics.k8s.io/v1beta1/namespaces/proj-<slug>/pods` |
+| `ClusterReader.podRangeSeries(slug, 'cpu' \| 'memory', { start, end, step })` | 공간 Pod별 시계열(Prometheus `query_range`). PromQL은 이 함수가 검증된 slug에서 만들고 부르는 쪽은 넘기지 못한다. `cpu`: `sum by (pod) (rate(container_cpu_usage_seconds_total{namespace="proj-<slug>",container!="",container!="POD"}[2m]))`, `memory`: `sum by (pod) (container_memory_working_set_bytes{…같은 선택…})`. 지표 이름 · 라벨은 실제 리더에서 확인하지 않았다(미검증) | `GET /api/v1/namespaces/monitoring/services/monitoring-prometheus:9090/proxy/api/v1/query_range?query=…&start=…&end=…&step=…` |
 
 ### 호출 도우미
 
