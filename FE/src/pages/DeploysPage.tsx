@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
-import { Alert } from '../components/ui/Alert.tsx'
+import NoticeBanner from '../components/NoticeBanner.tsx'
 import { Button } from '../components/ui/Button.tsx'
+import { Card } from '../components/ui/Card.tsx'
+import { Skeleton } from '../components/ui/Skeleton.tsx'
 import { Table, Td, Th, THead } from '../components/ui/Table.tsx'
 import type { DeployListItem } from '../deploy/progress.ts'
 import StatusBadge from '../deploy/StatusBadge.tsx'
@@ -31,14 +33,20 @@ function DeploysPage() {
 
   return (
     <>
-      <h1 className="text-xl">내 배포</h1>
+      <div className="flex flex-col gap-1">
+        <h1 className="text-2xl">내 배포</h1>
+        <p className="text-muted">요청한 배포를 최신순으로 봐요.</p>
+      </div>
       {state.status === 'loading' && (
-        <p role="status" className="text-sm text-muted">
-          불러오는 중…
-        </p>
+        <div className="flex flex-col gap-3">
+          <Skeleton block />
+          <p role="status" className="text-sm text-muted">
+            불러오는 중…
+          </p>
+        </div>
       )}
       {state.status === 'failed' && (
-        <Alert title="배포 목록을 불러오지 못했어요">
+        <NoticeBanner title="배포 목록을 불러오지 못했어요">
           <div className="flex flex-col gap-2">
             <p>사용자 잘못이 아니에요. 잠시 뒤에 다시 시도해 주세요.</p>
             <Button
@@ -52,16 +60,19 @@ function DeploysPage() {
               다시 시도
             </Button>
           </div>
-        </Alert>
+        </NoticeBanner>
       )}
       {state.status === 'ready' &&
         (state.deploys.length === 0 ? (
-          <p>
-            아직 배포가 없어요.{' '}
-            <Link to="/deploy/new" className="underline">
+          <Card className="flex flex-col items-start gap-3 p-6">
+            <p className="font-bold">아직 배포가 없어요.</p>
+            <Link
+              to="/deploy/new"
+              className="inline-flex h-8 items-center rounded-sm bg-accent px-3 text-sm font-bold text-accent-fg hover:brightness-95"
+            >
               새 배포 요청하기
             </Link>
-          </p>
+          </Card>
         ) : (
         <Table aria-label="내 배포 목록">
           <THead>
@@ -70,7 +81,8 @@ function DeploysPage() {
               <Th>레포</Th>
               <Th>상태</Th>
               <Th>만든 때</Th>
-              <Th>
+              {/* sr-only는 absolute라 기준 요소가 없으면 표의 스크롤 영역 밖으로 문서 폭을 늘린다. */}
+              <Th className="relative">
                 <span className="sr-only">진행 화면</span>
               </Th>
             </tr>
@@ -84,8 +96,8 @@ function DeploysPage() {
                   <StatusBadge status={deploy.status} />
                 </Td>
                 <Td>{new Date(deploy.createdAt).toLocaleString('ko-KR')}</Td>
-                <Td>
-                  <Link to={`/deploys/${deploy.id}`} className="underline">
+                <Td className="relative">
+                  <Link to={`/deploys/${deploy.id}`} className="text-accent-text underline">
                     보기<span className="sr-only"> ({deploy.slug})</span>
                   </Link>
                 </Td>
