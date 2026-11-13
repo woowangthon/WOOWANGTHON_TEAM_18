@@ -57,7 +57,7 @@ function AgentSection({ agent, deployId }: { agent: AgentResult; deployId: strin
           <p className="text-muted">근거</p>
           <ul className="list-disc pl-5">
             {items.map((item, index) => (
-              <li key={`${item.ref}-${index}`}>
+              <li key={index}>
                 {item.ref && <span className="font-mono">{item.ref}</span>}
                 {item.ref && item.text ? ' — ' : ''}
                 {item.text}
