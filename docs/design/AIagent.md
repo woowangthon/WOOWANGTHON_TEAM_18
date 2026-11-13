@@ -354,7 +354,7 @@ AI 서버 (에이전트) → 플랫폼 서버 MCP 게이트웨이 → GoCD 서�
 | 쓰는 곳 | 모델 |
 |---|---|
 | ② LLM 분류, 도구 고르기 | 로컬 Qwen3-8B (리더 vLLM, OpenAI 호환 API) |
-| ④ · ⑤ planning | 추론 모델 API (모델 이름 미정, [배포 워크플로우](deploy-workflow.md) §7) |
+| ④ · ⑤ planning | 추론 모델 `gpt-6.1-sol` (충북대 NOVA API Gateway, OpenAI 호환. [ADR-016](../adr/016-planner-model-nova-gateway.md), [배포 워크플로우](deploy-workflow.md) §7) |
 
 PydanticAI에서 두 모델을 OpenAI 호환 provider로 붙이고, 추론 모델 API를 못 쓰면 로컬 모델로 넘긴다.
 
