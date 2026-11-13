@@ -20,7 +20,7 @@ const resultLabel = (status: string) => {
 
 // AI 동료가 이 배포에 낸 해결 결과. 무엇을 했는지(summary)와 학생이 할 일(userRequest)을 보인다.
 // 값은 서버가 외부 전송 필터를 거친 것이라 그대로 보여 줘도 된다.
-function AgentSection({ agent, deployId }: { agent: AgentResult; deployId: string }) {
+function AgentSection({ agent }: { agent: AgentResult }) {
   const { status, summary, userRequest, prUrl, evidence } = agent
   const items = evidence.filter((item) => item.ref || item.text)
   return (
@@ -39,14 +39,15 @@ function AgentSection({ agent, deployId }: { agent: AgentResult; deployId: strin
           <p>{userRequest.message}</p>
           {userRequest.secretKeys.length > 0 && (
             <>
-              <p className="text-muted">다시 넣어야 할 비밀값</p>
+              {/* 이 배포에는 비밀값을 다시 넣어 이어 갈 방법이 없다(이미 시작한 배포라 시작도 안 된다). 새 배포에서 넣게 한다. */}
+              <p>아래 비밀값을 준비한 뒤 새 배포를 요청해 주세요. 새 배포의 비밀값 단계에서 넣으면 돼요.</p>
               <ul className="font-mono">
                 {userRequest.secretKeys.map((key) => (
                   <li key={key}>{key}</li>
                 ))}
               </ul>
-              <Link to={`/deploys/${deployId}/secrets`} className="self-start text-accent-text underline">
-                비밀값 넣으러 가기
+              <Link to="/deploy/new" className="self-start text-accent-text underline">
+                새 배포 요청하기
               </Link>
             </>
           )}

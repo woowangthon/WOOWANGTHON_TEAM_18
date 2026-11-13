@@ -265,7 +265,7 @@ function DeployProgress({ deployId }: { deployId: string }) {
           </Alert>
         )}
 
-        {progress.agent && <AgentSection agent={progress.agent} deployId={deployId} />}
+        {progress.agent && <AgentSection agent={progress.agent} />}
 
         {progress.warnings.length > 0 && (
           <Alert variant="warn" title="보안 검사 경고가 있어요">

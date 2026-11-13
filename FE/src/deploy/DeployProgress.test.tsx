@@ -494,7 +494,7 @@ it('does not link a PR address that is not https', async () => {
   expect(agentCard().queryByRole('link')).toBeNull()
 })
 
-it('tells the student what to do and lists the secret keys with a link to the secrets page when the agent needs the user', async () => {
+it('tells the student what to do and lists the secret keys and points to a new deploy, not the secrets page, when the agent needs the user', async () => {
   api.apiFetch.mockResolvedValue(
     progressOf('needs_user', 'secrets', {
       failure: { code: 'NEEDS_USER', stage: 'apply', service: 'web', message: '확인이 필요해요' },
@@ -506,7 +506,10 @@ it('tells the student what to do and lists the secret keys with a link to the se
   expect(agentCard().getByText('API 키를 다시 넣어 주세요.')).toBeTruthy()
   expect(agentCard().getByText('OPENAI_KEY')).toBeTruthy()
   expect(agentCard().getByText('DB_URL')).toBeTruthy()
-  expect(agentCard().getByRole('link', { name: '비밀값 넣으러 가기' }).getAttribute('href')).toBe(`/deploys/${ID}/secrets`)
+  expect(agentCard().getByText(/새 배포를 요청해 주세요/)).toBeTruthy()
+  expect(agentCard().getByRole('link', { name: '새 배포 요청하기' }).getAttribute('href')).toBe('/deploy/new')
+  // 이미 시작한 배포라 비밀값 페이지로 가도 이어 갈 수 없다.
+  expect(agentCard().queryByRole('link', { name: '비밀값 넣으러 가기' })).toBeNull()
 })
 
 it('lists the evidence only when there is some, skipping empty entries', async () => {
