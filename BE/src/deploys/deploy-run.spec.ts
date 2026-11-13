@@ -65,6 +65,11 @@ describe('toFailure', () => {
     expect(f.message).toMatch(/이미지/)
   })
 
+  it('tells the student a full cluster (SCHEDULING_FAILED) in a sentence of its own, without calling the agent', () => {
+    expect(toFailure({ code: 'SCHEDULING_FAILED', stage: 'apply', service: 'be' }).message).toBe('클러스터에 자리가 없어 앱을 띄우지 못했습니다. 잠시 뒤 다시 시도해 주세요.')
+    expect(classifyFailure('apply', 'SCHEDULING_FAILED')).toEqual({ code: 'SCHEDULING_FAILED', callAgent: false })
+  })
+
   it('gives a platform code without its own message the generic one', () => {
     expect(toFailure({ code: 'K8S_UNREACHABLE', stage: 'apply', service: null }).message).toBe('플랫폼 문제로 배포하지 못했습니다. 운영자가 확인합니다.')
     for (const code of ['constructor', 'toString', 'hasOwnProperty']) {

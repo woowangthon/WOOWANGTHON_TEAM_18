@@ -40,6 +40,15 @@ describe('parseStage', () => {
   })
 })
 
+describe('SCHEDULING_FAILED (apply, F04c)', () => {
+  it('goes to BE as a platform failure of apply that BE takes and does not hand to the agent', () => {
+    const failure = { kind: 'platform', code: 'SCHEDULING_FAILED', service: 'be', message: 'be-b: Unschedulable for 240s: 0/3 nodes are available', detail: { pod: {} } }
+    const body = noticeFrom(DEPLOY_ID, 'apply', { ok: false, slot: 'b', ready: ['ai'], failure }, now)
+    expect(body).toEqual({ deployId: DEPLOY_ID, stage: 'apply', result: 'failed', failure: { code: 'SCHEDULING_FAILED', service: 'be', message: 'be-b: Unschedulable for 240s: 0/3 nodes are available' } })
+    accepted(body)
+  })
+})
+
 describe('build report', () => {
   it('passed: the image of every run service, none for a reused one', () => {
     const body = noticeFrom(DEPLOY_ID, 'build', okBuild(), now)

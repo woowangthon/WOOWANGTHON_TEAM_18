@@ -147,6 +147,13 @@ describe('run_deploy', () => {
     expect((body.result.services as { reason: string }[]).map((s) => s.reason)).toEqual([null, 'GET pods did not answer in 10s', 'not applied'])
   })
 
+  it('SCHEDULING_FAILED at apply (no room on the nodes) goes as that platform code with the notify sentence', () => {
+    const f: StageFailure = { kind: 'platform', code: 'SCHEDULING_FAILED', service: 'be', message: 'be-b: Unschedulable for 240s: 0/3 nodes are available' }
+    const body = accepted(DEPLOY, trialBodyFrom(DEPLOY, 'apply', applyReport(['ai'], f), deployInput()))
+    expect(body.result).toMatchObject({ ok: false, pods: [], events: [], failure: { stage: 'apply', code: 'SCHEDULING_FAILED', message: 'be-b: Unschedulable for 240s: 0/3 nodes are available' } })
+    expect((body.result.services as { reason: string }[]).map((s) => s.reason)).toEqual([null, 'be-b: Unschedulable for 240s: 0/3 nodes are available', 'not applied'])
+  })
+
   it('a failure without a service (the test Ingress) keeps the Ready services and marks the rest not applied', () => {
     const body = accepted(DEPLOY, trialBodyFrom(DEPLOY, 'apply', applyReport(['ai', 'be', 'fe'], platform('APPLY_REFUSED')), deployInput()))
     expect((body.result.services as { ready: boolean }[]).every((s) => s.ready)).toBe(true)
