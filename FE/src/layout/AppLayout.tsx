@@ -6,6 +6,7 @@ import { Alert } from '../components/ui/Alert.tsx'
 import { Button } from '../components/ui/Button.tsx'
 import { Skeleton } from '../components/ui/Skeleton.tsx'
 import { tabClass } from '../components/ui/tabClass.ts'
+import ScreenErrorBoundary from './ScreenErrorBoundary.tsx'
 
 // 활성 메뉴는 Tabs와 같은 모양(굵은 글씨 + accent-ui 밑줄)이고, 밑줄이 헤더 아래 선과 겹치도록 -mb-px다.
 const navLinkClass = ({ isActive }: { isActive: boolean }) =>
@@ -83,19 +84,21 @@ function AppLayout() {
             연결을 확인하고 다시 시도해 주세요.
           </Alert>
         )}
-        {/* 화면 코드를 내려받는 동안에도 상단 바는 그대로 둔다. */}
-        <Suspense
-          fallback={
-            <div className="flex flex-col gap-3">
-              <Skeleton block />
-              <p role="status" className="text-sm text-muted">
-                불러오는 중…
-              </p>
-            </div>
-          }
-        >
-          <Outlet />
-        </Suspense>
+        <ScreenErrorBoundary key={pathname}>
+          {/* 화면 코드를 내려받는 동안에도 상단 바는 그대로 둔다. */}
+          <Suspense
+            fallback={
+              <div className="flex flex-col gap-3">
+                <Skeleton block />
+                <p role="status" className="text-sm text-muted">
+                  불러오는 중…
+                </p>
+              </div>
+            }
+          >
+            <Outlet />
+          </Suspense>
+        </ScreenErrorBoundary>
       </main>
     </>
   )

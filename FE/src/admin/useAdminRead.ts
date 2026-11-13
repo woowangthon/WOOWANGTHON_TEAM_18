@@ -25,7 +25,8 @@ export function useAdminRead<T>(path: string, paused = false): AdminRead<T> {
     data: query.data ?? null,
     error: query.error,
     reload: () => {
-      void query.refetch()
+      // paused이면 읽지 않는다(예전과 같다). refetch는 enabled와 상관없이 읽으므로 여기서 막는다.
+      if (!paused) void query.refetch()
     },
   }
 }

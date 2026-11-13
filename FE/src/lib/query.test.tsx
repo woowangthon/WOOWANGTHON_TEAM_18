@@ -1,5 +1,5 @@
 import { QueryClientProvider } from '@tanstack/react-query'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { useAdminRead } from '../admin/useAdminRead.ts'
 import { AuthContext } from '../auth/auth-context.ts'
@@ -30,26 +30,40 @@ function Deploys({ label }: { label: string }) {
   return <p>{`${label}:${state.status === 'ready' ? state.deploys.length : state.status}`}</p>
 }
 
-it('shares one read of the deploy list between screens, and a screen opened later shows it at once', async () => {
-  api.apiFetch.mockResolvedValue({ deploys: [run] })
+it('shows the remembered deploy list at once on a screen opened later, and reads it again behind it', async () => {
+  api.apiFetch.mockResolvedValueOnce({ deploys: [run] })
   const client = makeQueryClient()
-  const { rerender } = render(
+  const view = (label: string) => (
     <QueryClientProvider client={client}>
-      <Deploys label="dashboard" />
-    </QueryClientProvider>,
+      <div key={label}>
+        <Deploys label={label} />
+      </div>
+    </QueryClientProvider>
   )
+  const { rerender } = render(view('dashboard'))
   expect(await screen.findByText('dashboard:1')).toBeTruthy()
-  rerender(
-    <QueryClientProvider client={client}>
-      <Deploys label="profile" />
+  api.apiFetch.mockResolvedValueOnce({ deploys: [run, { ...run, id: 'd2' }] })
+  rerender(view('profile'))
+  // 기억해 둔 값이 첫 그림부터 보이고, 뒤에서 새로 읽어 바뀐 목록으로 고친다(만든 · 시작한 배포가 늦게 보이지 않는다).
+  expect(screen.getByText('profile:1')).toBeTruthy()
+  expect(await screen.findByText('profile:2')).toBeTruthy()
+  expect(api.apiFetch).toHaveBeenCalledTimes(2)
+})
+
+it('shares one read between two consumers mounted together', async () => {
+  api.apiFetch.mockResolvedValue({ deploys: [run] })
+  render(
+    <QueryClientProvider client={makeQueryClient()}>
+      <Deploys label="a" />
+      <Deploys label="b" />
     </QueryClientProvider>,
   )
-  // 기억해 둔 값이 첫 그림부터 보이고, 15초 안이라 다시 읽지 않는다.
-  expect(screen.getByText('profile:1')).toBeTruthy()
+  expect(await screen.findByText('a:1')).toBeTruthy()
+  expect(screen.getByText('b:1')).toBeTruthy()
   expect(api.apiFetch).toHaveBeenCalledTimes(1)
 })
 
-it('shows the remembered list while it reads again once the value is stale, and keeps it if that read fails', async () => {
+it('keeps the remembered list when the read behind it fails', async () => {
   api.apiFetch.mockResolvedValueOnce({ deploys: [run] })
   const client = makeQueryClient()
   const view = (label: string) => (
@@ -61,13 +75,8 @@ it('shows the remembered list while it reads again once the value is stale, and 
   )
   const { rerender } = render(view('first'))
   await screen.findByText('first:1')
-  await act(async () => {
-    await client.invalidateQueries({ queryKey: queryKeys.deploys, refetchType: 'none' })
-  })
   api.apiFetch.mockRejectedValueOnce(new Error('down'))
-  // 다른 화면이 열린다(새로 그려진다).
   rerender(view('second'))
-  expect(screen.getByText('second:1')).toBeTruthy()
   await waitFor(() => {
     expect(api.apiFetch).toHaveBeenCalledTimes(2)
   })
@@ -137,6 +146,24 @@ it('shows the last admin read at once when the screen is opened again, and refre
   render(view('b'))
   expect(screen.getByText('n:1')).toBeTruthy()
   expect(await screen.findByText('n:2')).toBeTruthy()
+})
+
+it('reads nothing, not even on reload, while paused', () => {
+  function Paused() {
+    const { reload } = useAdminRead<{ n: number }>('/api/admin/y', true)
+    return (
+      <button type="button" onClick={reload}>
+        reload
+      </button>
+    )
+  }
+  render(
+    <QueryClientProvider client={makeQueryClient()}>
+      <Paused />
+    </QueryClientProvider>,
+  )
+  screen.getByRole('button', { name: 'reload' }).click()
+  expect(api.apiFetch).not.toHaveBeenCalled()
 })
 
 const signedIn = (id: string): AuthState =>

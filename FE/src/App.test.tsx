@@ -55,11 +55,11 @@ const h1 = () => screen.getByRole('heading', { level: 1 }).textContent
 const h1Is = (title: string) => screen.findByRole('heading', { level: 1, name: title })
 
 // 같은 화면 코드는 한 번 내려받으면 이 파일의 뒤 시험에서는 이미 있으므로, 이 시험이 파일의 첫 번째 지연 화면 시험이어야 한다.
-it('keeps the top bar and shows a skeleton while a split screen is being downloaded', async () => {
-  renderApp('/deploy/new')
+it('keeps the top bar and shows a skeleton while the admin screen is being downloaded', async () => {
+  renderApp('/admin', 'in', sessionWith({ role: 'admin' }))
   expect(screen.getByText('불러오는 중…')).toBeTruthy()
-  expect(screen.getByRole('link', { name: '내 배포' })).toBeTruthy()
-  expect(await h1Is('새 배포 요청')).toBeTruthy()
+  expect(screen.getByRole('link', { name: '관리자' })).toBeTruthy()
+  expect(await h1Is('관리자')).toBeTruthy()
   expect(screen.queryByText('불러오는 중…')).toBeNull()
 })
 
