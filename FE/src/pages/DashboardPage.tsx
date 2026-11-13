@@ -3,7 +3,7 @@ import NoticeBanner from '../components/NoticeBanner.tsx'
 import { primaryLinkClass } from '../components/primaryLinkClass.ts'
 import { Button } from '../components/ui/Button.tsx'
 import { Card } from '../components/ui/Card.tsx'
-import { Skeleton } from '../components/ui/Skeleton.tsx'
+import { LoadingBlock } from '../components/ui/Skeleton.tsx'
 import { countProjects, groupProjects } from '../deploy/projects.ts'
 import type { Project, ProjectCounts } from '../deploy/projects.ts'
 import StatusBadge from '../deploy/StatusBadge.tsx'
@@ -84,14 +84,7 @@ function DashboardPage() {
         </NoticeBanner>
       )}
 
-      {state.status === 'loading' && (
-        <div className="flex flex-col gap-3">
-          <Skeleton block />
-          <p role="status" className="text-sm text-muted">
-            불러오는 중…
-          </p>
-        </div>
-      )}
+      {state.status === 'loading' && <LoadingBlock />}
 
       {state.status === 'failed' && (
         <NoticeBanner title="배포 목록을 불러오지 못했어요">

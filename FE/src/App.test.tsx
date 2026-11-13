@@ -51,7 +51,7 @@ const renderApp = (path: string, initial: 'in' | 'out' | 'restoring' = 'in', sig
   if (initial !== 'restoring') emit('INITIAL_SESSION', initial === 'in' ? signedInAs : null)
 }
 const h1 = () => screen.getByRole('heading', { level: 1 }).textContent
-// 운영자 · 배포 화면은 코드를 따로 받아 오므로 제목이 조금 늦게 뜬다.
+// 운영자 화면은 코드를 따로 받아 오므로 제목이 조금 늦게 뜬다.
 const h1Is = (title: string) => screen.findByRole('heading', { level: 1, name: title })
 
 // 같은 화면 코드는 한 번 내려받으면 이 파일의 뒤 시험에서는 이미 있으므로, 이 시험이 파일의 첫 번째 지연 화면 시험이어야 한다.
@@ -83,9 +83,9 @@ it.each(publicRoutes)('%s opens its page without a session', (path, title) => {
   expect(h1()).toBe(title)
 })
 
-it.each(protectedRoutes)('%s opens its page when signed in', async (path, title) => {
+it.each(protectedRoutes)('%s opens its page when signed in', (path, title) => {
   renderApp(path)
-  expect(await h1Is(title)).toBeTruthy()
+  expect(h1()).toBe(title)
 })
 
 it.each(protectedRoutes)('%s sends a signed-out visitor to the login page', (path) => {

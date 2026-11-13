@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { GITHUB_LINK_STALE_MS, queryKeys } from '../lib/query.ts'
+import { loadState, queryKeys } from '../lib/query.ts'
 import { supabase } from '../lib/supabase.ts'
 
 export type LinkState =
@@ -7,6 +7,9 @@ export type LinkState =
   | { status: 'failed' }
   | { status: 'unlinked' }
   | { status: 'linked'; handle: string | null }
+
+// 연동 여부는 연동 흐름(GitHub로 나갔다 돌아오는 전체 새로고침)이 끝나야 바뀌므로 5분 기억한다.
+const GITHUB_LINK_STALE_MS = 5 * 60_000
 
 async function readLink(): Promise<LinkState> {
   const { data, error } = await supabase.auth.getUserIdentities()
@@ -24,11 +27,7 @@ export function useGithubLink(): { link: LinkState; recheck: () => void } {
     queryFn: readLink,
     staleTime: GITHUB_LINK_STALE_MS,
   })
-  const link: LinkState = query.data
-    ? query.data
-    : query.isError && !query.isFetching
-      ? { status: 'failed' }
-      : { status: 'loading' }
+  const link: LinkState = loadState(query, (data) => data)
   return {
     link,
     recheck: () => {

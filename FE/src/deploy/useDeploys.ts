@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { apiFetch } from '../lib/api.ts'
-import { queryKeys } from '../lib/query.ts'
+import { loadState, queryKeys } from '../lib/query.ts'
 import type { DeployListItem } from './progress.ts'
 
 export type DeploysState =
@@ -16,11 +16,7 @@ export function useDeploys(): { state: DeploysState; retry: () => void } {
     queryKey: queryKeys.deploys,
     queryFn: async () => (await apiFetch<{ deploys: DeployListItem[] }>('/api/deploys')).deploys,
   })
-  const state: DeploysState = query.data
-    ? { status: 'ready', deploys: query.data }
-    : query.isError && !query.isFetching
-      ? { status: 'failed' }
-      : { status: 'loading' }
+  const state: DeploysState = loadState(query, (deploys) => ({ status: 'ready', deploys }))
   return {
     state,
     retry: () => {

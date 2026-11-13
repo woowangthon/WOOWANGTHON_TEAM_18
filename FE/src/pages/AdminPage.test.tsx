@@ -303,8 +303,6 @@ it.each([
   await show()
   replies[NODES] = error
   await advance(10_000)
-  // react-query는 새로 읽은 결과를 타이머가 돈 직후가 아니라 한 박자 뒤에 화면에 알린다.
-  await advance(1_000)
   expect(screen.getByText(title, { selector: 'p' })).toBeTruthy()
   expect(screen.getByText(/아래는 마지막으로 읽은 값이에요/)).toBeTruthy()
   expect(screen.getByText('leader', { selector: 'span' })).toBeTruthy()
@@ -345,7 +343,6 @@ it('clears the result of an earlier stop when the project is running again after
   expect(within(card('my-app')).getByText('중지했어요')).toBeTruthy()
   replies[PROJECTS] = projectsOf([running])
   await advance(10_000)
-  await advance(1_000)
   expect(within(card('my-app')).getByText('실행 중')).toBeTruthy()
   expect(within(card('my-app')).queryByText('중지했어요')).toBeNull()
   expect(screen.getByRole('button', { name: 'my-app 강제 중지' })).toBeTruthy()

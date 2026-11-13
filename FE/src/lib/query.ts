@@ -1,4 +1,5 @@
 import { QueryClient } from '@tanstack/react-query'
+import type { UseQueryResult } from '@tanstack/react-query'
 
 // 읽기(GET)를 화면 사이에서 기억해 두고, 다시 들어오면 기억해 둔 값을 먼저 보이고 뒤에서 새로 읽는다(stale-while-revalidate).
 // retry: 이전 화면들은 실패하면 바로 알렸다. 알아서 다시 시도하지 않고, 화면의 "다시 시도" 버튼이 맡는다.
@@ -14,5 +15,11 @@ export const queryKeys = {
   admin: (path: string) => ['admin', path] as const,
 }
 
-// GitHub 연동 여부는 연동 흐름(GitHub로 나갔다 돌아오는 전체 새로고침)이 끝나야 바뀐다.
-export const GITHUB_LINK_STALE_MS = 5 * 60_000
+// 읽기 결과를 화면 상태로 바꾼다. 기억해 둔 값이 있으면 그것을, 처음부터 실패했고 읽는 중이 아니면 실패를, 그 밖에는 로딩을 보인다.
+export function loadState<T, R>(
+  query: UseQueryResult<T>,
+  ready: (data: T) => R,
+): R | { status: 'failed' } | { status: 'loading' } {
+  if (query.data !== undefined) return ready(query.data)
+  return query.isError && !query.isFetching ? { status: 'failed' } : { status: 'loading' }
+}
