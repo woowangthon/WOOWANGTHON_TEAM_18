@@ -8,6 +8,7 @@ import { DeployConditionService } from '../deploys/deploy-condition.service.js'
 import { ticketCount } from '../deploys/deploy-run.js'
 import { type DeployRunRow, DeploysStore } from '../deploys/deploys.store.js'
 import { PipelineClient } from '../deploys/pipeline.client.js'
+import { SlotScaleDown } from '../deploys/slot-scale-down.js'
 import { ClusterReader } from '../k8s/cluster-reader.js'
 import type { Issue, Spec } from '../deploys/deploy-input.js'
 import { type BudgetCode, ToolBudget } from './budget.js'
@@ -166,6 +167,7 @@ export class GatewayTools {
     private readonly pipeline: PipelineClient,
     private readonly agent: AgentClient,
     private readonly conditions: DeployConditionService,
+    private readonly slots: SlotScaleDown,
   ) {}
 
   async call(ticket: GatewayTicket, name: string, args: Record<string, unknown>): Promise<ToolAnswer> {
@@ -400,6 +402,8 @@ export class GatewayTools {
     this.budget.forget(ticket.ticketId)
     await this.trials.endTicket(ticket.ticketId)
     if (!applied) return reject('TICKET_CLOSED', 'the ticket is no longer open')
+    // 에이전트가 포기했다: 더 읽을 사람이 없으니 대상 슬롯의 Pod가 계속 재시작하지 않게 내린다.
+    if (result.status === 'gave_up' && run) await this.slots.afterFailure(run, ticket.failure?.stage ?? null)
     this.logger.log(`ticket ${ticket.ticketId} result ${result.status}`)
     return { ok: true, content: { accepted: true } }
   }

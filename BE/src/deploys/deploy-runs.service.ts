@@ -4,12 +4,10 @@ import type { AuthUser } from '../auth/auth.decorators.js'
 import { isRecord } from '../common/is-record.js'
 import { parseUuid } from '../common/uuid.js'
 import { redact, redactString } from '../common/redact.js'
-import { ClusterReader } from '../k8s/cluster-reader.js'
 import type { DeployWarning } from '../security/findings.js'
 import { SecurityScanService } from '../security/security-scan.service.js'
-import { DeploymentScaler } from '../k8s/deployment-scaler.js'
 import { AgentClient } from './agent.client.js'
-import { type ServiceConditions, type Slot, targetSlot } from './deploy-condition.js'
+import { type ServiceConditions, targetSlot } from './deploy-condition.js'
 import { DeployPreparer } from './deploy-preparer.js'
 import {
   buildSteps,
@@ -30,6 +28,7 @@ import {
 } from './deploy-run.js'
 import { type DeployRow, type DeployRunRow, DeploysStore, StoreConflict } from './deploys.store.js'
 import { PipelineClient } from './pipeline.client.js'
+import { SlotScaleDown } from './slot-scale-down.js'
 
 const TICKET_MINUTES = 15
 // 파이프라인(빌드 포함)이 이보다 오래 걸리지 않는다고 본다. 이 시간 동안 아무 알림도 없던 진행 중인 실행은 끝난 것으로 본다.
@@ -104,8 +103,7 @@ export class DeployRunsService {
     private readonly preparer: DeployPreparer,
     private readonly pipeline: PipelineClient,
     private readonly agent: AgentClient,
-    private readonly reader: ClusterReader,
-    private readonly scaler: DeploymentScaler,
+    private readonly slots: SlotScaleDown,
     private readonly scans: SecurityScanService,
   ) {}
 
@@ -238,27 +236,11 @@ export class DeployRunsService {
     const hadLive = (await this.store.liveSlot(run.slug)) !== null
     await this.store.setLiveSlot(run.slug, run.target_slot)
     // 주소는 이미 바뀌었다. 이전 슬롯을 못 내려도 배포는 성공이다.
-    if (hadLive) await this.scaleDownSlot(run.slug, targetSlot(run.target_slot))
+    if (hadLive) await this.slots.scaleDown(run.slug, targetSlot(run.target_slot))
     const done = await this.store.updateRun(run.deploy_id, where, { status: 'succeeded', stage: null })
     // verified 뒤 다시 실행이 성공했다(api.md 5번). 받지 못해도 배포는 이미 끝났다.
     if (done && run.ticket_id) await this.agent.close(run.ticket_id, commitOf(run), 'success')
     return done
-  }
-
-  /**
-   * W7: 이전 live 슬롯의 Deployment(`<서비스>-<슬롯>`)를 0개로 줄인다. 실패해도 던지지 않는다: 남은 Pod는 자원만 쓰고
-   * 주소는 새 슬롯을 가리킨다(운영자 강제 중지로 내릴 수 있다). 같은 알림을 다시 받아도 같은 결과다(이미 0이어도 0으로 쓴다).
-   */
-  private async scaleDownSlot(slug: string, slot: Slot): Promise<void> {
-    try {
-      const names = (await this.reader.deployments(slug)).map((d) => d.name).filter((name) => name.endsWith(`-${slot}`))
-      const results = await Promise.allSettled(names.map((name) => this.scaler.scaleToZero(slug, name)))
-      results.forEach((r, i) => {
-        if (r.status === 'rejected') this.logger.error(`W7: could not scale ${slug} ${names[i]} to 0: ${r.reason instanceof Error ? r.reason.message : 'unknown'}`)
-      })
-    } catch (err) {
-      this.logger.error(`W7: could not list deployments of ${slug} to scale the old slot down: ${err instanceof Error ? err.message : 'unknown'}`)
-    }
   }
 
   private async failed(run: DeployRunRow, notice: Extract<Notice, { result: 'failed' }>): Promise<boolean> {
@@ -268,6 +250,7 @@ export class DeployRunsService {
     const stored = { code, stage: notice.stage, service: failure.service }
     if (!callAgent) {
       const done = await this.store.updateRun(run.deploy_id, where, { status: 'failed', failure: stored })
+      if (done) await this.slots.afterFailure(run, notice.stage)
       // verified 뒤 다시 실행이 플랫폼 문제로 끝났다. 앞 티켓의 에이전트에 멈추라고 알린다.
       if (done && run.ticket_id) await this.agent.close(run.ticket_id, commitOf(run), 'stopped')
       return done
@@ -275,6 +258,7 @@ export class DeployRunsService {
     // 다시 실행이 또 실패했는데 티켓을 이미 실행 기록당 상한만큼 냈다: 새 티켓 없이 마감한다.
     if (ticketCount(run) > MAX_TICKETS) {
       const done = await this.store.updateRun(run.deploy_id, where, { status: 'failed', failure: { ...stored, code: 'AGENT_GAVE_UP' } })
+      if (done) await this.slots.afterFailure(run, notice.stage)
       if (done && run.ticket_id) await this.agent.close(run.ticket_id, commitOf(run), 'stopped')
       return done
     }
@@ -302,7 +286,8 @@ export class DeployRunsService {
       this.logger.error(err)
     }
     if (!sent) {
-      await this.store.updateRun(run.deploy_id, { status: 'fixing' }, { status: 'failed', failure: { ...stored, code: 'AGENT_UNAVAILABLE' } })
+      const done = await this.store.updateRun(run.deploy_id, { status: 'fixing' }, { status: 'failed', failure: { ...stored, code: 'AGENT_UNAVAILABLE' } })
+      if (done) await this.slots.afterFailure(run, notice.stage)
     }
     return true
   }
