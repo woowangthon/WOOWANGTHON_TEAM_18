@@ -9,7 +9,7 @@ import { ticketCount } from '../deploys/deploy-run.js'
 import { type DeployRunRow, DeploysStore } from '../deploys/deploys.store.js'
 import { PipelineClient } from '../deploys/pipeline.client.js'
 import { SlotScaleDown } from '../deploys/slot-scale-down.js'
-import { ClusterReader } from '../k8s/cluster-reader.js'
+import { ClusterReader, newestPod } from '../k8s/cluster-reader.js'
 import type { Issue, Spec } from '../deploys/deploy-input.js'
 import { type BudgetCode, ToolBudget } from './budget.js'
 import { RepoReader, repoPath } from './repo-reader.js'
@@ -226,12 +226,8 @@ export class GatewayTools {
   }
 
   private async podLogs(ticket: GatewayTicket, service: string, count: number, previous: boolean): Promise<ToolAnswer> {
-    const pods = await this.cluster.rawObjects(ticket.slug, 'pods', this.selector(ticket, service))
-    // 가장 최근에 만든 Pod(롤아웃 중이면 새 Pod).
-    const newest = pods
-      .map((p) => p.metadata as { name?: string; creationTimestamp?: string })
-      .sort((a, b) => String(b.creationTimestamp ?? '').localeCompare(String(a.creationTimestamp ?? '')))[0]
-    if (!newest?.name) return { ok: true, content: { lines: [] } }
+    const newest = newestPod(await this.cluster.rawObjects(ticket.slug, 'pods', this.selector(ticket, service)))
+    if (!newest) return { ok: true, content: { lines: [] } }
     const text = await this.cluster.logs(ticket.slug, newest.name, { container: service, tailLines: count, previous })
     return { ok: true, content: { lines: lines(text).slice(-count).map(redactString) } }
   }
