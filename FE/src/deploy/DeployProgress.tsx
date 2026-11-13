@@ -2,6 +2,9 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
 import { Alert } from '../components/ui/Alert.tsx'
 import { Button } from '../components/ui/Button.tsx'
+import { Card } from '../components/ui/Card.tsx'
+import { CheckIcon } from '../components/ui/Icons.tsx'
+import { Spinner } from '../components/ui/Spinner.tsx'
 import { ApiError, apiFetch } from '../lib/api.ts'
 import DeployStages from './DeployStages.tsx'
 import { isActive, isPlatformProblem, POLL_MS, stageStatesOf } from './progress.ts'
@@ -159,7 +162,7 @@ function DeployProgress({ deployId }: { deployId: string }) {
   if (load.status === 'not-found') {
     return (
       <Alert title="배포를 찾을 수 없어요">
-        없는 배포이거나 내 배포가 아니에요. <Link to="/deploys" className="underline">내 배포 목록으로 가기</Link>
+        없는 배포이거나 내 배포가 아니에요. <Link to="/deploys" className="text-accent-text underline">내 배포 목록으로 가기</Link>
       </Alert>
     )
   }
@@ -191,7 +194,8 @@ function DeployProgress({ deployId }: { deployId: string }) {
     return (
       <>
         {offlineNotice}
-        <p role="status" className="text-sm text-muted">
+        <p role="status" className="flex items-center gap-2 text-sm text-muted">
+          <Spinner size="sm" aria-hidden="true" />
           진행 상태를 불러오는 중…
         </p>
       </>
@@ -201,81 +205,95 @@ function DeployProgress({ deployId }: { deployId: string }) {
   const { progress } = load
   const failure = progress.failure
   return (
-    <section aria-label="배포 진행 상태" className="flex flex-col gap-4">
-      <div className="flex items-center gap-2">
-        <StatusBadge status={progress.status} />
-        {isActive(progress.status) && offline !== 'stopped' && <span className="text-sm text-muted">3초마다 새로 읽고 있어요</span>}
+    <section aria-label="배포 진행 상태" className="flex flex-col gap-6 md:flex-row md:items-start md:gap-8">
+      <div className="md:w-52 md:flex-none">
+        <DeployStages states={stageStatesOf(progress)} />
       </div>
-      {offlineNotice}
-      <DeployStages states={stageStatesOf(progress)} />
-
-      {progress.status === 'not_started' && (
-        <div className="flex flex-col gap-2">
-          {startFailure && <StartFailureAlert failure={startFailure} />}
-          {/* 진행 상태 응답은 비밀값이 필요한지 알려 주지 않는다. 새 요청 없이 시작 전에는 늘 링크를 두고, NOT_READY 뒤에도 그대로 보인다. */}
-          <Link to={`/deploys/${deployId}/secrets`} className="self-start underline">
-            비밀값 넣으러 가기
-          </Link>
-          <Button className="self-start" onClick={() => void start()} disabled={starting} aria-busy={starting}>
-            {starting ? '시작하는 중…' : '배포 시작'}
-          </Button>
+      <div className="flex min-w-0 flex-1 flex-col gap-4">
+        <div className="flex items-center gap-2">
+          <StatusBadge status={progress.status} />
+          {isActive(progress.status) && offline !== 'stopped' && (
+            <span className="flex items-center gap-2 text-sm text-muted">
+              <Spinner size="sm" aria-hidden="true" />
+              3초마다 새로 읽고 있어요
+            </span>
+          )}
         </div>
-      )}
+        {offlineNotice}
 
-      {progress.status === 'fixing' && (
-        <Alert variant="info" title="문제를 해결하는 중이에요">
-          {failure?.message}
-        </Alert>
-      )}
-      {progress.status === 'needs_user' && (
-        <Alert variant="warn" title="사용자 조치가 필요해요">
-          {failure?.message}
-        </Alert>
-      )}
-      {progress.status === 'failed' && (
-        <Alert title="배포하지 못했어요">
-          <div className="flex flex-col gap-1">
-            {failure && (
-              <>
-                <p>{failure.message}</p>
-                <p className="text-muted">
-                  단계: {failedStageLabel(progress)}
-                  {failure.service ? ` · 서비스: ${failure.service}` : ''}
-                </p>
-                {isPlatformProblem(failure.code) && (
-                  <p>플랫폼 쪽 문제예요. 학생 잘못이 아니에요. 잠시 뒤에 새로 배포해 보고, 계속되면 운영자에게 알려 주세요.</p>
-                )}
-              </>
-            )}
+        {progress.status === 'not_started' && (
+          <div className="flex flex-col gap-2">
+            {startFailure && <StartFailureAlert failure={startFailure} />}
+            {/* 진행 상태 응답은 비밀값이 필요한지 알려 주지 않는다. 새 요청 없이 시작 전에는 늘 링크를 두고, NOT_READY 뒤에도 그대로 보인다. */}
+            <Link to={`/deploys/${deployId}/secrets`} className="self-start text-accent-text underline">
+              비밀값 넣으러 가기
+            </Link>
+            <Button className="self-start" onClick={() => void start()} disabled={starting} aria-busy={starting}>
+              {starting ? '시작하는 중…' : '배포 시작'}
+            </Button>
           </div>
-        </Alert>
-      )}
+        )}
 
-      {progress.warnings.length > 0 && (
-        <Alert variant="warn" title="보안 검사 경고가 있어요">
-          <p>배포를 막지는 않았어요.</p>
-          <ul className="mt-1 list-disc pl-5">
-            {progress.warnings.map((warning, index) => (
-              <li key={`${warning.code}-${index}`}>
-                {warning.message}
-                {warning.service ? ` (서비스: ${warning.service})` : ''}
-              </li>
-            ))}
-          </ul>
-        </Alert>
-      )}
+        {progress.status === 'fixing' && (
+          <Alert variant="info" title="문제를 해결하는 중이에요">
+            {failure?.message}
+          </Alert>
+        )}
+        {progress.status === 'needs_user' && (
+          <Alert variant="warn" title="사용자 조치가 필요해요">
+            {failure?.message}
+          </Alert>
+        )}
+        {progress.status === 'failed' && (
+          <Alert title="배포하지 못했어요">
+            <div className="flex flex-col gap-1">
+              {failure && (
+                <>
+                  <p>{failure.message}</p>
+                  <p className="text-muted">
+                    단계: {failedStageLabel(progress)}
+                    {failure.service ? ` · 서비스: ${failure.service}` : ''}
+                  </p>
+                  {isPlatformProblem(failure.code) && (
+                    <p>플랫폼 쪽 문제예요. 학생 잘못이 아니에요. 잠시 뒤에 새로 배포해 보고, 계속되면 운영자에게 알려 주세요.</p>
+                  )}
+                </>
+              )}
+            </div>
+          </Alert>
+        )}
 
-      {progress.status === 'succeeded' && progress.url?.startsWith('https://') && (
-        <div className="flex flex-col gap-2">
-          <h2 className="text-lg">배포가 끝났어요</h2>
-          <div className="flex flex-wrap items-center gap-2">
-            <a href={progress.url} target="_blank" rel="noopener noreferrer" className="font-mono underline">
-              {progress.url}
-            </a>
-            <CopyButton text={progress.url} />
-          </div>
-        </div>
-      )}
+        {progress.warnings.length > 0 && (
+          <Alert variant="warn" title="보안 검사 경고가 있어요">
+            <p>배포를 막지는 않았어요.</p>
+            <ul className="mt-1 list-disc pl-5">
+              {progress.warnings.map((warning, index) => (
+                <li key={`${warning.code}-${index}`}>
+                  {warning.message}
+                  {warning.service ? ` (서비스: ${warning.service})` : ''}
+                </li>
+              ))}
+            </ul>
+          </Alert>
+        )}
+
+        {progress.status === 'succeeded' && progress.url?.startsWith('https://') && (
+          <Card className="flex flex-col gap-3">
+            <h2 className="flex items-center gap-2 text-lg">
+              <span className="text-ok">
+                <CheckIcon />
+              </span>
+              배포가 끝났어요
+            </h2>
+            <div className="flex flex-wrap items-center gap-2">
+              <a href={progress.url} target="_blank" rel="noopener noreferrer" className="font-mono text-accent-text underline">
+                {progress.url}
+              </a>
+              <CopyButton text={progress.url} />
+            </div>
+          </Card>
+        )}
+      </div>
     </section>
   )
 }

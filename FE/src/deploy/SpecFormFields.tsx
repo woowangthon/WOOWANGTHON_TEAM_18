@@ -130,6 +130,16 @@ function RowInput({ label, value, onChange, error, mono }: { label: string; valu
   )
 }
 
+// 한 서비스의 칸을 뜻이 같은 것끼리 묶는다. 소제목은 위 구분선과 함께 칸이 어디까지인지 보여 준다.
+function Group({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="flex flex-col gap-4 border-t border-line pt-4 first:border-t-0 first:pt-0">
+      <h4 className="text-sm font-bold text-muted">{title}</h4>
+      <div className="grid gap-4 sm:grid-cols-2">{children}</div>
+    </div>
+  )
+}
+
 const pick = (value: string, label: string) => ({ value, label })
 const ROLE_OPTIONS = [pick('', '골라 주세요'), ...ROLES.map((r) => pick(r, r))]
 const FRAMEWORK_OPTIONS = [pick('', '골라 주세요'), ...FRAMEWORKS.map((f) => pick(f, f))]
@@ -190,11 +200,13 @@ function ServiceFields({ service: s, index, names, dockerfiles, issues, disabled
           빼기
         </Button>
       </div>
-      <div className="grid gap-4 sm:grid-cols-2">
+      <Group title="서비스 정보">
         <Text label="이름" value={s.name} onChange={(name) => { set({ name }) }} error={err('name')} disabled={disabled} hint={`소문자로 시작, 최대 ${NAME_MAX}자. 클러스터 안의 이름이 돼요.`} />
         <SelectField label="역할" value={s.role} options={ROLE_OPTIONS} onChange={(role) => { onChange(withRole(s, role)) }} error={err('role')} disabled={disabled} />
         <Text label="폴더" value={s.dir} onChange={(dir) => { set({ dir }) }} error={err('dir')} disabled={disabled} mono hint="레포 안의 위치. 루트는 ." />
+      </Group>
 
+      <Group title="빌드 방법">
         <SelectField label="Dockerfile" value={s.dockerfile} options={dockerfileOptions} onChange={(dockerfile) => { set({ dockerfile }) }} error={err('build.dockerfile')} disabled={disabled} />
         <Text label="빌드 위치" value={s.context} onChange={(context) => { set({ context }) }} error={err('build.context')} disabled={disabled} mono hint="빌드를 시작할 레포 안의 폴더" />
         {hasDockerfile ? (
@@ -212,7 +224,9 @@ function ServiceFields({ service: s, index, names, dockerfiles, issues, disabled
             )}
           </>
         )}
+      </Group>
 
+      <Group title="실행 방법">
         <SelectField
           label="실행 방식"
           value={s.kind}
@@ -229,7 +243,9 @@ function ServiceFields({ service: s, index, names, dockerfiles, issues, disabled
         <Text label="시작 대기 시간(초)" value={s.timeout} onChange={(timeout) => { set({ timeout }) }} error={err('runtime.health.startupTimeoutSeconds')} disabled={disabled} mono hint={`${TIMEOUT_MIN}~${TIMEOUT_MAX}초`} />
         <Text label="공개 경로" value={s.ingressPath} onChange={(ingressPath) => { set({ ingressPath }) }} error={err('runtime.ingressPath')} disabled={disabled} mono placeholder="/" hint="비우면 밖에서 접근할 수 없는 내부 전용이에요. 서비스끼리 겹칠 수 없어요." />
         <p className="text-xs text-muted sm:col-span-2">경로 접두사 제거(stripPrefix)는 아직 지원하지 않아요.</p>
+      </Group>
 
+      <Group title="환경변수와 연결">
         <EnvRows legend="빌드 환경변수" rows={s.buildEnv} path={`${at}.build.buildEnv`} issues={issues} disabled={disabled} hint="빌드 결과에 들어가는 공개 값이에요. 비밀값은 넣지 마세요." onChange={(buildEnv) => { set({ buildEnv }) }} />
         {!isStatic && (
           <>
@@ -247,7 +263,7 @@ function ServiceFields({ service: s, index, names, dockerfiles, issues, disabled
             </Rows>
           </>
         )}
-      </div>
+      </Group>
     </Card>
   )
 }

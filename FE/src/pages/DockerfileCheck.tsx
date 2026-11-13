@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Alert } from '../components/ui/Alert.tsx'
 import { Button } from '../components/ui/Button.tsx'
+import { Skeleton } from '../components/ui/Skeleton.tsx'
+import { Spinner } from '../components/ui/Spinner.tsx'
 import { apiFetch } from '../lib/api.ts'
 import RepoFailureAlert from './RepoFailureAlert.tsx'
 import { failureOf, isRetryable } from './repo-failure.ts'
@@ -44,9 +46,13 @@ function DockerfileCheck({ repoUrl, onDone }: { repoUrl: string; onDone?: (docke
       </h2>
 
       {state.status === 'loading' && (
-        <p role="status" className="text-sm text-muted">
-          Dockerfile을 확인하는 중…
-        </p>
+        <div className="flex flex-col gap-3">
+          <p role="status" className="flex items-center gap-2 text-sm text-muted">
+            <Spinner size="sm" aria-hidden="true" />
+            Dockerfile을 확인하는 중…
+          </p>
+          <Skeleton className="w-3/5" />
+        </div>
       )}
 
       {state.status === 'failed' && (
@@ -74,7 +80,7 @@ function DockerfileCheck({ repoUrl, onDone }: { repoUrl: string; onDone?: (docke
       {state.status === 'done' && (
         <>
           {state.dockerfiles.length > 0 && (
-            <ul className="flex flex-col gap-1 font-mono text-sm">
+            <ul className="flex flex-col gap-1 rounded-md border border-line bg-surface p-3 font-mono text-sm">
               {state.dockerfiles.map((path) => (
                 <li key={path}>{path}</li>
               ))}
