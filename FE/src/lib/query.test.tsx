@@ -208,6 +208,26 @@ it('forgets every remembered read when another user takes over the session', () 
   expect(client.getQueryData(queryKeys.deploys)).toBeUndefined()
 })
 
+it('does not keep showing the previous user\'s deploy list on a screen that stays open when another user takes over', async () => {
+  api.apiFetch.mockResolvedValueOnce({ deploys: [run] }).mockResolvedValueOnce({ deploys: [] })
+  const client = makeQueryClient()
+  // 실제 앱처럼 열린 화면은 같은 element라서 사용자가 바뀌어도 다시 그려지지 않는다.
+  const openScreen = <Deploys label="open" />
+  const show = (state: AuthState) => (
+    <QueryClientProvider client={client}>
+      <AuthContext.Provider value={{ state, signOut: () => Promise.resolve() }}>
+        <SessionCache />
+        {openScreen}
+      </AuthContext.Provider>
+    </QueryClientProvider>
+  )
+  const view = render(show(signedIn('u1')))
+  expect(await screen.findByText('open:1')).toBeTruthy()
+  view.rerender(show(signedIn('u2')))
+  expect(await screen.findByText('open:0')).toBeTruthy()
+  expect(api.apiFetch).toHaveBeenCalledTimes(2)
+})
+
 it('does not forget anything while the stored session is still being read', () => {
   const client = makeQueryClient()
   const show = cacheOf(client)
