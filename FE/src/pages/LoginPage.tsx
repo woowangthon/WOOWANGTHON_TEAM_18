@@ -204,11 +204,6 @@ function LoginPage() {
         >
           {submitting ? '로그인하는 중…' : expired ? '로그인하고 돌아가기' : '로그인'}
         </Button>
-        {submitting && (
-          <p role="status" className="text-center text-xs text-muted">
-            입력은 잠겨 있어요. 보통 1~2초 걸려요.
-          </p>
-        )}
       </form>
 
       <p className="text-center text-sm text-muted">
