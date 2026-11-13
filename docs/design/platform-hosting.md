@@ -10,6 +10,7 @@
 - **한다**:
   - FE를 S3 + CloudFront로 `https://app.stairnoworks.com`에 올린다.
   - BE를 EC2의 컨테이너로 띄우고, Cloudflare Tunnel로 `https://api.stairnoworks.com`에 연다.
+  - AI 서버를 같은 EC2의 컨테이너로 띄운다(밖에 열지 않는다, 아래 "AI 서버").
   - 설정값을 넣는 곳과, 다시 배포하는 명령을 정한다.
 - **하지 않는다**: CI에서 자동 배포는 하지 않는다. 대회 기간에는 운영자가 스크립트를 손으로 돌린다. GoCD 서버 · AWS 실행기는 아래 "GoCD 서버 · AWS 실행기"에 있다(같은 EC2).
 
@@ -19,6 +20,7 @@
 브라우저 ──HTTPS──▶ CloudFront (app.) ──▶ S3 (FE 정적 파일)
    │
    └──HTTPS──▶ Cloudflare (api.) ◀══터널(EC2가 밖으로 연 암호화 연결)══ EC2 ── wcp-tunnel ──▶ wcp-be (127.0.0.1:3000)
+                                                                          ├── wcp-ai (127.0.0.1:8000) ◀─ docker 네트워크 wcp ─▶ wcp-be
                                                                           └── GoCD 서버 (사설망으로만)
 ```
 
@@ -92,6 +94,19 @@ EC2 ── gocd-server (GoCD 26.1.0, JVM -Xmx1g, 8153은 Tailscale 주소에만 
 
 **왜 CodeBuild를 시작할 수 있는 키가 이 컨테이너에만 있나**: CodeBuild를 시작할 수 있으면 빌드 명령을 바꿔 GHCR 토큰을 꺼내 갈 수 있어서다([배포 워크플로우](deploy-workflow.md) §8). 그래서 키는 실행기 전용 IAM 사용자의 것이고, 인스턴스 역할에는 CodeBuild 권한이 없다.
 
+### AI 서버
+
+같은 EC2에 컨테이너 `wcp-ai`가 하나 더 뜬다. BE와 AI 서버는 서로를 부른다: BE가 문제 티켓 · 종료 알림을 AI 서버로(`AI_SERVER_URL`), AI 에이전트가 MCP 게이트웨이를 BE로(`GATEWAY_URL`) 보낸다([API 계약](api.md) "AI 에이전트"). 컨테이너는 서로의 `127.0.0.1`에 닿지 않으므로, 둘을 사용자 정의 docker 네트워크 `wcp`에 두고 컨테이너 이름으로 부른다.
+
+| 항목 | 값 |
+| --- | --- |
+| 실행 | `AI/Dockerfile` 이미지를 컨테이너 `wcp-ai`로, `--restart unless-stopped`, 네트워크 `wcp`. 포트 `8000`은 `127.0.0.1`에만 연다(배포 스크립트의 헬스 확인용). 터널에는 붙이지 않는다: 밖에서 AI 서버에 닿을 길은 없다 |
+| 네트워크 | docker 네트워크 `wcp`(없으면 `deploy-be.sh` · `deploy-ai.sh`가 만든다). `wcp-be`도 이 네트워크에 붙는다. 게이트웨이 포트(`GATEWAY_PORT`)는 BE 컨테이너 밖으로 열지 않고, 같은 네트워크의 `wcp-ai`만 닿는다 |
+| 설정값 | SSM `/wcp/ai/<이름>`(SecureString, 한 줄). 이름은 [`AI/.env.example`](../../AI/.env.example)과 같다. **필수**: `AGENT_API_TOKEN`(32자 이상, `openssl rand -hex 32`), `GATEWAY_URL=http://wcp-be:<GATEWAY_PORT>/mcp`. 선택: `LOCAL_MODEL_URL` · `LOCAL_MODEL_NAME` · `LOCAL_MODEL_API_KEY`, `PLANNER_MODEL_URL` · `PLANNER_MODEL_NAME` · `PLANNER_MODEL_API_KEY`, `AGENT_MAX_RUNS`. `HOST` · `PORT`는 넣지 않는다(이미지가 `0.0.0.0`, 스크립트가 `8000`으로 둔다). 모델 값이 없으면 서버는 뜨고 티켓마다 "AI 모델 설정이 없어 문제 해결을 하지 않았습니다" `gave_up`을 낸다(지금은 모델 없이 올린다) |
+| BE 쪽 값 | SSM `/wcp/be`에 `AI_SERVER_URL=http://wcp-ai:8000`, `AGENT_API_TOKEN`(위 `/wcp/ai/AGENT_API_TOKEN`과 **같은 값**), `GATEWAY_PORT`(`3000`이 아닌 포트, 예 `3100`)를 넣는다 |
+| 권한 | 인스턴스 역할에 `/wcp/ai` 경로의 `ssm:GetParametersByPath`를 더한다(`kms:Decrypt`는 이미 있다) |
+| 올리기 | 처음 한 번은 `deploy-be.sh`를 먼저(네트워크 `wcp`가 생기고 `wcp-be`가 그 네트워크에 붙는다, 위 BE 쪽 값도 이때 들어간다), 그다음 [`Infra/aws/deploy-ai.sh`](../../Infra/aws/deploy-ai.sh) `[git-ref]`. 새 컨테이너가 `/health`에 답하지 않으면 이전 컨테이너(이미지 · 설정 그대로)를 다시 띄운다. 그 뒤로는 바뀐 쪽만 다시 돌린다 |
+
 ### 함께 바꿀 바깥 설정
 
 - **Supabase** Authentication → URL Configuration: Site URL과 Redirect URLs에 `https://app.stairnoworks.com` 추가(이슈 #49).
@@ -109,6 +124,7 @@ EC2 ── gocd-server (GoCD 26.1.0, JVM -Xmx1g, 8153은 Tailscale 주소에만 
 ## 알려진 한계
 
 - BE는 컨테이너 하나다. 배포하는 몇 초 동안 API가 응답하지 않는다.
+- AI 서버도 컨테이너 하나다. 다시 배포하는 동안 도는 에이전트 실행은 끊긴다(그 티켓은 결과 없이 시간 초과로 끝난다). `deploy-ai.sh`와 `wcp` 네트워크는 로컬 docker로만 확인했다(2026-11-13, 가짜 설정값): 두 컨테이너가 같은 네트워크에 뜨고, AI → `http://wcp-be:<GATEWAY_PORT>/mcp`, BE → `http://wcp-ai:8000/health`가 닿고, 게이트웨이 포트는 호스트에 열리지 않으며, 잘못된 설정이면 이전 컨테이너로 되돌아간다. 실제 EC2에서는 돌려 보지 않았다.
 - 스크립트는 실제 AWS에서 아직 돌려 보지 않았다(2026-11-11). `start-gocd.sh`와 AWS 실행기도 EC2에서는 돌려 보지 않았다(로컬 docker에서 서버 기동 · 로그인 · 설정 저장소 등록 · 접근 토큰 발급까지만 확인했다).
 - GoCD 서버와 AWS 실행기가 죽으면 새 배포가 시작되지 않는다(BE가 `503 PIPELINE_UNAVAILABLE`). (`setup`이나 artifact 받기가 실패한 job은 `job.sh`가 `STAGE_NO_REPORT`를 curl로 알린다.) 실행 중이던 job이 GoCD의 시간 제한이나 실행기가 죽어서 끝나면 알림을 보내는 task가 돌지 못해 그 배포는 `running`으로 남는다. 같은 프로젝트의 다음 시작이 그 기록을 시간 초과(`TIMED_OUT`)로 마감하지만(BE의 `STALE_RUN_MS`, 1시간), 그 전까지 학생에게는 진행 중으로 보인다.
 - BE 컨테이너가 Tailscale 주소의 8153에 닿는지(`GOCD_URL`)는 EC2에서 확인하지 않았다.
