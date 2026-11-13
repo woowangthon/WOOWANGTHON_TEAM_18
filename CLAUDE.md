@@ -10,7 +10,7 @@
 
 - **What**: TBD — one sentence on the product. Full requirements: [`docs/SRS.md`](docs/SRS.md).
 - **Who**: Team 18 왕가네식구들 (`@woowangthon/18`), 2026 AI 우왕톤 — theme *"AI는 동료가 될 수 있을까?"*
-- **Stack**: FE React + TypeScript on S3 + CloudFront, BE Nest.js and AI server FastAPI on EC2, Supabase (DB, Auth), AWS CodeBuild for builds, GHCR as the image registry, GoCD deploying to a k3s cluster on school PCs over Tailscale; Kafka is deferred and the external LLM vendor and model are undecided — see [ADR-001](docs/adr/001-stack-and-deployment.md). Architecture: [`docs/system-definition.md`](docs/system-definition.md). Module designs and the FE/BE/AI contract: [`docs/design/`](docs/design/README.md).
+- **Stack**: FE React + TypeScript on S3 + CloudFront, BE Nest.js and AI server FastAPI on EC2, Supabase (DB, Auth), AWS CodeBuild for builds, GHCR as the image registry, GoCD deploying to a k3s cluster on school PCs over Tailscale; Kafka is deferred; the AI agent's planning model is `gpt-6.1-sol` through 충북대 NOVA's API Gateway ([ADR-016](docs/adr/016-planner-model-nova-gateway.md)) and its local model Qwen3-8B on the leader's vLLM — see [ADR-001](docs/adr/001-stack-and-deployment.md). Architecture: [`docs/system-definition.md`](docs/system-definition.md). Module designs and the FE/BE/AI contract: [`docs/design/`](docs/design/README.md).
 - **Repo**: [`woowangthon/WOOWANGTHON_TEAM_18`](https://github.com/woowangthon/WOOWANGTHON_TEAM_18) (`upstream`, judged) — one monorepo. Code under `FE/` (Vite + React), `BE/` (Nest.js), `AI/` (FastAPI), `Infra/` (cluster), docs under `docs/`, task notes under `tasks/`.
 - **Notion devlog DB**: TBD — the URL the [`devlog`](.claude/skills/devlog/SKILL.md) skill writes to. The skill is optional; fill this in before running it.
 
