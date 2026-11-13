@@ -4,7 +4,7 @@ import { useAuth } from '../auth/useAuth.ts'
 import { Card } from '../components/ui/Card.tsx'
 import { primaryLinkClass } from '../components/primaryLinkClass.ts'
 
-// 로그인 뒤에 도착하는 곳. 프로젝트 목록은 아직 없어서(대시보드 이슈에서 채운다) 다음에 할 일만 안내한다.
+// 로그인 뒤에 도착하는 곳. 프로젝트 목록은 아직 없어서(대시보드 이슈에서 채운다) 데이터를 읽지 않고 다음에 할 일만 안내한다.
 function DashboardPage() {
   const { state } = useAuth()
   // 관리자는 모니터링 계정이라 배포 진입점을 숨긴다(편의일 뿐, 서버는 막지 않는다).
@@ -13,18 +13,22 @@ function DashboardPage() {
     <>
       <div className="flex flex-col gap-1">
         <h1 className="text-2xl">대시보드</h1>
-        <p className="text-muted">내 프로젝트를 한곳에서 봐요.</p>
+        <p className="text-muted">배포를 요청하고 진행 상황을 확인해요.</p>
       </div>
       {showDeployLink && (
         <Card className="flex flex-col items-start gap-3 p-6">
-          <p className="font-bold">아직 보여 줄 프로젝트가 없어요</p>
-          <p className="text-sm text-muted">레포를 정해 배포를 요청하면 여기에서 볼 수 있어요.</p>
-          <Link
-            to="/deploy/new"
-            className={primaryLinkClass}
-          >
-            새 배포 요청하기
-          </Link>
+          <p className="font-bold">다음 할 일</p>
+          <p className="text-sm text-muted">
+            배포를 요청하거나, 내 배포에서 진행 상황을 확인하세요.
+          </p>
+          <div className="flex flex-wrap items-center gap-4">
+            <Link to="/deploy/new" className={primaryLinkClass}>
+              새 배포 요청하기
+            </Link>
+            <Link to="/deploys" className="text-sm text-accent-text underline">
+              내 배포 보기
+            </Link>
+          </div>
         </Card>
       )}
     </>
