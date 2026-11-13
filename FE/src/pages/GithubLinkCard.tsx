@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useLocation } from 'react-router'
+import { isAdmin } from '../auth/isAdmin.ts'
+import { useAuth } from '../auth/useAuth.ts'
 import { Alert } from '../components/ui/Alert.tsx'
 import { Button } from '../components/ui/Button.tsx'
 import { Card } from '../components/ui/Card.tsx'
@@ -39,6 +41,9 @@ function failureOfLinkCall(error: { code?: string }): LinkFailure {
 
 function GithubLinkCard() {
   const location = useLocation()
+  const { state } = useAuth()
+  // 관리자는 모니터링 계정이라 배포 진입점을 숨긴다(편의일 뿐, 서버는 막지 않는다).
+  const showDeployLink = !(state.status === 'signedIn' && isAdmin(state.session))
   const [link, setLink] = useState<LinkState>({ status: 'loading' })
   const [attempt, setAttempt] = useState(0)
   const [redirecting, setRedirecting] = useState(false)
@@ -141,9 +146,11 @@ function GithubLinkCard() {
           {link.handle ? `@${link.handle} 계정이 연결됐어요.` : 'GitHub 계정이 연결됐어요.'} 이제
           새 배포를 요청할 수 있어요.
         </p>
-        <Link to="/deploy/new" className="text-sm font-bold underline">
-          새 배포 요청하기
-        </Link>
+        {showDeployLink && (
+          <Link to="/deploy/new" className="text-sm font-bold underline">
+            새 배포 요청하기
+          </Link>
+        )}
       </Card>
     )
   }

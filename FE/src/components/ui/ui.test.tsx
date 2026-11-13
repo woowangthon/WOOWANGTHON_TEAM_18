@@ -1,12 +1,18 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { expect, it } from 'vitest'
 import { Alert } from './Alert.tsx'
+import { Banner } from './Banner.tsx'
 import { Badge } from './Badge.tsx'
 import { Button } from './Button.tsx'
 import { Field } from './Field.tsx'
 import { Input } from './Input.tsx'
 import { LogBlock } from './LogBlock.tsx'
+import { Meter } from './Meter.tsx'
 import { SelectField } from './Select.tsx'
+import { Skeleton } from './Skeleton.tsx'
+import { Spinner } from './Spinner.tsx'
+import { Steps } from './Steps.tsx'
+import { Tab, Tabs } from './Tabs.tsx'
 import { Table, Td, Th, THead } from './Table.tsx'
 
 const renderTable = () =>
@@ -37,11 +43,12 @@ it('Button variants render with different styles and default to type=button', ()
   const primary = screen.getByRole('button', { name: 'primary' })
   const outline = screen.getByRole('button', { name: 'outline' })
   expect(primary.getAttribute('type')).toBe('button')
-  expect(primary.className).toContain('bg-fg')
+  expect(primary.className).toContain('bg-accent')
+  expect(primary.className).toContain('text-accent-fg')
   // 기본 테두리가 있어야 비활성(disabled:border-line)이 되어도 너비가 변하지 않는다.
   expect(primary.className).toContain('border-transparent')
   expect(outline.className).toContain('border-line-strong')
-  expect(outline.className).not.toContain('bg-fg')
+  expect(outline.className).not.toContain('bg-accent')
 })
 
 it('Badge renders every variant with its own color', () => {
@@ -253,4 +260,110 @@ it('SelectField passes the chosen value, not the event', () => {
   render(<SelectField label="역할" value="" onChange={(value) => seen.push(value)} options={[{ value: '', label: '골라 주세요' }, { value: 'be', label: 'be' }]} />)
   fireEvent.change(screen.getByRole('combobox', { name: '역할' }), { target: { value: 'be' } })
   expect(seen).toEqual(['be'])
+})
+
+it('Tabs are a tablist: the active tab is selected and the only one in the Tab order, arrows move focus', () => {
+  render(
+    <Tabs aria-label="보기">
+      <Tab active>개요</Tab>
+      <Tab>배포 이력</Tab>
+      <Tab>로그</Tab>
+    </Tabs>,
+  )
+  expect(screen.getByRole('tablist', { name: '보기' })).toBeTruthy()
+  const [on, mid, last] = screen.getAllByRole('tab')
+  expect(on.getAttribute('aria-selected')).toBe('true')
+  expect(on.className).toContain('border-accent-ui')
+  expect(on.className).toContain('font-bold')
+  expect(on.getAttribute('tabindex')).toBe('0')
+  expect(mid.getAttribute('aria-selected')).toBe('false')
+  expect(mid.getAttribute('tabindex')).toBe('-1')
+  on.focus()
+  fireEvent.keyDown(on, { key: 'ArrowRight' })
+  expect(document.activeElement).toBe(mid)
+  fireEvent.keyDown(mid, { key: 'End' })
+  expect(document.activeElement).toBe(last)
+  fireEvent.keyDown(last, { key: 'ArrowRight' })
+  expect(document.activeElement).toBe(on)
+  fireEvent.keyDown(on, { key: 'ArrowLeft' })
+  expect(document.activeElement).toBe(last)
+  // Alt+← 같은 브라우저 단축키는 탭 이동으로 가로채지 않는다.
+  fireEvent.keyDown(last, { key: 'ArrowLeft', altKey: true })
+  expect(document.activeElement).toBe(last)
+})
+
+it('Spinner is a named status', () => {
+  render(<Spinner label="처리 중" />)
+  expect(screen.getByRole('status', { name: '처리 중' }).className).toContain('spinner')
+})
+
+it('Skeleton is hidden from assistive tech', () => {
+  const { container } = render(<Skeleton block />)
+  expect((container.firstElementChild as HTMLElement).getAttribute('aria-hidden')).toBe('true')
+})
+
+it('Banner reads errors at once (alert) and the rest politely (status), with a mark besides color', () => {
+  render(
+    <>
+      <Banner variant="err">빌드가 실패했어요</Banner>
+      <Banner variant="ok">배포가 끝났어요</Banner>
+      <Banner>승인을 기다려요</Banner>
+    </>,
+  )
+  expect(screen.getByRole('alert').textContent).toContain('빌드가 실패했어요')
+  expect(screen.getAllByRole('status')).toHaveLength(2)
+  expect(screen.getByRole('alert').querySelector('svg')).toBeTruthy()
+  expect(screen.getByText('배포가 끝났어요').parentElement?.parentElement?.querySelector('svg')).toBeTruthy()
+})
+
+it('Steps list every step with its state in text and mark the running one as the current step', () => {
+  render(
+    <Steps
+      aria-label="배포 단계"
+      steps={[
+        { label: '접수', state: 'done' },
+        { label: '빌드', state: 'run' },
+        { label: '배포', state: 'pend', note: '대기 중' },
+      ]}
+    />,
+  )
+  const items = screen.getAllByRole('listitem')
+  expect(items).toHaveLength(3)
+  expect(items[0].textContent).toContain('완료')
+  expect(items[1].textContent).toContain('진행 중')
+  // 진행 중 · 대기 · 실패는 상태 글자가 눈에 보인다(색이 가까워 색만으로는 못 가른다).
+  expect(screen.getByText('진행 중').className).not.toContain('sr-only')
+  expect(items[1].getAttribute('aria-current')).toBe('step')
+  expect(items[2].textContent).toContain('대기 중')
+  expect(items[0].getAttribute('aria-current')).toBeNull()
+})
+
+it('Steps show waiting and failed states in text and by shape, not by color alone', () => {
+  render(
+    <Steps
+      aria-label="배포 단계"
+      steps={[
+        { label: '비밀값', state: 'wait' },
+        { label: '빌드', state: 'fail' },
+      ]}
+    />,
+  )
+  const [wait, fail] = screen.getAllByRole('listitem')
+  expect(wait.textContent).toContain('입력 대기')
+  expect(wait.querySelector('.border-dashed')).toBeTruthy()
+  expect(fail.textContent).toContain('실패')
+  expect(fail.querySelector('svg')).toBeTruthy()
+})
+
+it('Meter exposes its value and clamps the bar to 0–100%', () => {
+  const { rerender } = render(<Meter value={60} aria-label="사용량" />)
+  const m = screen.getByRole('progressbar', { name: '사용량' })
+  expect(m.getAttribute('aria-valuenow')).toBe('60')
+  expect((m.firstElementChild as HTMLElement).style.width).toBe('60%')
+  rerender(<Meter value={250} max={100} aria-label="사용량" />)
+  expect((screen.getByRole('progressbar').firstElementChild as HTMLElement).style.width).toBe('100%')
+  expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('100')
+  rerender(<Meter value={-5} aria-label="사용량" />)
+  expect((screen.getByRole('progressbar').firstElementChild as HTMLElement).style.width).toBe('0%')
+  expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('0')
 })

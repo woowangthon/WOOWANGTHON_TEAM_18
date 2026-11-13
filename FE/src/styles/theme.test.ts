@@ -51,12 +51,22 @@ const contrast = (a: string, b: string) => {
 }
 
 it.each(themes)('%s: text pairs reach 4.5:1 and control borders 3:1', (_, t) => {
-  for (const text of ['fg', 'muted', 'ok', 'warn', 'err', 'info']) {
+  for (const text of ['fg', 'muted', 'ok', 'warn', 'err', 'info', 'accent-text']) {
     for (const ground of ['bg', 'surface']) {
       expect(contrast(t[text], t[ground]), `${text} on ${ground}`).toBeGreaterThanOrEqual(4.5)
     }
   }
   expect(contrast(t['line-strong'], t.bg), 'line-strong on bg').toBeGreaterThanOrEqual(3)
+})
+
+it.each(themes)('%s: accent pairs reach 4.5:1 (text) and 3:1 (UI)', (_, t) => {
+  expect(contrast(t['accent-fg'], t.accent), 'accent-fg on accent').toBeGreaterThanOrEqual(4.5)
+  // accent-ui(밑줄 · 미터 · 포커스 링)는 bg와 raise 위에서만 쓴다. 라이트 surface에서는 2.9:1이라 쓰지 않는다.
+  for (const ground of ['bg', 'raise']) {
+    expect(contrast(t['accent-ui'], t[ground]), `accent-ui on ${ground}`).toBeGreaterThanOrEqual(3)
+  }
+  // 선택된 행(accent-soft 바탕)의 글자가 읽힌다. 그 테두리(accent-ui)는 바탕이 아니라 주변 bg와의 대비로 본다.
+  expect(contrast(t.fg, t['accent-soft']), 'fg on accent-soft').toBeGreaterThanOrEqual(4.5)
 })
 
 it.each(themes)('%s: surface is a visible step from bg (1.08:1 or more)', (_, t) => {
