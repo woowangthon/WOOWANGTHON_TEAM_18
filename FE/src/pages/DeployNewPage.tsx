@@ -1,9 +1,10 @@
 import { useState } from 'react'
-import type { FormEvent } from 'react'
-import { Badge } from '../components/ui/Badge.tsx'
+import type { FormEvent, ReactNode } from 'react'
 import { Button } from '../components/ui/Button.tsx'
 import { Card } from '../components/ui/Card.tsx'
 import { Field } from '../components/ui/Field.tsx'
+import { Spinner } from '../components/ui/Spinner.tsx'
+import { CheckIcon } from '../components/ui/Icons.tsx'
 import CommitRef from '../deploy/CommitRef.tsx'
 import DeployConfirm from '../deploy/DeployConfirm.tsx'
 import { ApiError, apiFetch } from '../lib/api.ts'
@@ -13,6 +14,19 @@ import { failureOf } from './repo-failure.ts'
 import type { Failure } from './repo-failure.ts'
 
 const URL_FORMAT_HINT = '올바른 GitHub 레포 주소가 아니에요. 예: https://github.com/소유자/레포'
+
+// 사전 확인을 통과한 항목 한 줄. 기호는 색만으로 뜻을 전하지 않게 글자('통과')를 함께 둔다.
+function PassItem({ children }: { children: ReactNode }) {
+  return (
+    <li className="flex flex-wrap items-center gap-2">
+      <span className="text-ok">
+        <CheckIcon />
+      </span>
+      <span className="sr-only">통과</span>
+      {children}
+    </li>
+  )
+}
 
 function DeployNewPage() {
   const [repoUrl, setRepoUrl] = useState('')
@@ -58,8 +72,11 @@ function DeployNewPage() {
 
   return (
     <>
-      <h1 className="text-xl">새 배포 요청</h1>
-      <Card className="flex flex-col gap-4">
+      <div className="flex flex-col gap-1">
+        <h1 className="text-xl">새 배포 요청</h1>
+        <p className="text-muted">공개 레포 주소를 넣으면 사전 확인부터 시작해요.</p>
+      </div>
+      <Card className="flex flex-col gap-6 p-6">
         <form
           noValidate
           onSubmit={handleSubmit}
@@ -83,7 +100,8 @@ function DeployNewPage() {
             <p className="text-sm text-muted">공개 개인 레포만 지원해요.</p>
           </div>
           <div>
-            <Button type="submit" disabled={checking} aria-busy={checking}>
+            <Button type="submit" disabled={checking} aria-busy={checking} className="gap-2">
+              {checking && <Spinner size="sm" aria-hidden="true" />}
               {checking ? '확인하는 중…' : '레포 확인'}
             </Button>
           </div>
@@ -92,26 +110,22 @@ function DeployNewPage() {
         {failure && <RepoFailureAlert failure={failure} />}
 
         {checked && (
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-3 border-t border-line pt-6">
             <h2 className="text-lg">{checked.repo}</h2>
-            <ul className="flex flex-col gap-1 text-sm">
-              <li className="flex items-center gap-2">
-                <Badge variant="ok">통과</Badge> 공개 레포예요
-              </li>
-              <li className="flex items-center gap-2">
-                <Badge variant="ok">통과</Badge> 내 계정의 레포예요
-              </li>
-              <li className="flex flex-wrap items-center gap-2">
-                <Badge variant="ok">확정</Badge> 배포할 commit
+            <ul className="flex flex-col gap-2 text-sm">
+              <PassItem>공개 레포예요</PassItem>
+              <PassItem>내 계정의 레포예요</PassItem>
+              <PassItem>
+                배포할 commit
                 {checked.commit ? <CommitRef commit={checked.commit} /> : <span>없음 (빈 레포)</span>}
-              </li>
+              </PassItem>
             </ul>
           </div>
         )}
       </Card>
 
       {checked && (
-        <Card>
+        <Card className="p-6">
           <DockerfileCheck
             key={checked.repoUrl}
             repoUrl={checked.repoUrl}
@@ -123,7 +137,7 @@ function DeployNewPage() {
       )}
 
       {checked?.dockerfiles && (
-        <Card>
+        <Card className="p-6">
           <DeployConfirm
             key={`${checked.repoUrl}@${checked.commit ?? ''}`}
             repoUrl={checked.repoUrl}

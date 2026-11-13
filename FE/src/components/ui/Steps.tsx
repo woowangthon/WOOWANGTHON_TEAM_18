@@ -17,7 +17,7 @@ const states = {
 export type StepState = keyof typeof states
 export type Step = { label: ReactNode; state: StepState; note?: ReactNode }
 
-// 세로 단계 목록. 단계 상태는 화면이 정한다. 진행 중 · 대기 · 실패는 상태 글자가 눈에 보이고, 완료 · 예정은 스크린 리더에만 읽힌다.
+// 세로 단계 목록. 단계 상태는 화면이 정한다. 지금 눈여겨볼 단계(진행 중 · 입력 대기)에 aria-current를 단다. 진행 중 · 대기 · 실패는 상태 글자가 눈에 보이고, 완료 · 예정은 스크린 리더에만 읽힌다.
 export function Steps({ steps, 'aria-label': ariaLabel }: { steps: Step[]; 'aria-label': string }) {
   return (
     <ol aria-label={ariaLabel} className="m-0 list-none p-0">
@@ -27,7 +27,7 @@ export function Steps({ steps, 'aria-label': ariaLabel }: { steps: Step[]; 'aria
         return (
           <li
             key={i}
-            aria-current={s.state === 'run' ? 'step' : undefined}
+            aria-current={s.state === 'run' || s.state === 'wait' ? 'step' : undefined}
             className="relative flex items-start gap-3 pb-4 last:pb-0"
           >
             {!last && (
