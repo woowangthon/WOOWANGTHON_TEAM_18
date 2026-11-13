@@ -440,3 +440,108 @@ it('shows the service status card only for a succeeded deploy', async () => {
   await show()
   expect(screen.getByText(`서비스 상태 카드 ${ID}`)).toBeTruthy()
 })
+
+const agentOf = (extra: Partial<NonNullable<Progress['agent']>> = {}): NonNullable<Progress['agent']> => ({
+  status: 'gave_up',
+  summary: 'AI 모델 설정이 없어 문제 해결을 하지 않았습니다.',
+  userRequest: null,
+  prUrl: null,
+  evidence: [],
+  ...extra,
+})
+const agentCard = () => within(screen.getByRole('region', { name: 'AI 동료' }))
+const gaveUp: Partial<Progress> = {
+  failure: { code: 'AGENT_GAVE_UP', stage: 'apply', service: 'web', message: 'AI 에이전트가 이 실패를 해결하지 못했습니다.' },
+  agent: agentOf(),
+}
+
+it('shows the AI colleague result and no platform-fault note when the agent gave up', async () => {
+  api.apiFetch.mockResolvedValue(progressOf('failed', 'deploy', gaveUp))
+  await show()
+  expect(agentCard().getByText('해결하지 못했어요')).toBeTruthy()
+  expect(agentCard().getByText('AI 모델 설정이 없어 문제 해결을 하지 않았습니다.')).toBeTruthy()
+  expect(screen.queryByText(/플랫폼 쪽 문제예요/)).toBeNull()
+})
+
+it('still says it is the platform when the AI server was unavailable', async () => {
+  api.apiFetch.mockResolvedValue(progressOf('failed', 'deploy', { failure: failureWith('AGENT_UNAVAILABLE') }))
+  await show()
+  expect(screen.getByText(/플랫폼 쪽 문제예요/)).toBeTruthy()
+  expect(screen.queryByRole('region', { name: 'AI 동료' })).toBeNull()
+})
+
+it('says the agent fixed it and redeployed when verified', async () => {
+  api.apiFetch.mockResolvedValue(
+    progressOf('succeeded', null, { url: 'https://a.stairnoworks.com', agent: agentOf({ status: 'verified', summary: '포트를 3000으로 고쳤어요.' }) }),
+  )
+  await show()
+  expect(agentCard().getByText('고쳐서 다시 배포했어요')).toBeTruthy()
+  expect(agentCard().getByText('포트를 3000으로 고쳤어요.')).toBeTruthy()
+})
+
+it('links to the fix PR when the agent opened one, and only for an https address', async () => {
+  api.apiFetch.mockResolvedValue(
+    progressOf('failed', 'deploy', { agent: agentOf({ status: 'pr_opened', prUrl: 'https://github.com/o/r/pull/3' }) }),
+  )
+  await show()
+  expect(agentCard().getByText('수정 PR을 열었어요')).toBeTruthy()
+  expect(agentCard().getByRole('link', { name: '수정 PR 보러 가기' }).getAttribute('href')).toBe('https://github.com/o/r/pull/3')
+})
+
+it('does not link a PR address that is not https', async () => {
+  api.apiFetch.mockResolvedValue(progressOf('failed', 'deploy', { agent: agentOf({ status: 'pr_opened', prUrl: 'javascript:alert(1)' }) }))
+  await show()
+  expect(agentCard().queryByRole('link')).toBeNull()
+})
+
+it('tells the student what to do and lists the secret keys and points to a new deploy, not the secrets page, when the agent needs the user', async () => {
+  api.apiFetch.mockResolvedValue(
+    progressOf('needs_user', 'secrets', {
+      failure: { code: 'NEEDS_USER', stage: 'apply', service: 'web', message: '확인이 필요해요' },
+      agent: agentOf({ status: 'needs_user', userRequest: { message: 'API 키를 다시 넣어 주세요.', secretKeys: ['OPENAI_KEY', 'DB_URL'] } }),
+    }),
+  )
+  await show()
+  expect(agentCard().getByText('내가 할 일이 있어요')).toBeTruthy()
+  expect(agentCard().getByText('API 키를 다시 넣어 주세요.')).toBeTruthy()
+  expect(agentCard().getByText('OPENAI_KEY')).toBeTruthy()
+  expect(agentCard().getByText('DB_URL')).toBeTruthy()
+  expect(agentCard().getByText(/새 배포를 요청해 주세요/)).toBeTruthy()
+  expect(agentCard().getByRole('link', { name: '새 배포 요청하기' }).getAttribute('href')).toBe('/deploy/new')
+  // 이미 시작한 배포라 비밀값 페이지로 가도 이어 갈 수 없다.
+  expect(agentCard().queryByRole('link', { name: '비밀값 넣으러 가기' })).toBeNull()
+})
+
+it('lists the evidence only when there is some, skipping empty entries', async () => {
+  api.apiFetch.mockResolvedValue(
+    progressOf('failed', 'deploy', { agent: agentOf({ evidence: [{ ref: 'Dockerfile:3', text: 'EXPOSE가 없어요' }, { ref: null, text: null }] }) }),
+  )
+  await show()
+  expect(agentCard().getByText('근거')).toBeTruthy()
+  expect(agentCard().getAllByRole('listitem')).toHaveLength(1)
+  expect(agentCard().getByText('Dockerfile:3')).toBeTruthy()
+})
+
+it('draws no AI colleague section when the agent is null or missing', async () => {
+  api.apiFetch.mockResolvedValue(progressOf('failed', 'deploy', { failure: failureWith('BUILD_FAILED'), agent: null }))
+  await show()
+  expect(screen.queryByRole('region', { name: 'AI 동료' })).toBeNull()
+})
+
+it('says the security scan found nothing when a succeeded deploy has no warnings', async () => {
+  api.apiFetch.mockResolvedValue(progressOf('succeeded', null, { url: 'https://a.stairnoworks.com' }))
+  await show()
+  expect(screen.getByText('보안 검사: 찾은 문제가 없어요')).toBeTruthy()
+})
+
+it('does not say the scan found nothing when there are warnings, or when the deploy has not succeeded', async () => {
+  api.apiFetch.mockResolvedValue(
+    progressOf('succeeded', null, { url: 'https://a.stairnoworks.com', warnings: [{ code: 'SCAN_RUNNING', message: '검사 중이에요', service: null }] }),
+  )
+  const { unmount } = await show()
+  expect(screen.queryByText(/찾은 문제가 없어요/)).toBeNull()
+  unmount()
+  api.apiFetch.mockResolvedValue(progressOf('failed', 'deploy', { failure: failureWith('BUILD_FAILED') }))
+  await show()
+  expect(screen.queryByText(/찾은 문제가 없어요/)).toBeNull()
+})

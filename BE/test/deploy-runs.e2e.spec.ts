@@ -40,6 +40,10 @@ let restOverride: ((table: string, method: string) => Response | undefined) | un
 let prepare: (deployId: string) => Promise<unknown>
 // 가짜 클러스터(W7): 공간의 Deployment 이름(또는 읽기 오류)과, 0으로 내린 것 · 내리지 못하는 것.
 let spaceDeployments: string[] | Error
+// 대상 슬롯 Pod(문제 티켓 로그): rawObjects가 줄 Pod 원본, 로그 글, 받은 호출. 'hang'이면 답하지 않는다.
+let slotPods: Record<string, unknown>[] | Error | 'hang'
+let podLog: string
+let clusterCalls: unknown[][]
 let scaled: { slug: string; name: string }[]
 let scaleFails: Record<string, Error>
 let app: INestApplication<App>
@@ -176,6 +180,9 @@ beforeEach(async () => {
   prepare = (id) => Promise.resolve(preparedFor(id))
   restOverride = undefined
   spaceDeployments = []
+  slotPods = []
+  podLog = ''
+  clusterCalls = []
   scaled = []
   scaleFails = {}
   fetchMock.mockClear()
@@ -186,7 +193,18 @@ beforeEach(async () => {
       .overrideProvider(DeployPreparer)
       .useValue({ prepareIfReady: (id: string) => prepare(id) })
       .overrideProvider(ClusterReader)
-      .useValue({ deployments: () => (spaceDeployments instanceof Error ? Promise.reject(spaceDeployments) : Promise.resolve(spaceDeployments.map((name) => ({ name })))) })
+      .useValue({
+        deployments: () => (spaceDeployments instanceof Error ? Promise.reject(spaceDeployments) : Promise.resolve(spaceDeployments.map((name) => ({ name })))),
+        rawObjects: (slug: string, kind: string, selector?: string) => {
+          clusterCalls.push(['rawObjects', slug, kind, selector])
+          if (slotPods === 'hang') return new Promise(() => undefined)
+          return slotPods instanceof Error ? Promise.reject(slotPods) : Promise.resolve(slotPods)
+        },
+        logs: (slug: string, pod: string, options: unknown) => {
+          clusterCalls.push(['logs', slug, pod, options])
+          return Promise.resolve(podLog)
+        },
+      })
       .overrideProvider(DeploymentScaler)
       .useValue({
         scaleToZero: (slug: string, name: string) => {
@@ -841,6 +859,82 @@ describe('POST /api/pipeline/notify', () => {
     expect((await start(seedDeploy())).status).toBe(202)
   })
 
+  describe('the target slot of a deploy that ended failed is scaled down', () => {
+    const failure = { service: 'be', message: 'm', raw: { codebuild: null, k8s: { pod: null, events: [], status: null } }, logs: { from: '2026-11-11T01:00:00Z', to: '2026-11-11T01:10:00Z', lines: [] } }
+    // 대상 슬롯은 a(preparedFor 기본값)다. 이름이 `-a`로 끝나는 것만 그 슬롯이다.
+    const both = ['fe-a', 'be-a', 'fe-b', 'be-b', 'banana']
+    const reach = async (stage: string) => {
+      const id = seedDeploy()
+      await start(id)
+      await notify({ deployId: id, stage: 'build', result: 'passed', images: { fe: IMAGE } })
+      for (const s of ['prepare', 'render', 'apply', 'verify'].slice(0, ['prepare', 'render', 'apply', 'verify'].indexOf(stage))) await notify({ deployId: id, stage: s, result: 'passed' })
+      return id
+    }
+    const names = () => scaled.map((x) => x.name).sort()
+
+    it.each(['apply', 'verify'])('after a platform problem at %s, only the target slot', async (stage) => {
+      spaceDeployments = both
+      const id = await reach(stage)
+      await notify({ deployId: id, stage, result: 'failed', failure: { ...failure, code: 'K8S_UNREACHABLE' } })
+      expect(run(id)).toMatchObject({ status: 'failed' })
+      expect(names()).toEqual(['be-a', 'fe-a'])
+    })
+
+    it('after AGENT_UNAVAILABLE', async () => {
+      spaceDeployments = both
+      aiAnswer = () => new Response('{}', { status: 503 })
+      const id = await reach('apply')
+      await notify({ deployId: id, stage: 'apply', result: 'failed', failure })
+      expect(run(id)).toMatchObject({ status: 'failed', failure: { code: 'AGENT_UNAVAILABLE' } })
+      expect(names()).toEqual(['be-a', 'fe-a'])
+    })
+
+    it('not while the AI agent is working on the ticket (it reads this slot\'s Pods and events)', async () => {
+      spaceDeployments = both
+      const id = await reach('apply')
+      await notify({ deployId: id, stage: 'apply', result: 'failed', failure })
+      expect(run(id)).toMatchObject({ status: 'fixing' })
+      expect(scaled).toEqual([])
+    })
+
+    it.each(['build', 'prepare', 'render', 'switch'])('not after a failure at %s (nothing of this run is on the target slot, or the switch may be half done)', async (stage) => {
+      spaceDeployments = both
+      const id = stage === 'build' ? seedDeploy() : stage === 'switch' ? await reach('verify') : await reach(stage)
+      if (stage === 'build') await start(id)
+      if (stage === 'switch') await notify({ deployId: id, stage: 'verify', result: 'passed' })
+      await notify({ deployId: id, stage, result: 'failed', failure: { ...failure, code: 'SOME_PLATFORM_CODE', raw: { codebuild: null, k8s: { pod: null, events: [], status: stage === 'render' ? {} : null } } } })
+      expect(run(id)).toMatchObject({ status: 'failed' })
+      expect(scaled).toEqual([])
+    })
+
+    it('never when the project says that slot is live', async () => {
+      spaceDeployments = both
+      ;(db.projects ??= []).push({ slug: 'my-app', live_slot: 'a' })
+      const id = await reach('apply')
+      await notify({ deployId: id, stage: 'apply', result: 'failed', failure: { ...failure, code: 'K8S_UNREACHABLE' } })
+      expect(run(id)).toMatchObject({ status: 'failed' })
+      expect(scaled).toEqual([])
+    })
+
+    it('still ends as failed when the cluster cannot be reached, and logs it', async () => {
+      spaceDeployments = new ClusterError('unreachable')
+      const id = await reach('apply')
+      expect((await notify({ deployId: id, stage: 'apply', result: 'failed', failure: { ...failure, code: 'K8S_UNREACHABLE' } })).body).toEqual({ ok: true, applied: true })
+      expect(run(id)).toMatchObject({ status: 'failed' })
+      expect(logError).toHaveBeenCalledWith(expect.stringContaining('failed slot: could not list deployments of my-app'))
+    })
+
+    it('after the run already had the most tickets (AGENT_GAVE_UP without a new ticket)', async () => {
+      spaceDeployments = both
+      const id = await reach('apply')
+      db.deploy_runs.find((r) => r.deploy_id === id)!.ticket_id = 't_stale'
+      db.deploy_runs.find((r) => r.deploy_id === id)!.agent_result = { tickets: 3 }
+      await notify({ deployId: id, stage: 'apply', result: 'failed', failure })
+      expect(run(id)).toMatchObject({ status: 'failed', failure: { code: 'AGENT_GAVE_UP' } })
+      expect(names()).toEqual(['be-a', 'fe-a'])
+    })
+  })
+
   describe('a failure', () => {
     const failure = (over: Record<string, unknown> = {}) => ({
       service: 'be',
@@ -948,6 +1042,89 @@ describe('POST /api/pipeline/notify', () => {
       expect(run(id)).toMatchObject({ status: 'fixing', ticket_id: ticket.ticketId })
       expect(ticket.raw).toEqual({ codebuild: null, k8s: { pod: null, events: [{ reason: 'BackOff' }], status: null } })
       expect(ticket.logs.lines).toEqual([])
+    })
+
+    describe('logs from the target slot Pod when the pipeline sends none (apply · verify)', () => {
+      const pod = (name: string, created: string, restartCount = 0) => ({
+        metadata: { name, creationTimestamp: created },
+        status: { containerStatuses: [{ name: 'be', restartCount }] },
+      })
+      const noLogs = (over: Record<string, unknown> = {}) => ({ service: 'be', message: 'm', raw: { k8s: { events: [] } }, ...over })
+
+      it.each(['apply', 'verify'])('a %s ticket carries the last lines of the newest Pod of that service in the target slot, masked', async (stage) => {
+        slotPods = [pod('be-a-old', '2026-11-13T01:00:00Z'), pod('be-a-new', '2026-11-13T02:00:00Z')]
+        podLog = `listening on 3000\nboot ${SECRET_LINE}\n`
+        const id = await reach(stage)
+        const before = Date.now()
+        await notify({ deployId: id, stage, result: 'failed', failure: noLogs() })
+        const { ticket } = bodyOf(callsTo(AI_URL)[0])
+        expect(clusterCalls).toEqual([
+          ['rawObjects', 'my-app', 'pods', 'app=be,slot=a'],
+          ['logs', 'my-app', 'be-a-new', { container: 'be', tailLines: 200, previous: false, sinceSeconds: 600 }],
+        ])
+        expect(ticket.logs.lines).toEqual(['listening on 3000', expect.stringContaining('[REDACTED]') as string])
+        expect(JSON.stringify(ticket)).not.toMatch(/hunter2pass|ghp_a{36}/)
+        // 최근 10분.
+        const { from, to } = ticket.logs as unknown as { from: string; to: string }
+        expect(Date.parse(to) - Date.parse(from)).toBe(600_000)
+        expect(Date.parse(to)).toBeGreaterThanOrEqual(before - 1000)
+        expect(run(id)).toMatchObject({ status: 'fixing', ticket_id: ticket.ticketId })
+      })
+
+      it('reads the previous container when the newest Pod restarted', async () => {
+        slotPods = [pod('be-a-1', '2026-11-13T02:00:00Z', 3)]
+        podLog = 'Error: connect ECONNREFUSED\n'
+        const id = await reach('apply')
+        await notify({ deployId: id, stage: 'apply', result: 'failed', failure: noLogs() })
+        expect(clusterCalls[1]).toEqual(['logs', 'my-app', 'be-a-1', { container: 'be', tailLines: 200, previous: true, sinceSeconds: 600 }])
+        expect(bodyOf(callsTo(AI_URL)[0]).ticket.logs.lines).toEqual(['Error: connect ECONNREFUSED'])
+      })
+
+      it('keeps the logs the pipeline sent and does not read the cluster', async () => {
+        slotPods = [pod('be-a-1', '2026-11-13T02:00:00Z')]
+        const id = await reach('apply')
+        await notify({ deployId: id, stage: 'apply', result: 'failed', failure: noLogs({ logs: { from: '2026-11-13T01:00:00Z', to: '2026-11-13T01:10:00Z', lines: ['from the pipeline'] } }) })
+        expect(bodyOf(callsTo(AI_URL)[0]).ticket.logs).toEqual({ from: '2026-11-13T01:00:00Z', to: '2026-11-13T01:10:00Z', lines: ['from the pipeline'] })
+        expect(clusterCalls).toEqual([])
+      })
+
+      it('sends an empty log when the service has no Pod in the target slot', async () => {
+        const id = await reach('verify')
+        await notify({ deployId: id, stage: 'verify', result: 'failed', failure: noLogs() })
+        expect(bodyOf(callsTo(AI_URL)[0]).ticket.logs.lines).toEqual([])
+        expect(clusterCalls.filter(([kind]) => kind === 'logs')).toEqual([])
+      })
+
+      it('still sends the ticket with an empty log when the cluster cannot be read, and logs no values', async () => {
+        slotPods = new ClusterError('unreachable')
+        const id = await reach('apply')
+        expect((await notify({ deployId: id, stage: 'apply', result: 'failed', failure: noLogs() })).body).toEqual({ ok: true, applied: true })
+        expect(bodyOf(callsTo(AI_URL)[0]).ticket.logs.lines).toEqual([])
+        expect(run(id)).toMatchObject({ status: 'fixing' })
+        expect(JSON.stringify(logError.mock.calls)).toContain('ticket logs: could not read my-app be')
+      })
+
+      it('gives up on the logs after 3 seconds and still sends the ticket', async () => {
+        slotPods = 'hang'
+        const id = await reach('verify')
+        const started = Date.now()
+        expect((await notify({ deployId: id, stage: 'verify', result: 'failed', failure: noLogs() })).body).toEqual({ ok: true, applied: true })
+        const took = Date.now() - started
+        expect(took).toBeGreaterThanOrEqual(2900)
+        expect(took).toBeLessThan(6000)
+        expect(bodyOf(callsTo(AI_URL)[0]).ticket.logs.lines).toEqual([])
+        expect(run(id)).toMatchObject({ status: 'fixing' })
+      }, 15_000)
+
+      it.each(['build', 'prepare', 'render'])('does not read the cluster for a %s ticket', async (stage) => {
+        slotPods = [pod('be-a-1', '2026-11-13T02:00:00Z')]
+        const id = stage === 'build' ? seedDeploy() : await reach(stage)
+        if (stage === 'build') await start(id)
+        const raw = stage === 'build' ? { codebuild: { id: 'cb:1' } } : stage === 'render' ? { k8s: { status: { code: 422 } } } : { k8s: { events: [] } }
+        await notify({ deployId: id, stage, result: 'failed', failure: noLogs({ raw }) })
+        expect(callsTo(AI_URL)).toHaveLength(1)
+        expect(clusterCalls).toEqual([])
+      })
     })
 
     it('keeps the secret key names in the ticket\'s deploy input (names, not values)', async () => {

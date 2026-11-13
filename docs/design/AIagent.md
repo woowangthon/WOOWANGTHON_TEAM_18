@@ -177,7 +177,7 @@ AI 서버 (에이전트) → 플랫폼 서버 MCP 게이트웨이 → GoCD 서�
 | `raw.k8s.events` | `involvedObject`가 대상 슬롯 리소스인 이벤트 원본 (없으면 `[]`) |
 | `raw.k8s.status` | `render`일 때 server-side apply dry-run에 k3s API가 돌려준 Status 원본(필수), 그 밖에는 `null` |
 | `errorMessage` | 사람이 읽는 오류 한 줄. `render`면 Status의 `message`를 그대로 넣는다. `verify`면 통과하지 못한 검사 하나(요청한 경로와 응답 상태, 또는 Ready가 아닌 Pod · 엔드포인트가 빈 Service)를 적고, `raw.k8s`에는 그 서비스의 Pod와 이벤트를 넣는다 |
-| `logs` | 오류 시각 10분 전부터, 최대 200줄. 재시작한 Pod는 직전 컨테이너 로그 |
+| `logs` | 오류 시각 10분 전부터, 최대 200줄. 재시작한 Pod는 직전 컨테이너 로그. `apply` · `verify`는 파이프라인이 보내지 않으면 플랫폼 서버가 대상 슬롯 Pod에서 읽어 채운다(읽지 못하면 빈 줄, [API 계약](api.md) "파이프라인 ↔ 플랫폼 서버" 3번) |
 | `previous` | 직전 티켓. 없으면 `null`. `status`는 `verified` · `pr_opened` · `needs_user` · `gave_up`(그 티켓의 해결 결과) 또는 `stopped`(결과 없이 끝남) |
 
 모든 칸은 보내기 전에 외부 전송 필터로 비밀값처럼 보이는 문자열을 가린다.
@@ -354,7 +354,7 @@ AI 서버 (에이전트) → 플랫폼 서버 MCP 게이트웨이 → GoCD 서�
 | 쓰는 곳 | 모델 |
 |---|---|
 | ② LLM 분류, 도구 고르기 | 로컬 Qwen3-8B (리더 vLLM, OpenAI 호환 API) |
-| ④ · ⑤ planning | 추론 모델 API (모델 이름 미정, [배포 워크플로우](deploy-workflow.md) §7) |
+| ④ · ⑤ planning | 추론 모델 `gpt-6.1-sol` (충북대 NOVA API Gateway, OpenAI 호환. [ADR-016](../adr/016-planner-model-nova-gateway.md), [배포 워크플로우](deploy-workflow.md) §7) |
 
 PydanticAI에서 두 모델을 OpenAI 호환 provider로 붙이고, 추론 모델 API를 못 쓰면 로컬 모델로 넘긴다.
 

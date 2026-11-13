@@ -1,36 +1,16 @@
-import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
 import NoticeBanner from '../components/NoticeBanner.tsx'
 import { Button } from '../components/ui/Button.tsx'
 import { Card } from '../components/ui/Card.tsx'
-import { Skeleton } from '../components/ui/Skeleton.tsx'
+import { LoadingBlock } from '../components/ui/Skeleton.tsx'
 import { primaryLinkClass } from '../components/primaryLinkClass.ts'
 import { Table, Td, Th, THead } from '../components/ui/Table.tsx'
-import type { DeployListItem } from '../deploy/progress.ts'
 import StatusBadge from '../deploy/StatusBadge.tsx'
-import { apiFetch } from '../lib/api.ts'
-
-type State = { status: 'loading' } | { status: 'failed' } | { status: 'ready'; deploys: DeployListItem[] }
+import { useDeploys } from '../deploy/useDeploys.ts'
 
 // 내 배포 목록(최신순). 새로 고침하거나 다시 들어와도 진행 중인 배포를 찾아 진행 화면으로 돌아가게 한다.
 function DeploysPage() {
-  const [state, setState] = useState<State>({ status: 'loading' })
-  const [attempt, setAttempt] = useState(0)
-
-  useEffect(() => {
-    let ignore = false
-    apiFetch<{ deploys: DeployListItem[] }>('/api/deploys')
-      .then(({ deploys }) => {
-        if (!ignore) setState({ status: 'ready', deploys })
-      })
-      .catch(() => {
-        // 실패를 "배포 없음"으로 바꾸지 않는다. 로그인 만료는 apiFetch가 로그아웃시킨다.
-        if (!ignore) setState({ status: 'failed' })
-      })
-    return () => {
-      ignore = true
-    }
-  }, [attempt])
+  const { state, retry } = useDeploys()
 
   return (
     <>
@@ -38,14 +18,7 @@ function DeploysPage() {
         <h1 className="text-2xl">내 배포</h1>
         <p className="text-muted">요청한 배포를 최신순으로 봐요.</p>
       </div>
-      {state.status === 'loading' && (
-        <div className="flex flex-col gap-3">
-          <Skeleton block />
-          <p role="status" className="text-sm text-muted">
-            불러오는 중…
-          </p>
-        </div>
-      )}
+      {state.status === 'loading' && <LoadingBlock />}
       {state.status === 'failed' && (
         <NoticeBanner title="배포 목록을 불러오지 못했어요">
           <div className="flex flex-col gap-2">
@@ -53,10 +26,7 @@ function DeploysPage() {
             <Button
               variant="outline"
               className="self-start"
-              onClick={() => {
-                setState({ status: 'loading' })
-                setAttempt((count) => count + 1)
-              }}
+              onClick={retry}
             >
               다시 시도
             </Button>

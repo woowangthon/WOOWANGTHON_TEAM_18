@@ -8,6 +8,7 @@ import { GatewayServer } from '../src/gateway/gateway.server.js'
 import { RepoReader, type RepoEntry } from '../src/gateway/repo-reader.js'
 import { tokenHash } from '../src/gateway/tickets.js'
 import { ClusterReader } from '../src/k8s/cluster-reader.js'
+import { DeploymentScaler } from '../src/k8s/deployment-scaler.js'
 import { startApp } from './start-app.js'
 
 const SHA = '0123456789abcdef0123456789abcdef01234567'
@@ -17,11 +18,14 @@ const SECRET = `ghp_${'s'.repeat(36)}`
 
 // 가짜 실행 기록: fixing, 대상 슬롯 b, 서비스 fe · be.
 let run: DeployRunRow
+const scaled: string[] = []
 const updates: { where: unknown; patch: Record<string, unknown> }[] = []
 const fakeStore = {
   findRunByGatewayToken: (hash: string) => Promise.resolve(hash === run.gateway_token_hash ? run : undefined),
   findById: (id: string) => Promise.resolve(id === DEPLOY ? { id, repo: 'student/app', slug: 'my-app' } : undefined),
   findRun: (id: string) => Promise.resolve(id === DEPLOY ? run : undefined),
+  liveSlot: () => Promise.resolve(null),
+  findActiveRun: () => Promise.resolve(undefined),
   updateRun: (_id: string, where: { status?: string }, patch: Record<string, unknown>) => {
     updates.push({ where, patch })
     if (where.status && run.status !== where.status) return Promise.resolve(false)
@@ -36,6 +40,8 @@ const pod = (name: string, slot: string, created: string) => ({
   status: { phase: 'Running' },
 })
 const cluster = {
+  // 슬롯 b가 대상이다(run.target_slot). a는 live였던 슬롯이다.
+  deployments: () => Promise.resolve([{ name: 'be-a' }, { name: 'be-b' }, { name: 'fe-b' }]),
   calls: [] as unknown[][],
   logText: `listening on 3000\nconnect with ${SECRET}\n`,
   rawObjects(slug: string, kind: string, selector?: string) {
@@ -84,10 +90,12 @@ beforeEach(async () => {
     updated_at: '2026-11-11T00:00:00Z',
   }
   updates.length = 0
+  scaled.length = 0
   cluster.calls.length = 0
   repo.calls.length = 0
   app = await startApp([], (b) =>
-    b.overrideProvider(DeploysStore).useValue(fakeStore).overrideProvider(ClusterReader).useValue(cluster).overrideProvider(RepoReader).useValue(repo),
+    b.overrideProvider(DeploysStore).useValue(fakeStore).overrideProvider(ClusterReader).useValue(cluster).overrideProvider(RepoReader).useValue(repo)
+      .overrideProvider(DeploymentScaler).useValue({ scaleToZero: (_slug: string, name: string) => Promise.resolve(void scaled.push(name)) }),
   )
   const port = await app.get(GatewayServer).listen(0, '127.0.0.1')
   url = `http://127.0.0.1:${port}/mcp`
@@ -235,6 +243,8 @@ describe('MCP gateway', () => {
       },
     ])
     expect(rejected(await call(client, 'read_repo', { path: '.' }))).toBe('TICKET_CLOSED')
+    // 더 읽을 에이전트가 없으니 대상 슬롯(b)만 내린다. live였던 슬롯 a는 그대로다.
+    expect(scaled.sort()).toEqual(['be-b', 'fe-b'])
     await client.close()
   })
 
@@ -245,6 +255,7 @@ describe('MCP gateway', () => {
     const client = await connect()
     expect((await call(client, 'submit_result', { result: result({ status, ...extra }) })).structuredContent).toEqual({ accepted: true })
     expect(run.status).toBe('needs_user')
+    expect(scaled).toEqual([])
     expect(run.agent_result).toMatchObject({ status, ...extra })
     expect(run.gateway_token_hash).toBeNull()
     await client.close()

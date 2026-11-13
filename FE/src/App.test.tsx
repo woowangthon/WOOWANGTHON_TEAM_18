@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { beforeEach, expect, it, vi } from 'vitest'
 import App from './App.tsx'
+import { WithQuery } from './test-utils.tsx'
 
 // 실제 Supabase를 부르지 않는다. 테스트 전용 대역이라 MOCK 표식은 필요 없다(conventions §6).
 type Listener = (event: string, session: unknown) => void
@@ -41,13 +42,26 @@ beforeEach(() => {
 
 const renderApp = (path: string, initial: 'in' | 'out' | 'restoring' = 'in', signedInAs: unknown = session) => {
   render(
-    <MemoryRouter initialEntries={[path]}>
-      <App />
-    </MemoryRouter>,
+    <WithQuery>
+      <MemoryRouter initialEntries={[path]}>
+        <App />
+      </MemoryRouter>
+    </WithQuery>,
   )
   if (initial !== 'restoring') emit('INITIAL_SESSION', initial === 'in' ? signedInAs : null)
 }
 const h1 = () => screen.getByRole('heading', { level: 1 }).textContent
+// 운영자 화면은 코드를 따로 받아 오므로 제목이 조금 늦게 뜬다.
+const h1Is = (title: string) => screen.findByRole('heading', { level: 1, name: title })
+
+// 같은 화면 코드는 한 번 내려받으면 이 파일의 뒤 시험에서는 이미 있으므로, 이 시험이 파일의 첫 번째 지연 화면 시험이어야 한다.
+it('keeps the top bar and shows a skeleton while the admin screen is being downloaded', async () => {
+  renderApp('/admin', 'in', sessionWith({ role: 'admin' }))
+  expect(screen.getByText('불러오는 중…')).toBeTruthy()
+  expect(screen.getByRole('link', { name: '관리자' })).toBeTruthy()
+  expect(await h1Is('관리자')).toBeTruthy()
+  expect(screen.queryByText('불러오는 중…')).toBeNull()
+})
 
 // 화면을 채우는 이슈(#51~#57)는 각자 자기 페이지 파일을 고치므로, 여기서는 경로와 페이지의 연결만 본다.
 const publicRoutes = [
@@ -79,15 +93,17 @@ it.each(protectedRoutes)('%s sends a signed-out visitor to the login page', (pat
   expect(h1()).toBe('로그인')
 })
 
-it('sends the root path to the dashboard when signed in', () => {
+it('shows the landing at the root path when signed in, with a link to the dashboard', () => {
   renderApp('/')
-  expect(h1()).toBe('대시보드')
+  expect(h1()).toBe('GitHub 레포 하나로, 학교 PC에 배포까지')
+  expect(screen.getAllByRole('link', { name: '대시보드로' })[0]?.getAttribute('href')).toBe('/dashboard')
+  expect(screen.queryByRole('link', { name: '로그인' })).toBeNull()
 })
 
 it('shows the public landing at the root path when signed out', () => {
   renderApp('/', 'out')
   expect(h1()).toBe('GitHub 레포 하나로, 학교 PC에 배포까지')
-  expect(screen.getByRole('link', { name: '로그인' }).getAttribute('href')).toBe('/login')
+  expect(screen.getAllByRole('link', { name: '로그인' })[0]?.getAttribute('href')).toBe('/login')
   expect(screen.getAllByRole('link', { name: '시작하기' })[0]?.getAttribute('href')).toBe('/signup')
 })
 
@@ -107,7 +123,7 @@ it('shows the app bar with the email, links and logout on protected pages', () =
   expect(screen.getByRole('link', { name: '대시보드' }).getAttribute('href')).toBe('/dashboard')
   expect(screen.getByRole('link', { name: '프로필' }).getAttribute('href')).toBe('/profile')
   expect(screen.getByRole('link', { name: '내 배포' }).getAttribute('href')).toBe('/deploys')
-  expect(screen.getByRole('link', { name: 'WCP' }).getAttribute('href')).toBe('/dashboard')
+  expect(screen.getByRole('link', { name: 'WCP' }).getAttribute('href')).toBe('/')
   expect(screen.getByRole('button', { name: '로그아웃' })).toBeTruthy()
 })
 
@@ -185,9 +201,9 @@ it('shows the expired-session screen and returns to the same page after logging 
 })
 
 // Admin Page(#101): 관리자는 토큰의 app_metadata.role이 admin일 때뿐이다. 판단은 서버가 하고, 화면은 편의로 막는다.
-it('opens the Admin Page for an admin and shows the menu link', () => {
+it('opens the Admin Page for an admin and shows the menu link', async () => {
   renderApp('/admin', 'in', sessionWith({ role: 'admin' }))
-  expect(h1()).toBe('관리자')
+  expect(await h1Is('관리자')).toBeTruthy()
   expect(screen.getByRole('link', { name: '관리자' })).toBeTruthy()
 })
 
@@ -203,12 +219,29 @@ it('does not show the menu link to a non-admin, nor to a user whose only role is
   expect(screen.queryByRole('link', { name: '관리자' })).toBeNull()
 })
 
-it('hides the deploy menu from an admin (monitoring account) and keeps it for a non-admin', () => {
-  renderApp('/dashboard', 'in', sessionWith({ role: 'admin' }))
-  expect(screen.queryByRole('link', { name: '내 배포' })).toBeNull()
-  for (const name of ['대시보드', '프로필', '관리자']) {
-    expect(screen.getByRole('link', { name })).toBeTruthy()
+it('shows an admin only the admin menu (no dashboard, profile or deploys)', () => {
+  renderApp('/admin', 'in', sessionWith({ role: 'admin' }))
+  expect(screen.getByRole('link', { name: '관리자' })).toBeTruthy()
+  for (const name of ['대시보드', '프로필', '내 배포']) {
+    expect(screen.queryByRole('link', { name })).toBeNull()
   }
+})
+
+it.each([
+  '/dashboard',
+  '/profile',
+  '/deploys',
+  '/deploys/0b6f0c1e-4a52-4d8e-9a1b-3f7d2c5e8a90',
+  '/deploys/0b6f0c1e-4a52-4d8e-9a1b-3f7d2c5e8a90/secrets',
+  '/deploy/new',
+])('sends an admin who opens %s to the Admin Page', async (path) => {
+  renderApp(path, 'in', sessionWith({ role: 'admin' }))
+  expect(await h1Is('관리자')).toBeTruthy()
+})
+
+it('does not send a non-admin whose only role is a user_metadata one away from the student pages', () => {
+  renderApp('/dashboard', 'in', sessionWith({}, { role: 'admin' }))
+  expect(h1()).toBe('대시보드')
 })
 
 it('shows the deploy menu to a non-admin', () => {

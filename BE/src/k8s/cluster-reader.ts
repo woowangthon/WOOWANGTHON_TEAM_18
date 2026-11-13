@@ -196,17 +196,28 @@ export class ClusterReader {
     return items.map(withoutBookkeeping)
   }
 
-  /** Pod 로그의 끝부분. `tailLines`는 기본 200, 최대 2000이고 응답은 256 KiB에서 잘린다. `previous`면 직전 컨테이너의 로그다. */
+  /**
+   * Pod 로그의 끝부분. `tailLines`는 기본 200, 최대 2000이고 응답은 256 KiB에서 잘린다. `previous`면 직전 컨테이너의 로그다.
+   * `sinceSeconds`가 있으면 그만큼 최근 줄만이다.
+   */
   async logs(
     slug: string,
     pod: string,
-    { container, tailLines = DEFAULT_TAIL, previous = false }: { container?: string; tailLines?: number; previous?: boolean } = {},
+    {
+      container,
+      tailLines = DEFAULT_TAIL,
+      previous = false,
+      sinceSeconds,
+    }: { container?: string; tailLines?: number; previous?: boolean; sinceSeconds?: number } = {},
   ): Promise<string> {
     // 요청 경로와 쿼리에 들어가는 값이다.
     if (!POD_NAME.test(pod)) throw new Error(`Not a valid pod name: ${JSON.stringify(pod)}`)
     if (container !== undefined && !CONTAINER_NAME.test(container)) throw new Error(`Not a valid container name: ${JSON.stringify(container)}`)
     if (!Number.isInteger(tailLines) || tailLines < 1) throw new Error(`Not a valid tailLines: ${JSON.stringify(tailLines)}`)
-    const query = `tailLines=${Math.min(tailLines, MAX_TAIL)}&limitBytes=${MAX_LOG_BYTES}${container ? `&container=${container}` : ''}${previous ? '&previous=true' : ''}`
+    if (sinceSeconds !== undefined && !(Number.isInteger(sinceSeconds) && sinceSeconds >= 1)) throw new Error(`Not a valid sinceSeconds: ${JSON.stringify(sinceSeconds)}`)
+    const query =
+      `tailLines=${Math.min(tailLines, MAX_TAIL)}&limitBytes=${MAX_LOG_BYTES}${container ? `&container=${container}` : ''}${previous ? '&previous=true' : ''}` +
+      (sinceSeconds !== undefined ? `&sinceSeconds=${sinceSeconds}` : '')
     return this.k8s.request('GET', `/api/v1/namespaces/${space(slug)}/pods/${pod}/log?${query}`)
   }
 
@@ -222,6 +233,18 @@ export class ClusterReader {
     this.logger.error(`GET ${path} answered 200 without a list`)
     throw new ClusterError('unexpected', 200)
   }
+}
+
+/**
+ * `rawObjects(slug, 'pods', …)`로 읽은 Pod 원본 중 가장 최근에 만든 것(롤아웃 중이면 새 Pod)의 이름과 컨테이너 재시작 수의 합.
+ * 없으면 null. 게이트웨이의 `read_pod_logs`와 문제 티켓의 로그(api.md 3번 `failure.logs`)가 같은 Pod를 고르게 한 곳에 둔다.
+ */
+export function newestPod(pods: Record<string, unknown>[]): { name: string; restarts: number } | null {
+  const created = (p: Record<string, unknown>) => text(record(p.metadata).creationTimestamp) ?? ''
+  const newest = [...pods].sort((a, b) => created(b).localeCompare(created(a)))[0]
+  const name = newest ? text(record(newest.metadata).name) : undefined
+  if (!newest || !name) return null
+  return { name, restarts: records(record(newest.status).containerStatuses).reduce((sum, s) => sum + count(s.restartCount), 0) }
 }
 
 export function space(slug: string): string {

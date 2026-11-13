@@ -3,6 +3,7 @@ import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { AdminNode, AdminProject, NodesResponse, ProjectsResponse } from '../admin/types.ts'
 import { ApiError } from '../lib/api.ts'
+import { WithQuery } from '../test-utils.tsx'
 import AdminPage from './AdminPage.tsx'
 
 // 실제 BE를 부르지 않는다. 테스트 전용 대역이라 MOCK 표식은 필요 없다(conventions §6).
@@ -94,9 +95,11 @@ const advance = (ms: number) =>
 const reads = (path: string) => api.apiFetch.mock.calls.filter((c) => c[0] === path).length
 const show = async () => {
   const view = render(
-    <MemoryRouter>
-      <AdminPage />
-    </MemoryRouter>,
+    <WithQuery>
+      <MemoryRouter>
+        <AdminPage />
+      </MemoryRouter>
+    </WithQuery>,
   )
   await advance(0)
   return view

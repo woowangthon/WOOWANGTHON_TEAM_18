@@ -3,6 +3,7 @@ import { MemoryRouter } from 'react-router'
 import { beforeEach, expect, it, vi } from 'vitest'
 import type { DeployListItem } from '../deploy/progress.ts'
 import { ApiError } from '../lib/api.ts'
+import { WithQuery } from '../test-utils.tsx'
 import DeploysPage from './DeploysPage.tsx'
 
 // 실제 BE를 부르지 않는다. 테스트 전용 대역이라 MOCK 표식은 필요 없다(conventions §6).
@@ -29,9 +30,11 @@ beforeEach(() => {
 
 const show = () =>
   render(
-    <MemoryRouter>
-      <DeploysPage />
-    </MemoryRouter>,
+    <WithQuery>
+      <MemoryRouter>
+        <DeploysPage />
+      </MemoryRouter>
+    </WithQuery>,
   )
 const row = (slug: string) => screen.getAllByRole('row').find((r) => r.textContent.includes(slug))
 

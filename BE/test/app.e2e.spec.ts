@@ -50,4 +50,25 @@ describe('CORS', () => {
     const res = await http.get('/api/health').set('Origin', allowed).expect(200)
     expect(res.headers['access-control-allow-origin']).toBeUndefined()
   })
+
+  it('lets the browser cache the preflight for two hours', async () => {
+    const http = await start([allowed])
+    const res = await http
+      .options('/api/deploys')
+      .set('Origin', allowed)
+      .set('Access-Control-Request-Method', 'GET')
+      .set('Access-Control-Request-Headers', 'authorization')
+      .expect(204)
+    expect(res.headers['access-control-max-age']).toBe('7200')
+    expect(res.headers['access-control-allow-origin']).toBe(allowed)
+  })
+
+  it('does not answer the preflight of an origin outside the list with a cache time', async () => {
+    const http = await start([allowed])
+    const res = await http
+      .options('/api/deploys')
+      .set('Origin', 'http://evil.test')
+      .set('Access-Control-Request-Method', 'GET')
+    expect(res.headers['access-control-allow-origin']).toBeUndefined()
+  })
 })

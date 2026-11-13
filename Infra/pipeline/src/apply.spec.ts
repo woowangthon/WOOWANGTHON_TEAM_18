@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
-import { deploymentReady, groupDocs, podSignal, quotaEvent, runApply, waitLimitSeconds } from './apply.js'
+import { deploymentReady, groupDocs, podSignal, quotaEvent, runApply, unschedulable, waitLimitSeconds } from './apply.js'
 import type { DeployInput } from './deploy-input.js'
 import { deployInput, digest } from './fixtures.js'
 import { KubeError, splitManifest } from './kube.js'
@@ -35,6 +35,12 @@ const pod = (name: string, containerStatuses: unknown[] = []) => ({
   status: { phase: 'Pending', containerStatuses },
 })
 const waiting = (reason: string) => [{ name: 'c', state: { waiting: { reason } } }]
+const SCHED_MSG = '0/3 nodes are available: 1 node(s) had untolerated taint, 2 Insufficient cpu.'
+// 스케줄러가 노드를 찾지 못한 Pod(Pending, PodScheduled=False/Unschedulable).
+const unscheduled = (name: string) => ({
+  ...pod(name),
+  status: { phase: 'Pending', conditions: [{ type: 'PodScheduled', status: 'False', reason: 'Unschedulable', message: SCHED_MSG }] },
+})
 
 const pods = (svc: string) => `GET /api/v1${NS}/pods?labelSelector=app%3D${svc}%2Cslot%3Db`
 const events = `GET /api/v1${NS}/events`
@@ -51,6 +57,20 @@ function cluster(over: Record<string, Route> = {}) {
   routes[events] = list()
   return fakeKube({ ...routes, ...over })
 }
+
+describe('unschedulable', () => {
+  it('is the PodScheduled=False/Unschedulable condition of a Pending Pod', () => {
+    expect(unschedulable(unscheduled('x'))).toMatchObject({ type: 'PodScheduled', reason: 'Unschedulable', message: SCHED_MSG })
+  })
+  it.each([
+    ['a Pending Pod that is scheduled (pulling, creating)', { phase: 'Pending', conditions: [{ type: 'PodScheduled', status: 'True' }] }],
+    ['a Pending Pod with no conditions yet', { phase: 'Pending' }],
+    ['a Running Pod with an old Unschedulable condition', { phase: 'Running', conditions: [{ type: 'PodScheduled', status: 'False', reason: 'Unschedulable' }] }],
+    ['a Pending Pod not scheduled for another reason', { phase: 'Pending', conditions: [{ type: 'PodScheduled', status: 'False', reason: 'SchedulingGated' }] }],
+  ])('is null for %s', (_, status) => {
+    expect(unschedulable({ status })).toBeNull()
+  })
+})
 
 describe('waitLimitSeconds', () => {
   it('is startupTimeoutSeconds + 120, at most 7 minutes', () => {
@@ -205,6 +225,34 @@ describe('runApply', () => {
     const failure = (await runApply(built(), 'b', MANIFEST, call, fakeClock())).failure
     expect(failure).toMatchObject({ kind: 'platform', code: 'IMAGE_PULL_FAILED', service: 'ai', message: `ai-b: ${reason}` })
     expect(failure?.kind === 'platform' && (failure.detail as { pod: unknown }).pod).toMatchObject({ metadata: { name: 'ai-b-x' } })
+  })
+
+  it('reports a Pod the scheduler could not place, still Pending at the limit, as platform SCHEDULING_FAILED (no agent)', async () => {
+    const clock = fakeClock()
+    const fse = { metadata: { name: 'f' }, involvedObject: { kind: 'Pod', name: 'ai-b-x' }, reason: 'FailedScheduling', message: SCHED_MSG }
+    const { call } = cluster({ [dep('ai')]: ok(notReady), [pods('ai')]: list(unscheduled('ai-b-x')), [events]: list(fse) })
+    const failure = (await runApply(built(), 'b', MANIFEST, call, clock)).failure
+    expect(failure).toMatchObject({ kind: 'platform', code: 'SCHEDULING_FAILED', service: 'ai', message: `ai-b: Unschedulable for 240s: ${SCHED_MSG}` })
+    const detail = (failure as { detail: { pod: { metadata: Record<string, unknown> }; events: unknown[] } }).detail
+    expect(detail.pod.metadata.name).toBe('ai-b-x')
+    expect(detail.pod.metadata.managedFields).toBeUndefined()
+    // FailedScheduling 이벤트는 근거로만 싣는다.
+    expect(detail.events).toEqual([fse])
+    // 바로 실패하지 않는다: 노드 자원은 풀릴 수 있어 한도(240초)까지 기다린다.
+    expect(clock.sleep).toHaveBeenCalledTimes(80)
+  })
+
+  it('does not give up early on an Unschedulable Pod that gets placed and becomes Ready before the limit', async () => {
+    let n = 0
+    const { call } = cluster({ [dep('ai')]: () => (++n <= 5 ? ok(notReady) : ok(readyDep)), [pods('ai')]: list(unscheduled('ai-b-x')) })
+    const report = await runApply(built(), 'b', MANIFEST, call, fakeClock())
+    expect(report).toMatchObject({ ok: true, failure: null })
+  })
+
+  it('keeps a quota FailedCreate a student failure even when a Pod is also Unschedulable', async () => {
+    const e = { metadata: { name: 'q' }, involvedObject: { kind: 'ReplicaSet', name: 'ai-b-1' }, reason: 'FailedCreate', message: 'exceeded quota: project-cap' }
+    const { call } = cluster({ [dep('ai')]: ok(notReady), [pods('ai')]: list(unscheduled('ai-b-x')), [events]: list(e) })
+    expect((await runApply(built(), 'b', MANIFEST, call, fakeClock())).failure).toMatchObject({ kind: 'student', errorMessage: `ai-b: FailedCreate: ${e.message}` })
   })
 
   it('times out after startupTimeoutSeconds + 120 with the first Pod as it is', async () => {

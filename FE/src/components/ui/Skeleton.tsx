@@ -15,3 +15,15 @@ export function Skeleton({
     />
   )
 }
+
+// 화면 하나의 데이터나 코드를 기다리는 동안의 자리: 블록 Skeleton과 "불러오는 중…" 알림.
+export function LoadingBlock() {
+  return (
+    <div className="flex flex-col gap-3">
+      <Skeleton block />
+      <p role="status" className="text-sm text-muted">
+        불러오는 중…
+      </p>
+    </div>
+  )
+}

@@ -1,15 +1,23 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
-import { beforeEach, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { AuthContext } from '../auth/auth-context.ts'
+import { WithQuery } from '../test-utils.tsx'
 import ProfilePage from './ProfilePage.tsx'
 
 // 실제 Supabase를 부르지 않는다. 테스트 전용 대역이라 MOCK 표식은 필요 없다(conventions §6).
 const auth = vi.hoisted(() => ({
   getUserIdentities: vi.fn(),
   linkIdentity: vi.fn(),
+  signInWithPassword: vi.fn(),
+  updateUser: vi.fn(),
 }))
 vi.mock('../lib/supabase.ts', () => ({ supabase: { auth } }))
+const api = vi.hoisted(() => ({ apiFetch: vi.fn() }))
+vi.mock('../lib/api.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/api.ts')>()),
+  apiFetch: api.apiFetch,
+}))
 
 const identities = (list: unknown[]) => ({ data: { identities: list }, error: null })
 const emailOnly = identities([{ provider: 'email' }])
@@ -21,22 +29,35 @@ const githubLinked = identities([
 beforeEach(() => {
   auth.getUserIdentities.mockReset()
   auth.linkIdentity.mockReset()
+  auth.signInWithPassword.mockReset()
+  auth.updateUser.mockReset()
+  api.apiFetch.mockReset().mockResolvedValue({ deploys: [] })
 })
 
-const sessionOf = (appMetadata: Record<string, unknown> = {}) =>
-  ({ access_token: 'tok', user: { email: 'me@example.com', app_metadata: appMetadata } }) as never
-const renderPage = (url = '/profile', appMetadata: Record<string, unknown> = {}) =>
+const sessionOf = (appMetadata: Record<string, unknown> = {}, email = 'me@example.com') =>
+  ({
+    access_token: 'tok',
+    user: {
+      email,
+      app_metadata: appMetadata,
+      created_at: '2026-11-01T03:00:00.000Z',
+      last_sign_in_at: '2026-11-13T05:30:00.000Z',
+    },
+  }) as never
+const renderPage = (url = '/profile', appMetadata: Record<string, unknown> = {}, email = 'me@example.com') =>
   render(
-    <AuthContext.Provider
-      value={{
-        state: { status: 'signedIn', session: sessionOf(appMetadata) },
-        signOut: () => Promise.resolve(),
-      }}
-    >
-      <MemoryRouter initialEntries={[url]}>
-        <ProfilePage />
-      </MemoryRouter>
-    </AuthContext.Provider>,
+    <WithQuery>
+      <AuthContext.Provider
+        value={{
+          state: { status: 'signedIn', session: sessionOf(appMetadata, email) },
+          signOut: () => Promise.resolve(),
+        }}
+      >
+        <MemoryRouter initialEntries={[url]}>
+          <ProfilePage />
+        </MemoryRouter>
+      </AuthContext.Provider>
+    </WithQuery>,
   )
 const linkButton = () => screen.getByRole('button', { name: 'GitHub로 연동하기' })
 
@@ -206,5 +227,167 @@ it('treats a thrown getUserIdentities as a failed check, not as unlinked', async
   expect(await screen.findByText('연동 상태를 확인하지 못했어요')).toBeTruthy()
   await waitFor(() => {
     expect(screen.queryByRole('button', { name: 'GitHub로 연동하기' })).toBeNull()
+  })
+})
+
+it('shows the account info: email, join date and last sign-in', async () => {
+  auth.getUserIdentities.mockResolvedValue(emailOnly)
+  renderPage()
+  const section = screen.getByRole('region', { name: '계정 정보' })
+  expect(within(section).getByText('me@example.com')).toBeTruthy()
+  expect(within(section).getByText(new Date('2026-11-01T03:00:00.000Z').toLocaleString('ko-KR'))).toBeTruthy()
+  expect(within(section).getByText(new Date('2026-11-13T05:30:00.000Z').toLocaleString('ko-KR'))).toBeTruthy()
+  await screen.findByText('GitHub 계정 연동')
+})
+
+it('has a section menu that jumps to the four sections', async () => {
+  auth.getUserIdentities.mockResolvedValue(emailOnly)
+  renderPage()
+  const menu = screen.getByRole('navigation', { name: '프로필 구역' })
+  expect(within(menu).getAllByRole('link').map((a) => a.getAttribute('href'))).toEqual([
+    '#account',
+    '#password',
+    '#github',
+    '#deploys',
+  ])
+  await screen.findByText('GitHub 계정 연동')
+})
+
+it('summarises my deploys by project: count and running, with a link to the list', async () => {
+  auth.getUserIdentities.mockResolvedValue(emailOnly)
+  const run = (id: string, slug: string, status: string, createdAt: string) => ({ id, slug, status, createdAt, repo: `me/${slug}`, commit: 'x', stage: null, url: null })
+  api.apiFetch.mockResolvedValue({
+    deploys: [
+      run('3', 'a', 'succeeded', '2026-11-13T00:00:00Z'),
+      run('2', 'a', 'failed', '2026-11-12T00:00:00Z'),
+      run('1', 'b', 'failed', '2026-11-11T00:00:00Z'),
+    ],
+  })
+  renderPage()
+  const section = screen.getByRole('region', { name: '내 배포 요약' })
+  await waitFor(() => {
+    expect(section.textContent).toContain('프로젝트 2개 · 실행 중 1개')
+  })
+  expect(within(section).getByRole('link', { name: '내 배포 보기' }).getAttribute('href')).toBe('/deploys')
+})
+
+it('says the summary failed to load and retries', async () => {
+  auth.getUserIdentities.mockResolvedValue(emailOnly)
+  api.apiFetch.mockRejectedValueOnce(new Error('down')).mockResolvedValue({ deploys: [] })
+  renderPage()
+  const section = screen.getByRole('region', { name: '내 배포 요약' })
+  fireEvent.click(await within(section).findByRole('button', { name: '다시 시도' }))
+  await waitFor(() => {
+    expect(section.textContent).toContain('프로젝트 0개 · 실행 중 0개')
+  })
+})
+
+describe('password change', () => {
+  const field = (name: string) => screen.getByLabelText<HTMLInputElement>(name)
+  const type = (name: string, value: string) => {
+    fireEvent.change(field(name), { target: { value } })
+  }
+  const fill = (current = 'oldpass12', next = 'newpass123', confirm = next) => {
+    type('현재 비밀번호', current)
+    type('새 비밀번호', next)
+    type('새 비밀번호 확인', confirm)
+  }
+  const submit = () => {
+    fireEvent.click(screen.getByRole('button', { name: '비밀번호 바꾸기' }))
+  }
+  beforeEach(() => {
+    auth.getUserIdentities.mockResolvedValue(emailOnly)
+    auth.signInWithPassword.mockResolvedValue({ error: null })
+    auth.updateUser.mockResolvedValue({ error: null })
+  })
+
+  it('re-checks the current password, then updates it, and clears the form', async () => {
+    renderPage()
+    fill()
+    submit()
+    expect(await screen.findByText('비밀번호를 바꿨어요')).toBeTruthy()
+    expect(auth.signInWithPassword).toHaveBeenCalledWith({ email: 'me@example.com', password: 'oldpass12' })
+    expect(auth.updateUser).toHaveBeenCalledWith({ password: 'newpass123' })
+    expect(auth.signInWithPassword.mock.invocationCallOrder[0]).toBeLessThan(auth.updateUser.mock.invocationCallOrder[0] ?? 0)
+    expect(field('현재 비밀번호').value).toBe('')
+    expect(field('새 비밀번호').value).toBe('')
+  })
+
+  it('applies the signup rules before calling Supabase', () => {
+    renderPage()
+    fill('oldpass12', 'short', 'short')
+    submit()
+    expect(screen.getByText('8자 이상이어야 해요')).toBeTruthy()
+    expect(auth.signInWithPassword).not.toHaveBeenCalled()
+  })
+
+  it('asks for every field and a matching confirmation', () => {
+    renderPage()
+    fill('', 'newpass123', 'different123')
+    submit()
+    expect(screen.getByText('현재 비밀번호를 입력해 주세요')).toBeTruthy()
+    expect(screen.getByText('비밀번호가 서로 달라요')).toBeTruthy()
+    expect(auth.updateUser).not.toHaveBeenCalled()
+  })
+
+  it('refuses a new password equal to the current one', () => {
+    renderPage()
+    fill('samepass12', 'samepass12')
+    submit()
+    expect(screen.getByText('현재 비밀번호와 다른 비밀번호를 써 주세요')).toBeTruthy()
+    expect(auth.signInWithPassword).not.toHaveBeenCalled()
+  })
+
+  it('shows a wrong current password on its field and does not update', async () => {
+    auth.signInWithPassword.mockResolvedValue({ error: { code: 'invalid_credentials', status: 400 } })
+    renderPage()
+    fill()
+    submit()
+    expect(await screen.findByText('현재 비밀번호가 맞지 않아요')).toBeTruthy()
+    expect(auth.updateUser).not.toHaveBeenCalled()
+  })
+
+  it('shows the weak-password error from the server on the new password field', async () => {
+    auth.updateUser.mockResolvedValue({ error: { code: 'weak_password', status: 422 } })
+    renderPage()
+    fill()
+    submit()
+    expect(await screen.findByText(/더 안전한 비밀번호를 써 주세요/)).toBeTruthy()
+    expect(screen.queryByText('비밀번호를 바꿨어요')).toBeNull()
+  })
+
+  it('says the password was not changed when the update fails for another reason', async () => {
+    auth.updateUser.mockResolvedValue({ error: { code: 'unexpected_failure', status: 500 } })
+    renderPage()
+    fill()
+    submit()
+    expect(await screen.findByText('비밀번호를 바꾸지 못했어요')).toBeTruthy()
+    expect(screen.queryByText('비밀번호를 바꿨어요')).toBeNull()
+  })
+
+  it('says to wait when the re-check is rate limited, and treats a thrown error as a failure', async () => {
+    auth.signInWithPassword.mockResolvedValueOnce({ error: { code: 'over_request_rate_limit', status: 429 } })
+    renderPage()
+    fill()
+    submit()
+    expect(await screen.findByText('시도가 많아서 잠시 쉬어요')).toBeTruthy()
+    auth.signInWithPassword.mockRejectedValueOnce(new Error('offline'))
+    submit()
+    expect(await screen.findByText('비밀번호를 바꾸지 못했어요')).toBeTruthy()
+  })
+
+  it.each(['test@example.com', 'admin@example.com', 'Test@Example.com'])('locks the demo account %s', (email) => {
+    renderPage('/profile', {}, email)
+    expect(screen.getByText('시연 계정은 비밀번호를 바꿀 수 없어요')).toBeTruthy()
+    for (const name of ['현재 비밀번호', '새 비밀번호', '새 비밀번호 확인']) {
+      expect(field(name).disabled).toBe(true)
+    }
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: '비밀번호 바꾸기' }).disabled).toBe(true)
+  })
+
+  it('does not lock an ordinary account', () => {
+    renderPage()
+    expect(screen.queryByText('시연 계정은 비밀번호를 바꿀 수 없어요')).toBeNull()
+    expect(field('현재 비밀번호').disabled).toBe(false)
   })
 })
