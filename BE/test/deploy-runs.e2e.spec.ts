@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { ConflictException, type INestApplication, Logger } from '@nestjs/common'
+import { ConflictException, type INestApplication, Logger, ServiceUnavailableException } from '@nestjs/common'
 import request from 'supertest'
 import type { App } from 'supertest/types.js'
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from 'vitest'
@@ -11,6 +11,7 @@ import { ClusterCapacity } from '../src/k8s/cluster-capacity.js'
 import { ClusterError } from '../src/k8s/cluster-error.js'
 import { ClusterReader } from '../src/k8s/cluster-reader.js'
 import { DeploymentScaler } from '../src/k8s/deployment-scaler.js'
+import { SpaceService } from '../src/k8s/space.service.js'
 import { combineDigests, serviceDigest } from '../src/deploys/secrets-input.js'
 import { errorBody, JWKS_URL, keySet, token } from './auth-helpers.js'
 import { startApp } from './start-app.js'
@@ -50,6 +51,9 @@ let scaled: { slug: string; name: string }[]
 let scaleFails: Record<string, Error>
 // 가짜 클러스터 사용률: true면 자리가 없다.
 let clusterFull: boolean
+// 가짜 공간 만들기: 부른 slug와 그때까지의 GoCD 호출 수(순서를 본다). spaceFails가 있으면 그것으로 실패한다.
+let spaceCalls: { slug: string; gocdCallsBefore: number }[]
+let spaceFails: Error | undefined
 let app: INestApplication<App>
 let logError: MockInstance<Logger['error']>
 
@@ -127,6 +131,12 @@ const fetchMock = vi.fn<typeof fetch>((input, init) => {
   return Promise.reject(new Error(`unexpected fetch ${url}`))
 })
 const callsTo = (url: string) => fetchMock.mock.calls.filter(([u]) => urlOf(u) === url)
+const fakeSpace = {
+  ensureSpace: (slug: string) => {
+    spaceCalls.push({ slug, gocdCallsBefore: callsTo(GOCD_URL).length })
+    return spaceFails ? Promise.reject(spaceFails) : Promise.resolve()
+  },
+}
 interface Sent {
   ticket: { ticketId: string; stage: string; raw: unknown; logs: { lines: unknown[] }; deployInput: unknown }
   gateway: { token: string; expiresAt: string }
@@ -185,6 +195,8 @@ beforeEach(async () => {
   prepare = (id) => Promise.resolve(preparedFor(id))
   restOverride = undefined
   clusterFull = false
+  spaceCalls = []
+  spaceFails = undefined
   spaceDeployments = []
   slotPods = []
   podLog = ''
@@ -213,6 +225,8 @@ beforeEach(async () => {
       })
       .overrideProvider(ClusterCapacity)
       .useValue({ isFull: () => Promise.resolve(clusterFull) })
+      .overrideProvider(SpaceService)
+      .useValue(fakeSpace)
       .overrideProvider(DeploymentScaler)
       .useValue({
         scaleToZero: (slug: string, name: string) => {
@@ -249,6 +263,27 @@ describe('POST /api/deploys/:id/start', () => {
     expect(bodyOf(calls[0])).toEqual({ environment_variables: [{ name: 'DEPLOY_ID', value: id }], update_materials_before_scheduling: true })
   })
 
+  it('makes sure the space exists before the pipeline runs, even when no service has secret keys', async () => {
+    const id = seedDeploy({ slug: 'fresh-app' })
+    const res = await start(id)
+    expect(res.status).toBe(202)
+    expect(spaceCalls).toEqual([{ slug: 'fresh-app', gocdCallsBefore: 0 }])
+    expect(callsTo(GOCD_URL)).toHaveLength(1)
+  })
+
+  it('answers 503 CLUSTER_UNAVAILABLE and records nothing when the space cannot be made', async () => {
+    spaceFails = new ServiceUnavailableException({ code: 'CLUSTER_UNAVAILABLE', message: 'Could not reach the cluster' })
+    const id = seedDeploy()
+    const res = await start(id)
+    expect(res.status).toBe(503)
+    expect(res.body).toEqual(errorBody('CLUSTER_UNAVAILABLE'))
+    expect(db.deploy_runs ?? []).toEqual([])
+    expect(callsTo(GOCD_URL)).toHaveLength(0)
+    // 기록이 없으므로 같은 요청을 다시 보내면 시작된다.
+    spaceFails = undefined
+    expect((await start(id)).status).toBe(202)
+  })
+
   it('does not reveal another user\'s deploy, a missing one, or a malformed id (all 404, nothing started)', async () => {
     const mine = seedDeploy({ user_id: OTHER })
     for (const id of [mine, randomUUID(), 'not-a-uuid']) {
@@ -282,6 +317,7 @@ describe('POST /api/deploys/:id/start', () => {
     expect(res.status).toBe(409)
     expect(res.body).toEqual(errorBody('NOT_READY'))
     expect(db.deploy_runs ?? []).toEqual([])
+    expect(spaceCalls).toEqual([])
     expect(callsTo(GOCD_URL)).toHaveLength(0)
   })
 
@@ -411,7 +447,9 @@ describe('POST /api/deploys/:id/start with the real readiness check', () => {
           preparedWith.push(secretHash)
           return prepare(id)
         },
-      }),
+      })
+        .overrideProvider(SpaceService)
+        .useValue(fakeSpace),
     )
   })
 
@@ -453,6 +491,8 @@ describe('POST /api/deploys/:id/start with the real readiness check', () => {
     const res = await start(seedDeploy({ spec: specWith([]) }))
     expect(res.status).toBe(202)
     expect(preparedWith).toEqual([null])
+    // 비밀값 쓰기를 거치지 않았어도(공간을 만들 곳이 여기뿐이다) 파이프라인보다 먼저 공간을 확인한다.
+    expect(spaceCalls).toEqual([{ slug: 'my-app', gocdCallsBefore: 0 }])
   })
 
   it('still hides another user\'s deploy before the readiness check runs', async () => {

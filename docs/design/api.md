@@ -427,7 +427,7 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
 
 요청 본문은 없어도 되고 `{}`(JSON)도 받는다. 응답 `202`: `{ "deployId", "status": "queued" | "running", "stage": "build", "targetSlot": "a" | "b" }`. 실행 기록을 `queued`로 저장해 대기열에 세우고, 바로 출발할 수 있으면(도는 배포가 없고 클러스터에 자리가 있음) 그 자리에서 `running`으로 바꾸며 GoCD 파이프라인을 실행한 뒤 돌려준다. 아니면 `queued`로 돌려주고 차례가 오면 서버가 파이프라인을 실행한다(끝나기를 기다리지 않는다). FE는 이어서 `GET /api/deploys/:id/status`를 다시 읽는다.
 
-서버가 확인하는 것(순서대로): 내 배포인지(`404`) → 이미 시작했는지 → 클러스터에 자리가 있는지(`409 CLUSTER_FULL`) → 준비 상태가 "준비됨"인지(비밀값 · 필수 env, #82) → 배포 입력과 대상 슬롯을 만들고(`prepare`, #93) → 같은 프로젝트(`slug`)의 배포가 줄에 있거나 진행 중이 아닌지 → 실행 기록을 `queued`로 저장 → 대기열이 차례대로 파이프라인 실행.
+서버가 확인하는 것(순서대로): 내 배포인지(`404`) → 이미 시작했는지 → 클러스터에 자리가 있는지(`409 CLUSTER_FULL`) → 준비 상태가 "준비됨"인지(비밀값 · 필수 env, #82) → 배포 입력과 대상 슬롯을 만들고(`prepare`, #93) → 학생 공간 `proj-<slug>`가 있게 한다(없으면 만든다, [space.md](space.md). 비밀값이 없는 프로젝트는 비밀값 넣기에서 공간이 만들어지지 않으므로 여기서 확인한다) → 같은 프로젝트(`slug`)의 배포가 줄에 있거나 진행 중이 아닌지 → 실행 기록을 `queued`로 저장 → 대기열이 차례대로 파이프라인 실행.
 
 오류:
 - `401` · `404 DEPLOY_NOT_FOUND`: 위와 같다(남의 배포 포함)
@@ -436,6 +436,7 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
 - `409 DEPLOY_IN_PROGRESS`: 같은 프로젝트의 다른 배포가 `queued` · `running` · `fixing`이다. 그 실행이 1시간 넘게 바뀌지 않았으면 끝난 것으로 보고 `failed`(`TIMED_OUT`)로 마감한 뒤 이 배포를 시작한다(알림이 오지 않거나 `fixing`을 풀 해결 결과 처리가 없어도 프로젝트가 영영 막히지 않게)
 - `409 ALREADY_STARTED`: 이 배포는 이미 시작했다(다시 배포하려면 새로 저장한다)
 - `503 PIPELINE_UNAVAILABLE`: 바로 출발할 수 있었는데 GoCD에 닿지 못했거나 거절했다. 실행 기록은 남기지 않으므로 같은 요청을 다시 보내도 된다. (이미 `queued`로 기다리던 배포가 나중에 출발할 때 GoCD가 받지 않으면 요청이 끝난 뒤이므로 `failed`(`PIPELINE_UNAVAILABLE`)로 마감한다)
+- `503 CLUSTER_UNAVAILABLE`: 학생 공간을 확인 · 만들지 못했다(리더에 닿지 못함 · 거절). 실행 기록을 남기지 않으므로 같은 요청을 다시 보내도 된다
 - `503 DATABASE_UNAVAILABLE`
 
 ### `GET /api/deploys/:id/status` — 진행 상태 읽기 (소유자만)

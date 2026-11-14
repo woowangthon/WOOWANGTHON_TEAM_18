@@ -6,6 +6,7 @@ import { parseUuid } from '../common/uuid.js'
 import { redact, redactString } from '../common/redact.js'
 import { ClusterCapacity } from '../k8s/cluster-capacity.js'
 import { ClusterReader, newestPod } from '../k8s/cluster-reader.js'
+import { SpaceService } from '../k8s/space.service.js'
 import type { DeployWarning } from '../security/findings.js'
 import { SecurityScanService } from '../security/security-scan.service.js'
 import { AgentClient } from './agent.client.js'
@@ -118,6 +119,7 @@ export class DeployRunsService {
     private readonly reader: ClusterReader,
     private readonly queue: DeployQueue,
     private readonly capacity: ClusterCapacity,
+    private readonly space: SpaceService,
   ) {}
 
   /** 내 배포 하나. 없는 id · 남의 id · UUID가 아닌 id는 모두 404다. */
@@ -138,6 +140,8 @@ export class DeployRunsService {
     if (await this.capacity.isFull()) throw clusterFull()
     // 준비 안 됨(409 NOT_READY)은 여기서 던져진다.
     const prepared = await this.preparer.prepareIfReady(deploy.id)
+    // 공간은 비밀값을 쓸 때만 만들어졌다. 비밀값이 없는 프로젝트도 실행기가 배포할 수 있게 여기서 확인한다(이미 있으면 성공, 실패하면 503).
+    await this.space.ensureSpace(deploy.slug)
     const row = {
       deploy_id: deploy.id,
       user_id: user.id,
