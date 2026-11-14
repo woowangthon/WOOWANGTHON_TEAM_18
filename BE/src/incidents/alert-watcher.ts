@@ -141,7 +141,7 @@ export class AlertWatcher implements OnApplicationBootstrap, OnModuleDestroy {
       const gathered = await this.judge.gather(incident)
       const evidence = evidenceOf(gathered)
       // 근거를 저장하지 못해도(마이그레이션 전 · DB 오류) 멈추기와 판단은 계속한다.
-      if (!incident.evidence && evidence) await this.store.update(incident.id, { evidence }).catch(() => this.logger.warn('incident evidence not saved'))
+      if (!incident.evidence && evidence) await this.store.saveEvidence(incident.id, evidence).catch(() => this.logger.warn('incident evidence not saved'))
       if (incident.alertname === AUTO_STOP && (await this.autoStop(incident))) return
       await this.judgeAndNotify(incident, gathered)
     })()

@@ -133,7 +133,7 @@ it('shows why the service stopped with the kept log lines', async () => {
   const evidence = { pod: 'shop-a-1', restarts: 3, waiting: null, lastExit: { reason: 'OOMKilled', exitCode: 137 }, logs: ['line 1'] }
   incidents = [incident({ action: 'auto_stopped', evidence })]
   await show()
-  expect(screen.getByText('왜 멈췄나: 재시작 3번 · 마지막 종료: OOMKilled (코드 137)')).toBeTruthy()
+  expect(screen.getByText('알림 근거: 재시작 3번 · 마지막 종료: OOMKilled (코드 137)')).toBeTruthy()
   expect(screen.getByText('로그 마지막 1줄')).toBeTruthy()
 })
 
@@ -152,4 +152,17 @@ it('closes a banner with X and keeps it closed after the page is opened again', 
   await show()
   expect(screen.queryByText('서비스를 멈췄어요')).toBeNull()
   expect(screen.getByText('운영 알림')).toBeTruthy()
+})
+
+it('keeps what another tab closed in the meantime when closing a banner', async () => {
+  incidents = [incident({ id: 'a', action: 'auto_stopped' })]
+  render(
+    <WithQuery>
+      <IncidentNotice />
+    </WithQuery>,
+  )
+  await advance(0)
+  localStorage.setItem('wcp.closedIncidents', JSON.stringify(['other-tab']))
+  fireEvent.click(screen.getByRole('button', { name: '알림 닫기' }))
+  expect(JSON.parse(localStorage.getItem('wcp.closedIncidents') ?? '[]')).toEqual(['other-tab', 'a'])
 })

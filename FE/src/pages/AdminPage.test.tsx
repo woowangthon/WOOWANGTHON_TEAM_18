@@ -539,7 +539,7 @@ describe('운영 알림', () => {
     serve({ [INCIDENTS]: incidentsOf([incident({ action: 'auto_stopped', evidence })]) })
     await show()
     const card = within(incidentCard())
-    expect(card.getByText('왜 멈췄나: 재시작 4번 · 마지막 종료: Error (코드 1) · 시작하자마자 계속 꺼지고 있어요')).toBeTruthy()
+    expect(card.getByText('알림 근거: 재시작 4번 · 마지막 종료: Error (코드 1) · 시작하자마자 계속 꺼지고 있어요')).toBeTruthy()
     expect(card.getByText('로그 마지막 2줄')).toBeTruthy()
     expect(incidentCard().querySelector('pre')!.textContent).toBe('booting\n<b>Error</b>: ENOENT')
     expect(incidentCard().querySelector('pre b')).toBeNull()

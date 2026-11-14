@@ -5,6 +5,7 @@ import type { App } from 'supertest/types.js'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DeploysStore } from '../src/deploys/deploys.store.js'
 import { AlertWatcher } from '../src/incidents/alert-watcher.js'
+import { IncidentsStore } from '../src/incidents/incidents.store.js'
 import { ClusterError } from '../src/k8s/cluster-error.js'
 import { type AlertInfo, ClusterReader, type DeploymentInfo, type PodInfo } from '../src/k8s/cluster-reader.js'
 import { DeploymentScaler } from '../src/k8s/deployment-scaler.js'
@@ -215,6 +216,16 @@ describe('alert watcher', () => {
     ;(db.incidents[0].ai as Row).status = 'pending'
     pods['my-app'] = [pod('be-a-2', 0)]
     await check()
+    expect(db.incidents[0].evidence).toEqual(first)
+  })
+
+  it('does not overwrite saved evidence even from a stale row that still has none', async () => {
+    seedProject('my-app')
+    pods['my-app'] = [pod('be-a-1', 4)]
+    alerts = [alert('KubePodNotReady', 'proj-my-app')]
+    await check()
+    const first = structuredClone(db.incidents[0].evidence)
+    await app.get(IncidentsStore).saveEvidence(String(db.incidents[0].id), { pod: 'be-a-2', restarts: 0, waiting: null, lastExit: null, logs: [] })
     expect(db.incidents[0].evidence).toEqual(first)
   })
 

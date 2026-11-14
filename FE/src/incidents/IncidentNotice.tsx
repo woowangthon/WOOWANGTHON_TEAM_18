@@ -53,7 +53,8 @@ function IncidentList({ slug }: { slug: string | undefined }) {
   )
   if (shown.length === 0) return null
   const close = (id: string) => {
-    const next = [...closed, id]
+    // 다른 탭이 그 사이 저장한 것도 합친다(덮어쓰지 않게).
+    const next = [...new Set([...readClosed(), ...closed, id])]
     saveClosed(next)
     setClosed(next)
   }

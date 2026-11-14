@@ -1,7 +1,7 @@
 import { waitingText } from '../deploy/metrics.ts'
 import type { IncidentEvidence } from './types.ts'
 
-// "왜 멈췄나": 알림을 연 때 읽은 Pod 상태 한 줄과 로그 마지막 줄들(펼쳐 본다). 근거가 없으면 아무것도 그리지 않는다.
+// "알림 근거": 알림을 연 때 읽은 Pod 상태 한 줄과 로그 마지막 줄들(펼쳐 본다). 근거가 없으면 아무것도 그리지 않는다.
 function Evidence({ evidence }: { evidence: IncidentEvidence | null }) {
   if (!evidence) return null
   const { restarts, waiting, lastExit, logs } = evidence
@@ -12,7 +12,7 @@ function Evidence({ evidence }: { evidence: IncidentEvidence | null }) {
   ]
   return (
     <div className="flex flex-col gap-1 text-sm">
-      <p>왜 멈췄나: {facts.join(' · ')}</p>
+      <p>알림 근거: {facts.join(' · ')}</p>
       {logs.length > 0 && (
         <details>
           <summary className="cursor-pointer">로그 마지막 {logs.length}줄</summary>

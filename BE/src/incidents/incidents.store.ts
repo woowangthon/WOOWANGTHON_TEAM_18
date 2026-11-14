@@ -101,12 +101,17 @@ export class IncidentsStore {
   /** `action`이 `from`일 때만 바꾼다(겹친 결정은 하나만 통과). 바꿨으면 바뀐 줄, 아니면 null. */
   async update(
     id: string,
-    patch: Partial<Pick<IncidentRow, 'action' | 'ai' | 'decided_by' | 'decided_at' | 'evidence'>>,
+    patch: Partial<Pick<IncidentRow, 'action' | 'ai' | 'decided_by' | 'decided_at'>>,
     from?: IncidentAction,
     aiFrom?: IncidentAi['status'],
   ): Promise<IncidentRow | null> {
     const where: Record<string, string> = { id: `eq.${id}`, ...(from ? { action: `eq.${from}` } : {}), ...(aiFrom ? { 'ai->>status': `eq.${aiFrom}` } : {}) }
     return (await this.rows('PATCH', where, { ...patch, updated_at: new Date().toISOString() }))[0] ?? null
+  }
+
+  /** 근거가 아직 없을 때만 남긴다(먼저 남긴 근거를 오래된 행으로 다시 처리해도 덮어쓰지 않는다). */
+  async saveEvidence(id: string, evidence: IncidentEvidence): Promise<void> {
+    await this.rows('PATCH', { id: `eq.${id}`, evidence: 'is.null' }, { evidence, updated_at: new Date().toISOString() })
   }
 
   /** 이 프로젝트의 정할 차례인(울리고 있고 pending) 알림을 모두 같은 결정으로 닫는다. 닫은 줄을 돌려준다. */
