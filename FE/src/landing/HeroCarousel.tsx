@@ -26,11 +26,12 @@ function HeroCarousel() {
   useEffect(() => {
     if (!playing || hovered || focused) return
     // 직접 넘긴 뒤에는 그 장을 CAROUSEL_MS만큼 보이도록 index가 바뀔 때마다 다시 센다.
-    const id = window.setInterval(() => setIndex((i) => (i + 1) % SLIDES.length), CAROUSEL_MS)
+    const id = window.setInterval(() => go(1), CAROUSEL_MS)
     return () => window.clearInterval(id)
   }, [playing, hovered, focused, index])
 
   const slide = SLIDES[index]
+  const toggleLabel = playing ? '자동 넘김 멈추기' : '자동 넘김 켜기'
   return (
     <div
       role="group"
@@ -98,8 +99,8 @@ function HeroCarousel() {
           </div>
           <button
             type="button"
-            aria-label={playing ? '자동 넘김 멈추기' : '자동 넘김 켜기'}
-            title={playing ? '자동 넘김 멈추기' : '자동 넘김 켜기'}
+            aria-label={toggleLabel}
+            title={toggleLabel}
             onClick={() => setPlaying((p) => !p)}
             className="flex size-8 items-center justify-center rounded-sm text-muted hover:text-fg"
           >
