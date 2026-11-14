@@ -18,7 +18,8 @@ const TIMEOUT_MS = 150_000
 const MAX_ENTRIES = 200
 
 // 학생 문제로 난 실패(티켓이 간 실패)의 코드. 그 밖의 코드는 플랫폼 문제라 설명하지 않는다(skipped).
-const STUDENT_CODES = ['BUILD_FAILED', 'DEPLOY_FAILED', 'VERIFY_FAILED', 'AGENT_GAVE_UP', 'AGENT_UNAVAILABLE']
+// AGENT_UNAVAILABLE은 AI 서버가 티켓을 받지 못한 실패라 넣지 않는다: 같은 AI 서버에 설명을 물어도 기다리기만 한다.
+const STUDENT_CODES = ['BUILD_FAILED', 'DEPLOY_FAILED', 'VERIFY_FAILED', 'AGENT_GAVE_UP']
 
 export interface Explanation {
   summary: string
@@ -59,12 +60,6 @@ export function maskInternal(text: string): string {
 
 /** 문자열마다 내부 이름 가림 → 비밀값 필터. 길이 상한도 여기서 맞춘다. */
 const clean = (text: string, limit: number) => redactString(maskInternal(text)).slice(0, limit)
-const cleanAll = (value: unknown): unknown => {
-  if (typeof value === 'string') return maskInternal(value)
-  if (Array.isArray(value)) return value.map(cleanAll)
-  if (!isRecord(value)) return value
-  return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, cleanAll(v)]))
-}
 
 const records = (v: unknown): Record<string, unknown>[] => (Array.isArray(v) ? v.filter(isRecord) : [])
 const rec = (v: unknown): Record<string, unknown> => (isRecord(v) ? v : {})
@@ -155,8 +150,9 @@ export function explainRequest(run: DeployRunRow, material: FailureMaterial | un
         .map((e) => clean(e, 500)),
     },
   }
-  // 마지막으로 전체에 한 번 더(이름이 민감한 칸 · 남은 문자열).
-  const safe = redact(cleanAll(body)) as Record<string, unknown>
+  // 마지막으로 전체에 비밀값 필터를 한 번 더(이름이 민감한 칸). 내부 이름 가림은 위의 자유 글(로그 · 명령 · 에이전트 글)에만 건다:
+  // 서비스 이름 · 경로는 학생이 정한 값이라 `proj-web`처럼 가림 패턴에 걸려도 그대로 보낸다.
+  const safe = redact(body) as Record<string, unknown>
   ;(safe.services as Record<string, unknown>[]).forEach((svc, i) => (svc.secretCount = secretCounts[i]))
   return safe
 }

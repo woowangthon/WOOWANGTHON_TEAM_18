@@ -136,10 +136,25 @@ describe('explainRequest', () => {
     for (const status of ['running', 'fixing', 'queued'] as const) expect(explainRequest(run({ status }), undefined, undefined)).toBeNull()
   })
 
+  it('skips a failure the AI server did not take (AGENT_UNAVAILABLE)', () => {
+    expect(explainRequest(failedRun({ failure: { code: 'AGENT_UNAVAILABLE', stage: 'apply', service: 'be' } }), material(), undefined)).toBeNull()
+  })
+
+  it('keeps student-chosen service names and paths that look like internal names', () => {
+    const r = failedRun({ failure: { code: 'VERIFY_FAILED', stage: 'verify', service: 'proj-web' } })
+    const inp = r.input as { spec: { services: { name: string; runtime: { ingressPath: string | null } }[] } }
+    inp.spec.services[0].name = 'proj-web'
+    inp.spec.services[0].runtime.ingressPath = '/proj-web'
+    const body = explainRequest(r, material({ logs: ['namespace proj-my-app missing'] }), undefined)!
+    expect((body.services as { name: string; ingressPath: string }[])[0]).toMatchObject({ name: 'proj-web', ingressPath: '/proj-web' })
+    expect((body.failure as { service: string }).service).toBe('proj-web')
+    expect((body.evidence as { logs: string[] }).logs[0]).toBe('namespace [internal] missing')
+  })
+
   it('explains needs_user with the agent summary and evidence, masked', () => {
     const r = failedRun({
       status: 'needs_user',
-      failure: { code: 'AGENT_UNAVAILABLE', stage: 'apply', service: 'be' },
+      failure: { code: 'VERIFY_FAILED', stage: 'verify', service: 'be' },
       agent_result: { status: 'needs_user', summary: 'host be.proj-x.svc.cluster.local down', evidence: [{ ref: 'log', text: 'ip 100.101.1.2' }] },
     })
     const body = explainRequest(r, material(), undefined)!
