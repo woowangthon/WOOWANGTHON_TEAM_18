@@ -150,6 +150,7 @@ export class AlertWatcher implements OnApplicationBootstrap, OnModuleDestroy {
 
   /**
    * 진행 중인 배포가 없으면 프로젝트의 Deployment를 모두 0으로 내린다. 멈췄으면 true.
+   * 모두 내렸으면 그 프로젝트의 대기 중 알림을 모두 auto_stopped로 닫는다.
    * 배포 중의 재시작 반복은 파이프라인 확인(verify)과 AI 에이전트가 다룬다. 그때는 멈추지 않고 AI 판단으로 넘긴다.
    */
   private async autoStop(incident: IncidentRow): Promise<boolean> {
@@ -158,7 +159,9 @@ export class AlertWatcher implements OnApplicationBootstrap, OnModuleDestroy {
     // 읽지 못했거나 하나도 못 내렸으면 AI 판단으로 넘긴다. 일부만 내렸으면 그대로 두어(pending) 다음 확인이 나머지를 다시 내린다.
     if (result === 'none') return false
     if (result === 'some') return true
-    const stopped = await this.store.update(incident.id, { action: 'auto_stopped', ai: emptyAi('skipped'), decided_by: 'rule', decided_at: new Date().toISOString() }, 'pending')
+    // 같은 프로젝트의 다른 대기 중 알림도 함께 닫는다(프로젝트가 멈췄다). Discord는 이 알림 하나만 보낸다.
+    const closed = await this.store.closePending(incident.slug, { action: 'auto_stopped', ai: emptyAi('skipped'), decided_by: 'rule', decided_at: new Date().toISOString() })
+    const stopped = closed.find((i) => i.id === incident.id)
     if (!stopped) return true
     this.logger.log(`incident auto-stopped: ${incident.slug}`)
     await this.notify(stopped)
@@ -169,7 +172,8 @@ export class AlertWatcher implements OnApplicationBootstrap, OnModuleDestroy {
     const ai = await this.judge.judge(incident)
     // 아직 판단 전인 것만 채운다(다른 처리가 먼저 끝냈으면 알림을 다시 보내지 않는다).
     const judged = await this.store.update(incident.id, { ai }, undefined, 'pending')
-    if (judged) await this.notify(judged)
+    // 판단을 기다리는 사이 운영자가 정했거나 같은 프로젝트의 중지로 닫혔으면, 판단은 화면에 남기고 Discord는 보내지 않는다.
+    if (judged?.action === 'pending') await this.notify(judged)
   }
 
   private async notify(incident: IncidentRow): Promise<void> {

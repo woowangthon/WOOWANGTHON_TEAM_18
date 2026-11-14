@@ -3,6 +3,7 @@ import { type INestApplication, Logger } from '@nestjs/common'
 import request from 'supertest'
 import type { App } from 'supertest/types.js'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { DeploysStore } from '../src/deploys/deploys.store.js'
 import { AlertWatcher } from '../src/incidents/alert-watcher.js'
 import { ClusterError } from '../src/k8s/cluster-error.js'
 import { type AlertInfo, ClusterReader, type DeploymentInfo, type PodInfo } from '../src/k8s/cluster-reader.js'
@@ -26,6 +27,7 @@ let deployments: Record<string, DeploymentInfo[]>
 let pods: Record<string, PodInfo[]>
 let scaled: { slug: string; name: string }[]
 let aiAnswer: () => Response
+let aiGate: Promise<void> | undefined
 let discord: { url: string; content: string; mentions: unknown }[]
 let aiBodies: Row[]
 let discordDown: boolean
@@ -103,7 +105,7 @@ const fetchMock = vi.fn<typeof fetch>((input, init) => {
   if (url.startsWith(REST)) return Promise.resolve().then(() => rest(new URL(url), init))
   if (url === AI) {
     aiBodies.push(JSON.parse(init?.body as string) as Row)
-    return Promise.resolve(aiAnswer())
+    return (aiGate ?? Promise.resolve()).then(() => aiAnswer())
   }
   if (url.startsWith('https://discord.com/api/webhooks/')) {
     if (discordDown) return Promise.reject(new Error('down'))
@@ -152,6 +154,7 @@ beforeEach(async () => {
   scaleFails = new Set()
   incidentsDown = false
   aiAnswer = () => Response.json(judgment)
+  aiGate = undefined
   fetchMock.mockClear()
   vi.stubGlobal('fetch', fetchMock)
   vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
@@ -305,6 +308,24 @@ describe('alert watcher: partial failures', () => {
     expect(scaled.filter((s) => s.name === 'fe-a')).toHaveLength(1)
   })
 
+  it('closes the other waiting incidents of the project it auto-stops, and sends one Discord message', async () => {
+    seedProject('my-app')
+    seedProject('other-app')
+    deployments['my-app'] = [deployment('be-a')]
+    alerts = [alert('KubePodNotReady', 'proj-my-app'), alert('KubePodNotReady', 'proj-other-app')]
+    await check()
+    discord = []
+    alerts = [...alerts, alert('KubePodCrashLooping', 'proj-my-app')]
+    await check()
+    const byKey = (slug: string, name: string) => db.incidents.find((i) => i.slug === slug && i.alertname === name)!
+    expect(byKey('my-app', 'KubePodCrashLooping')).toMatchObject({ action: 'auto_stopped', decided_by: 'rule' })
+    expect(byKey('my-app', 'KubePodNotReady')).toMatchObject({ action: 'auto_stopped', decided_by: 'rule', ai: { status: 'skipped' } })
+    expect(byKey('other-app', 'KubePodNotReady')).toMatchObject({ action: 'pending', decided_by: null })
+    // 알림은 자동 중지한 경고 하나만(같이 닫힌 알림은 보내지 않는다).
+    expect(discord).toHaveLength(1)
+    expect(discord[0].content).toContain('(KubePodCrashLooping)')
+  })
+
   it('asks the AI when no Deployment could be stopped', async () => {
     seedProject('my-app')
     deployments['my-app'] = [deployment('be-a')]
@@ -360,6 +381,55 @@ describe('operator incidents API', () => {
     expect((await call('post', `/api/admin/incidents/${id}/dismiss`, await adminAuth())).body).toEqual(errorBody('INCIDENT_CLOSED'))
   })
 
+  it('closes every waiting incident of the project with one stop, leaving decided ones and other projects alone', async () => {
+    seedProject('my-app')
+    seedProject('other-app')
+    deployments['my-app'] = [deployment('be-a')]
+    alerts = [alert('KubePodNotReady', 'proj-my-app'), alert('CPUThrottlingHigh', 'proj-my-app'), alert('KubeContainerWaiting', 'proj-my-app'), alert('KubePodNotReady', 'proj-other-app')]
+    await check()
+    const byKey = (slug: string, name: string) => db.incidents.find((i) => i.slug === slug && i.alertname === name)!
+    byKey('my-app', 'KubeContainerWaiting').action = 'dismissed'
+    const id = byKey('my-app', 'KubePodNotReady').id as string
+    const res = await call('post', `/api/admin/incidents/${id}/stop`, await adminAuth())
+    expect(res.status).toBe(200)
+    const decidedAt = byKey('my-app', 'KubePodNotReady').decided_at
+    expect(byKey('my-app', 'CPUThrottlingHigh')).toMatchObject({ action: 'stopped', decided_by: 'op@example.com', decided_at: decidedAt })
+    expect(byKey('my-app', 'KubeContainerWaiting')).toMatchObject({ action: 'dismissed', decided_by: null })
+    expect(byKey('other-app', 'KubePodNotReady')).toMatchObject({ action: 'pending', decided_by: null })
+    expect(scaled).toEqual([{ slug: 'my-app', name: 'be-a' }])
+  })
+
+  it('keeps a judgment that arrives after the stop, but does not send it to Discord', async () => {
+    seedProject('my-app')
+    deployments['my-app'] = [deployment('be-a')]
+    let release = () => {}
+    aiGate = new Promise((r) => (release = r))
+    alerts = [alert('KubePodNotReady', 'proj-my-app'), alert('CPUThrottlingHigh', 'proj-my-app')]
+    const watcher = app.get(AlertWatcher)
+    watcher.kick()
+    await vi.waitFor(() => expect(aiBodies).toHaveLength(2))
+    const id = db.incidents[0].id as string
+    expect((await call('post', `/api/admin/incidents/${id}/stop`, await adminAuth())).status).toBe(200)
+    release()
+    await watcher.idle()
+    expect(db.incidents.map((i) => [i.action, (i.ai as Row).status])).toEqual([
+      ['stopped', 'done'],
+      ['stopped', 'done'],
+    ])
+    expect(discord).toEqual([])
+  })
+
+  it('leaves the other waiting incidents open when the cluster could not stop anything', async () => {
+    seedProject('my-app')
+    deployments['my-app'] = [deployment('be-a')]
+    scaleFails.add('be-a')
+    alerts = [alert('KubePodNotReady', 'proj-my-app'), alert('CPUThrottlingHigh', 'proj-my-app')]
+    await check()
+    const id = db.incidents[0].id as string
+    expect((await call('post', `/api/admin/incidents/${id}/stop`, await adminAuth())).status).toBe(503)
+    expect(db.incidents.map((i) => i.action)).toEqual(['pending', 'pending'])
+  })
+
   it('keeps an open incident in the list even when 50 newer ones exist', async () => {
     const id = await seedIncident()
     db.incidents[0].created_at = '2026-01-01T00:00:00.000Z'
@@ -404,18 +474,32 @@ describe('operator incidents API', () => {
   })
 })
 
+describe('deploy result to the student Discord', () => {
+  it('sends one line to the owner when a run fails, and nothing to the operator', async () => {
+    const now = new Date().toISOString()
+    db.deploy_runs = [{ deploy_id: 'd1', user_id: USER, slug: 'my-app', target_slot: 'b', input: {}, status: 'fixing', stage: 'apply', failure: null, created_at: now, updated_at: now }]
+    db.user_webhooks = [{ user_id: USER, url: STUDENT_HOOK }]
+    const applied = await app.get(DeploysStore).updateRun('d1', { status: 'fixing' }, { status: 'failed', failure: { code: 'AGENT_GAVE_UP', stage: 'apply', service: null } })
+    expect(applied).toBe(true)
+    await vi.waitFor(() => expect(discord).toHaveLength(1))
+    expect(discord[0]).toMatchObject({ url: STUDENT_HOOK, mentions: { parse: [] } })
+    expect(discord[0].content).toContain('[my-app] 배포하지 못했어요 (apply · AGENT_GAVE_UP).')
+  })
+})
+
 describe('student incidents API', () => {
   it('shows only my projects: open alerts and recent stops, not dismissed ones', async () => {
     seedProject('my-app')
+    seedProject('my-two')
     seedProject('their-app', OTHER)
     deployments['my-app'] = [deployment('be-a')]
-    alerts = [alert('KubePodNotReady', 'proj-my-app'), alert('KubePodCrashLooping', 'proj-my-app'), alert('KubePodNotReady', 'proj-their-app'), alert('CPUThrottlingHigh', 'proj-my-app')]
+    alerts = [alert('KubePodCrashLooping', 'proj-my-app'), alert('KubePodNotReady', 'proj-my-two'), alert('KubePodNotReady', 'proj-their-app'), alert('CPUThrottlingHigh', 'proj-my-two')]
     await check()
     db.incidents.find((i) => i.alertname === 'CPUThrottlingHigh')!.action = 'dismissed'
     const res = await call('get', '/api/incidents', await userAuth())
     expect(res.status).toBe(200)
     const got = (res.body as { incidents: { slug: string; alertname: string; action: string; decidedBy?: unknown }[] }).incidents
-    expect(got.map((i) => `${i.slug} ${i.alertname} ${i.action}`).sort()).toEqual(['my-app KubePodCrashLooping auto_stopped', 'my-app KubePodNotReady pending'])
+    expect(got.map((i) => `${i.slug} ${i.alertname} ${i.action}`).sort()).toEqual(['my-app KubePodCrashLooping auto_stopped', 'my-two KubePodNotReady pending'])
     expect(got[0]).not.toHaveProperty('decidedBy')
   })
 
