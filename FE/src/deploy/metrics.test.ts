@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { slotsOf, stateText, waitingText } from './metrics.ts'
+import { slotsOf, slotTimeText, stateText, waitingText } from './metrics.ts'
 
 it('spreads points over 61 one-minute slots and leaves the missing minutes null', () => {
   const end = 10_000
@@ -49,4 +49,11 @@ it('ends the grid at the given end time, not at the last point, so a stalled col
   expect(slots).toHaveLength(61)
   expect(slots[50]).toBe(7)
   expect(slots.slice(51).every((v) => v === null)).toBe(true)
+})
+
+it('names a slot by the same arithmetic slotsOf uses: the last slot is the end time, the first is one window earlier', () => {
+  const series = { endT: 1_794_540_000, windowSeconds: 3600, stepSeconds: 60 }
+  const clock = (t: number) => new Date(t * 1000).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false })
+  expect(slotTimeText(series, 60)).toBe(clock(series.endT))
+  expect(slotTimeText(series, 0)).toBe(clock(series.endT - 3600))
 })

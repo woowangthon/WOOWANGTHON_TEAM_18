@@ -3,10 +3,10 @@ import { Alert } from '../components/ui/Alert.tsx'
 import { Badge } from '../components/ui/Badge.tsx'
 import { Card } from '../components/ui/Card.tsx'
 import { Skeleton } from '../components/ui/Skeleton.tsx'
-import { Sparkline } from '../components/ui/Sparkline.tsx'
+import { LineChart } from '../components/ui/LineChart.tsx'
 import { ApiError } from '../lib/api.ts'
 import { cpuText, memoryText } from '../lib/format.ts'
-import { NOT_COLLECTED, slotsOf, stateText, stateVariant, waitingText } from './metrics.ts'
+import { NOT_COLLECTED, slotsOf, slotTimeText, stateText, stateVariant, waitingText } from './metrics.ts'
 import type { Metrics, MetricsService, Series } from './metrics.ts'
 import { useMetrics } from './useMetrics.ts'
 
@@ -30,6 +30,8 @@ function ServiceRow({ service, series }: { service: MetricsService; series: Seri
   // 모든 서비스의 그래프가 서버가 준 같은 끝 시각(series.endT)의 눈금을 쓴다. 점이 없는 서비스는 칸이 없다([]).
   const slots = (key: 'cpuMillicores' | 'memoryBytes') =>
     series ? slotsOf(found?.[key] ?? [], series.endT, series.windowSeconds, series.stepSeconds) : []
+  // 칸의 시각(이 브라우저의 시간대). 가로축 눈금과 말풍선이 쓴다.
+  const xAt = (i: number) => (series ? slotTimeText(series, i) : '')
   return (
     <div className="flex flex-col gap-2 border-t border-line pt-4 first:border-t-0 first:pt-0">
       <div className="flex flex-wrap items-center gap-2">
@@ -43,8 +45,8 @@ function ServiceRow({ service, series }: { service: MetricsService; series: Seri
       <Usage service={service} />
       {series?.status === 'collected' && (
         <div className="grid gap-4 sm:grid-cols-2">
-          <Sparkline values={slots('cpuMillicores')} label={`${service.name} CPU 사용량(최근 1시간)`} format={cpuText} emptyText={NOT_COLLECTED} />
-          <Sparkline values={slots('memoryBytes')} label={`${service.name} 메모리 사용량(최근 1시간)`} format={memoryText} emptyText={NOT_COLLECTED} />
+          <LineChart values={slots('cpuMillicores')} label={`${service.name} CPU 사용량(최근 1시간)`} format={cpuText} emptyText={NOT_COLLECTED} xAt={xAt} />
+          <LineChart values={slots('memoryBytes')} label={`${service.name} 메모리 사용량(최근 1시간)`} format={memoryText} emptyText={NOT_COLLECTED} xAt={xAt} />
         </div>
       )}
     </div>
