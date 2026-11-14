@@ -22,6 +22,7 @@ def base_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "PLANNER_MODEL_URL",
         "PLANNER_MODEL_NAME",
         "PLANNER_MODEL_API_KEY",
+        "EXPLAIN_REASONING_EFFORT",
     ):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("AGENT_API_TOKEN", TOKEN)
@@ -153,3 +154,12 @@ def test_reads_env_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None
     env = tmp_path / ".env"
     env.write_text("GATEWAY_URL=https://gw.internal/mcp\n")
     assert str(load_settings(env_file=str(env)).gateway_url) == "https://gw.internal/mcp"
+
+
+def test_explain_reasoning_effort(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert load_settings(env_file=None).explain_reasoning_effort == "medium"
+    monkeypatch.setenv("EXPLAIN_REASONING_EFFORT", "high")
+    assert load_settings(env_file=None).explain_reasoning_effort == "high"
+    monkeypatch.setenv("EXPLAIN_REASONING_EFFORT", "max")
+    with pytest.raises(ConfigError, match="EXPLAIN_REASONING_EFFORT"):
+        load_settings(env_file=None)

@@ -465,10 +465,12 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
   "url": null,
   "warnings": [],
   "queue": null,
+  "explanation": null,
   "updatedAt": "2026-11-11T01:00:00.000Z"
 }
 ```
 
+- `explanation`(FR-105, [배포 설명](deploy-explain.md)): `status`가 `succeeded` · `failed` · `needs_user`이고 서버가 설명을 맡았으면 `{ "state", "content" }`, 아니면 `null`. `state`는 `pending`(만드는 중) · `ready` · `failed`(만들지 못함) · `skipped`(플랫폼 문제 실패라 설명하지 않음)이고 `content`는 `ready`일 때만 `{ "summary", "steps": [{ "stage", "did", "meaning" }], "cause": string | null, "actions": string[], "terms": [{ "term", "meaning" }] }`, 그 밖에는 `null`이다. `stage`는 파이프라인 스테이지(`build` · `prepare` · `render` · `apply` · `verify` · `switch`). 길이: `summary` ≤300자, `did` · `meaning` · `cause` ≤300자, `steps` ≤6, `actions` ≤5(각 ≤200자), `terms` ≤5(`term` ≤40자, `meaning` ≤200자). 서버가 비밀값 필터와 내부 이름 가림을 거친 값이다. 플래그 `DEPLOY_EXPLAIN_ENABLED`가 꺼져 있으면 늘 `null`이고, BE 메모리에만 두므로 서버가 다시 뜨면 `null`로 돌아간다. FE는 끝난 뒤에도 `pending`이면 처음 본 때부터 3분까지 3초마다 더 읽고, `null` · `failed` · `skipped` · 기다림 초과면 고정 단계 안내를 보인다.
 - `queue`: `status`가 `queued`일 때만 `{ "position": number, "waitingForRoom": boolean }`, 아니면 `null`. `position`은 앞에 있는 배포의 수(먼저 시작한 `queued`와 지금 도는 `running`)이고 0이면 다음 차례다. `waitingForRoom`이 `true`이면 차례인데 클러스터에 자리가 없어 기다리는 중이다(마지막 확인 값, 10초 안에 읽은 것).
 - `failure`: `status`가 `failed`이거나 `fixing` · `needs_user`면 `{ "code", "stage", "service", "message" }`, 아니면 `null`. `message`는 학생에게 그대로 보여 줘도 되는 고정 문장이고 로그 · 원본 · 비밀값을 담지 않는다. `service`는 모르면 `null`.
 - `failure.code`: `BUILD_FAILED` · `DEPLOY_FAILED`(prepare · render · apply) · `VERIFY_FAILED` · `SWITCH_FAILED` · 플랫폼 문제(코드는 열려 있다: `^[A-Za-z][A-Za-z0-9_]{2,63}$`면 받는다. 예: `CODEBUILD_API_ERROR` · `IMAGE_PULL_FAILED` · `LIVE_SLOT_PROTECTED` · `STAGE_NO_REPORT`(스테이지의 결과 파일이 없거나 읽을 수 없음) · `BUILD_WAIT_TIMEOUT` · `NO_IMAGE_DIGEST` · `CHART_RENDER_FAILED` · `SPACE_MISSING` · `K8S_UNREACHABLE`. AI를 부르지 않고 실패로 마감하며, 모르는 코드는 일반 문구로 보여 준다) · `AGENT_UNAVAILABLE`(AI 서버가 티켓을 받지 못함) · `TIMED_OUT`(진행 중인 실행이 1시간 넘게 아무 알림 없이 멈춰 있어 중단함. 대기열이 보는 `running`은 30분, `fixing`은 게이트웨이 토큰이 만료되고 2분 뒤 — AI 결과가 반영되지 않은 경우. `stage`는 실패했던 스테이지) · `PIPELINE_UNAVAILABLE`(대기열이 출발시키려 했지만 GoCD가 받지 않음).
@@ -808,6 +810,19 @@ type Incident = {
 - 요청: `{ "incidentId", "slug", "alertname", "summary"(≤200자), "labels": {…}(≤20개, 값 ≤200자), "pods": [{ "name", "phase"(≤20자), "ready", "restarts", "waiting" }](≤10), "logs": string[](≤200줄) }`. 모르는 칸은 거부한다.
 - 응답 `200`: `{ "risk", "recommendation", "cause", "reason", "model": "local" | "planner" }`. `cause` · `reason`은 한국어 한 문장(≤300자).
 - 오류: `400 INVALID_INCIDENT`, `401 AUTH_REQUIRED`, `503 MODEL_UNAVAILABLE`(로컬 모델과 추론 API 모두 실패, 또는 설정 없음). 플랫폼 서버는 90초를 기다린다.
+
+### `POST /agent/explanations` — 학생용 배포 설명 (AI 서버, 플랫폼 → AI, FR-105)
+
+`AGENT_API_TOKEN`으로 부른다. 동기로 답한다. 플랫폼 서버는 배포가 끝난 뒤 기다리지 않고 따로 부르며(150초 상한), 답이 무엇이든 배포 상태는 바뀌지 않는다. 설계는 [배포 설명](deploy-explain.md).
+
+- 요청(모르는 칸은 거부):
+  - `deployId`, `outcome`: `succeeded` · `failed` · `needs_user`, `targetSlot`: `a` · `b`, `firstDeploy`: boolean | null
+  - `services`(1–3): `{ "name", "role", "kind", "port", "ingressPath", "health": { "type", "path" }, "build": "run" | "reuse" | null, "framework", "hasDockerfile", "buildCommand", "startCommand", "envCount", "secretCount" }`. env 값과 비밀값 이름은 싣지 않고 개수만 싣는다.
+  - `failure`: `outcome`이 `succeeded`면 `null`, 아니면 `{ "code", "stage", "service", "message" }`(`message`는 학생 화면의 고정 문장).
+  - `evidence`: 학생 문제 실패의 재료 `{ "errorMessage"(≤2000자), "logs"(≤200줄), "pods"(컨테이너 상태 한 줄씩, ≤10), "events"(`reason: message`, ≤10), "renderStatus"(≤2000자) | null }` 또는 `null`(성공, 또는 재료가 사라짐). CodeBuild 원본 · Pod spec · metadata는 싣지 않는다.
+  - `agent`: `{ "status", "summary", "evidence": string[](≤10) }` 또는 `null`.
+- 응답 `200`: 위 진행 상태의 `explanation.content`와 같은 모양. AI 서버가 길이를 맞추고 비밀값 필터를 다시 건다.
+- 오류: `400 INVALID_EXPLANATION`, `401 AUTH_REQUIRED`, `503 MODEL_UNAVAILABLE`(추론 모델 설정이 없거나 호출 실패).
 
 ## AI 에이전트 (플랫폼 서버 ↔ AI 서버)
 
