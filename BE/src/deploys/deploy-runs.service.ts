@@ -73,7 +73,7 @@ export interface AgentView {
 const str = (v: unknown): string | null => (typeof v === 'string' ? v : null)
 
 /** 게이트웨이가 검사하고 저장한 값이다. 빠진 칸만 빈 값으로 읽는다. */
-function toAgent(stored: Record<string, unknown>): AgentView {
+export function toAgent(stored: Record<string, unknown>): AgentView {
   const u = isRecord(stored.userRequest) ? stored.userRequest : null
   const pr = isRecord(stored.pr) ? stored.pr : null
   return {

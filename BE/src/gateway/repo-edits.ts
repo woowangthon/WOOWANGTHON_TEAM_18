@@ -211,8 +211,9 @@ export class RepoEdits {
         return forbid(
           'lines',
           `${path}: over the limit of ${MAX_CHANGED_LINES} changed lines in one ticket (added plus removed lines; ${changedLines} already used by the other files). ` +
-            `The file has ${toLines(c.before).length} lines and the new content has ${toLines(c.after).length}. ` +
-            'content is the whole new file; to change a few lines send { path, find, replace } instead',
+            `The file has ${toLines(c.before).length} lines and the new content has ${toLines(c.after).length}.` +
+            // 이번에 파일 전체(content)로 보낸 파일에만: 바뀐 줄만 보낸 경우가 많다.
+            (files.some((f) => f.path === path && 'content' in f) ? ' content is the whole new file; to change a few lines send { path, find, replace } instead' : ''),
         )
       }
       // 끝 줄바꿈만 다른 파일은 바뀐 줄이 없다: 고친 것으로 치지 않는다.
@@ -274,18 +275,18 @@ export function checkEditArgs(args: { files?: unknown; message?: unknown }): { f
   }
   const out: EditFile[] = []
   for (const f of files) {
-    const whole = isRecord(f) && typeof f.content === 'string' && Object.keys(f).length === 2
-    const swap = isRecord(f) && typeof f.find === 'string' && f.find !== '' && typeof f.replace === 'string' && Object.keys(f).length === 3
-    if (!isRecord(f) || typeof f.path !== 'string' || !(whole || swap)) return refuse('INVALID_ARGUMENT', FILE_SHAPE)
+    if (!isRecord(f) || typeof f.path !== 'string') return refuse('INVALID_ARGUMENT', FILE_SHAPE)
+    const keys = Object.keys(f).length
+    const text = typeof f.content === 'string' && keys === 2 ? f.content : typeof f.find === 'string' && f.find !== '' && typeof f.replace === 'string' && keys === 3 ? f.replace : null
+    if (text === null) return refuse('INVALID_ARGUMENT', FILE_SHAPE)
     const path = repoPath(f.path)
     if (path === null || path === '') return refuse('INVALID_ARGUMENT', `path must be a file path relative to the repository root, got ${JSON.stringify(f.path.slice(0, 100))}`)
     const why = forbiddenPath(path)
     if (why) return forbid('path', `${path}: ${why}`)
     if (out.some((o) => o.path === path)) return refuse('INVALID_ARGUMENT', `${path} is listed twice`)
-    const text = whole ? (f.content as string) : (f.replace as string)
-    if (Buffer.byteLength(text) > MAX_FILE_BYTES) return forbid('size', `${path}: content is larger than ${MAX_FILE_BYTES / 1024}KB`)
+    // 크기는 바꾼 뒤의 전체 내용으로 doEdit이 본다.
     if (text.includes('\0')) return forbid('not-text', `${path}: only text files can be written`)
-    out.push(whole ? { path, content: f.content as string } : { path, find: f.find as string, replace: f.replace as string })
+    out.push(typeof f.find === 'string' ? { path, find: f.find, replace: text } : { path, content: text })
   }
   return { files: out, message: message.trim() }
 }

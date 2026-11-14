@@ -2,11 +2,12 @@ import { ConfigService } from '@nestjs/config'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Env } from '../config/env.js'
 import { DeployEvents } from './deploy-events.js'
+import { ENDED_STATUSES } from './deploy-run.js'
 import { DeploysStore } from './deploys.store.js'
 
 const ID = '6f1c0a52-3b7e-4a40-9a6c-2f5d8e1b7c90'
 const queryOf = (call: Parameters<typeof fetch>) => Object.fromEntries(new URL(call[0] as string).searchParams)
-const store = () => new DeploysStore(new ConfigService<Env, true>({ SUPABASE_URL: 'https://test.supabase.co', SUPABASE_SECRET_KEY: 'k' }))
+const store = () => new DeploysStore(new ConfigService<Env, true>({ SUPABASE_URL: 'https://test.supabase.co', SUPABASE_SECRET_KEY: 'k' }), new DeployEvents())
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -31,7 +32,7 @@ describe('DeploysStore.updateRun end events', () => {
     const s = new DeploysStore(new ConfigService<Env, true>({ SUPABASE_URL: 'https://test.supabase.co', SUPABASE_SECRET_KEY: 'k' }), events)
     const fetchMock = vi.fn<typeof fetch>(() => Promise.resolve(Response.json([{}])))
     vi.stubGlobal('fetch', fetchMock)
-    for (const status of ['succeeded', 'failed', 'needs_user'] as const) await s.updateRun(ID, {}, { status })
+    for (const status of ENDED_STATUSES) await s.updateRun(ID, {}, { status })
     expect(ended).toEqual([ID, ID, ID])
     await s.updateRun(ID, {}, { status: 'fixing' })
     await s.updateRun(ID, {}, { stage: 'verify' })

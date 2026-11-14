@@ -283,6 +283,12 @@ describe('edit_repo_file find/replace', () => {
     expect(bot.commits).toEqual([])
   })
 
+  it('does not point to find/replace when the over-limit edit already used it', async () => {
+    const answer = await edit([swap('src/App.tsx', 'line 10\n', `${lines(60, 'new')}\n`)])
+    expect(answer).toMatchObject({ ok: false, code: 'EDIT_FORBIDDEN' })
+    expect((answer as { message: string }).message).not.toContain('find, replace')
+  })
+
   it('refuses a replace that makes the file larger than 200KB', async () => {
     bot.files.set('mid.txt', file(`${'x'.repeat(199 * 1024)}\nMARK\n`))
     expect(await edit([swap('mid.txt', 'MARK', 'y'.repeat(2 * 1024))])).toMatchObject({ ok: false, code: 'EDIT_FORBIDDEN', message: expect.stringContaining('200KB') as string })

@@ -1,26 +1,24 @@
 import { Injectable, Logger, type OnModuleInit } from '@nestjs/common'
-import { isRecord } from '../common/is-record.js'
 import { DeployEvents } from '../deploys/deploy-events.js'
 import { toFailure } from '../deploys/deploy-run.js'
+import { toAgent } from '../deploys/deploy-runs.service.js'
 import { type DeployRunRow, DeploysStore } from '../deploys/deploys.store.js'
 import { DiscordNotifier } from './discord.notifier.js'
 import { IncidentsStore } from './incidents.store.js'
 
-const text = (v: unknown): string | null => (typeof v === 'string' && v.trim() !== '' ? v : null)
-
 /** 배포 결과 한 줄(학생 Discord). 자세한 내용은 "내 배포" 화면에 있다. */
 export function deployMessage(run: Pick<DeployRunRow, 'slug' | 'status' | 'failure' | 'agent_result'>): string {
   const head = `[${run.slug}]`
-  const agent = isRecord(run.agent_result) ? run.agent_result : {}
+  // "내 배포" 화면과 같은 방식으로 AI 결과를 읽는다.
+  const agent = run.agent_result ? toAgent(run.agent_result) : null
   if (run.status === 'succeeded') return `${head} 배포를 마쳤어요.`
   if (run.status === 'needs_user') {
-    const prUrl = isRecord(agent.pr) ? text(agent.pr.url) : null
-    if (prUrl) return `${head} AI가 고친 PR을 열었어요: ${prUrl}\n머지한 뒤 다시 배포해 주세요.`
-    const ask = isRecord(agent.userRequest) ? text(agent.userRequest.message) : null
+    if (agent?.prUrl) return `${head} AI가 고친 PR을 열었어요: ${agent.prUrl}\n머지한 뒤 다시 배포해 주세요.`
+    const ask = agent?.userRequest?.message.trim()
     return [`${head} 배포를 이어 가려면 확인이 필요해요.`, ...(ask ? [ask] : [])].join('\n')
   }
   const failure = run.failure ? toFailure(run.failure) : null
-  const summary = text(agent.summary)
+  const summary = agent?.summary.trim()
   return [
     `${head} 배포하지 못했어요${failure ? ` (${failure.stage} · ${failure.code})` : ''}.`,
     ...(failure ? [failure.message] : []),
