@@ -219,3 +219,12 @@ it('draws no card for a deploy the server does not know (the page above already 
   await advance(60000)
   expect(reads()).toBe(1)
 })
+
+it('draws the graphs with a time axis from the server end time and a value axis with units', async () => {
+  api.apiFetch.mockResolvedValue(liveWith([fe]))
+  await show()
+  const cpu = card().getByRole('img', { name: /^fe CPU 사용량/ })
+  // 가로축은 시각(HH:mm) 눈금, 세로축은 코어 단위 눈금이다.
+  expect(cpu.textContent).toMatch(/\d{2}:\d{2}/)
+  expect(cpu.textContent).toContain('코어')
+})
