@@ -63,8 +63,14 @@ export class IncidentsStore {
     this.secretKey = config.get('SUPABASE_SECRET_KEY', { infer: true })
   }
 
-  async open(): Promise<IncidentRow[]> {
+  /** 아직 울리는(해소되지 않은) 알림. */
+  async unresolved(): Promise<IncidentRow[]> {
     return this.rows('GET', { select: '*', resolved_at: 'is.null' })
+  }
+
+  /** 운영자가 정할 차례인 알림(울리고 있고 pending), 최근 것부터. */
+  async waiting(): Promise<IncidentRow[]> {
+    return this.rows('GET', { select: '*', resolved_at: 'is.null', action: 'eq.pending', order: 'created_at.desc' })
   }
 
   /** 새 경고를 적는다. 같은 열린 경고가 이미 있으면(다른 확인이 먼저 적었다) null. */

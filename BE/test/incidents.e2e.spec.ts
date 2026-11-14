@@ -289,10 +289,26 @@ describe('alert watcher: partial failures', () => {
     expect(discord.map((d) => d.url)).toEqual([OPERATOR_HOOK])
   })
 
-  it('does not record a stop when only some Deployments went to 0, and asks the AI instead', async () => {
+  it('keeps retrying the auto-stop while only some Deployments went to 0', async () => {
     seedProject('my-app')
     deployments['my-app'] = [deployment('be-a'), deployment('fe-a')]
     scaleFails.add('fe-a')
+    alerts = [alert('KubePodCrashLooping', 'proj-my-app')]
+    await check()
+    // 일부만 내렸으면 멈춤으로 기록하지 않고, AI에도 넘기지 않고, 알리지도 않는다.
+    expect(db.incidents[0]).toMatchObject({ action: 'pending', ai: { status: 'pending' } })
+    expect(aiBodies).toEqual([])
+    expect(discord).toEqual([])
+    scaleFails.clear()
+    await check()
+    expect(db.incidents[0]).toMatchObject({ action: 'auto_stopped' })
+    expect(scaled.filter((s) => s.name === 'fe-a')).toHaveLength(1)
+  })
+
+  it('asks the AI when no Deployment could be stopped', async () => {
+    seedProject('my-app')
+    deployments['my-app'] = [deployment('be-a')]
+    scaleFails.add('be-a')
     alerts = [alert('KubePodCrashLooping', 'proj-my-app')]
     await check()
     expect(db.incidents[0]).toMatchObject({ action: 'pending', ai: { status: 'done' } })
@@ -359,6 +375,17 @@ describe('operator incidents API', () => {
     const res = await call('post', `/api/admin/incidents/${id}/stop`, await adminAuth())
     expect(res.status).toBe(503)
     expect(db.incidents[0]).toMatchObject({ action: 'pending', decided_by: null })
+  })
+
+  it('keeps the stop decision when only some Deployments went to 0, so it cannot become a dismissal', async () => {
+    const id = await seedIncident()
+    deployments['my-app'] = [deployment('be-a'), deployment('fe-a')]
+    scaleFails.add('fe-a')
+    const res = await call('post', `/api/admin/incidents/${id}/stop`, await adminAuth())
+    expect(res.status).toBe(503)
+    expect(res.body).toEqual(errorBody('STOP_INCOMPLETE'))
+    expect(db.incidents[0]).toMatchObject({ action: 'stopped', decided_by: 'op@example.com' })
+    expect((await call('post', `/api/admin/incidents/${id}/dismiss`, await adminAuth())).body).toEqual(errorBody('INCIDENT_CLOSED'))
   })
 
   it('dismisses without touching the cluster', async () => {

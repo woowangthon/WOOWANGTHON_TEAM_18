@@ -49,8 +49,7 @@ export class AdminIncidentsController {
   @Get()
   async list() {
     // 정할 차례인 것은 최근 50개 밖으로 밀려도 빠지지 않게 따로 읽는다.
-    const [open, recent] = await Promise.all([this.store.open(), this.store.recent(ADMIN_LIMIT)])
-    const waiting = open.filter(isOpen).sort((a, b) => b.created_at.localeCompare(a.created_at))
+    const [waiting, recent] = await Promise.all([this.store.waiting(), this.store.recent(ADMIN_LIMIT)])
     const seen = new Set(waiting.map((i) => i.id))
     return { incidents: [...waiting, ...recent.filter((i) => !seen.has(i.id))].map(adminView) }
   }
@@ -58,11 +57,17 @@ export class AdminIncidentsController {
   @Post(':id/stop')
   @HttpCode(200)
   async stop(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    // 결정을 먼저 잡고(겹친 무시 · 중지는 하나만 통과) 클러스터를 바꾼다. 다 못 내렸으면 결정을 되돌려 다시 시도할 수 있게 한다.
+    // 결정을 먼저 잡고(겹친 무시 · 중지는 하나만 통과) 클러스터를 바꾼다.
     const decided = await this.decide(await this.pending(id), 'stopped', user)
-    if (!(await stopProject(this.reader, this.scaler, decided.incident.slug))) {
+    const result = await stopProject(this.reader, this.scaler, decided.incident.slug)
+    if (result === 'none') {
+      // 아무것도 바뀌지 않았으니 결정을 되돌려 다시 정할 수 있게 한다.
       await this.store.update(decided.incident.id, { action: 'pending', decided_by: null, decided_at: null }, 'stopped')
       throw new ServiceUnavailableException({ code: 'CLUSTER_UNREACHABLE', message: 'Could not stop the project in the cluster' })
+    }
+    if (result === 'some') {
+      // 일부는 이미 내려갔다: 결정(stopped)은 그대로 두고(되돌리면 무시로 바뀔 수 있다), 나머지는 프로젝트 강제 중지로 다시 내린다.
+      throw new ServiceUnavailableException({ code: 'STOP_INCOMPLETE', message: 'Some services were stopped, some were not; retry with the project stop' })
     }
     return decided
   }

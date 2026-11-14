@@ -104,7 +104,7 @@ export class AlertWatcher implements OnApplicationBootstrap, OnModuleDestroy {
     )
     this.nodeAlerts = new Set(nodes.keys())
 
-    const open = await this.store.open()
+    const open = await this.store.unresolved()
     const openKeys = new Set(open.map((i) => keyOf(i.slug, i.alertname)))
     // 처리하다 멈춘 알림(저장 뒤 실패 · 서버 재시작): 아직 울리고, 정할 차례이고, AI 판단도 없으면 다시 처리한다.
     const unfinished = open.filter((i) => projects.has(keyOf(i.slug, i.alertname)) && i.action === 'pending' && i.ai.status === 'pending')
@@ -154,7 +154,10 @@ export class AlertWatcher implements OnApplicationBootstrap, OnModuleDestroy {
    */
   private async autoStop(incident: IncidentRow): Promise<boolean> {
     if (await this.deploys.findActiveRun(incident.slug)) return false
-    if (!(await stopProject(this.reader, this.scaler, incident.slug))) return false
+    const result = await stopProject(this.reader, this.scaler, incident.slug)
+    // 읽지 못했거나 하나도 못 내렸으면 AI 판단으로 넘긴다. 일부만 내렸으면 그대로 두어(pending) 다음 확인이 나머지를 다시 내린다.
+    if (result === 'none') return false
+    if (result === 'some') return true
     const stopped = await this.store.update(incident.id, { action: 'auto_stopped', ai: emptyAi('skipped'), decided_by: 'rule', decided_at: new Date().toISOString() }, 'pending')
     if (!stopped) return true
     this.logger.log(`incident auto-stopped: ${incident.slug}`)
@@ -178,11 +181,13 @@ export class AlertWatcher implements OnApplicationBootstrap, OnModuleDestroy {
   }
 }
 
-/** 프로젝트의 Deployment를 모두 replicas 0으로. 모두 내렸거나 내릴 것이 없으면 true(일부만 내렸으면 false라 다시 시도한다). */
-export async function stopProject(reader: ClusterReader, scaler: DeploymentScaler, slug: string): Promise<boolean> {
+/**
+ * 프로젝트의 Deployment를 모두 replicas 0으로. `all`: 모두 내렸거나 내릴 것이 없다. `some`: 일부만 내렸다. `none`: 목록을 못 읽었거나 하나도 못 내렸다.
+ */
+export async function stopProject(reader: ClusterReader, scaler: DeploymentScaler, slug: string): Promise<'all' | 'some' | 'none'> {
   const names = (await reader.deployments(slug).catch(() => null))?.map((d) => d.name)
-  if (!names) return false
-  if (names.length === 0) return true
+  if (!names) return 'none'
   const results = await Promise.allSettled(names.map((name) => scaler.scaleToZero(slug, name)))
-  return results.every((r) => r.status === 'fulfilled')
+  const done = results.filter((r) => r.status === 'fulfilled').length
+  return done === names.length ? 'all' : done === 0 ? 'none' : 'some'
 }

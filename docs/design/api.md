@@ -751,8 +751,8 @@ type Incident = {
 
 ### `POST /api/admin/incidents/:id/stop` — 알림의 프로젝트 멈추기 (운영자)
 
-먼저 `action = stopped`로 결정을 잡고(겹친 무시 · 중지는 하나만 통과), 공간의 Deployment를 모두 `replicas: 0`으로 내린다. 하나라도 못 내렸으면 결정을 `pending`으로 되돌리고 `503`이다(다시 요청할 수 있다). 본문 없음. 응답 `200`: `{ "incident" }`.
-오류: `404 INCIDENT_NOT_FOUND`(UUID 모양이 아닌 값 포함), `409 INCIDENT_CLOSED`(이미 정했다), `503 CLUSTER_UNREACHABLE`(하나도 못 내렸다), `403 ADMIN_REQUIRED`.
+먼저 `action = stopped`로 결정을 잡고(겹친 무시 · 중지는 하나만 통과), 공간의 Deployment를 모두 `replicas: 0`으로 내린다. 하나도 못 내렸으면 결정을 `pending`으로 되돌리고 `503 CLUSTER_UNREACHABLE`이다(다시 요청할 수 있다). 일부만 내렸으면 결정은 `stopped`로 두고 `503 STOP_INCOMPLETE`다(되돌리면 무시로 바뀔 수 있어서다. 나머지는 `POST /api/admin/projects/:slug/stop`으로 다시 내린다). 본문 없음. 응답 `200`: `{ "incident" }`.
+오류: `404 INCIDENT_NOT_FOUND`(UUID 모양이 아닌 값 포함), `409 INCIDENT_CLOSED`(이미 정했다), `503 CLUSTER_UNREACHABLE`(하나도 못 내렸다), `503 STOP_INCOMPLETE`(일부만 내렸다), `403 ADMIN_REQUIRED`.
 
 ### `POST /api/admin/incidents/:id/dismiss` — 알림 무시 (운영자)
 
