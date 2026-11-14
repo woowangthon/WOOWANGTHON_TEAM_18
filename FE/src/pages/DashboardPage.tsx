@@ -15,7 +15,7 @@ import { useGithubLink } from './useGithubLink.ts'
 
 const tiles: { key: keyof ProjectCounts; label: string }[] = [
   { key: 'total', label: '전체 프로젝트' },
-  { key: 'running', label: '실행 중' },
+  { key: 'running', label: '배포 완료' },
   { key: 'inProgress', label: '진행 중' },
   { key: 'needsAttention', label: '확인 필요' },
 ]
@@ -36,10 +36,10 @@ const isWebUrl = (url: string) => /^https?:\/\//i.test(url)
 function ProjectCard({ project }: { project: Project }) {
   const { latest } = project
   return (
-    <li className="flex flex-col justify-between gap-3 rounded-md border border-line bg-bg p-4">
+    <li className="flex min-w-0 flex-col justify-between gap-3 rounded-md border border-line bg-bg p-4">
       <div className="flex min-w-0 flex-col gap-1">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="font-mono font-bold">{project.slug}</span>
+          <span className="font-mono font-bold break-all">{project.slug}</span>
           <StatusBadge status={latest.status} />
         </div>
         <span className="font-mono text-sm break-all text-muted">{latest.repo}</span>
