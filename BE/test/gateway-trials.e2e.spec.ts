@@ -641,6 +641,7 @@ describe('MCP gateway trial tools', () => {
       const client = await connect()
       await tryAndVerify(client)
       expect(rejected(await call(client, 'submit_result', verified(specPatch)))).toMatchObject({ code })
+      // 게이트웨이는 실행 기록을 바꾸지 않는다. 에이전트가 최소 gave_up을 다시 내고, 그것도 오지 않으면 토큰 만료 뒤 대기열이 TIMED_OUT으로 마감한다.
       expect(run.status).toBe('fixing')
       await client.close()
     })

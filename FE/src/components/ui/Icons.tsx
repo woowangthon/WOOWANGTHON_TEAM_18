@@ -57,6 +57,7 @@ export const ChevronRightIcon = (p: SVGProps<SVGSVGElement>) => (
     <path d="M6 3l5 5-5 5" />
   </svg>
 )
+
 // 프로필 구역 · 버튼에 쓰는 그림. 선 그림은 위와 같은 선 굵기이고, 브랜드 그림(GitHub · Discord)은 채운 그림이다.
 export const PersonIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base} {...p}>
