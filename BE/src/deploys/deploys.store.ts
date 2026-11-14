@@ -233,6 +233,19 @@ export class DeploysStore {
     return this.firstRun({ status: 'eq.running', order: 'created_at.asc' })
   }
 
+  /** 게이트웨이 토큰이 `before`보다 먼저 만료된 `fixing` 실행(대기열이 TIMED_OUT으로 마감한다). 오래 바뀌지 않은 순으로 10개까지. */
+  async findExpiredFixing(before: Date): Promise<DeployRunRow[]> {
+    const rows = await this.call('deploy_runs', 'GET', {
+      select: '*',
+      status: 'eq.fixing',
+      gateway_expires_at: `lt.${before.toISOString()}`,
+      order: 'updated_at.asc',
+      limit: '10',
+    })
+    if (!rows.every(isRunRow)) throw this.unreadable('deploy_runs', 'GET')
+    return rows
+  }
+
   /** 가장 오래 기다린 queued 실행. 없으면 undefined. */
   findOldestQueued(): Promise<DeployRunRow | undefined> {
     return this.firstRun({ status: 'eq.queued', order: 'created_at.asc' })

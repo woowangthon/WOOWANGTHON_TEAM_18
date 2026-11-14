@@ -170,8 +170,8 @@ export class DeployRunsService {
   }
 
   /**
-   * 실행 기록을 저장한다. 같은 프로젝트의 진행 중인 실행이 STALE_RUN_MS 넘게 바뀌지 않았으면 끝난 것으로 보고(파이프라인이 알림을 못 보냈거나
-   * `fixing`을 풀어 줄 해결 결과 처리가 아직 없다) TIMED_OUT으로 마감한 뒤 한 번 더 저장한다. 그러지 않으면 한 번 막힌 프로젝트는 영영 시작하지 못한다.
+   * 실행 기록을 저장한다. 같은 프로젝트의 진행 중인 실행이 STALE_RUN_MS 넘게 바뀌지 않았으면 끝난 것으로 보고(파이프라인이 알림을 못 보냈다.
+   * 토큰이 만료된 `fixing`은 보통 대기열 타이머가 먼저 마감한다. 이것은 안전망이다) TIMED_OUT으로 마감한 뒤 한 번 더 저장한다. 그러지 않으면 한 번 막힌 프로젝트는 영영 시작하지 못한다.
    */
   private async insertOrExpireStale(row: Parameters<DeploysStore['insertRun']>[0]): Promise<void> {
     try {

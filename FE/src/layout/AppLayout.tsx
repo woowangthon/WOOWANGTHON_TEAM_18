@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { Link, NavLink, Outlet, useLocation } from 'react-router'
 import { isAdmin } from '../auth/isAdmin.ts'
 import { useAuth } from '../auth/useAuth.ts'
+import Logo from '../components/Logo.tsx'
+import SiteFooter from '../components/SiteFooter.tsx'
 import { Alert } from '../components/ui/Alert.tsx'
 import { Button } from '../components/ui/Button.tsx'
 import { tabClass } from '../components/ui/tabClass.ts'
@@ -30,31 +32,29 @@ function AppLayout() {
   }
 
   return (
-    <>
+    <div className="flex min-h-screen flex-col">
       <header className="border-b border-line bg-bg">
-        <div className="mx-auto flex min-h-16 max-w-300 flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 sm:px-8">
+        <div className="mx-auto flex min-h-16 max-w-300 flex-wrap items-center justify-between gap-x-4 gap-y-2 px-3 sm:px-4">
           <div className="flex flex-wrap items-stretch gap-x-8 self-stretch">
-            <Link to="/" className="flex items-center py-2">
-              {/* 임시: 로고가 흰 배경이라 다크에서는 밝은 칩 위에 올린다. 투명 배경 로고가 생기면 칩을 뺀다. */}
-              <img
-                src="/logo.svg"
-                alt="WCP"
-                className="size-10 rounded-md object-contain dark:bg-fg dark:p-0.5"
-              />
+            {/* 관리자는 /admin 안에서만 움직인다(편의일 뿐, 서버는 막지 않는다). 로고도 /admin으로 간다. */}
+            <Link to={admin ? '/admin' : '/'} className="flex items-center py-2">
+              <Logo />
             </Link>
             <nav aria-label="주 메뉴" className="flex min-h-12 gap-1">
-              {/* 관리자는 모니터링 계정이라 관리자 메뉴만 둔다(편의일 뿐, 서버는 막지 않는다). */}
               {admin ? (
-                <NavLink to="/admin" className={navLinkClass}>
-                  관리자
-                </NavLink>
+                <>
+                  <NavLink to="/admin" end className={navLinkClass}>
+                    관리자
+                  </NavLink>
+                  {/* 같은 화면 안의 구역으로 건너뛴다. */}
+                  <a href="#incidents-heading" className={navLinkClass({ isActive: false })}>
+                    운영 알림
+                  </a>
+                </>
               ) : (
                 <>
                   <NavLink to="/dashboard" className={navLinkClass}>
                     대시보드
-                  </NavLink>
-                  <NavLink to="/profile" className={navLinkClass}>
-                    프로필
                   </NavLink>
                   <NavLink to="/deploys" className={navLinkClass}>
                     내 배포
@@ -64,7 +64,12 @@ function AppLayout() {
             </nav>
           </div>
           <div className="flex items-center gap-3 py-2">
-            <span className="text-xs text-muted">{state.session.user.email}</span>
+            <span className="hidden text-xs text-muted sm:inline">{state.session.user.email}</span>
+            {!admin && (
+              <NavLink to="/profile" className={navLinkClass}>
+                프로필
+              </NavLink>
+            )}
             <Button
               variant="outline"
               onClick={() => {
@@ -76,7 +81,7 @@ function AppLayout() {
           </div>
         </div>
       </header>
-      <main className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-8">
+      <main className="mx-auto flex w-full max-w-300 flex-1 flex-col gap-6 px-3 py-8 sm:px-4">
         {signOutFailedAt === pathname && (
           <Alert title="로그아웃하지 못했어요">
             연결을 확인하고 다시 시도해 주세요.
@@ -84,7 +89,8 @@ function AppLayout() {
         )}
         <Outlet />
       </main>
-    </>
+      <SiteFooter />
+    </div>
   )
 }
 

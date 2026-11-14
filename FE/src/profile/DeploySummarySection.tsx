@@ -3,13 +3,14 @@ import { countProjects, groupProjects } from '../deploy/projects.ts'
 import { useDeploys } from '../deploy/useDeploys.ts'
 import { Button } from '../components/ui/Button.tsx'
 import { Skeleton } from '../components/ui/Skeleton.tsx'
+import { BookIcon } from '../components/ui/Icons.tsx'
 import ProfileSection from './ProfileSection.tsx'
 
 function DeploySummarySection() {
   const { state, retry } = useDeploys()
   const counts = state.status === 'ready' ? countProjects(groupProjects(state.deploys)) : null
   return (
-    <ProfileSection id="deploys" title="내 배포 요약">
+    <ProfileSection id="deploys" title="내 배포 요약" icon={<BookIcon width={20} height={20} />}>
       {state.status === 'loading' && (
         <>
           <Skeleton className="w-1/2" />

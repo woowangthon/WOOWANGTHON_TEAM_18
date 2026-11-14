@@ -249,6 +249,50 @@ def test_a_plan_with_a_tool_the_platform_does_not_have_is_made_again() -> None:
     assert "unknown tools ['read_build_logs']" in planner.sent(2)
 
 
+# D10(2026-11-14): 로컬 모델이 edit_repo_file을 files 없이 path · find · replace로 불러
+# INVALID_ARGUMENT로 계획이 깨졌다. 그런 모양의 계획은 실행 전에 다시 만들게 한다.
+KEYS = ("path", "find", "replace", "content")
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        {"path": "src/App.tsx", "find": "a", "replace": "b"},
+        *({"files": [{"path": "a", "content": "x"}], key: "x"} for key in KEYS),
+        {"files": {"path": "a", "find": "x", "replace": "y"}, "message": "m"},
+    ],
+)
+def test_a_plan_with_edit_repo_file_args_outside_files_is_made_again(args: dict[str, Any]) -> None:
+    gw = FakeGateway()
+    planner = Script(
+        classify("A1"),
+        plan({"tool": "edit_repo_file", "args": args}, FINISH),
+        plan(FINISH),
+        final(status="gave_up", summary="모름"),
+    )
+    local = Script(final(status="gave_up", summary="모름"))
+    solve(make_run(**SIGNALS["A1"]), gw, local, planner)
+    wrong = "edit_repo_file args are { files: [{ path, find, replace }], message }"
+    assert wrong in planner.sent(2)
+    assert '"tool":"edit_repo_file"' not in local.sent(0)
+
+
+@pytest.mark.parametrize(
+    "step",
+    [
+        {"tool": "edit_repo_file", "args": {"files": [{"path": "a", "content": "x"}]}},
+        {"tool": "edit_repo_file", "when": "find에 지금 줄, replace에 고친 줄"},
+        {"tool": "edit_repo_file", "args": {"files": "{읽은 파일의 고친 줄}", "message": "m"}},
+    ],
+)
+def test_a_plan_with_edit_repo_file_files_or_no_args_is_kept(step: dict[str, Any]) -> None:
+    gw = FakeGateway()
+    planner = Script(classify("A1"), plan(step, FINISH), final(status="gave_up", summary="x"))
+    local = Script(final(status="gave_up", summary="모름"))
+    solve(make_run(**SIGNALS["A1"]), gw, local, planner)
+    assert '"tool":"edit_repo_file"' in local.sent(0)
+
+
 # ---- ④ 재계획 ----
 
 
@@ -596,7 +640,38 @@ def test_invalid_result_is_replaced_by_a_minimal_gave_up_once() -> None:
     assert second["actions"] == first["actions"] and second["ticketId"] == "t_0013"
 
 
-@pytest.mark.parametrize("code", ["INVALID_RESULT", "TICKET_CLOSED"])
+@pytest.mark.parametrize("code", ["PATCH_FORBIDDEN", "INVALID_SPEC"])
+def test_a_non_invalid_rejection_is_replaced_by_a_minimal_gave_up_once(
+    code: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    gw = FakeGateway()
+    gw.script["submit_result"] = [reject(code, "path /spec/services/0/name ghp_" + "a" * 36)]
+    local = Script(
+        call("run_verify"),
+        final(status="verified", specPatch=PORT_PATCH, summary="고쳤습니다."),
+    )
+    solve(make_run(**SIGNALS["A1"]), gw, local)
+    first, second = gw.submitted
+    assert first["status"] == "verified"
+    assert second["status"] == "gave_up" and "플랫폼 검사에서 거절" in second["summary"]
+    assert "specPatch" not in second and second["actions"] == first["actions"]
+    assert f"result rejected ({code}): path /spec/services/0/name" in caplog.text
+    assert "ghp_" + "a" * 36 not in caplog.text
+
+
+def test_closed_ticket_rejection_of_the_result_is_not_resubmitted(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    gw = FakeGateway()
+    gw.script["submit_result"] = [reject("TICKET_CLOSED")]
+    local = Script(final(status="verified", specPatch=PORT_PATCH, summary="고쳤습니다."))
+    solve(make_run(**SIGNALS["A1"]), gw, local)
+    assert [r["status"] for r in gw.submitted] == ["verified"]
+    assert "sending a minimal gave_up" not in caplog.text
+    assert "result not delivered: submit_result rejected TICKET_CLOSED" in caplog.text
+
+
+@pytest.mark.parametrize("code", ["INVALID_RESULT", "PATCH_FORBIDDEN", "TICKET_CLOSED"])
 def test_second_rejection_of_the_result_is_only_logged(
     code: str, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -604,7 +679,7 @@ def test_second_rejection_of_the_result_is_only_logged(
     gw.script["submit_result"] = [reject(code)] * 3
     local = Script(final(status="gave_up", summary="모름"))
     solve(make_run(**SIGNALS["A1"]), gw, local, planner_of(final(status="gave_up", summary="모름")))
-    assert len(gw.submitted) == (2 if code == "INVALID_RESULT" else 1)
+    assert len(gw.submitted) == (1 if code == "TICKET_CLOSED" else 2)
     assert f"result not delivered: submit_result rejected {code}" in caplog.text
 
 
@@ -919,8 +994,21 @@ def test_the_instructions_tell_the_model_the_pull_request_rules() -> None:
         "the platform checks it",
         # D3(2026-11-14): run_render는 source를 받지 않아 수정 PR 경로에서 호출이 낭비됐다.
         "Skip run_render on this path",
+        # D8(2026-11-14): "run_deploy, run_verify and open_pr with the same source"로 합친 뒤
+        # 로컬 모델이 run_verify에 source를 붙여 INVALID_ARGUMENT로 계획이 깨졌다.
+        "run_verify with no arguments",
+        "then run_deploy with the same `source`",
     ):
         assert text in INSTRUCTIONS
+    assert "run_verify and open_pr with the same" not in INSTRUCTIONS
+
+
+def test_the_plan_instructions_give_edit_repo_file_its_whole_args() -> None:
+    # D10(2026-11-14): "for edit_repo_file `{ path, find, replace }`"가 도구 인자 전체로 읽혀
+    # 로컬 모델이 files 없이 불렀다.
+    whole = "edit_repo_file args `{ files: [{ path, find, replace }], message }`"
+    assert whole in PLAN_INSTRUCTIONS
+    assert "edit_repo_file `{ path, find, replace }`" not in PLAN_INSTRUCTIONS
 
 
 # ---- 성능 정리(2026-11-14) ----

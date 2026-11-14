@@ -3,9 +3,12 @@ import { isAdmin } from '../auth/isAdmin.ts'
 import { useAuth } from '../auth/useAuth.ts'
 import { primaryLinkClass } from '../components/primaryLinkClass.ts'
 import { Card } from '../components/ui/Card.tsx'
+import Logo from '../components/Logo.tsx'
 import HeroCarousel from '../landing/HeroCarousel.tsx'
 import ProjectTypes from '../landing/ProjectTypes.tsx'
 import Showcase from '../landing/Showcase.tsx'
+import SectionNav from '../landing/SectionNav.tsx'
+import SiteFooter from '../components/SiteFooter.tsx'
 import Survey from '../landing/Survey.tsx'
 
 const outlineLinkClass =
@@ -27,31 +30,10 @@ function LandingPage() {
   return (
     <div className="flex min-h-screen flex-col">
       <header className="border-b border-line bg-bg">
-        <div className="mx-auto flex min-h-16 max-w-300 flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 sm:px-8">
-          <div className="flex flex-wrap items-center gap-x-6">
-            <Link to="/" className="flex items-center py-2">
-              {/* 임시: 로고가 흰 배경이라 다크에서는 밝은 칩 위에 올린다. 투명 배경 로고가 생기면 칩을 뺀다. */}
-              <img
-                src="/logo.svg"
-                alt="WCP"
-                className="size-10 rounded-md object-contain dark:bg-fg dark:p-0.5"
-              />
-            </Link>
-            <nav aria-label="페이지 바로가기" className="flex gap-4 text-sm text-muted">
-              <a href="#survey" className="py-2 hover:text-fg">
-                설문
-              </a>
-              <a href="#showcase" className="py-2 hover:text-fg">
-                기능 소개
-              </a>
-              <a href="#types" className="py-2 hover:text-fg">
-                지원 범위
-              </a>
-              <a href="#how" className="py-2 hover:text-fg">
-                사용 방법
-              </a>
-            </nav>
-          </div>
+        <div className="mx-auto flex min-h-16 max-w-300 flex-wrap items-center justify-between gap-x-4 gap-y-2 px-3 sm:px-4">
+          <Link to="/" className="flex items-center py-2">
+            <Logo />
+          </Link>
           <div className="flex items-center gap-2 py-2">
             {home ? (
               <Link to={home} className={primaryLinkClass}>
@@ -71,8 +53,10 @@ function LandingPage() {
         </div>
       </header>
 
+      <SectionNav />
+
       <main className="flex-1">
-        <section className="mx-auto grid max-w-300 items-center gap-10 px-4 py-16 sm:px-8 sm:py-24 lg:grid-cols-2 lg:gap-16">
+        <section className="mx-auto grid max-w-300 items-center gap-10 px-3 py-16 sm:px-4 sm:py-24 lg:grid-cols-2 lg:gap-16">
           <div className="flex flex-col gap-6">
             <h1 className="max-w-2xl text-2xl sm:text-3xl">GitHub 레포 하나로, 학교 PC에 배포까지</h1>
             <p className="max-w-2xl text-lg text-muted">
@@ -99,7 +83,7 @@ function LandingPage() {
         <ProjectTypes />
 
         <section id="how" className="border-t border-line">
-          <div className="mx-auto flex max-w-300 flex-col gap-6 px-4 py-16 sm:px-8">
+          <div className="mx-auto flex max-w-300 flex-col gap-6 px-3 py-16 sm:px-4">
             <h2 className="text-xl">이렇게 배포돼요</h2>
             <ol className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               {steps.map((step, index) => (
@@ -122,7 +106,7 @@ function LandingPage() {
 
 
         <section className="border-t border-line bg-surface">
-          <div className="mx-auto flex max-w-300 flex-col items-start gap-6 px-4 py-20 sm:px-8">
+          <div className="mx-auto flex max-w-300 flex-col items-start gap-6 px-3 py-20 sm:px-4">
             <h2 className="max-w-2xl text-2xl sm:text-3xl">첫 배포, 지금 해 보세요</h2>
             <p className="max-w-2xl text-lg text-muted">GitHub 레포 주소만 있으면 돼요. 막히면 AI 동료가 도와줘요.</p>
             <div className="flex flex-wrap items-center gap-3">
@@ -145,11 +129,7 @@ function LandingPage() {
         </section>
       </main>
 
-      <footer className="border-t border-line">
-        <div className="mx-auto max-w-300 px-4 py-6 text-sm text-muted sm:px-8">
-          2026 AI 우왕톤 · 왕가네식구들
-        </div>
-      </footer>
+      <SiteFooter />
     </div>
   )
 }

@@ -1,3 +1,4 @@
+import { GithubIcon } from '../components/ui/Icons.tsx'
 import { useAuth } from '../auth/useAuth.ts'
 import AccountSection from '../profile/AccountSection.tsx'
 import DiscordSection from '../profile/DiscordSection.tsx'
@@ -32,7 +33,10 @@ function ProfilePage() {
       <AccountSection session={state.session} />
       <PasswordSection email={state.session.user.email ?? ''} />
       <section id="github" aria-labelledby="github-heading" className="flex scroll-mt-4 flex-col gap-3">
-        <h2 id="github-heading" className="text-lg">
+        <h2 id="github-heading" className="flex items-center gap-2 text-lg">
+          <span aria-hidden="true" className="text-muted">
+            <GithubIcon width={20} height={20} />
+          </span>
           GitHub 연동
         </h2>
         <GithubLinkCard />

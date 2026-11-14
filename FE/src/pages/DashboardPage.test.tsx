@@ -79,7 +79,7 @@ it('counts the tiles from the latest run of each project only', async () => {
   show()
   await screen.findByRole('list')
   expect(tile('전체 프로젝트')).toBe('전체 프로젝트6')
-  expect(tile('실행 중')).toBe('실행 중1')
+  expect(tile('배포 완료')).toBe('배포 완료1')
   expect(tile('진행 중')).toBe('진행 중2')
   expect(tile('확인 필요')).toBe('확인 필요2')
 })
@@ -172,4 +172,39 @@ it('shows an operations alert above the projects, and nothing when there are non
   show()
   await screen.findByRole('list')
   expect(screen.queryByText('서비스를 멈췄어요')).toBeNull()
+})
+
+const serveRuns = (deploys: DeployListItem[]) =>
+  api.apiFetch.mockImplementation((path: string) =>
+    Promise.resolve(path === '/api/incidents' ? { incidents: [] } : { deploys }),
+  )
+const names = () => within(screen.getByRole('list')).getAllByRole('listitem').map((li) => li.querySelector('.font-mono')?.textContent)
+
+it('shows the projects as cards, newest first, and sorts by name on request', async () => {
+  serveRuns([run('1', 'shop', 'succeeded', '2026-11-13T10:00:00Z'), run('2', 'blog', 'running', '2026-11-14T10:00:00Z'), run('3', 'api', 'failed', '2026-11-12T10:00:00Z')])
+  show()
+  await screen.findByRole('list')
+  expect(names()).toEqual(['blog', 'shop', 'api'])
+  fireEvent.change(screen.getByLabelText('정렬'), { target: { value: 'name' } })
+  expect(names()).toEqual(['api', 'blog', 'shop'])
+})
+
+it('filters by status, says how many are shown, and says so when none match', async () => {
+  serveRuns([run('1', 'shop', 'succeeded', '2026-11-13T10:00:00Z'), run('2', 'blog', 'running', '2026-11-14T10:00:00Z')])
+  show()
+  await screen.findByRole('list')
+  expect(screen.getByText('2개 보는 중 (전체 2개)')).toBeTruthy()
+  fireEvent.change(screen.getByLabelText('상태'), { target: { value: 'running' } })
+  expect(names()).toEqual(['shop'])
+  expect(screen.getByText('1개 보는 중 (전체 2개)')).toBeTruthy()
+  fireEvent.change(screen.getByLabelText('상태'), { target: { value: 'needsAttention' } })
+  expect(screen.getByText('이 상태의 프로젝트가 없어요.')).toBeTruthy()
+  expect(screen.queryByRole('list')).toBeNull()
+})
+
+it('offers the statuses it can tell and no "stopped", which the deploy list does not carry', async () => {
+  serveRuns([run('1', 'shop', 'succeeded', '2026-11-13T10:00:00Z')])
+  show()
+  await screen.findByRole('list')
+  expect([...screen.getByLabelText('상태').querySelectorAll('option')].map((o) => o.textContent)).toEqual(['전체', '배포 완료', '진행 중', '확인 필요'])
 })
