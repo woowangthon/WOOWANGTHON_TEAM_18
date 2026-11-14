@@ -2,7 +2,7 @@
 
 - **SRS**: FR-075~FR-077, FR-098~FR-102
 - **Owner**: suda5936
-- **Branch**: claude/determined-cray-3gq1oy
+- **Branch**: claude/new-session-25ecwq
 
 ## Plan
 
@@ -13,8 +13,8 @@ Not applied: planner timeout/max_tokens (no measurement to pick values; a reason
 
 ## Todo
 
-- [ ] baseline runs on prod (A1, B3, B4, B5w)
-- [ ] code changes + tests — files: `AI/ai_server/agent/{cases.json,prompts.py,loop.py}`, `AI/tests/*`
+- [x] baseline runs on prod (A1, B3, B4, B5w)
+- [x] code changes + tests — files: `AI/ai_server/agent/{cases.json,prompts.py,loop.py}`, `AI/tests/*`
 - [ ] PR, merge, `deploy-ai.sh`
 - [ ] after runs on prod, same repos
 - [ ] test log (Claude Docs) + `docs/ai-scope.md`
