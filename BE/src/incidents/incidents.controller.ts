@@ -65,6 +65,8 @@ export class AdminIncidentsController {
       await this.store.update(decided.incident.id, { action: 'pending', decided_by: null, decided_at: null }, 'stopped')
       throw new ServiceUnavailableException({ code: 'CLUSTER_UNREACHABLE', message: 'Could not stop the project in the cluster' })
     }
+    // 프로젝트가 멈췄으니 같은 프로젝트의 다른 대기 중 알림도 같은 결정으로 닫는다(중지를 알림마다 누르지 않게).
+    await this.store.closePending(decided.incident.slug, { action: 'stopped', decided_by: decided.incident.decidedBy, decided_at: decided.incident.decidedAt })
     if (result === 'some') {
       // 일부는 이미 내려갔다: 결정(stopped)은 그대로 두고(되돌리면 무시로 바뀔 수 있다), 나머지는 프로젝트 강제 중지로 다시 내린다.
       throw new ServiceUnavailableException({ code: 'STOP_INCOMPLETE', message: 'Some services were stopped, some were not; retry with the project stop' })

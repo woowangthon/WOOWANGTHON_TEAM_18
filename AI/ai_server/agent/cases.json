@@ -37,7 +37,7 @@
     "match": { "path": "logs.lines[*]", "regex": "Module not found|Cannot find module|Could not resolve|Failed to resolve import" },
     "playbook": [
       { "tool": "read_repo", "args": { "path": "로그가 가리키는 파일이 있는 폴더" } },
-      { "tool": "edit_repo_file", "when": "실제 파일 이름과 import 경로의 대소문자 · 경로가 다를 때 import 줄만 실제 이름에 맞춰" },
+      { "tool": "edit_repo_file", "when": "실제 파일 이름과 import 경로의 대소문자 · 경로가 다를 때: find에 지금 import 줄, replace에 실제 이름에 맞춘 줄" },
       { "tool": "run_build", "args": { "source": "edit_repo_file이 돌려준 source" } },
       { "tool": "run_deploy", "args": { "source": "같은 source" } },
       { "tool": "run_verify" },
@@ -173,9 +173,14 @@
     ] },
     "playbook": [
       { "tool": "read_pod_logs", "args": { "previous": true, "lines": 100 } },
-      { "tool": "run_deploy", "when": "로그가 빠진 env를 가리키고 값이 공개 값일 때", "args": { "specPatch": [{ "op": "add", "path": "/spec/services/{i}/runtime/env/{key}", "value": "{value}" }] } },
+      { "tool": "run_deploy", "when": "로그가 빠진 env를 가리키고 값이 공개 값일 때만", "args": { "specPatch": [{ "op": "add", "path": "/spec/services/{i}/runtime/env/{key}", "value": "{value}" }] } },
+      { "tool": "read_repo", "when": "로그가 코드의 파일 · 모듈 경로 오류(ENOENT, Cannot find module)를 가리킬 때", "args": { "path": "로그가 가리키는 파일이 있는 폴더" } },
+      { "tool": "edit_repo_file", "when": "코드의 경로가 실제 파일 이름과 다를 때: find에 지금 줄, replace에 고친 줄" },
+      { "tool": "run_build", "when": "edit_repo_file을 했을 때", "args": { "source": "edit_repo_file이 돌려준 source" } },
+      { "tool": "run_deploy", "when": "edit_repo_file을 했을 때", "args": { "source": "같은 source" } },
       { "tool": "run_verify" },
-      { "tool": "submit_result", "when": "DB 연결 실패 · 비밀값 문제면 needs_user로" }
+      { "tool": "open_pr", "when": "edit_repo_file의 source로 run_verify 통과", "args": { "source": "같은 source" } },
+      { "tool": "submit_result", "when": "DB 연결 실패 · 비밀값 문제면 needs_user로. BOT_UNAVAILABLE이거나 open_pr가 patchAttached로 답해도 needs_user로: 고칠 파일과 줄을 알린다" }
     ]
   },
   {

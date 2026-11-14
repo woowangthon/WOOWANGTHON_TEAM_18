@@ -6,6 +6,7 @@ import { SourceScanner } from '../security/source-scanner.js'
 import { ReposModule } from '../repos/repos.module.js'
 import { ClusterSecretWriter } from './cluster-secret-writer.js'
 import { DeployConditionService } from './deploy-condition.service.js'
+import { DeployEvents } from './deploy-events.js'
 import { AgentClient } from './agent.client.js'
 import { DeployPreparer } from './deploy-preparer.js'
 import { DeployReadinessService } from './deploy-readiness.service.js'
@@ -28,6 +29,7 @@ import { SlotScaleDown } from './slot-scale-down.js'
   providers: [
     DeploysService,
     DeploysStore,
+    DeployEvents,
     DeployConditionService,
     DeployRunsService,
     DeployQueue,
@@ -47,6 +49,7 @@ import { SlotScaleDown } from './slot-scale-down.js'
     { provide: SecretWriter, useClass: ClusterSecretWriter },
   ],
   // 게이트웨이(src/gateway)가 실행 기록 · AI 서버 연결을 같이 쓴다.
-  exports: [DeployConditionService, DeploysStore, AgentClient, PipelineClient, PipelineTokenGuard, SlotScaleDown],
+  // DeployEvents: 운영 알림 모듈이 배포 결과를 학생 Discord로 보낸다.
+  exports: [DeployConditionService, DeploysStore, DeployEvents, AgentClient, PipelineClient, PipelineTokenGuard, SlotScaleDown],
 })
 export class DeploysModule {}

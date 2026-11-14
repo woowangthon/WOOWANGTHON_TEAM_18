@@ -46,7 +46,7 @@ from ai_server.agent.models import (
     Ticket,
     UserRequest,
 )
-from ai_server.agent.redact import RedactingModel
+from ai_server.agent.redact import RedactingModel, redact
 from ai_server.agent.runs import Runner, TicketRun
 from ai_server.agent.trace import classification, clean, exc_shape, trace
 from ai_server.config import Settings
@@ -195,20 +195,30 @@ async def _llm_classify(
     return case
 
 
-async def _plan_steps(model: Model, prompt: str, trace_id: str) -> Plan:
-    """추론 모델이 도구 없이 계획만 낸다(게이트웨이 호출 한도를 쓰지 않는다)."""
+async def _plan_steps(model: Model, prompt: str, gateway: GatewayToolset) -> Plan:
+    """추론 모델이 읽기 도구로 증거를 본 뒤 계획을 낸다(edit_repo_file은 파일 전체 내용이 든다).
+
+    읽기 거절은 모델에 돌려준다(strict가 아니다). 읽은 결과도 가림 필터를 거쳐 추론 API로 간다.
+    """
     agent = Agent(
-        model, output_type=Plan, instructions=prompts.PLAN_INSTRUCTIONS, retries=OUTPUT_RETRIES
+        model,
+        output_type=Plan,
+        instructions=prompts.PLAN_INSTRUCTIONS,
+        toolsets=[gateway.filtered(lambda ctx, tool: tool.name in prompts.READ_TOOLS)],
+        # 지난 읽기 결과를 줄이지 않는다(compact_history 없음): 읽은 파일 전체로 새 내용을 쓴다.
+        retries=OUTPUT_RETRIES,
     )
-    trace(trace_id, f"act model=planner name={clean(model.model_name)} (plan)")
+    trace(gateway.trace_id, f"act model=planner name={clean(model.model_name)} (plan)")
     started = time.monotonic()
+    before = len(gateway.actions)
     result = await agent.run(prompt)
     ran = result.response.model_name
+    reads = ",".join(clean(a.tool) for a in gateway.actions[before:]) or "-"
     tools = ",".join(clean(s.tool) for s in result.output.steps)
     trace(
-        trace_id,
-        f"plan done ran={clean(ran) if ran else '-'} steps={len(result.output.steps)} "
-        f"tools={tools} {_usage(result.usage, started)}",
+        gateway.trace_id,
+        f"plan done ran={clean(ran) if ran else '-'} reads={reads} "
+        f"steps={len(result.output.steps)} tools={tools} {_usage(result.usage, started)}",
     )
     plan: Plan = result.output
     return plan
@@ -344,6 +354,21 @@ def _invented_needs_user(outcome: Outcome, keys: list[str]) -> Outcome:
     )
 
 
+def _fit_to_gateway(outcome: Outcome, opened_pr_url: str | None) -> Outcome:
+    """결과를 게이트웨이 검사(BE/src/gateway/result.ts · tools.ts)에 맞춘다.
+
+    specPatch · buildOverrides는 verified 전용이라 다른 결과에 있으면 비어 있어도 INVALID_RESULT다.
+    pr_opened의 pr.url은 open_pr가 돌려준 주소와 같아야 한다. 모델이 결과에 다시 적으면 어긋나므로
+    코드가 채운다(2026-11-14 실측: pr_opened 6건이 모두 INVALID_RESULT로 거절).
+    """
+    update: dict[str, Any] = {}
+    if outcome.status != "verified":
+        update |= {"spec_patch": None, "build_overrides": None}
+    if outcome.status == "pr_opened" and outcome.pr is not None and opened_pr_url is not None:
+        update["pr"] = outcome.pr.model_copy(update={"url": opened_pr_url})
+    return outcome.model_copy(update=update) if update else outcome
+
+
 # 제출이 전송 오류로 실패하면 이만큼 기다렸다 다시 낸다(초).
 SUBMIT_RETRY_DELAYS = (2.0, 5.0, 10.0)
 
@@ -410,8 +435,12 @@ async def _submit(gateway: GatewayToolset, result: AgentResult) -> None:
             if e.code != "INVALID_RESULT" or minimal_sent:
                 log.error("ticket %s result not delivered: %s", result.ticket_id, e)
                 return
+            # 게이트웨이의 거절 이유(칸 이름 · 규칙 문장, result.ts)를 남긴다. 메시지에 모델이 만든
+            # 경로(specPatch의 op.path 등)가 섞일 수 있어 비밀값 모양은 가린다(FR-102와 같은 필터).
             log.warning(
-                "ticket %s result rejected as invalid; sending a minimal gave_up", result.ticket_id
+                "ticket %s result rejected as invalid (%s); sending a minimal gave_up",
+                result.ticket_id,
+                budget.clip_line(redact(e.message), 300),
             )
             result = AgentResult(
                 ticket_id=result.ticket_id,
@@ -476,7 +505,7 @@ def make_agent_runner(
                             plan = await _plan_steps(
                                 models.planner,
                                 prompts.plan_steps_prompt(ticket, notes, case),
-                                ticket.ticket_id,
+                                gateway,
                             )
                             outcome = await _execute(
                                 models.local,
@@ -536,6 +565,7 @@ def make_agent_runner(
                 "-> needs_user",
             )
             outcome = _invented_needs_user(outcome, invented)
+        outcome = _fit_to_gateway(outcome, gateway.opened_pr_url)
         result = AgentResult(
             **outcome.model_dump(),
             ticket_id=ticket.ticket_id,

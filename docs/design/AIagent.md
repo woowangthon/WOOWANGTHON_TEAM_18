@@ -107,7 +107,7 @@ AI 서버 (에이전트) → 플랫폼 서버 MCP 게이트웨이 → GoCD 서�
 
 | 도구 | 하는 일 | 제한 |
 |---|---|---|
-| `edit_repo_file` | 봇 fork 작업 브랜치에 파일 수정 commit. 그 커밋을 `source`로 실행 도구에 넘긴다. 학생 레포에는 쓰지 않는다 | 티켓 전체에서 파일 5개 · 바뀐 줄 50줄(지운 줄 + 넣은 줄), `.env` · `.github/` 금지, 비밀값 모양의 줄 금지. 티켓당 5회 |
+| `edit_repo_file` | 봇 fork 작업 브랜치에 파일 수정 commit(파일 전체 내용 `content`, 또는 한 번만 있는 글을 바꾸는 `find` · `replace`). 그 커밋을 `source`로 실행 도구에 넘긴다. 학생 레포에는 쓰지 않는다 | 티켓 전체에서 파일 5개 · 바뀐 줄 50줄(지운 줄 + 넣은 줄), `.env` · `.github/` 금지, 비밀값 모양의 줄 금지. 티켓당 5회 |
 | `open_pr` | 학생 레포에 수정 PR. PR을 열 수 없으면 `{ url: null, patchAttached: true }`(patch는 플랫폼이 `needs_user` 안내에 붙인다) | 티켓당 1개(2회). 게이트웨이가 같은 `source`로 `run_deploy` → `run_verify` 통과를 확인한 뒤에만 연다(`NOT_VERIFIED`) |
 
 **끝내기**
@@ -128,7 +128,7 @@ AI 서버 (에이전트) → 플랫폼 서버 MCP 게이트웨이 → GoCD 서�
 | CodeBuild 빌드 설정 | 그 빌드에만, `buildOverrides` 상한 안 (§3) |
 | 대상 슬롯 운영 | 재시작, 0 · 1개 조정, Ready 다시 기다리기 |
 | 그대로 재실행 | 고칠 것이 없는 일시적 실패 (CodeBuild 준비 실패, 이미지 받기 시간 초과) |
-| dry-run 먼저 | 이름 · 포트 오류는 `run_render`로 먼저 확인한다. 자원 합계(쿼터)는 `run_render`에서 걸리지 않고 `run_deploy`의 Prepare에서 걸린다(case `P2`) |
+| dry-run 먼저 | 이름 · 포트 오류는 `run_render`로 먼저 확인한다. 자원 합계(쿼터)는 `run_render`에서 걸리지 않고 `run_deploy`의 Prepare에서 걸린다(case `P2`). `run_render`는 `source`를 받지 않아 원래 commit만 시험하므로, 레포 수정 → PR 경로는 `run_build` → `run_deploy`로 바로 간다 |
 | 레포 수정 → PR | fork 커밋으로 `run_verify`까지 통과한 변경만 |
 | 사용자 요청 | 비밀값이 틀림 · 빠짐, 학생 DB에 닿지 않음, 학생 DB 스키마 문제 |
 | 플랫폼 문제 보고 | 이미지 공개 설정, 노드 자원 부족, 차트 · 기본 Dockerfile 문제 |
@@ -333,7 +333,7 @@ AI 서버 (에이전트) → 플랫폼 서버 MCP 게이트웨이 → GoCD 서�
 | `B1` | build | 락 파일 불일치 | `INSTALL` 실패, `ERR_PNPM_OUTDATED_LOCKFILE`, `npm ci` sync 오류 | `needs_user`로 다시 만들 락 파일과 명령을 알림(락 파일은 패키지 매니저를 돌려야 다시 만들 수 있고 `edit_repo_file` 50줄을 넘기 쉽다) |
 | `B2` | build | Node 버전 불일치 | `engine "node" is incompatible`, `ERR_PNPM_UNSUPPORTED_ENGINE`, `npm error code EBADENGINE`. npm의 `EBADENGINE` **경고**와 일반 `SyntaxError`는 신호로 쓰지 않고, 대조는 `B5` · `B3` · `B4` 뒤에 한다(경고가 섞인 다른 실패를 B2로 잘못 고르지 않게, 2026-11-14) | `build.nodeVersion` |
 | `B3` | build | 빌드 시점 env 누락 | `BUILD` 실패, `import.meta.env.VITE_*` undefined | `build.buildEnv` 또는 사용자 요청 |
-| `B4` | build | 대소문자 · import 경로 | `Module not found`, `Cannot find module` | 수정 PR(`edit_repo_file` → 같은 `source`로 `run_build` · `run_deploy` · `run_verify` → `open_pr`). `BOT_UNAVAILABLE`이거나 PR이 막히면(`patchAttached`) `needs_user`로 import 파일 · 고칠 경로를 알림 |
+| `B4` | build | 대소문자 · import 경로 | `Module not found`, `Cannot find module` | 수정 PR(`edit_repo_file`의 `find`에 지금 import 줄, `replace`에 고친 줄 → 같은 `source`로 `run_build` · `run_deploy` · `run_verify` → `open_pr`). `BOT_UNAVAILABLE`이거나 PR이 막히면(`patchAttached`) `needs_user`로 import 파일 · 고칠 경로를 알림 |
 | `B5` | build | `COPY` 대상 없음 | `COPY failed`, `"/dist": not found` | `build.context` · `outputDir` · `dockerfile` |
 | `P1` | prepare | 필수 Secret key 없음 | W3 상태 "빠짐" | 사용자 요청 |
 | `P2` | prepare | 자원 합계 초과 | 검증 규칙 `resources` 합계 | `runtime.resources` |
@@ -342,7 +342,7 @@ AI 서버 (에이전트) → 플랫폼 서버 MCP 게이트웨이 → GoCD 서�
 | `R2` | render | 포트 · probe 값 오류 | `422 Invalid`, field `...containerPort` | `runtime.port` · `health` |
 | `R3` | render | 쿼터 초과 | `403 Forbidden`, `exceeded quota` | `runtime.resources`. render에서는 드묾: ResourceQuota는 Pod가 생길 때 걸려 Deployment dry-run은 통과한다(2026-11-11 로컬 k3s, CPU 9 Deployment가 통과). 실제로는 Prepare의 `P2`나 apply의 `A4`(FailedCreate)로 온다 |
 | `A1` | apply | 헬스체크 실패 | 이벤트 `Unhealthy` | `runtime.port` · `health.path` · `startupTimeoutSeconds` |
-| `A2` | apply | 시작 직후 종료 | `CrashLoopBackOff`, `exitCode` ≠ 0 | 로그 패턴: env 누락 → `runtime.env`, DB 연결 실패 → 사용자 요청 |
+| `A2` | apply | 시작 직후 종료 | `CrashLoopBackOff`, `exitCode` ≠ 0 | 로그 패턴: env 누락 → `runtime.env`, 코드의 파일 · 모듈 경로 오류(`ENOENT`, `Cannot find module`) → B4와 같은 수정 PR(`find` · `replace`), DB 연결 실패 → 사용자 요청 |
 | `A3` | apply | 메모리 초과 | `OOMKilled` (137) | `runtime.resources.memory` |
 | `A4` | apply | Pod 생성 실패 (쿼터) | ReplicaSet 이벤트 `FailedCreate` + `exceeded quota` | `runtime.resources` |
 | `V1` | verify | 정적 파일 404 | `errorMessage`에 파일 경로(`/assets/` 또는 `.js` · `.css` · 이미지 · 글꼴 확장자)와 `404` | 원인은 Vite `base` · `outputDir` 경로. spec(`build.outputDir`)이면 `specPatch`, 레포 파일(`vite.config`의 `base`)이면 수정 PR(수정 PR 도구 전에는 `needs_user`로 고칠 파일 · 값을 알림) |
@@ -365,7 +365,7 @@ PydanticAI에서 두 모델을 OpenAI 호환 provider로 붙이고, 추론 모�
 |---|---|---|
 | ① 정규식 대조 | 없음 | §8 `match`로 같은 stage에서 맞는 case를 **전부** 고른다(`CaseMemory.candidates`). 최종 판단에 쓰지 않고 ②에 `Regex hint (may be wrong)`로만 준다 |
 | ② 분류 | 추론 API | 같은 stage의 case 목록(id · 제목)과 ①의 힌트로 하나를 고르거나 null. 힌트가 로그 발췌와 다르면 발췌를 따른다. 목록에 없는 id는 모르는 것으로 본다. 고른 case에 hits를 올린다. 결과의 `method`는 `llm` |
-| ③ 계획 → 실행 | 추론 API → 로컬 | 추론 모델은 도구를 부르지 않고 계획(`cause` + `steps`: 도구 · 실제 인자 · `when`, 마지막은 끝내는 조건)만 낸다(게이트웨이 호출 한도를 쓰지 않는다). 게이트웨이에 없는 도구 · 8,000자를 넘는 계획은 다시 만들게 한다. 로컬 모델은 계획에 있는 도구만 받아 그대로 부르고 해결 결과(§6의 status · `specPatch` · `pr` · `userRequest` · `evidence` · `summary`)를 낸다 |
+| ③ 계획 → 실행 | 추론 API → 로컬 | 추론 모델은 읽기 도구(`read_repo` · `get_target_status` · `read_pod_logs`)만 불러 증거를 본 뒤 계획(`cause` + `steps`: 도구 · 실제 인자 · `when`, 마지막은 끝내는 조건)을 낸다. `edit_repo_file`의 `find`에는 읽은 파일의 지금 글을 그대로 적는다(파일 전체 `content`도 받는다)(2026-11-14 운영 B4: 읽지 못해 "읽고 `needs_user`"로 계획했다). 읽기는 게이트웨이 호출 한도에 세고, 기록(`actions`)에 남고, 가림 필터를 거쳐 추론 API로 간다. 읽기 거절은 재계획이 아니라 추론 모델에 돌려준다. 계획 중에는 지난 읽기 결과를 한 줄로 줄이지 않는다(추론 API가 실패해 로컬로 넘어가면 16K를 넘을 수 있다). 추적 로그는 `plan done reads=<도구 이름들>`만 남긴다. 게이트웨이에 없는 도구 · 8,000자를 넘는 계획은 다시 만들게 한다. 로컬 모델은 계획에 있는 도구만 받아 그대로 부르고 해결 결과(§6의 status · `specPatch` · `pr` · `userRequest` · `evidence` · `summary`)를 낸다 |
 | ④ 재계획 | 추론 API | ③이 `gave_up`이거나, 실행 중 게이트웨이 거절(같은 호출 반복 `REPEATED_CALL` 포함)을 받았거나, 출력이 계속 깨지면 playbook · 지금까지의 도구 호출 · 멈춘 이유를 받아 다시 계획하고 직접 실행한다 |
 | ⑤ planning | 추론 API | ②가 null이면 처음부터 계획하고 직접 실행한다 |
 
@@ -399,6 +399,7 @@ PydanticAI에서 두 모델을 OpenAI 호환 provider로 붙이고, 추론 모�
 - 로컬 8B 모델의 분류 · 도구 호출 품질은 검증하지 않았다. 실제 모델(로컬 · 추론 API)은 아직 한 번도 붙여 돌리지 않았다.
 - 컨텍스트 예산은 글자 수로 어림했다(가장 큰 시험 티켓 · 도구 결과로 로컬 모델 입력이 도구 정의까지 합쳐 30,000자 이하). 실제 토큰 수는 vLLM에 붙인 뒤 응답의 `usage.prompt_tokens`로 재야 한다. 한글은 글자당 토큰이 더 많아 어림이 빗나갈 수 있다.
 - 요약본과 발췌는 정보를 버린다. 오류 표시 단어가 없는 원인 줄은 발췌에서 빠질 수 있고, 지난 도구 결과는 한 줄만 남는다. 에이전트가 필요하면 관찰 도구로 다시 읽는다.
+- 결과를 내기 직전에 코드가 게이트웨이 검사(`BE/src/gateway/result.ts` · `tools.ts`)에 맞춘다: `verified`가 아니면(`pr_opened` · `needs_user` · `gave_up`) `specPatch` · `buildOverrides`를 뺀다(있으면 비어 있어도 `INVALID_RESULT`). `pr_opened`의 `pr.url`은 이 티켓의 `open_pr`가 돌려준 주소로 채운다. 2026-11-14 실측에서 `pr_opened` 6건이 모두 `INVALID_RESULT`로 거절되어 최소 `gave_up`이 된 것을 보고 넣었다. 거절되면 그 이유를 AI 서버 경고 로그에 남긴다.
 - `verified`의 패치가 env · buildEnv에 넣는 값이 티켓 · 도구 결과 어디에도 없으면 AI 서버 코드가 `needs_user`로 바꾼다(지어낸 값. 모델은 비밀값을 모른다). 2026-11-14 실서비스 측정에서 로컬 모델이 비밀값 `VITE_API_KEY`에 지어낸 값을 넣어 시험을 통과시키고 `verified`를 낸 것을 보고 넣었다(`loop._invented_env_keys`).
 - 에이전트가 낸 `verified`가 정말 `run_verify` 통과 뒤인지 AI 서버는 따로 확인하지 않는다. 게이트웨이가 이 티켓의 시험 기록(같은 `specPatch`로 `run_deploy` → `run_verify` 통과)과 맞춰 보고(B2), 다시 실행의 Verify가 대상 슬롯을 한 번 더 확인한다(§1).
 - 가림 필터는 정해진 모양만 가린다. 이름 없이 나온 임의의 비밀 문자열은 못 가린다.
