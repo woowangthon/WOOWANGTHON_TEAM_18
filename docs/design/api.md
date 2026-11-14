@@ -682,12 +682,21 @@ verified (submit_result)
 
 ### `GET /api/admin/projects` — 실행 중인 서비스
 
-DB에 배포가 있는 프로젝트(`slug`)마다 공간 `proj-<slug>`를 읽어 돌려준다(공간 전체를 한 번에 읽는 권한은 서버 계정에 없다). 가장 최근에 배포를 저장한 프로젝트부터. 공간이 아직 없으면 `services`가 `[]`다. 한 프로젝트의 공간만 못 읽으면(권한 · 시간 초과) 나머지는 그대로 돌려주고 그 프로젝트는 `services: []`에 `clusterError`(`CLUSTER_FORBIDDEN` · `CLUSTER_UNREACHABLE`)를 단다. 모든 프로젝트를 못 읽으면 `503`이다. DB에서 한 번에 읽는 배포는 최근 500개라 그보다 오래된 프로젝트는 빠진다(MVP 규모에서는 넘지 않는다).
+DB에 배포가 있는 프로젝트(`slug`)를 검색 · 상태로 거르고 쪽으로 나눈 뒤, 그 프로젝트마다 공간 `proj-<slug>`를 읽어 돌려준다(공간 전체를 한 번에 읽는 권한은 서버 계정에 없다). 가장 최근에 배포를 저장한 프로젝트부터. 운영자가 정리한 프로젝트(아래 `hide`)는 나오지 않는다(FR-104).
+
+쿼리(모두 선택): `page`(1부터, 기본 1), `pageSize`(1~50, 기본 10), `q`(앞뒤 공백을 뗀 100자까지. `slug` 또는 `repo`에 들어 있으면 맞는다. 대소문자 무시), `status`(`all` 기본 · `running` · `stopped`). 모양이 틀리면(숫자가 아니거나 범위 밖, 같은 쿼리를 두 번 보냄, 모르는 `status`) `400 INVALID_QUERY`이고 DB · 클러스터를 부르지 않는다.
+
+- `status`는 화면(ProjectCard)의 뜻과 같다: 읽은 서비스 중 하나라도 `replicas > 0`이면 `running`, 서비스가 없거나 모두 `0`이면 `stopped`(공간이 없는 것도 끌 것이 없으니 `stopped`). 공간을 못 읽은(`clusterError`) 프로젝트는 둘 다 아니라 `all`에만 나온다.
+- 상태는 클러스터에서만 알 수 있어서 `status`가 `running` · `stopped`이면 검색에 맞는 프로젝트의 공간을 **모두** 읽은 뒤 거르고 쪽으로 나눈다(MVP 규모는 수십 개). `all`이면 그 쪽의 프로젝트만 읽는다.
+- 모든 프로젝트를 못 읽으면 `503`인 규칙은 이번에 읽은 프로젝트에 적용한다. 공간이 아직 없으면 `services`가 `[]`다. 한 프로젝트의 공간만 못 읽으면(권한 · 시간 초과) 나머지는 그대로 돌려주고 그 프로젝트는 `services: []`에 `clusterError`(`CLUSTER_FORBIDDEN` · `CLUSTER_UNREACHABLE`)를 단다. 모든 프로젝트를 못 읽으면 `503`이다. DB에서 한 번에 읽는 배포는 최근 500개라 그보다 오래된 프로젝트는 빠진다(MVP 규모에서는 넘지 않는다).
 
 응답 `200`:
 
 ```json
 {
+  "page": 1,
+  "pageSize": 10,
+  "total": 1,
   "projects": [
     {
       "slug": "my-app",
@@ -718,6 +727,19 @@ DB에 배포가 있는 프로젝트(`slug`)마다 공간 `proj-<slug>`를 읽어
 - `liveSlot` · `url`: 아직 한 번도 전환하지 않았으면 `null`.
 - `lastStop`: 가장 최근 강제 중지 기록(없으면 `null`). 그 뒤에 다시 배포했는지는 `replicas`로 본다.
 - `ownerId`: 소유자의 사용자 id(이메일은 배포 테이블에 없다).
+- `total`: 검색 · 상태로 거른 뒤(정리한 것은 뺀) 프로젝트 수. 범위를 넘은 `page`는 `projects: []`에 같은 `total`이다.
+
+### `POST /api/admin/projects/:slug/hide` — 정리 (FR-104)
+
+운영자 목록에서 프로젝트를 숨긴다(소프트 삭제). 본문은 없다. **중지된 프로젝트만** 정리할 수 있다(서비스가 없거나 모두 `replicas: 0`. 공간이 없어도 된다): 실행 중이면 서비스를 내리는 일을 여기서 하지 않고 `409 NOT_STOPPED`로 먼저 중지하라고 알린다. 숨긴 시각은 `projects.hidden_at`에 남긴다(줄이 없으면 만든다. `live_slot`은 그대로다).
+
+- **클러스터 객체는 지우지 않는다.** Deployment · Service · Ingress · 네임스페이스 · 이미지는 그대로 남는다. 클러스터 정리(GC)는 구현하지 않았고 후속 일이다(담당 유성님). 이 API가 클러스터를 정리한다고 읽으면 안 된다.
+- 숨김은 `hidden_at`이 그 프로젝트의 **가장 최근 배포를 저장한 때보다 나중일 때만** 유효하다. 정리한 뒤 학생이 다시 배포하면 목록에 돌아온다(배포 쪽 코드는 바뀌지 않는다). 숨긴 것을 되돌리는 API는 없다.
+- 누가 정리했는지는 기록하지 않는다(`admin_actions`는 중지만 담는다).
+
+응답 `200`: `{ "slug": "my-app" }`. 이미 숨긴 것을 다시 정리해도 `200`이다.
+
+오류: `404 PROJECT_NOT_FOUND`(DB에 없는 slug, slug 모양이 아닌 값 포함), `409 NOT_STOPPED`, `403 ADMIN_REQUIRED`, `503 CLUSTER_UNREACHABLE` · `CLUSTER_FORBIDDEN`(중지된 것을 확인하려고 공간을 읽지 못했다), `503 DATABASE_UNAVAILABLE`(기록하지 못했다. 같은 요청을 다시 보내도 안전하다).
 
 ### `POST /api/admin/projects/:slug/stop` — 강제 중지 (FR-094)
 
