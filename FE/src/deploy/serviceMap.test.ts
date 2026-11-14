@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest'
 import type { Metrics } from './metrics.ts'
+import type { DeployStatus } from './progress.ts'
 import { layoutServices, nodeStateOf, readinessText } from './serviceMap.ts'
 import type { ServiceSpec } from './types.ts'
 
@@ -83,4 +84,9 @@ it('says the deploy is complete but waiting for the health check while a service
   expect(readinessText(live('running'))).toBe('실행 중(정상)')
   expect(readinessText(undefined)).toBe('배포가 끝났어요')
   expect(readinessText({ ...live('running'), state: 'not_live', reason: 'superseded', services: [] })).toBe('배포가 끝났어요')
+})
+
+it('shows a status this screen does not know by its name instead of breaking the map', () => {
+  const state = nodeStateOf('fe', { status: 'paused' as DeployStatus, failureService: null, metrics: undefined })
+  expect(state).toEqual({ text: 'paused', variant: 'neutral' })
 })

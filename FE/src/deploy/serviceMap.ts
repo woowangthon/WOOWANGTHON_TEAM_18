@@ -71,6 +71,9 @@ export function nodeStateOf(
       return metrics?.state === 'not_live' && metrics.reason === 'superseded'
         ? { text: '새 배포가 공개 중', variant: 'neutral' }
         : { text: '상태 확인 중', variant: 'neutral' }
+    default:
+      // 이 화면이 모르는 상태(서버에 새로 생긴 것)는 배지처럼 그 이름 그대로 보인다. 없으면 구성도가 깨져 배포 화면 전체가 내려간다.
+      return { text: statusLabel(status), variant: 'neutral' }
   }
 }
 
