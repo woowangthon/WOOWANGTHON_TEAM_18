@@ -80,7 +80,8 @@ export class DeployQueue implements OnApplicationBootstrap, OnModuleDestroy {
       return false
     } catch (err) {
       this.logger.error(`could not start the pipeline for ${run.slug}: ${err instanceof Error ? err.name : 'error'}`)
-      const failed = await this.store.updateRun(run.deploy_id, { status: 'running' }, { status: 'failed', failure: { code: 'PIPELINE_UNAVAILABLE', stage: 'build', service: null } })
+      // build에 머문 실행만 마감한다: GoCD가 받고 응답만 실패했다면 그 사이 알림이 실행을 다음 스테이지로 넘겼을 수 있다(그 실행은 돌고 있다).
+      const failed = await this.store.updateRun(run.deploy_id, { status: 'running', stage: 'build' }, { status: 'failed', failure: { code: 'PIPELINE_UNAVAILABLE', stage: 'build', service: null } })
       // verified 뒤 다시 실행이면 에이전트에 그 티켓이 끝났다고 알린다.
       if (failed && run.ticket_id) await this.agent.close(run.ticket_id, commitOf(run), 'stopped')
       return true

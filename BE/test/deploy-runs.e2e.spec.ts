@@ -745,6 +745,21 @@ describe('deploy queue', () => {
     expect(callsTo(CLOSE_URL)).toHaveLength(0)
   })
 
+  it.each([
+    ['a new deploy', {}],
+    ['a verified re-run', reRunOver(new Date().toISOString())],
+  ])('leaves %s running when GoCD took it but answered with an error after a notice moved it past build', async (_label, over) => {
+    const id = seedQueued('app-one', over)
+    // GoCD가 실행은 받았고(build 통과 알림이 먼저 와 prepare로 넘겼다) 응답만 실패했다.
+    gocdAnswer = () => {
+      Object.assign(run(id), { stage: 'prepare', updated_at: new Date().toISOString() })
+      return new Response('{}', { status: 500 })
+    }
+    await settle()
+    expect(run(id)).toMatchObject({ status: 'running', stage: 'prepare', failure: null })
+    expect(callsTo(CLOSE_URL)).toHaveLength(0)
+  })
+
   it('closes no ticket when a new deploy (no ticket) cannot be scheduled', async () => {
     seedQueued('app-one')
     gocdAnswer = () => new Response('{}', { status: 500 })
