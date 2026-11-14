@@ -105,7 +105,9 @@ class GatewayToolset(MCPToolset[Any]):
             # 이것이 없으면 모델이 무엇이 틀렸는지 모른 채 같은 패치를 되풀이한다
             # (2026-11-14 리허설: 포트를 문자열로 네 번).
             fields = fields_shape((content or {}).get("fields"))
-            detail = message if fields == "-" else f"{message} (fields: {fields})"
+            # 칸별 오류를 앞에 둔다. 재계획 지시문이 기록을 200자에서 자르면
+            # 뒤의 일반 메시지가 먼저 잘린다.
+            detail = message if fields == "-" else f"fields {fields}; {message}"
             self.actions.append(
                 Action(tool=name, args=args, ok=False, result=f"rejected {code}: {detail}")
             )

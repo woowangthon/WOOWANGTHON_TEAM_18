@@ -543,12 +543,31 @@ def test_a_spec_rejection_tells_the_model_which_field_and_the_planner_replans() 
     assert "INVALID_TYPE" in replan and "계속 거절" in replan
 
 
+def test_field_errors_survive_the_replan_prompt_clip_before_a_long_message() -> None:
+    gw = FakeGateway()
+    fields = [
+        {"path": "services[0].runtime.port", "code": "INVALID_TYPE"},
+        {"path": "services[0].runtime.health.port", "code": "UNKNOWN_KEY"},
+    ]
+    gw.script["run_render"] = [reject("INVALID_SPEC", "x" * 400, fields)]
+    local = Script(
+        call("run_render", specPatch=PORT_PATCH),
+        final(status="gave_up", summary="모름"),
+    )
+    planner = Script(final(status="gave_up", summary="모름"))
+    solve(make_run(**SIGNALS["A1"]), gw, local, planner)
+    replan = planner.sent(0)
+    assert "services[0].runtime.port:INVALID_TYPE" in replan
+    assert "services[0].runtime.health.port:UNKNOWN_KEY" in replan
+
+
 def test_the_playbook_prompt_says_a_port_is_a_number() -> None:
     gw = FakeGateway()
     local = Script(final(status="gave_up", summary="모름"))
     planner = Script(final(status="gave_up", summary="모름"))
     solve(make_run(**SIGNALS["A1"]), gw, local, planner)
-    assert 'numbers (3000, not "3000")' in local.sent(0)
+    first = local.sent(0)
+    assert "JSON type that field takes" in first and 'numbers (3000, not "3000")' in first
 
 
 def test_without_model_settings_each_ticket_gets_a_gave_up_that_says_so(
