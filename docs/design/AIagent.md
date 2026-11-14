@@ -77,7 +77,7 @@ AI 서버 (에이전트) → 플랫폼 서버 MCP 게이트웨이 → GoCD 서�
 
 | `buildOverrides` 칸 | CodeBuild 값 | 상한 (초기값) |
 |---|---|---|
-| `computeType` | `computeTypeOverride` | 기본보다 한 단계 위까지 |
+| `computeType` | `computeTypeOverride` | 프로젝트 기본(SMALL)만. 무료 티어 밖 크기는 받지 않는다(2026-11-14) |
 | `timeoutMinutes` | `timeoutInMinutesOverride` | 20분(시험 빌드의 대기 = `timeoutMinutes` + 5분이 시험 대기 30분 안에 들게) |
 | `image` | `imageOverride` | 플랫폼이 정한 빌드 이미지 허용 목록(빌드가 docker로 돌므로 privileged 모드에서 docker가 도는 CodeBuild 표준 이미지만) |
 | `cache` | `cacheOverride`: `false`면 `{ type: NO_CACHE }`, `true`거나 없으면 override 안 함(프로젝트 설정 그대로) | - |
