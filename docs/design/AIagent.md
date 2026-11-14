@@ -270,7 +270,7 @@ AI 서버 (에이전트) → 플랫폼 서버 MCP 게이트웨이 → GoCD 서�
 
 | `status` | 필수 칸 | 플랫폼 서버가 하는 일 |
 |---|---|---|
-| `verified` | `specPatch` (재실행만 했으면 빈 배열) | `specPatch` 검증(이 티켓에서 같은 패치로 `run_deploy` → `run_verify` 통과) → 실행 기록 입력에 저장 → 고친 입력으로 `student-deploy`를 처음부터 다시 실행(Build는 재사용, Verify가 재확인) → Switch → W7. 다시 실패하면 새 티켓(실행 기록당 3개까지). [API 계약](api.md) "파이프라인 ↔ 플랫폼 서버" 5번 |
+| `verified` | `specPatch` (재실행만 했으면 빈 배열) | `specPatch` 검증(이 티켓에서 같은 패치로 `run_deploy` → `run_verify` 통과) → 실행 기록 입력에 저장 → 배포 대기열에 다시 세움 → 차례에 고친 입력으로 `student-deploy`를 처음부터 다시 실행(Build는 재사용, Verify가 재확인) → Switch → W7. 다시 실패하면 새 티켓(실행 기록당 3개까지). [API 계약](api.md) "파이프라인 ↔ 플랫폼 서버" 5번 |
 | `pr_opened` | `pr` | 사용자 머지 대기. 머지되면 새 커밋으로 W0부터 |
 | `needs_user` | `userRequest` | 사용자에게 요청 |
 | `gave_up` | `summary` | 보고 |

@@ -8,11 +8,13 @@ import type { DeployRunRow } from '../src/deploys/deploys.store.js'
 import { DeploysStore } from '../src/deploys/deploys.store.js'
 import { AgentClient } from '../src/deploys/agent.client.js'
 import { DeployConditionService } from '../src/deploys/deploy-condition.service.js'
+import { DeployQueue } from '../src/deploys/deploy-queue.js'
 import { PipelineClient } from '../src/deploys/pipeline.client.js'
 import { GatewayServer } from '../src/gateway/gateway.server.js'
 import { RepoReader } from '../src/gateway/repo-reader.js'
 import { tokenHash } from '../src/gateway/tickets.js'
 import { GatewayTrials } from '../src/gateway/trials.js'
+import { ClusterCapacity } from '../src/k8s/cluster-capacity.js'
 import { ClusterReader } from '../src/k8s/cluster-reader.js'
 import { DeploymentScaler } from '../src/k8s/deployment-scaler.js'
 import { validSpec } from './spec-fixture.js'
@@ -33,6 +35,10 @@ const CACHED_IMAGE = `ghcr.io/woowang-bot/student-apps@sha256:${'8'.repeat(64)}`
 
 let run: DeployRunRow
 let live: DeployRunRow | undefined
+// 다른 프로젝트의 실행 기록(대기열이 같이 본다)과 클러스터 자리.
+let others: DeployRunRow[]
+let clusterFull: boolean
+const oldest = (status: string) => [run, ...others].filter((r) => r.status === status).sort((a, b) => a.created_at.localeCompare(b.created_at))[0]
 const expiries: string[] = []
 // build_cache(slug/서비스/해시 → 이미지)와 거기 쓴 줄.
 const cache = new Map<string, string>()
@@ -53,16 +59,21 @@ const fakeStore = {
   findRunByGatewayToken: (hash: string) => Promise.resolve(hash === run.gateway_token_hash ? run : undefined),
   findById: (id: string) => Promise.resolve(id === DEPLOY ? { id, repo: 'student/my-app', slug: 'my-app' } : undefined),
   findRun: (id: string) => Promise.resolve(id === DEPLOY ? run : undefined),
+  findRunning: () => Promise.resolve(oldest('running')),
+  findOldestQueued: () => Promise.resolve(oldest('queued')),
+  // 이 테스트의 티켓은 만료 전이다(만료된 fixing 마감은 deploy-runs.e2e가 본다).
+  findExpiredFixing: () => Promise.resolve([]),
   findLastSucceededRun: () => Promise.resolve(live),
   cachedImage: (slug: string, service: string, hash: string) => Promise.resolve(cache.get(`${slug}/${service}/${hash}`) ?? null),
   cacheImages: (rows: { slug: string; service: string; build_input_hash: string; image: string }[]) => {
     cached.push(...rows)
     return Promise.resolve()
   },
-  updateRun: (_id: string, where: { status?: string }, patch: Record<string, unknown>) => {
-    if (where.status && run.status !== where.status) return Promise.resolve(false)
+  updateRun: (id: string, where: { status?: string }, patch: Record<string, unknown>) => {
+    const row = [run, ...others].find((r) => r.deploy_id === id)!
+    if (where.status && row.status !== where.status) return Promise.resolve(false)
     if (typeof patch.gateway_expires_at === 'string') expiries.push(patch.gateway_expires_at)
-    Object.assign(run, patch)
+    Object.assign(row, patch)
     return Promise.resolve(true)
   },
 }
@@ -153,6 +164,8 @@ beforeEach(async () => {
     updated_at: new Date().toISOString(),
   }
   live = undefined
+  others = []
+  clusterFull = false
   expiries.length = 0
   cache.clear()
   cached.length = 0
@@ -181,7 +194,9 @@ beforeEach(async () => {
       .overrideProvider(AgentClient)
       .useValue(fakeAgent)
       .overrideProvider(DeployConditionService)
-      .useValue(fakeConditions),
+      .useValue(fakeConditions)
+      .overrideProvider(ClusterCapacity)
+      .useValue({ isFull: () => Promise.resolve(clusterFull) }),
   )
   app.get(GatewayTrials).settleRetryMs = 10
   const port = await app.get(GatewayServer).listen(0, '127.0.0.1')
@@ -506,6 +521,9 @@ describe('MCP gateway trial tools', () => {
         ...extra,
       },
     })
+    const queueIdle = () => app.get(DeployQueue).idle()
+    // 다른 프로젝트의 도는 실행(먼저 시작했고 방금 바뀌었다).
+    const otherRunning = (): DeployRunRow => ({ ...run, deploy_id: '55555555-5555-4555-8555-555555555555', slug: 'other-app', status: 'running', stage: 'apply', ticket_id: null, created_at: '2026-11-10T00:00:00Z', updated_at: new Date().toISOString() })
     /** run_deploy(패치) → run_verify 통과까지. */
     const tryAndVerify = async (client: Client, specPatch: unknown[] = port8000) => {
       behave = answering('apply', deployOk)
@@ -514,12 +532,15 @@ describe('MCP gateway trial tools', () => {
       expect((await call(client, 'run_verify')).structuredContent).toMatchObject({ ok: true })
     }
 
-    it('saves the checked input (all reuse + digest) on the run, re-runs student-deploy from build and keeps the ticket id', async () => {
+    it('queues the checked input for the queue to re-run, keeps the ticket id and does not schedule GoCD itself', async () => {
       const client = await connect()
       await tryAndVerify(client)
+      // 다른 프로젝트가 도는 중이라 대기열은 출발시키지 않는다: 게이트웨이가 GoCD를 직접 부르지 않는지 본다.
+      others = [otherRunning()]
       expect((await call(client, 'submit_result', verified(port8000))).structuredContent).toEqual({ accepted: true })
-      expect(reruns).toEqual([DEPLOY])
-      expect(run).toMatchObject({ status: 'running', stage: 'build', failure: null, gateway_token_hash: null, ticket_id: 't_trial' })
+      await queueIdle()
+      expect(reruns).toEqual([])
+      expect(run).toMatchObject({ status: 'queued', stage: 'build', failure: null, gateway_token_hash: null, ticket_id: 't_trial' })
       expect(specOf(run.input).services[1].runtime.port).toBe(8000)
       expect(run.input.deploy_condition).toEqual({
         services: { fe: { buildInputHash: HASH('a'), build: 'reuse', image: FE_IMAGE }, be: { buildInputHash: HASH('b'), build: 'reuse', image: BE_IMAGE } },
@@ -531,6 +552,46 @@ describe('MCP gateway trial tools', () => {
       // 토큰은 끝났다.
       expect(rejected(await call(client, 'run_render'))).toMatchObject({ code: 'TICKET_CLOSED' })
       await client.close()
+    })
+
+    it('does not start the re-run while another project is running; starts it when that run ends', async () => {
+      const client = await connect()
+      await tryAndVerify(client)
+      others = [otherRunning()]
+      await call(client, 'submit_result', verified(port8000))
+      await queueIdle()
+      expect(run.status).toBe('queued')
+      expect(reruns).toEqual([])
+      others[0].status = 'succeeded'
+      app.get(DeployQueue).kick()
+      await queueIdle()
+      expect(reruns).toEqual([DEPLOY])
+      expect(run).toMatchObject({ status: 'running', stage: 'build', ticket_id: 't_trial' })
+      await client.close()
+    })
+
+    it('starts the re-run even when the cluster is full (its own trial pod is counted; Prepare frees its slot)', async () => {
+      clusterFull = true
+      const client = await connect()
+      await tryAndVerify(client)
+      await call(client, 'submit_result', verified(port8000))
+      await queueIdle()
+      expect(reruns).toEqual([DEPLOY])
+      expect(run.status).toBe('running')
+      await client.close()
+    })
+
+    it('still keeps a new deploy (no ticket) waiting while the cluster is full', async () => {
+      clusterFull = true
+      Object.assign(run, { status: 'queued', stage: 'build', failure: null, ticket_id: null, gateway_token_hash: null })
+      app.get(DeployQueue).kick()
+      await queueIdle()
+      expect(reruns).toEqual([])
+      expect(run.status).toBe('queued')
+      clusterFull = false
+      app.get(DeployQueue).kick()
+      await queueIdle()
+      expect(reruns).toEqual([DEPLOY])
     })
 
     it('counts the ticket after the one the earlier verified result counted', async () => {
@@ -546,6 +607,7 @@ describe('MCP gateway trial tools', () => {
       const client = await connect()
       await tryAndVerify(client, [])
       expect((await call(client, 'submit_result', verified([]))).structuredContent).toEqual({ accepted: true })
+      await queueIdle()
       expect(run).toMatchObject({ status: 'running', stage: 'build' })
       await client.close()
     })
@@ -604,6 +666,7 @@ describe('MCP gateway trial tools', () => {
         expect((await call(client, 'run_build', { service: 'fe', specPatch: outputDir })).structuredContent).toMatchObject({ ok: true })
         await tryAndVerify(client, outputDir)
         expect((await call(client, 'submit_result', verified(outputDir, { buildOverrides: { timeoutMinutes: 10 } }))).structuredContent).toEqual({ accepted: true })
+        await queueIdle()
         expect(reruns).toEqual([DEPLOY])
         expect(feOf(run.input)).toEqual({ buildInputHash: HASH('c'), build: 'reuse', image: NEW_IMAGE })
         expect(specOf(run.input).services[0]).toMatchObject({ build: { outputDir: 'build' } })
@@ -646,11 +709,12 @@ describe('MCP gateway trial tools', () => {
       await client.close()
     })
 
-    it('ends as failed PIPELINE_UNAVAILABLE and closes the ticket when student-deploy cannot be scheduled', async () => {
+    it('ends as failed PIPELINE_UNAVAILABLE and closes the ticket when the queue cannot schedule student-deploy', async () => {
       rerunFails = true
       const client = await connect()
       await tryAndVerify(client)
       expect((await call(client, 'submit_result', verified(port8000))).structuredContent).toEqual({ accepted: true })
+      await queueIdle()
       expect(run).toMatchObject({ status: 'failed', failure: { code: 'PIPELINE_UNAVAILABLE', stage: 'build', service: null } })
       expect(closes).toEqual([['t_trial', SHA, 'stopped']])
       await client.close()
@@ -689,6 +753,7 @@ describe('MCP gateway trial tools', () => {
         fakePipeline.cancelTrial = () => Promise.resolve(cancelOk)
       }
       expect(cancels).toBe(3)
+      await queueIdle()
       expect(reruns).toEqual([DEPLOY])
       expect(run.status).toBe('running')
       await waiting
