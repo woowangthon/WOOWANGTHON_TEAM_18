@@ -6,6 +6,7 @@ export type Failure =
   | 'not-found'
   | 'not-personal'
   | 'unavailable'
+  | 'rate-limited'
   | 'unknown'
 
 export const failureCopy: Record<Failure, { title: string; body: string }> = {
@@ -29,6 +30,10 @@ export const failureCopy: Record<Failure, { title: string; body: string }> = {
     title: '서버와 연결하지 못했어요',
     body: '사용자 잘못이 아니에요. 잠시 후 다시 시도해 주세요.',
   },
+  'rate-limited': {
+    title: 'GitHub 조회 한도를 잠시 다 썼어요',
+    body: '사용자 잘못이 아니에요. 한도는 곧 다시 채워져요. 몇 분 뒤에 다시 시도해 주세요.',
+  },
   unknown: {
     title: '레포를 확인하지 못했어요',
     body: '잠시 후 다시 시도해 주세요.',
@@ -48,9 +53,12 @@ export function failureOf(error: unknown): Failure {
       return 'not-found'
     case 'REPO_NOT_PERSONAL':
       return 'not-personal'
+    // 플랫폼 서버가 GitHub API 한도에 걸렸다. "연결 불가"와 달리 기다리면 풀린다.
+    case 'GITHUB_RATE_LIMITED':
+      return 'rate-limited'
   }
   return error.status === 503 || error.code === 'NETWORK_ERROR' ? 'unavailable' : 'unknown'
 }
 
 // 서버나 네트워크 문제는 다시 시도하면 될 수 있다. 소유 확인 오류는 그렇지 않다.
-export const isRetryable = (failure: Failure) => failure === 'unavailable' || failure === 'unknown'
+export const isRetryable = (failure: Failure) => failure === 'unavailable' || failure === 'rate-limited' || failure === 'unknown'

@@ -8,7 +8,7 @@
 플랫폼 서버(BE)가 Tailscale로 리더의 쿠버네티스 API에 붙어 프로젝트의 학생 공간 `proj-<slug>`를 만드는 부분이다.
 
 - 하는 것: 리더 접속 설정(주소 · 토큰 · CA), 쿠버네티스 API 호출 도우미, 공간 객체 여섯 만들기, 오류를 `503`으로 돌려주기.
-- 하지 않는 것: Secret 쓰기(W3, #43), 조치 · 조회(재시작 · Pod 상태 · 로그), 사용자가 부르는 HTTP 엔드포인트. Secret 쓰기 · 읽기 함수와 오류를 종류로 나누는 것은 [cluster-client.md](cluster-client.md)(#111)에 있다. 이 모듈은 서버 안에서 W3 같은 쪽이 부르는 서비스이고 FE가 보는 API가 없다.
+- 하지 않는 것: Secret 쓰기(W3, #43), 조치 · 조회(재시작 · Pod 상태 · 로그), 사용자가 부르는 HTTP 엔드포인트. Secret 쓰기 · 읽기 함수와 오류를 종류로 나누는 것은 [cluster-client.md](cluster-client.md)(#111)에 있다. 이 모듈은 서버 안에서 부르는 서비스이고 FE가 보는 API가 없다. 부르는 곳은 둘이다: 비밀값 쓰기(W3, `ClusterSecretWriter`가 Secret을 쓰기 전)와 배포 시작(`POST /api/deploys/:id/start`가 실행 기록을 저장하기 전, [api.md](api.md)). 비밀값이 없는 프로젝트는 비밀값 쓰기를 건너뛰므로 배포 시작이 공간을 만든다. 공간이 없으면 실행기 RoleBinding도 없어 Prepare가 `403`(`EXECUTOR_FORBIDDEN`)으로 끝난다(2026-11-14 실제 서비스에서 확인).
 - 이 서버 계정이 할 수 있는 것은 [cluster.md §8](cluster.md#8-플랫폼-서버와-배포-실행기의-권한-서버-계정-1차-구현됨-2026-11-10-나머지-예정)이 정한다. 여기서는 그 권한 안에서만 부른다.
 
 ## 설계

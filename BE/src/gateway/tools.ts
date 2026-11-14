@@ -12,6 +12,7 @@ import { SlotScaleDown } from '../deploys/slot-scale-down.js'
 import { ClusterReader, newestPod } from '../k8s/cluster-reader.js'
 import type { Issue, Spec } from '../deploys/deploy-input.js'
 import { type BudgetCode, ToolBudget } from './budget.js'
+import { RepoEdits, type SourceRef } from './repo-edits.js'
 import { RepoReader, repoPath } from './repo-reader.js'
 import { type AgentResult, checkResult, storedResult } from './result.js'
 import { applySpecPatch, livePathProblem } from './spec-patch.js'
@@ -20,7 +21,8 @@ import { GatewayTrials, TRIAL_WAIT_MS, type TrialFailure, type TrialTool } from 
 
 // MCP 게이트웨이의 도구(api.md "MCP 게이트웨이 — 도구"). 인자 · 결과 모양은 거기 고정돼 있다.
 // F11: 관찰(get_target_status · read_pod_logs · read_repo)과 submit_result. F11b: 시험 실행 run_build · run_render · run_deploy · run_verify
-// (api.md "파이프라인 ↔ 플랫폼 서버" 4번)와 verified 뒤 다시 실행(5번). 대상 슬롯 운영 · read_build_logs는 그 뒤에 연다.
+// (api.md "파이프라인 ↔ 플랫폼 서버" 4번)와 verified 뒤 다시 실행(5번). F13: 레포 수정 edit_repo_file · open_pr(봇 fork, repo-edits.ts).
+// 대상 슬롯 운영 · read_build_logs는 그 뒤에 연다.
 // 목록에 없는 도구는 에이전트가 부를 수 없다.
 
 export type RejectCode =
@@ -32,6 +34,9 @@ export type RejectCode =
   | 'INVALID_SPEC'
   | 'OVERRIDE_LIMIT'
   | 'LIVE_SLOT_PROTECTED'
+  | 'EDIT_FORBIDDEN'
+  | 'NOT_VERIFIED'
+  | 'BOT_UNAVAILABLE'
 
 export type ToolAnswer = { ok: true; content: Record<string, unknown> } | { ok: false; code: RejectCode; message: string; fields?: Issue[] }
 
@@ -109,6 +114,28 @@ export const TOOLS: ToolDef[] = [
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
+    name: 'edit_repo_file',
+    description:
+      '봇 계정의 fork에 수정 commit을 만든다(학생 레포에는 쓰지 않는다). files는 바꿀 파일의 전체 내용이다. 한 티켓에서 파일 5개 · 바뀐 줄 50줄(지운 줄 + 넣은 줄)까지이고, .env · .github/ · 비밀값처럼 보이는 줄은 거절한다. 같은 티켓에서 다시 부르면 앞서 고친 것에 이어 쌓는다. 돌려준 source를 run_build · run_deploy · read_repo에 넘겨 확인한다.',
+    inputSchema: {
+      type: 'object',
+      properties: { files: { type: 'array' }, message: { type: 'string' } },
+      required: ['files', 'message'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'open_pr',
+    description:
+      '학생 레포에 수정 PR을 연다(봇 계정, 티켓당 1개). 같은 source로 run_deploy와 run_verify를 통과한 뒤에만 열린다. 학생 레포가 PR을 막았으면 url 없이 patch를 돌려준다.',
+    inputSchema: {
+      type: 'object',
+      properties: { source: { type: 'object' }, title: { type: 'string' }, body: { type: 'string' } },
+      required: ['source', 'title', 'body'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'submit_result',
     description: '해결 결과 제출(docs/design/AIagent.md §6). 이 호출 뒤 게이트웨이 토큰은 무효다.',
     inputSchema: { type: 'object', properties: { result: { type: 'object' } }, required: ['result'], additionalProperties: false },
@@ -168,6 +195,7 @@ export class GatewayTools {
     private readonly agent: AgentClient,
     private readonly conditions: DeployConditionService,
     private readonly slots: SlotScaleDown,
+    private readonly edits: RepoEdits,
   ) {}
 
   async call(ticket: GatewayTicket, name: string, args: Record<string, unknown>): Promise<ToolAnswer> {
@@ -195,6 +223,13 @@ export class GatewayTools {
       case 'run_deploy':
       case 'run_verify':
         return this.runTrial(ticket, name, args)
+      case 'edit_repo_file':
+        return this.edits.edit(ticket, args)
+      case 'open_pr': {
+        const run = await this.store.findRun(ticket.deployId)
+        if (!run) return reject('TICKET_CLOSED', 'the deploy run is gone')
+        return this.edits.openPr(ticket, args, (source) => this.verifiedWith(ticket, source, run))
+      }
       default:
         return this.submit(ticket, args.result)
     }
@@ -233,12 +268,13 @@ export class GatewayTools {
   }
 
   private async readRepo(ticket: GatewayTicket, path: string, source: unknown): Promise<ToolAnswer> {
-    // source는 edit_repo_file이 돌려준 봇 fork 커밋만 받는다. 그 도구는 아직 없다(F13).
-    if (source !== undefined) return reject('INVALID_ARGUMENT', 'source is not available yet: there is no edit_repo_file tool')
+    // source는 edit_repo_file이 돌려준 봇 fork 커밋만 받는다(없으면 티켓의 commitSha).
+    const from = source === undefined ? { repo: ticket.repo, commitSha: ticket.commitSha } : this.edits.resolve(ticket, source)
+    if (typeof from === 'string') return reject('INVALID_ARGUMENT', from)
     const clean = repoPath(path)
     if (clean === null) return reject('INVALID_ARGUMENT', `path must be relative to the repository root, got ${JSON.stringify(path)}`)
-    const entry = await this.repo.read(ticket.repo, ticket.commitSha, clean)
-    if (entry === null) return reject('INVALID_ARGUMENT', `no such path at ${ticket.commitSha.slice(0, 7)}: ${path}`)
+    const entry = await this.repo.read(from.repo, from.commitSha, clean)
+    if (entry === null) return reject('INVALID_ARGUMENT', `no such path at ${from.commitSha.slice(0, 7)}: ${path}`)
     return { ok: true, content: entry.type === 'file' ? { ...entry, content: redactString(entry.content) } : entry }
   }
 
@@ -247,12 +283,15 @@ export class GatewayTools {
    * 빌드 값이 실행 기록과 같으면 그 해시, 다르면 같은 commit으로 다시 계산한다. 이미지는 실행 기록(원래 reuse 이미지 · 이번 실행에서 빌드한 이미지)
    * → 이 티켓의 시험 이미지 → build_cache 순서로 찾는다(빌드 값을 고친 서비스는 실행 기록의 이미지를 쓰지 않는다).
    * `build`(run_build의 서비스)는 이미지가 없으면 `run`, 나머지는 모두 `reuse` + digest이고, 이미지가 없으면 이유(문자열)를 돌려준다.
+   * `source`(edit_repo_file이 만든 봇 fork commit)가 있으면 그 commit의 레포로 입력을 만든다: 입력의 `commitSha` · `spec.project.repo`가 fork로 바뀌어
+   * 빌드가 그 commit을 받고, 서비스마다 그 commit에서 해시를 다시 낸다(내용이 같으면 해시도 같아 기존 이미지를 그대로 쓴다).
    */
   private async trialInput(
     ticket: GatewayTicket,
     run: DeployRunRow,
     specPatch: unknown,
     build?: string,
+    source?: SourceRef,
   ): Promise<{ ok: true; input: Record<string, unknown>; changed: { service: string; hash: string }[] } | Rejection> {
     const patched = applySpecPatch(run.input, specPatch ?? [])
     if (!patched.ok) return { ok: false, code: patched.code, message: patched.message, ...(patched.fields ? { fields: patched.fields } : {}) }
@@ -264,42 +303,51 @@ export class GatewayTools {
     for (const svc of (input.spec as Spec).services) {
       const c = original[svc.name]
       // name은 고칠 수 없어 실행 기록에 같은 서비스가 있다.
-      const same = isDeepStrictEqual(before.find((b) => b.name === svc.name)?.build, svc.build)
+      const sameBuild = isDeepStrictEqual(before.find((b) => b.name === svc.name)?.build, svc.build)
       let hash = c.buildInputHash
-      if (!same) {
+      if (!sameBuild || source) {
         try {
-          hash = await this.conditions.buildHash(ticket.repo, ticket.commitSha, svc.build)
+          hash = await this.conditions.buildHash(source?.repo ?? ticket.repo, source?.commitSha ?? ticket.commitSha, svc.build)
         } catch (err) {
           // 고친 context · dockerfile이 그 commit에 없다.
           if (err instanceof HttpException && err.getStatus() === 422) return reject('INVALID_ARGUMENT', `${svc.name}: ${(err.getResponse() as { message?: string }).message ?? 'build source not found'}`)
           throw err
         }
-        changed.push({ service: svc.name, hash })
       }
+      const same = sameBuild && hash === c.buildInputHash
+      if (!same) changed.push({ service: svc.name, hash })
       const fromRun = same ? (c.build === 'reuse' ? c.image : (run.images?.[svc.name] ?? null)) : null
-      const image = fromRun ?? this.trials.trialImage(ticket.ticketId, svc.name, hash) ?? (await this.store.cachedImage(ticket.slug, svc.name, hash))
+      let image = fromRun ?? this.trials.trialImage(ticket.ticketId, svc.name, hash) ?? (await this.store.cachedImage(ticket.slug, svc.name, hash))
+      // run_build는 그 서비스만 빌드하고 reuse 서비스는 빌드 단계가 건드리지 않는다. source 하나로 여러 서비스의 해시가 바뀌면 서로 이미지가 없어
+      // 아무것도 먼저 빌드하지 못하므로, run_build에서는 다른 서비스 자리를 실행 기록의 이미지로 채운다(이 입력은 배포하지 않는다).
+      if (!image && build !== undefined && svc.name !== build) image = c.build === 'reuse' ? c.image : (run.images?.[svc.name] ?? null)
       if (!image && svc.name !== build) {
         return reject('INVALID_ARGUMENT', `service ${svc.name} has no image for these build settings yet; call run_build for it first`)
       }
       services[svc.name] = image ? { buildInputHash: hash, build: 'reuse', image } : { buildInputHash: hash, build: 'run', image: null }
     }
     ;(input.deploy_condition as { services: ServiceConditions }).services = services
+    if (source) {
+      input.commitSha = source.commitSha
+      ;(input.spec as Spec).project.repo = source.repo
+    }
     return { ok: true, input, changed }
   }
 
   private async runTrial(ticket: GatewayTicket, tool: TrialTool, args: Record<string, unknown>): Promise<ToolAnswer> {
-    // source는 edit_repo_file이 돌려준 봇 fork 커밋만 받는다. 그 도구는 아직 없다(F13).
-    if (args.source !== undefined) return reject('INVALID_ARGUMENT', 'source is not available yet: there is no edit_repo_file tool')
+    // source는 edit_repo_file이 돌려준 봇 fork 커밋만 받는다.
+    const source = args.source === undefined ? undefined : this.edits.resolve(ticket, args.source)
+    if (typeof source === 'string') return reject('INVALID_ARGUMENT', source)
     if (this.trialing.has(ticket.ticketId)) return reject('INVALID_ARGUMENT', 'another trial of this ticket is still running; wait for its result')
     this.trialing.add(ticket.ticketId)
     try {
-      return await this.trial(ticket, tool, args)
+      return await this.trial(ticket, tool, args, source)
     } finally {
       this.trialing.delete(ticket.ticketId)
     }
   }
 
-  private async trial(ticket: GatewayTicket, tool: TrialTool, args: Record<string, unknown>): Promise<ToolAnswer> {
+  private async trial(ticket: GatewayTicket, tool: TrialTool, args: Record<string, unknown>, source?: SourceRef): Promise<ToolAnswer> {
     const run = await this.store.findRun(ticket.deployId)
     if (!run) return reject('TICKET_CLOSED', 'the deploy run is gone')
     let overrides: Record<string, unknown> | null = null
@@ -319,7 +367,7 @@ export class GatewayTools {
         input = built.input
       }
     } else {
-      const built = await this.trialInput(ticket, run, args.specPatch, service)
+      const built = await this.trialInput(ticket, run, args.specPatch, service, source)
       if (!built.ok) return built
       input = built.input
       // live 경로 보호는 패치가 없어도 본다: 이 입력을 Apply하면 live가 같이 쓰는 Middleware가 바뀌는지.
@@ -368,6 +416,17 @@ export class GatewayTools {
     return { ok: true, content: redact(outcome.result) as Record<string, unknown> }
   }
 
+  /**
+   * 이 source로 run_deploy → run_verify를 통과했는가: 통과한 입력의 commit · 레포가 source와 같고, spec이 실행 기록과 같다(레포만 fork로 바뀜).
+   * specPatch를 같이 써야만 통과한 source는 PR로 열지 않는다. PR에는 spec 변경이 실리지 않아 학생이 머지해도 같은 실패가 난다.
+   */
+  private verifiedWith(ticket: GatewayTicket, source: SourceRef, run: DeployRunRow): boolean {
+    const input = this.trials.verifiedInput(ticket.ticketId) as { commitSha?: unknown; spec?: Spec } | undefined
+    if (input?.commitSha !== source.commitSha || input.spec?.project?.repo !== source.repo) return false
+    const original = run.input.spec as Spec
+    return isDeepStrictEqual({ ...input.spec, project: { ...input.spec.project, repo: original.project.repo } }, original)
+  }
+
   /** 토큰 만료를 쓴다. 실행 기록이 이미 fixing이 아니면(티켓이 끝났다) false. */
   private setExpiry(ticket: GatewayTicket, at: number): Promise<boolean> {
     return this.store.updateRun(ticket.deployId, { status: 'fixing' }, { gateway_expires_at: new Date(at).toISOString() })
@@ -382,10 +441,23 @@ export class GatewayTools {
     const deployTried = this.trials.attemptedDeploy(ticket.ticketId)
     // 학생에게 보일 칸만 남긴다(도구 호출 원본 · 로그는 버린다). 외부에서 온 글이라 한 번 더 가린다.
     // tickets: 이 실행 기록에서 몇 번째 티켓의 결과인가(실행 기록당 3개, api.md 5번). 학생에게 보이는 칸은 아니다.
-    const agentResult = { ...(redact(storedResult(result)) as Record<string, unknown>), tickets: ticketCount(run) }
+    const agentResult: Record<string, unknown> = { ...(redact(storedResult(result)) as Record<string, unknown>), tickets: ticketCount(run) }
+    if (result.status === 'pr_opened') {
+      // 열지 않은 PR을 열었다고 하지 못하게: open_pr이 이 티켓에 돌려준 주소와 같아야 하고, 파일 · 줄 수는 게이트웨이가 센 값을 쓴다.
+      const opened = this.edits.openedPr(ticket.ticketId)
+      if (opened === null || result.pr?.url !== opened.url) return reject('INVALID_RESULT', 'pr_opened needs pr.url to be the url open_pr returned in this ticket')
+      agentResult.pr = { url: opened.url, files: opened.files, changedLines: opened.changedLines }
+    }
+    // PR을 열지 못했다(학생 레포가 막음): 확인한 patch를 플랫폼이 학생 안내에 붙인다. 에이전트는 patch 글을 받지도 옮겨 쓰지도 않는다.
+    const patchText = result.status === 'needs_user' ? this.edits.patchFor(ticket.ticketId) : null
+    if (patchText) {
+      const u = agentResult.userRequest as { message: string; secretKeys: string[] }
+      agentResult.userRequest = { ...u, message: `${u.message}\n\n${patchText}` }
+    }
     if (result.status === 'verified') {
       if (run?.status === 'fixing') return this.submitVerified(ticket, run, result, agentResult)
       this.budget.forget(ticket.ticketId)
+      this.edits.forget(ticket.ticketId)
       await this.trials.endTicket(ticket.ticketId)
       return reject('TICKET_CLOSED', 'the ticket is no longer open')
     }
@@ -398,6 +470,7 @@ export class GatewayTools {
           { status: 'needs_user' as const }
     const applied = await this.store.updateRun(ticket.deployId, { status: 'fixing' }, { ...patch, agent_result: agentResult, gateway_token_hash: null })
     this.budget.forget(ticket.ticketId)
+    this.edits.forget(ticket.ticketId)
     await this.trials.endTicket(ticket.ticketId)
     if (!applied) return reject('TICKET_CLOSED', 'the ticket is no longer open')
     // 에이전트가 포기했다: 더 읽을 사람이 없으니 대상 슬롯의 Pod가 계속 재시작하지 않게 내린다.
@@ -432,6 +505,7 @@ export class GatewayTools {
 
     // 여기부터 티켓은 끝난다. 기다리는 시험을 취소하고, 같은 프로젝트의 이전 시험이 끝났음을 확인한 뒤에만 다시 실행한다.
     this.budget.forget(ticket.ticketId)
+    this.edits.forget(ticket.ticketId)
     await this.trials.endTicket(ticket.ticketId)
     const stage = ticket.failure?.stage ?? 'build'
     if (!(await this.trials.settled(ticket.slug))) {

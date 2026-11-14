@@ -248,8 +248,8 @@ describe('POST /api/repos/check when an outside service is not working (503, nev
 
   it.each<[string, Answer]>([
     ...outage,
-    ['rate limit 403', status(403)],
-    ['rate limit 429', status(429)],
+    ['403 without rate limit headers', status(403)],
+    ['429 without rate limit headers', status(429)],
     ['403 with a body that looks fine', () => Response.json({ full_name: 'student/my-app', owner: { id: Number(GITHUB_ID), type: 'User' } }, { status: 403 })],
     ['200 without an owner', () => Response.json({ full_name: 'student/my-app' })],
   ])('GitHub: %s → GITHUB_UNAVAILABLE', async (_, answer) => {
@@ -257,6 +257,54 @@ describe('POST /api/repos/check when an outside service is not working (503, nev
     const res = await check(VALID)
     expect(res.status).toBe(503)
     expect(res.body).toEqual(errorBody('GITHUB_UNAVAILABLE'))
+  })
+})
+
+describe('GitHub rate limit', () => {
+  const RESET = Math.floor(Date.UTC(2026, 10, 14, 8, 30) / 1000)
+  const limited = (code: number): Answer => () =>
+    new Response('{"message":"API rate limit exceeded"}', { status: code, headers: { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(RESET) } })
+
+  it.each([403, 429])('a %i with no requests remaining → 503 GITHUB_RATE_LIMITED with the retry time, not GITHUB_UNAVAILABLE', async (code) => {
+    githubAnswer = limited(code)
+    const res = await check(VALID)
+    expect(res.status).toBe(503)
+    expect(res.body).toEqual({ error: { code: 'GITHUB_RATE_LIMITED', message: expect.stringContaining('rate limit') as string, retryAt: '2026-11-14T08:30:00.000Z' } })
+    expect(logError).toHaveBeenCalledWith(expect.stringContaining('rate limited until 2026-11-14T08:30:00.000Z'))
+  })
+
+  it('a secondary limit (retry-after) on a later call is reported the same way', async () => {
+    treeAnswer = () => new Response('{}', { status: 403, headers: { 'retry-after': '60' } })
+    const res = await dockerfiles(VALID)
+    expect(res.status).toBe(503)
+    expect((res.body as { error: unknown }).error).toMatchObject({ code: 'GITHUB_RATE_LIMITED', retryAt: expect.any(String) as string })
+  })
+})
+
+describe('GITHUB_TOKEN', () => {
+  // ConfigModule은 import될 때 env를 읽으므로(test/empty-env.e2e.spec.ts), env를 바꾼 뒤 앱을 새로 불러온다.
+  beforeEach(async () => {
+    await app.close()
+    vi.stubEnv('GITHUB_TOKEN', 'github_pat_test')
+    vi.resetModules()
+    const fresh = await import('./start-app.js')
+    app = await fresh.startApp()
+  })
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    vi.resetModules()
+  })
+
+  it('is sent as a Bearer token to every api.github.com call, never to raw or Supabase, and never in the response', async () => {
+    rawFiles = { 'package.json': { dependencies: { react: '^19' } } }
+    treeAnswer = treeOf(['package.json'])
+    const res = await deploySpec({ ...VALID, commit: OTHER_SHA })
+    expect(res.status).toBe(200)
+    const github = callsTo('https://api.github.com/')
+    expect(github).toHaveLength(3)
+    for (const [, init] of github) expect(init?.headers).toMatchObject({ Authorization: 'Bearer github_pat_test' })
+    for (const [, init] of [...callsTo(RAW), ...callsTo(SUPABASE_USER_URL)]) expect(JSON.stringify(init?.headers)).not.toContain('github_pat_test')
+    expect(JSON.stringify(res.body)).not.toContain('github_pat_test')
   })
 })
 
@@ -280,8 +328,8 @@ describe('POST /api/repos/check pins the commit', () => {
     ...outage,
     ['404', status(404)],
     ['422', status(422)],
-    ['rate limit 403', status(403)],
-    ['rate limit 429', status(429)],
+    ['403 without rate limit headers', status(403)],
+    ['429 without rate limit headers', status(429)],
     ['200 with a short SHA', () => new Response(HEAD_SHA.slice(0, 7))],
     ['200 with an upper-case SHA', () => new Response(HEAD_SHA.toUpperCase())],
     ['an error status with a SHA that looks fine', () => new Response(HEAD_SHA, { status: 502 })],
@@ -361,8 +409,8 @@ describe('POST /api/repos/dockerfiles when GitHub cannot give the file list (503
   it.each<[string, Answer]>([
     ...outage,
     ['404', status(404)],
-    ['rate limit 403', status(403)],
-    ['rate limit 429', status(429)],
+    ['403 without rate limit headers', status(403)],
+    ['429 without rate limit headers', status(429)],
     ['403 with a body that looks fine', () => Response.json({ truncated: false, tree: [] }, { status: 403 })],
     ['200 without a tree', () => Response.json({ truncated: false })],
     ['200 without truncated', () => Response.json({ tree: [] })],
@@ -593,7 +641,7 @@ describe('POST /api/repos/deploy-spec checks ownership first (same errors as /re
 })
 
 describe('POST /api/repos/deploy-spec when GitHub cannot give a file (503, never a user error)', () => {
-  it.each<[string, Answer]>([...outage, ['404', status(404)], ['rate limit 403', status(403)], ['rate limit 429', status(429)], ['200 without a tree', () => Response.json({ truncated: false })]])(
+  it.each<[string, Answer]>([...outage, ['404', status(404)], ['403 without rate limit headers', status(403)], ['429 without rate limit headers', status(429)], ['200 without a tree', () => Response.json({ truncated: false })]])(
     'file list: %s → GITHUB_UNAVAILABLE and no file is read',
     async (_, answer) => {
       treeAnswer = answer
@@ -607,7 +655,7 @@ describe('POST /api/repos/deploy-spec when GitHub cannot give a file (503, never
   it.each<[string, RawAnswer]>([
     // 200인데 JSON이 아닌 답은 그 폴더만 판단 필요로 두므로(위 describe) 여기 없다.
     ...outage.filter(([name]) => name !== '200 that is not JSON'),
-    ['rate limit 429', status(429)],
+    ['429 without rate limit headers', status(429)],
     ['403', status(403)],
     ['an error status with a body that looks fine', () => Response.json(VITE_PKG, { status: 502 })],
   ])('one package.json: %s → GITHUB_UNAVAILABLE (and it is logged)', async (_, answer) => {
@@ -720,8 +768,8 @@ describe('POST /api/repos/deploy-spec at a pinned commit', () => {
 
   it.each<[string, CommitAnswer]>([
     ...outage,
-    ['rate limit 403', status(403)],
-    ['rate limit 429', status(429)],
+    ['403 without rate limit headers', status(403)],
+    ['429 without rate limit headers', status(429)],
     ['500', status(500)],
     ['an error status with the right SHA', () => new Response(OTHER_SHA, { status: 502 })],
   ])('commit lookup %s → 503 GITHUB_UNAVAILABLE (and it is logged), never "no such commit"', async (_, answer) => {

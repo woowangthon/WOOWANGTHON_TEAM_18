@@ -83,6 +83,7 @@ EC2 ── gocd-server (GoCD 26.1.0, JVM -Xmx1g, 8153은 Tailscale 주소에만 
 | `PIPELINE_NOTIFY_TOKEN` | 위 `/wcp/gocd/PIPELINE_NOTIFY_TOKEN`과 같은 값 |
 | `CLUSTER_FULL_PERCENT` | 선택(1–100, 없으면 80). 워커 노드의 CPU · 메모리 사용률 중 큰 값이 이 값 이상이면 새 배포를 거절하고(`409 CLUSTER_FULL`) 대기 중인 배포는 출발하지 않는다 |
 | `DISCORD_WEBHOOK_URL` | 선택. 운영자 Discord 채널의 웹후크(운영 알림, [`incidents.md`](incidents.md)). `https://discord.com/api/webhooks/<id>/<token>` 모양이 아니면 BE가 뜨지 않는다. 비우면 운영자 Discord로 보내지 않는다. **SecureString** |
+| `GITHUB_TOKEN` | 선택이지만 운영에는 넣는다. BE가 `api.github.com`에 `Authorization: Bearer`로 붙이는 토큰. 운영은 봇 GitHub 계정(`wanggane-bot`)의 토큰을 쓴다(공개 레포만 읽으므로 권한 없는 fine-grained PAT여도 된다). 한도(시간당 5,000번)는 계정마다라 봇 계정의 다른 API 호출과 나눠 쓴다. 봇 토큰에 쓰기 권한(예: `write:packages`)이 있으면 BE 서버에서 새는 순간 그 권한도 함께 샌다. 마감 뒤 권한 없는 PAT로 바꾼다. 없으면 인증 없이 EC2 IP당 시간당 60번이라 모든 학생 배포가 그 60번을 나눠 쓴다(2026-11-14 실서비스에서 바닥나 배포 저장이 503으로 실패했다). 있으면 시간당 5,000번. 한도에 걸리면 `503 GITHUB_RATE_LIMITED`(`retryAt`)다. **SecureString** |
 
 **콘솔에서 만들 AWS 리소스** (서울 `ap-northeast-2`, 이름은 파이프라인이 그대로 쓴다):
 
@@ -105,7 +106,7 @@ EC2 ── gocd-server (GoCD 26.1.0, JVM -Xmx1g, 8153은 Tailscale 주소에만 
 | 실행 | `AI/Dockerfile` 이미지를 컨테이너 `wcp-ai`로, `--restart unless-stopped`, 네트워크 `wcp`. 포트 `8000`은 `127.0.0.1`에만 연다(배포 스크립트의 헬스 확인용). 터널에는 붙이지 않는다: 밖에서 AI 서버에 닿을 길은 없다 |
 | 네트워크 | docker 네트워크 `wcp`(없으면 `deploy-be.sh` · `deploy-ai.sh`가 만든다). `wcp-be`도 이 네트워크에 붙는다. 게이트웨이 포트(`GATEWAY_PORT`)는 BE 컨테이너 밖으로 열지 않고, 같은 네트워크의 `wcp-ai`만 닿는다 |
 | 설정값 | SSM `/wcp/ai/<이름>`(SecureString, 한 줄). 이름은 [`AI/.env.example`](../../AI/.env.example)과 같다. **필수**: `AGENT_API_TOKEN`(32자 이상, `openssl rand -hex 32`), `GATEWAY_URL=http://wcp-be:<GATEWAY_PORT>/mcp`. 선택: `LOCAL_MODEL_URL` · `LOCAL_MODEL_NAME` · `LOCAL_MODEL_API_KEY`, `PLANNER_MODEL_URL` · `PLANNER_MODEL_NAME` · `PLANNER_MODEL_API_KEY`, `AGENT_MAX_RUNS`. `HOST` · `PORT`는 넣지 않는다(이미지가 `0.0.0.0`, 스크립트가 `8000`으로 둔다). 모델 값이 없으면 서버는 뜨고 티켓마다 "AI 모델 설정이 없어 문제 해결을 하지 않았습니다" `gave_up`을 낸다(지금은 모델 없이 올린다) |
-| BE 쪽 값 | SSM `/wcp/be`에 `AI_SERVER_URL=http://wcp-ai:8000`, `AGENT_API_TOKEN`(위 `/wcp/ai/AGENT_API_TOKEN`과 **같은 값**), `GATEWAY_PORT`(`3000`이 아닌 포트, 예 `3100`)를 넣는다 |
+| BE 쪽 값 | SSM `/wcp/be`에 `AI_SERVER_URL=http://wcp-ai:8000`, `AGENT_API_TOKEN`(위 `/wcp/ai/AGENT_API_TOKEN`과 **같은 값**), `GATEWAY_PORT`(`3000`이 아닌 포트, 예 `3100`)를 넣는다. 선택: `BOT_GITHUB_TOKEN`(수정 PR을 올리는 봇 계정 `wanggane-bot`의 classic PAT, `public_repo`, 비밀. 비면 AI 에이전트의 `edit_repo_file` · `open_pr`이 `BOT_UNAVAILABLE`로 거절한다) |
 | 권한 | 인스턴스 역할에 `/wcp/ai` 경로의 `ssm:GetParametersByPath`를 더한다(`kms:Decrypt`는 이미 있다) |
 | 올리기 | 처음 한 번은 `deploy-be.sh`를 먼저(네트워크 `wcp`가 생기고 `wcp-be`가 그 네트워크에 붙는다, 위 BE 쪽 값도 이때 들어간다), 그다음 [`Infra/aws/deploy-ai.sh`](../../Infra/aws/deploy-ai.sh) `[git-ref]`. 새 컨테이너가 `/health`에 답하지 않으면 이전 컨테이너(이미지 · 설정 그대로)를 다시 띄운다. 앞선 실행이 중간에 멈춰 멈춘 `wcp-ai-prev`만 남았으면, 설정을 읽기 전에 그것을 `wcp-ai`로 되살린다. 한 번에 하나만 돈다(`flock`, util-linux. Amazon Linux 2023에는 기본으로 있다, `command -v flock`으로 확인). 그 뒤로는 바뀐 쪽만 다시 돌린다 |
 

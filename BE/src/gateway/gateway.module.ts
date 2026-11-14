@@ -2,7 +2,9 @@ import { Module } from '@nestjs/common'
 import { ConfigModule } from '@nestjs/config'
 import { DeploysModule } from '../deploys/deploys.module.js'
 import { K8sModule } from '../k8s/k8s.module.js'
+import { BotRepo } from './bot-repo.js'
 import { GatewayServer } from './gateway.server.js'
+import { RepoEdits } from './repo-edits.js'
 import { RepoReader } from './repo-reader.js'
 import { GatewayTickets } from './tickets.js'
 import { GatewayTools } from './tools.js'
@@ -13,7 +15,7 @@ import { GatewayTrials } from './trials.js'
 @Module({
   imports: [ConfigModule, DeploysModule, K8sModule],
   controllers: [TrialsController],
-  providers: [GatewayServer, GatewayTickets, GatewayTools, GatewayTrials, RepoReader],
+  providers: [BotRepo, GatewayServer, GatewayTickets, GatewayTools, GatewayTrials, RepoEdits, RepoReader],
   exports: [GatewayServer],
 })
 export class GatewayModule {}

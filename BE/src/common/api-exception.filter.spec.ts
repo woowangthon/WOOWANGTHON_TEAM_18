@@ -1,4 +1,4 @@
-import { type ArgumentsHost, BadRequestException, HttpException, Logger, NotFoundException, UnauthorizedException } from '@nestjs/common'
+import { type ArgumentsHost, BadRequestException, HttpException, Logger, NotFoundException, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common'
 import { afterEach, expect, it, vi } from 'vitest'
 import { ApiExceptionFilter } from './api-exception.filter.js'
 
@@ -32,6 +32,13 @@ it('ignores fields that are not a list', () => {
   expect(run(new BadRequestException({ code: 'X', message: 'm', fields: 'nope' })).body).toEqual({
     error: { code: 'X', message: 'm' },
   })
+})
+
+it('passes the retry time through when the exception carries one (GITHUB_RATE_LIMITED)', () => {
+  expect(run(new ServiceUnavailableException({ code: 'GITHUB_RATE_LIMITED', message: 'm', retryAt: '2026-11-14T08:30:00.000Z' })).body).toEqual({
+    error: { code: 'GITHUB_RATE_LIMITED', message: 'm', retryAt: '2026-11-14T08:30:00.000Z' },
+  })
+  expect(run(new ServiceUnavailableException({ code: 'X', message: 'm', retryAt: 5 })).body).toEqual({ error: { code: 'X', message: 'm' } })
 })
 
 it('falls back to the HTTP status name', () => {

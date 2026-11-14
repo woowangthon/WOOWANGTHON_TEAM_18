@@ -5,7 +5,7 @@
     "match": { "path": "logs.lines[*]", "regex": "ERR_PNPM_OUTDATED_LOCKFILE|npm ci` can only install packages when your package.json and package-lock.json|are not in sync|lockfile needs to be updated|YN0028" },
     "playbook": [
       { "tool": "read_repo", "args": { "path": "." } },
-      { "tool": "submit_result", "when": "레포 파일을 고쳐야 하므로 needs_user로: 다시 만들 락 파일 이름과 명령(예: npm install 뒤 package-lock.json 커밋)을 알린다" }
+      { "tool": "submit_result", "when": "락 파일은 패키지 매니저를 돌려야 다시 만들 수 있고 edit_repo_file 한도(50줄)를 넘기 쉬우므로 needs_user로: 다시 만들 락 파일 이름과 명령(예: npm install 뒤 package-lock.json 커밋)을 알린다" }
     ]
   },
   {
@@ -37,7 +37,12 @@
     "match": { "path": "logs.lines[*]", "regex": "Module not found|Cannot find module|Could not resolve|Failed to resolve import" },
     "playbook": [
       { "tool": "read_repo", "args": { "path": "로그가 가리키는 파일이 있는 폴더" } },
-      { "tool": "submit_result", "when": "레포 파일을 고쳐야 하므로 needs_user로: import하는 파일, 지금 경로, 실제 파일 이름에 맞춘 경로를 알린다" }
+      { "tool": "edit_repo_file", "when": "실제 파일 이름과 import 경로의 대소문자 · 경로가 다를 때 import 줄만 실제 이름에 맞춰" },
+      { "tool": "run_build", "args": { "source": "edit_repo_file이 돌려준 source" } },
+      { "tool": "run_deploy", "args": { "source": "같은 source" } },
+      { "tool": "run_verify" },
+      { "tool": "open_pr", "when": "run_verify 통과", "args": { "source": "같은 source" } },
+      { "tool": "submit_result", "when": "BOT_UNAVAILABLE이거나 open_pr가 patchAttached로 답하면 needs_user로: import하는 파일, 지금 경로, 실제 파일 이름에 맞춘 경로를 알린다" }
     ]
   },
   {

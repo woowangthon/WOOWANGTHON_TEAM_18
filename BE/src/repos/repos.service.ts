@@ -10,6 +10,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
+import { githubApiHeaders, githubRateLimited, rateLimitedUntil } from '../common/github.js'
 import type { Env } from '../config/env.js'
 import { buildProjects, type DeployProject, join, selectPackageDirs } from './deploy-spec.js'
 import { isCommitSha, parseRepoUrl, type RepoRef } from './repo-url.js'
@@ -21,9 +22,8 @@ const MAX_PACKAGE_JSON_BYTES = 1_000_000
 const DOCKERFILE_PATH = /(^|\/)Dockerfile$/
 // package.json 내용은 API 한도에 잡히지 않는 raw 주소로 읽는다(한도 헤더가 없다). 인증 없이 공개 레포만 본다.
 const RAW_HEADERS = { 'User-Agent': 'woowangthon-platform' }
-const GITHUB_HEADERS = { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'woowangthon-platform' }
 // commits/{rev}를 이 형식으로 부르면 JSON(수 KB, 바뀐 파일 목록까지) 대신 40자 SHA 텍스트만 온다.
-const GITHUB_SHA_HEADERS = { ...GITHUB_HEADERS, Accept: 'application/vnd.github.sha' }
+const SHA_ACCEPT = 'application/vnd.github.sha'
 
 const authUnavailable = () =>
   new ServiceUnavailableException({ code: 'AUTH_UNAVAILABLE', message: 'Could not check the linked GitHub account' })
@@ -37,10 +37,12 @@ export class ReposService {
   private readonly logger = new Logger(ReposService.name)
   private readonly supabaseUrl: string
   private readonly apiKey: string
+  private readonly githubToken: string | undefined
 
   constructor(config: ConfigService<Env, true>) {
     this.supabaseUrl = config.get('SUPABASE_URL', { infer: true })
     this.apiKey = config.get('SUPABASE_PUBLISHABLE_KEY', { infer: true })
+    this.githubToken = config.get('GITHUB_TOKEN', { infer: true })
   }
 
   /**
@@ -147,19 +149,15 @@ export class ReposService {
     return github.id
   }
 
-  // 인증 없이 공개 레포만 본다. 사용자 토큰은 GitHub에 보내지 않는다.
+  // 공개 레포만 본다. 사용자 토큰은 GitHub에 보내지 않는다.
   private async fetchRepo({ owner, repo }: RepoRef): Promise<GithubRepo> {
-    const { status, ok, body } = await this.request(
-      `https://api.github.com/repos/${owner}/${repo}`,
-      GITHUB_HEADERS,
-      githubUnavailable,
-    )
+    const { status, ok, body } = await this.github(`/repos/${owner}/${repo}`)
     // 없는 레포와 비공개 레포는 GitHub가 둘 다 404로 답한다.
     if (status === 404) {
       throw new NotFoundException({ code: 'REPO_NOT_FOUND', message: 'No public repository found at that address' })
     }
     if (!ok || !isGithubRepo(body)) {
-      // 한도 초과(403 · 429) · GitHub 장애 · 예상 밖 응답은 사용자 잘못이 아니다.
+      // GitHub 장애 · 예상 밖 응답은 사용자 잘못이 아니다(한도 초과는 github()가 먼저 GITHUB_RATE_LIMITED로 던진다).
       this.logger.error(`GitHub GET /repos/${owner}/${repo} answered ${status}`)
       throw githubUnavailable()
     }
@@ -168,11 +166,7 @@ export class ReposService {
 
   // rev는 HEAD(기본 브랜치) 또는 확인을 마친 commit SHA다. 소유 확인을 이미 통과한 레포라 아래를 뺀 실패는 사용자 잘못이 아니다(404 포함).
   private async fetchTree({ owner, repo }: RepoRef, rev: string): Promise<GithubTree> {
-    const { status, ok, body } = await this.request(
-      `https://api.github.com/repos/${owner}/${repo}/git/trees/${rev}?recursive=1`,
-      GITHUB_HEADERS,
-      githubUnavailable,
-    )
+    const { status, ok, body } = await this.github(`/repos/${owner}/${repo}/git/trees/${rev}?recursive=1`)
     // 커밋이 없는 빈 레포는 GitHub가 409 "Git Repository is empty."로 답한다. 파일이 없다는 정상 상태다.
     if (status === 409) return { tree: [], truncated: false }
     if (!ok || !isGithubTree(body)) {
@@ -201,11 +195,7 @@ export class ReposService {
 
   // rev(HEAD 또는 SHA)가 가리키는 commit의 전체 SHA. missing에 든 상태 코드는 "그 commit이 없다"는 뜻이라 null이고, 그 밖의 실패는 503이다.
   private async fetchCommit({ owner, repo }: RepoRef, rev: string, missing: number[]): Promise<string | null> {
-    const { status, ok, text } = await this.request(
-      `https://api.github.com/repos/${owner}/${repo}/commits/${rev}`,
-      GITHUB_SHA_HEADERS,
-      githubUnavailable,
-    )
+    const { status, ok, text } = await this.github(`/repos/${owner}/${repo}/commits/${rev}`, SHA_ACCEPT)
     if (missing.includes(status)) return null
     // sha 미디어 타입의 답은 개행 없이 40자 그대로다(2026-11-10 확인). 그렇지 않으면 모양 검사에서 걸려 503이다.
     if (!ok || !isCommitSha(text)) {
@@ -249,17 +239,24 @@ export class ReposService {
   }
 
   private async fetchRootTree({ owner, repo }: RepoRef, commit: string): Promise<string> {
-    const { status, ok, body } = await this.request(
-      `https://api.github.com/repos/${owner}/${repo}/git/commits/${commit}`,
-      GITHUB_HEADERS,
-      githubUnavailable,
-    )
+    const { status, ok, body } = await this.github(`/repos/${owner}/${repo}/git/commits/${commit}`)
     const sha = (body as { tree?: { sha?: unknown } } | undefined)?.tree?.sha
     if (!ok || typeof sha !== 'string' || !/^[0-9a-f]{40}$/.test(sha)) {
       this.logger.error(`GitHub GET /repos/${owner}/${repo}/git/commits answered ${status}`)
       throw githubUnavailable()
     }
     return sha
+  }
+
+  // api.github.com 호출 하나. 토큰이 있으면 붙이고, 한도에 걸린 답은 503 GITHUB_RATE_LIMITED(다시 시도할 시각)로 던진다.
+  private async github(path: string, accept?: string) {
+    const res = await this.request(`https://api.github.com${path}`, githubApiHeaders(this.githubToken, accept), githubUnavailable)
+    const until = rateLimitedUntil(res.status, res.headers)
+    if (until) {
+      this.logger.error(`GitHub GET ${path.split('?')[0]} answered ${res.status}: rate limited until ${until.toISOString()} (${this.githubToken ? 'with' : 'without'} GITHUB_TOKEN)`)
+      throw githubRateLimited(until)
+    }
+    return res
   }
 
   // 외부 호출 하나. 5초 제한을 걸고, 오류 응답이어도 본문을 끝까지 읽어 연결이 풀로 돌아가게 한다.
@@ -274,7 +271,7 @@ export class ReposService {
       } catch {
         body = undefined
       }
-      return { status: res.status, ok: res.ok, body, text }
+      return { status: res.status, ok: res.ok, headers: res.headers, body, text }
     } catch (err) {
       this.logger.error(err)
       throw unavailable()

@@ -47,6 +47,8 @@ DEFAULTS: dict[str, Json] = {
         "type": "dir",
         "entries": [{"name": "package.json", "type": "file", "size": 300}],
     },
+    "edit_repo_file": {"source": {"commitSha": "b" * 40}, "files": ["src/a.ts"], "changedLines": 2},
+    "open_pr": {"url": "https://github.com/student/app/pull/1"},
     "submit_result": {"accepted": True},
 }
 
@@ -150,6 +152,14 @@ class FakeGateway:
         @s.tool
         def read_repo(path: str, source: Json | None = None) -> ToolResult:
             return a("read_repo", {"path": path, "source": source})
+
+        @s.tool
+        def edit_repo_file(files: list[Json], message: str) -> ToolResult:
+            return a("edit_repo_file", {"files": files, "message": message})
+
+        @s.tool
+        def open_pr(source: Json, title: str, body: str) -> ToolResult:
+            return a("open_pr", {"source": source, "title": title, "body": body})
 
         @s.tool
         def submit_result(result: Json) -> ToolResult:

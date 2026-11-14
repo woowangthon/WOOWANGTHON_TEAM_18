@@ -310,20 +310,42 @@ def test_verify_cases_only_match_verify_tickets() -> None:
 
 
 def test_playbooks_only_name_tools_the_gateway_opens() -> None:
-    # read_build_logs · edit_repo_file · open_pr는 게이트웨이에 없다(BE/src/gateway/tools.ts).
+    # read_build_logs는 게이트웨이에 없다(BE/src/gateway/tools.ts).
     for case in load_cases():
         for step in case.playbook:
             assert step.tool in GATEWAY_TOOLS, (case.case_id, step.tool)
 
 
-def test_repo_and_name_fixes_end_with_needs_user() -> None:
-    # 레포 수정 도구가 없고 name · slug는 시험할 수 없어(PATCH_FORBIDDEN) 학생에게 안내한다.
-    for case_id in ("B1", "B4", "R1"):
+def test_lockfile_and_name_fixes_end_with_needs_user() -> None:
+    # 락 파일은 패키지 매니저 없이 다시 만들 수 없고, name · slug는 시험할 수 없어(PATCH_FORBIDDEN)
+    # 학생에게 안내한다.
+    for case_id in ("B1", "R1"):
         case = CaseMemory(load_cases()).get(case_id)
         assert case is not None
         last = case.playbook[-1]
         assert last.tool == "submit_result" and "needs_user" in (last.when or "")
         assert all("/name" not in json.dumps(s.args) for s in case.playbook)
+
+
+def test_import_case_fix_opens_a_pr_with_one_source_and_falls_back_to_needs_user() -> None:
+    # F13 도구(edit_repo_file · open_pr)가 생겼으니 B4는 수정 PR로 간다. 봇을 못 쓰면 needs_user.
+    case = CaseMemory(load_cases()).get("B4")
+    assert case is not None
+    tools = [s.tool for s in case.playbook]
+    assert tools == [
+        "read_repo",
+        "edit_repo_file",
+        "run_build",
+        "run_deploy",
+        "run_verify",
+        "open_pr",
+        "submit_result",
+    ]
+    for step in case.playbook[2:6]:
+        if step.tool != "run_verify":
+            assert "source" in step.args, step.tool
+    last = case.playbook[-1].when or ""
+    assert "needs_user" in last and "BOT_UNAVAILABLE" in last and "patchAttached" in last
 
 
 @pytest.mark.parametrize(

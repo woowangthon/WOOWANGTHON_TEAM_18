@@ -55,7 +55,7 @@ AI 서버 (에이전트) → 플랫폼 서버 MCP 게이트웨이 → GoCD 서�
 ```
 
 - 에이전트(AI 서버)에는 클러스터 · GoCD · 봇 계정 자격 증명이 없다. 도구는 모두 게이트웨이가 실행한다([ADR-012](../adr/012-agent-acts-through-platform-gateway.md)). 예외는 AI 서버 자신의 장기 메모리를 읽는 `read_memory` 하나다(클러스터 · GitHub에 닿지 않는다).
-- 게이트웨이는 시험 전용 GoCD 파이프라인 `student-trial`(Build → Prepare → Render → Apply → Verify, Switch 없음. Build는 AWS 실행기)을 환경 변수 옵션으로 실행한다: 시험 id `TRIAL_ID`, 돌릴 스테이지 `TRIAL_STAGES`(`run_build` = `build`, `run_render` = `render`, `run_deploy` = `prepare,render,apply`, `run_verify` = `verify`). 공개 주소는 `verified` 뒤 다시 실행하는 `student-deploy`의 Switch로만 바뀐다. 대상 슬롯 · `specPatch`를 적용한 입력은 파이프라인이 시험 id로 읽어 간다. 환경 변수에 비밀값은 넣지 않는다. 모양은 [API 계약](api.md) "파이프라인 ↔ 플랫폼 서버" 4번, 결정은 [ADR-014](../adr/014-agent-trial-pipeline-and-rerun.md)(ADR-012 일부 대체)다. 소스 커밋(봇 fork)은 F13에서 정한다.
+- 게이트웨이는 시험 전용 GoCD 파이프라인 `student-trial`(Build → Prepare → Render → Apply → Verify, Switch 없음. Build는 AWS 실행기)을 환경 변수 옵션으로 실행한다: 시험 id `TRIAL_ID`, 돌릴 스테이지 `TRIAL_STAGES`(`run_build` = `build`, `run_render` = `render`, `run_deploy` = `prepare,render,apply`, `run_verify` = `verify`). 공개 주소는 `verified` 뒤 다시 실행하는 `student-deploy`의 Switch로만 바뀐다. 대상 슬롯 · `specPatch`를 적용한 입력은 파이프라인이 시험 id로 읽어 간다. 환경 변수에 비밀값은 넣지 않는다. 모양은 [API 계약](api.md) "파이프라인 ↔ 플랫폼 서버" 4번, 결정은 [ADR-014](../adr/014-agent-trial-pipeline-and-rerun.md)(ADR-012 일부 대체)다. 소스 커밋(봇 fork)은 `source`로 넘긴다: 시험 입력의 `commitSha` · `spec.project.repo`를 봇 fork의 commit으로 바꿔 Build가 그 commit을 받는다([API 계약](api.md) "레포 수정(F13)").
 - 게이트웨이는 모든 실행 도구에서 `specPatch` 경로 검사와 live 슬롯 보호 검사를 한다.
 - 티켓 접수 · 종료 알림 API, 게이트웨이 접속 · 토큰(티켓마다 하나), 도구마다의 인자 · 결과 모양과 거절 코드는 [API 계약](api.md) "AI 에이전트"에 있다.
 
@@ -106,8 +106,8 @@ AI 서버 (에이전트) → 플랫폼 서버 MCP 게이트웨이 → GoCD 서�
 
 | 도구 | 하는 일 | 제한 |
 |---|---|---|
-| `edit_repo_file` | 봇 fork 작업 브랜치에 파일 수정 commit. 그 커밋을 `source`로 실행 도구에 넘긴다 | 파일 5개 · 50줄, `.env` · `.github/` 금지 |
-| `open_pr` | 학생 레포에 수정 PR | 티켓당 1개. 게이트웨이가 같은 `source`로 `run_verify` 통과를 확인한 뒤에만 연다 |
+| `edit_repo_file` | 봇 fork 작업 브랜치에 파일 수정 commit. 그 커밋을 `source`로 실행 도구에 넘긴다. 학생 레포에는 쓰지 않는다 | 티켓 전체에서 파일 5개 · 바뀐 줄 50줄(지운 줄 + 넣은 줄), `.env` · `.github/` 금지, 비밀값 모양의 줄 금지. 티켓당 5회 |
+| `open_pr` | 학생 레포에 수정 PR. PR을 열 수 없으면 `{ url: null, patchAttached: true }`(patch는 플랫폼이 `needs_user` 안내에 붙인다) | 티켓당 1개(2회). 게이트웨이가 같은 `source`로 `run_deploy` → `run_verify` 통과를 확인한 뒤에만 연다(`NOT_VERIFIED`) |
 
 **끝내기**
 
@@ -329,10 +329,10 @@ AI 서버 (에이전트) → 플랫폼 서버 MCP 게이트웨이 → GoCD 서�
 
 | case | 단계 | 오류 | 신호 | 처리 |
 |---|---|---|---|---|
-| `B1` | build | 락 파일 불일치 | `INSTALL` 실패, `ERR_PNPM_OUTDATED_LOCKFILE`, `npm ci` sync 오류 | 수정 PR (락 파일 갱신). 수정 PR 도구 전에는 `needs_user`로 다시 만들 락 파일과 명령을 알림 |
+| `B1` | build | 락 파일 불일치 | `INSTALL` 실패, `ERR_PNPM_OUTDATED_LOCKFILE`, `npm ci` sync 오류 | `needs_user`로 다시 만들 락 파일과 명령을 알림(락 파일은 패키지 매니저를 돌려야 다시 만들 수 있고 `edit_repo_file` 50줄을 넘기 쉽다) |
 | `B2` | build | Node 버전 불일치 | `engine "node" is incompatible`, `ERR_PNPM_UNSUPPORTED_ENGINE`, `npm error code EBADENGINE`. npm의 `EBADENGINE` **경고**와 일반 `SyntaxError`는 신호로 쓰지 않고, 대조는 `B5` · `B3` · `B4` 뒤에 한다(경고가 섞인 다른 실패를 B2로 잘못 고르지 않게, 2026-11-14) | `build.nodeVersion` |
 | `B3` | build | 빌드 시점 env 누락 | `BUILD` 실패, `import.meta.env.VITE_*` undefined | `build.buildEnv` 또는 사용자 요청 |
-| `B4` | build | 대소문자 · import 경로 | `Module not found`, `Cannot find module` | 수정 PR. 수정 PR 도구 전에는 `needs_user`로 import 파일 · 고칠 경로를 알림 |
+| `B4` | build | 대소문자 · import 경로 | `Module not found`, `Cannot find module` | 수정 PR(`edit_repo_file` → 같은 `source`로 `run_build` · `run_deploy` · `run_verify` → `open_pr`). `BOT_UNAVAILABLE`이거나 PR이 막히면(`patchAttached`) `needs_user`로 import 파일 · 고칠 경로를 알림 |
 | `B5` | build | `COPY` 대상 없음 | `COPY failed`, `"/dist": not found` | `build.context` · `outputDir` · `dockerfile` |
 | `P1` | prepare | 필수 Secret key 없음 | W3 상태 "빠짐" | 사용자 요청 |
 | `P2` | prepare | 자원 합계 초과 | 검증 규칙 `resources` 합계 | `runtime.resources` |
@@ -399,11 +399,12 @@ PydanticAI에서 두 모델을 OpenAI 호환 provider로 붙이고, 추론 모�
 - 요약본과 발췌는 정보를 버린다. 오류 표시 단어가 없는 원인 줄은 발췌에서 빠질 수 있고, 지난 도구 결과는 한 줄만 남는다. 에이전트가 필요하면 관찰 도구로 다시 읽는다.
 - 에이전트가 낸 `verified`가 정말 `run_verify` 통과 뒤인지 AI 서버는 따로 확인하지 않는다. 게이트웨이가 이 티켓의 시험 기록(같은 `specPatch`로 `run_deploy` → `run_verify` 통과)과 맞춰 보고(B2), 다시 실행의 Verify가 대상 슬롯을 한 번 더 확인한다(§1).
 - 가림 필터는 정해진 모양만 가린다. 이름 없이 나온 임의의 비밀 문자열은 못 가린다.
-- 게이트웨이가 지금 여는 도구는 여덟 개다: 관찰 셋(`get_target_status` · `read_pod_logs` · `read_repo`), 시험 넷(`run_build` · `run_render` · `run_deploy` · `run_verify`, F11b), `submit_result`. 대상 슬롯 운영 · `read_build_logs`는 그 뒤, `edit_repo_file` · `open_pr`은 F13이다. `verified`는 이 티켓에서 같은 `specPatch`로 `run_deploy` → `run_verify`를 통과했을 때만 받는다(B2). 빌드 값을 고쳤으면 그 서비스의 `run_build`도 같은 패치로 통과했어야 한다(B3). 그래서 지금 에이전트가 낼 수 있는 결과는 `verified` · `needs_user` · `gave_up`(과 F13 뒤 `pr_opened`)이다.
+- 게이트웨이가 지금 여는 도구는 열 개다: 관찰 셋(`get_target_status` · `read_pod_logs` · `read_repo`), 시험 넷(`run_build` · `run_render` · `run_deploy` · `run_verify`, F11b), 레포 수정 둘(`edit_repo_file` · `open_pr`, F13), `submit_result`. 대상 슬롯 운영 · `read_build_logs`는 그 뒤다. `verified`는 이 티켓에서 같은 `specPatch`로 `run_deploy` → `run_verify`를 통과했을 때만 받는다(B2). 빌드 값을 고쳤으면 그 서비스의 `run_build`도 같은 패치로 통과했어야 한다(B3). 그래서 지금 에이전트가 낼 수 있는 결과는 `verified` · `needs_user` · `gave_up` · `pr_opened`이다.
+- 수정 PR(F13, FR-077)은 게이트웨이(`BE/src/gateway/repo-edits.ts` · `bot-repo.ts`)가 봇 계정 `wanggane-bot`으로 한다. 토큰(`BOT_GITHUB_TOKEN`, classic PAT `public_repo`, 2026-12-10 만료)은 BE에만 있고 AI 서버에는 가지 않으며, 비어 있으면 `edit_repo_file` · `open_pr`은 `BOT_UNAVAILABLE`로 거절한다. 바뀐 줄은 지운 줄 + 넣은 줄이고(한 줄을 고치면 2줄), 파일 5개 · 50줄은 호출마다가 아니라 티켓 전체 기준이다(같은 티켓에서 다시 부르면 앞서 고친 것에 이어 쌓는다). 비밀값 검사는 값의 모양(토큰 · 키 · 인증 헤더 · 주소 속 비밀번호)만 보고, 이름만 민감한 줄(`"jsonwebtoken": "^9"`)은 막지 않는다. `pr_opened`는 `open_pr`이 이 티켓에 돌려준 주소와 같을 때만 받는다. 이 기능은 가짜 GitHub 응답과 가짜 GoCD로만 자동 테스트했고, **실제 GitHub · 실제 봇 토큰 · 실제 CodeBuild로는 돌려 보지 않았다(미검증)**: 이미 있는 fork에 fork 요청을 다시 보내면 그 fork가 돌아오는지, 봇 fork에서 학생 레포의 commit으로 git tree를 만들 수 있는지, CodeBuild의 `git fetch`가 fork의 commit SHA를 받는지, 로컬 모델이 `source`를 이어 넘기는지는 확인하지 않았다. 수정 기록(작업 브랜치 · 이 티켓의 commit)은 BE 메모리에 있어 서버가 다시 뜨면 이어 쓰지 못한다. 비공개 레포는 fork할 수 없다(`BOT_UNAVAILABLE`, 제출 단계에서 공개 레포만 받는다, [ADR-002](../adr/002-bot-account-for-fix-prs.md)). 한 `source`로 여러 서비스의 빌드 입력이 바뀌면(예: be의 빌드 컨텍스트가 레포 전체) `run_build`는 대상이 아닌 서비스 자리를 실행 기록의 이미지로 채워(빌드 단계는 reuse 서비스를 건드리지 않는다) 하나씩 빌드할 수 있게 한다. 그 서비스에 실행 기록의 이미지도 없으면(한 번도 빌드를 통과하지 못함) 그 서비스를 먼저 빌드해야 하고, 두 서비스 모두 이미지가 없으면 빌드할 수 없다.
 - 시험 실행은 게이트웨이 쪽(F11b: `run_build` · `run_render` · `run_deploy` · `run_verify`, `BE/src/gateway/trials.ts` · `tools.ts`)과 파이프라인 쪽의 Switch CLI `TRIAL_ID` 가드 · Build CLI `buildOverrides` 받기를 구현했다. 결과를 모아 보내는 `trial-report`, 입력 task의 시험 분기(`?counter`, `build-overrides.json`), 시험 파이프라인 정의(`Infra/gocd/student-trial.gocd.yaml`)도 구현했지만 실제 GoCD로는 아직 돌려 보지 않았다. 시험 기록과 기다림은 플랫폼 서버 메모리에 있어, 서버가 다시 뜨면 기다리던 `run_*` 호출은 끊긴다(에이전트는 게이트웨이에 닿지 못한 것으로 본다). `name` · `slug`는 슬롯 · Secret 이름이 따라 바뀌어 시험할 수 없어 `PATCH_FORBIDDEN`이다. 빌드 값을 고친 서비스의 해시는 같은 commit의 GitHub 트리로 다시 계산한다(배포 입력을 만들 때와 같은 규칙, 가짜 응답으로만 시험했다). `verified` 뒤에는 고친 입력으로 배포 파이프라인을 처음부터 다시 실행한다(B2, 가짜 GoCD로만 자동 테스트했다).
 - 티켓 하나의 전체 시간은 시험 대기를 포함해 60분이 상한이다(에이전트 작업 15분은 대기를 뺀 시간). `build` 스테이지 티켓은 `run_build`로 고쳐 본다(통과한 이미지가 이 티켓의 시험 이미지가 되고 `build_cache`에도 남는다).
 - `student-trial` 하나를 모든 프로젝트가 같이 쓰고 리더 실행기는 하나(`Infra/executor/agent.yaml`의 `replicas: 1`)라 시험과 배포가 한 줄로 선다. 데모처럼 여럿이 동시에 쓸 때 시험 대기 30분 안에 드는지는 확인하지 않았다.
 - 티켓 한도(3개)는 실행 기록마다라 프로젝트 전체로는 한도가 없다(새 배포마다 새로 3개). 프로젝트 단위 한도는 별도 이슈로 논의한다.
-- 게이트웨이의 호출 횟수 · 작업 시간은 플랫폼 서버 메모리에서 센다: 전체 20회, 같은 호출 연속 2회, 도구별 횟수(§3 표, 지금 열린 `run_build` 2 · `run_render` 5 · `run_deploy` 2 · `run_verify` 3), 작업 15분(첫 호출부터, 시험 대기는 진행 중인 것까지 뺀다), 티켓 전체 60분(대기 포함). 서버가 다시 뜨면 그 티켓은 처음부터 다시 세고, 티켓 시작은 저장된 만료 - 60분으로 보수적으로 잡아 남은 만료까지만 쓴다.
+- 게이트웨이의 호출 횟수 · 작업 시간은 플랫폼 서버 메모리에서 센다: 전체 20회, 같은 호출 연속 2회, 도구별 횟수(§3 표, 지금 열린 `run_build` 2 · `run_render` 5 · `run_deploy` 2 · `run_verify` 3 · `edit_repo_file` 5 · `open_pr` 2), 작업 15분(첫 호출부터, 시험 대기는 진행 중인 것까지 뺀다), 티켓 전체 60분(대기 포함). 서버가 다시 뜨면 그 티켓은 처음부터 다시 세고, 티켓 시작은 저장된 만료 - 60분으로 보수적으로 잡아 남은 만료까지만 쓴다.
 - `read_repo`는 인증 없이 GitHub API를 부른다(서버 IP당 시간당 60번, 레포 소유 확인과 같이 쓴다). 한도에 닿으면 도구 오류로 끝난다.
 - 게이트웨이에 끝내 닿지 못하면 결과를 낼 길이 없다. 계약에 다른 길(콜백 · 재전송 요청)이 없어서, 플랫폼은 자기 제한 시간(1시간 TIMED_OUT)까지 기다린다. AI 서버에는 로그만 남는다.

@@ -105,7 +105,7 @@ describe('SUPABASE_URL', () => {
 })
 
 describe('pipeline and AI server settings', () => {
-  const names = ['GOCD_URL', 'GOCD_TOKEN', 'GOCD_PIPELINE', 'GOCD_TRIAL_PIPELINE', 'PIPELINE_NOTIFY_TOKEN', 'AI_SERVER_URL', 'AGENT_API_TOKEN'] as const
+  const names = ['GOCD_URL', 'GOCD_TOKEN', 'GOCD_PIPELINE', 'GOCD_TRIAL_PIPELINE', 'PIPELINE_NOTIFY_TOKEN', 'AI_SERVER_URL', 'AGENT_API_TOKEN', 'BOT_GITHUB_TOKEN'] as const
 
   it('are optional: unset or empty means the feature is off', () => {
     for (const raw of [base, { ...base, ...Object.fromEntries(names.map((n) => [n, ''])) }]) {
@@ -133,6 +133,7 @@ describe('pipeline and AI server settings', () => {
     ['GOCD_URL', 'https://gocd.example.com/'],
     ['AI_SERVER_URL', 'https://ai.example.com/agent'],
     ['GOCD_TOKEN', 'a b'],
+    ['BOT_GITHUB_TOKEN', 'a b'],
     ['PIPELINE_NOTIFY_TOKEN', 'a\nb'],
     ['PIPELINE_NOTIFY_TOKEN', 'x'.repeat(31)],
     ['AGENT_API_TOKEN', ' x'],
@@ -291,5 +292,17 @@ describe('DISCORD_WEBHOOK_URL', () => {
     } catch (err) {
       expect((err as Error).message).not.toContain('abc')
     }
+  })
+})
+
+describe('GITHUB_TOKEN', () => {
+  it('is optional: unset or empty means GitHub is called without a token', () => {
+    expect(validateEnv(base).GITHUB_TOKEN).toBeUndefined()
+    expect(validateEnv({ ...base, GITHUB_TOKEN: '' }).GITHUB_TOKEN).toBeUndefined()
+    expect(validateEnv({ ...base, GITHUB_TOKEN: 'github_pat_x' }).GITHUB_TOKEN).toBe('github_pat_x')
+  })
+
+  it('stops the boot on whitespace without putting the value in the message', () => {
+    expect(() => validateEnv({ ...base, GITHUB_TOKEN: 'github_pat_secret value' })).toThrow(/^(?=.*GITHUB_TOKEN)(?!.*github_pat_secret)/s)
   })
 })

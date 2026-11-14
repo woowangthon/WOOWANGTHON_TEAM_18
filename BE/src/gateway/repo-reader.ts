@@ -1,10 +1,12 @@
 import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common'
+import { ConfigService } from '@nestjs/config'
+import { githubApiHeaders, githubRateLimited, rateLimitedUntil } from '../common/github.js'
 import { isRecord } from '../common/is-record.js'
+import type { Env } from '../config/env.js'
 
 const TIMEOUT_MS = 10_000
 /** 파일 내용은 이만큼까지 준다(api.md `read_repo`: 200KB 넘으면 자름). */
 export const MAX_FILE_BYTES = 200 * 1024
-const GITHUB_HEADERS = { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'woowangthon-platform' }
 const RAW_HEADERS = { 'User-Agent': 'woowangthon-platform' }
 
 export type RepoEntry =
@@ -23,16 +25,21 @@ export function repoPath(path: string): string | null {
 }
 
 /**
- * 공개 레포의 한 commit 시점 파일 · 폴더를 읽는다(인증 없이, 서버 IP당 시간당 60번인 GitHub API 한도에 잡힌다).
+ * 공개 레포의 한 commit 시점 파일 · 폴더를 읽는다(GitHub API 한도에 잡힌다: GITHUB_TOKEN이 있으면 시간당 5,000번, 없으면 서버 IP당 60번).
  * 폴더는 contents API, 큰 파일은 raw로 읽는다. 없으면 null.
  */
 @Injectable()
 export class RepoReader {
   private readonly logger = new Logger(RepoReader.name)
+  private readonly githubToken: string | undefined
+
+  constructor(config: ConfigService<Env, true>) {
+    this.githubToken = config.get('GITHUB_TOKEN', { infer: true })
+  }
 
   async read(repo: string, commitSha: string, path: string): Promise<RepoEntry | null> {
     const encoded = path.split('/').filter(Boolean).map(encodeURIComponent).join('/')
-    const res = await this.get(`https://api.github.com/repos/${repo}/contents${encoded ? `/${encoded}` : ''}?ref=${commitSha}`, GITHUB_HEADERS)
+    const res = await this.get(`https://api.github.com/repos/${repo}/contents${encoded ? `/${encoded}` : ''}?ref=${commitSha}`, githubApiHeaders(this.githubToken))
     if (res === null) return null
     const body: unknown = JSON.parse(res.toString('utf8'))
     if (Array.isArray(body)) {
@@ -71,6 +78,11 @@ export class RepoReader {
     if (res.status === 404 || !res.ok) {
       await res.body?.cancel()
       if (res.status === 404) return null
+      const until = rateLimitedUntil(res.status, res.headers)
+      if (until) {
+        this.logger.error(`GitHub answered ${res.status} to a repository read: rate limited until ${until.toISOString()}`)
+        throw githubRateLimited(until)
+      }
       this.logger.error(`GitHub answered ${res.status} to a repository read`)
       throw unavailable()
     }

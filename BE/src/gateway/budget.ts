@@ -10,7 +10,7 @@ export const TICKET_MS = 60 * 60_000
 /** 같은 도구 · 같은 인자는 연속으로 이만큼까지(그다음은 막는다). */
 export const MAX_REPEAT = 2
 /** 도구별 티켓당 횟수(AIagent.md §3 표). 없는 도구는 전체 횟수만 센다. */
-export const TOOL_CALLS: Record<string, number> = { run_build: 2, run_render: 5, run_deploy: 2, run_verify: 3 }
+export const TOOL_CALLS: Record<string, number> = { run_build: 2, run_render: 5, run_deploy: 2, run_verify: 3, edit_repo_file: 5, open_pr: 2 }
 
 export type BudgetCode = 'TOOL_LIMIT' | 'TIME_LIMIT' | 'REPEATED_CALL'
 

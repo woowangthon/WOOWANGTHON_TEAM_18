@@ -26,20 +26,33 @@ How to work:
   errors, run_build first when you change build values, then run_deploy, then run_verify.
 - `specPatch` paths may only be `/spec/services/<i>/build/...` or `/spec/services/<i>/runtime/...`.
   A service name or the project slug cannot be changed here: finish with `needs_user`.
-  The platform validates the patched spec: at most one service per role, no two services with the
-  same ingressPath, startupTimeoutSeconds 5-300.
-- Calls per ticket: run_build 2, run_render 5, run_deploy 2, run_verify 3, 20 tool calls in all.
+- Calls per ticket: run_build 2, run_render 5, run_deploy 2, run_verify 3, edit_repo_file 5,
+  open_pr 2, 20 tool calls in all.
   When one runs out the platform stops you, so call run_deploy only with a patch you expect to work.
-- You cannot change repository files. If the fix is in the student's code, Dockerfile or lock file,
-  finish with `needs_user` naming the file and the change.
+- A code change goes through edit_repo_file: the whole new content of each file, at most 5 files and
+  50 changed lines (added plus removed) over the whole ticket, never .env or .github/, never a
+  secret value. It commits to the platform's bot fork, not to the student's repository, and returns
+  `source`. Test that exact `source`: run_build for each service whose files changed, then
+  run_deploy with the same `source`, then run_verify, then open_pr with the same `source`, a Korean
+  title and a body that says what was wrong and what you changed.
+  open_pr is refused (NOT_VERIFIED) until run_verify has passed for that `source`.
+  read_repo also takes `source` to read your changed files back.
+- open_pr answers `{ url }`, or `{ url: null, patchAttached: true }` when the student's
+  repository does not take the pull request: then finish with needs_user and say in
+  `userRequest.message` which files you changed and why. Do not copy the patch; the platform
+  attaches the verified patch itself.
+  BOT_UNAVAILABLE means the platform cannot open pull requests now: finish with needs_user and
+  tell the student which file to change and how.
 - If a tool is rejected, read the code: fix the arguments, or stop if nothing else can work.
 
 Finish with the final result:
 - status `verified`: run_verify passed with your last specPatch; give that specPatch
   (an empty list if you only re-ran).
+- status `pr_opened`: open_pr answered a url; give `pr` with that exact `url`
+  (the platform checks it).
 - status `needs_user`: the student must act (a wrong or missing secret, their database is
-  unreachable or its schema is wrong, a repository file to fix, a name to change); give
-  `userRequest` with what to do and the secret key names.
+  unreachable or its schema is wrong, a file to fix without a pull request, a name to change);
+  give `userRequest` with what to do and the secret key names.
 - status `gave_up`: you could not fix it.
 Write `summary`, `evidence[].text` and `userRequest.message` in Korean for the student: the likely
 cause, what you tried, and what the student should do next. `evidence[].ref` names where the
@@ -146,10 +159,19 @@ GATEWAY_TOOLS = frozenset(
         "run_render",
         "run_deploy",
         "run_verify",
+        "edit_repo_file",
+        "open_pr",
         "submit_result",
     }
 )
-TOOL_CALLS = {"run_build": 2, "run_render": 5, "run_deploy": 2, "run_verify": 3}
+TOOL_CALLS = {
+    "run_build": 2,
+    "run_render": 5,
+    "run_deploy": 2,
+    "run_verify": 3,
+    "edit_repo_file": 5,
+    "open_pr": 2,
+}
 TOTAL_CALLS = 20
 
 
