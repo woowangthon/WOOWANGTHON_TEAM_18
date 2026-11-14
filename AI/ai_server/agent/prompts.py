@@ -230,7 +230,7 @@ def plan_steps_prompt(ticket: Ticket, notes: list[str], case: Case) -> str:
     """추론 모델이 case의 playbook을 참고해 계획을 낸다(읽기 도구만 부른다)."""
     # 티켓에 로그가 있으면(빌드 로그, apply · verify 실패의 Pod 로그) 첫 관찰을 건너뛸 수 있다.
     logs = (
-        "The ticket below already carries the latest log lines; skip a log-reading step when "
+        "The ticket below already carries the latest log lines; skip reading the logs when "
         "they show the cause. "
         if ticket.logs.lines
         else ""

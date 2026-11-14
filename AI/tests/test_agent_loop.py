@@ -1012,6 +1012,8 @@ def test_plan_prompt_says_the_ticket_already_has_the_logs() -> None:
         local = Script(final(status="gave_up", summary="모름"))
         solve(make_run(**overrides), gw, local, planner)
         assert ("already carries the latest log lines" in planner.sent(1)) is said
+        # 계획 단계에서 읽는 것은 추론 모델 자신이다(계획의 단계가 아니다).
+        assert ("skip reading the logs when they show the cause" in planner.sent(1)) is said
 
 
 def test_replan_prompt_counts_the_calls_left() -> None:
@@ -1104,6 +1106,32 @@ def test_an_env_value_read_from_the_repository_stays_verified() -> None:
     result = _b3_run_with(patch)
     assert result["status"] == "verified"
     assert result["specPatch"] == patch
+
+
+def test_an_env_value_the_planner_read_while_planning_stays_verified() -> None:
+    # 계획 단계의 읽기도 증거다(gateway.seen). 로컬 모델이 다시 읽지 않아도 지어낸 값이 아니다.
+    patch = _env_patch("VITE_THEME", "light")
+    gw = FakeGateway()
+    gw.script["read_repo"] = [ENV_EXAMPLE]
+    planner = Script(
+        classify("B3"),
+        call("read_repo", path=".env.example"),
+        plan(
+            {"tool": "run_build", "args": {"service": "be", "specPatch": patch}},
+            {"tool": "run_deploy", "args": {"specPatch": patch}},
+            {"tool": "run_verify"},
+            {"tool": "submit_result", "when": "verified"},
+        ),
+    )
+    local = Script(
+        call("run_build", service="be", specPatch=patch),
+        call("run_deploy", specPatch=patch),
+        call("run_verify"),
+        final(status="verified", specPatch=patch, summary="빌드 env를 넣어 통과했습니다."),
+    )
+    solve(make_run(**SIGNALS["B3"]), gw, local, planner)
+    assert gw.tool_calls()[0] == "read_repo"
+    assert only_result(gw)["status"] == "verified"
 
 
 @pytest.mark.parametrize(
