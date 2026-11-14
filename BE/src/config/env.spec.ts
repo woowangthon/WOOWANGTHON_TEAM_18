@@ -269,3 +269,28 @@ describe('CLUSTER_FULL_PERCENT', () => {
     expect(() => validateEnv({ ...base, CLUSTER_FULL_PERCENT: value })).toThrow(/CLUSTER_FULL_PERCENT/)
   })
 })
+
+describe('DISCORD_WEBHOOK_URL', () => {
+  const HOOK = 'https://discord.com/api/webhooks/123456789012345678/abcDEF_ghi-JKL'
+
+  it('is optional and keeps a Discord webhook URL', () => {
+    expect(validateEnv(base).DISCORD_WEBHOOK_URL).toBeUndefined()
+    expect(validateEnv({ ...base, DISCORD_WEBHOOK_URL: '' }).DISCORD_WEBHOOK_URL).toBeUndefined()
+    expect(validateEnv({ ...base, DISCORD_WEBHOOK_URL: HOOK }).DISCORD_WEBHOOK_URL).toBe(HOOK)
+  })
+
+  it.each([
+    'http://discord.com/api/webhooks/1/abc',
+    'https://discord.com.evil.example/api/webhooks/1/abc',
+    'https://evil.example/?https://discord.com/api/webhooks/1/abc',
+    'https://discord.com/api/webhooks/1/abc/extra',
+    `${HOOK} `,
+  ])('stops the boot for %s without printing the value', (value) => {
+    expect(() => validateEnv({ ...base, DISCORD_WEBHOOK_URL: value })).toThrow(/DISCORD_WEBHOOK_URL/)
+    try {
+      validateEnv({ ...base, DISCORD_WEBHOOK_URL: value })
+    } catch (err) {
+      expect((err as Error).message).not.toContain('abc')
+    }
+  })
+})
