@@ -547,7 +547,7 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
 
 내 배포를 최신순(`createdAt` 내림차순)으로 돌려준다. 쿼리 `limit`(1~50, 기본 20). 화면이 새로 고침 뒤에도 진행 중인 배포를 찾게 하려는 것이다.
 
-응답 `200`: `{ "deploys": [{ "id", "repo", "slug", "commit", "createdAt", "status", "stage", "url" }] }`. `status` · `stage` · `url`은 위와 같다.
+응답 `200`: `{ "deploys": [{ "id", "repo", "slug", "commit", "createdAt", "status", "stage", "url", "prOpened" }] }`. `status` · `stage` · `url`은 위와 같다. `prOpened`는 `status`가 `needs_user`이고 AI가 수정 PR을 열었으면(`agent.prUrl`이 있으면) `true`, 아니면 `false`다. 화면이 같은 `needs_user`를 "PR 확인 필요"와 다른 조치로 나누어 보이게 한다.
 
 오류: `401`, `400 INVALID_LIMIT`, `503 DATABASE_UNAVAILABLE`.
 

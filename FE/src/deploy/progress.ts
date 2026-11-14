@@ -48,6 +48,8 @@ export type DeployListItem = {
   status: DeployStatus
   stage: string | null
   url: string | null
+  // needs_user이고 AI가 수정 PR을 열었으면 true. 이 칸이 없던 응답은 false로 읽는다.
+  prOpened?: boolean
 }
 
 // 진행 중일 때만 이 간격으로 다시 읽는다(계약: 3초). succeeded · failed · needs_user · not_started면 멈춘다.
@@ -56,8 +58,11 @@ export const POLL_MS = 3000
 const SETTLED: string[] = ['not_started', 'needs_user', 'succeeded', 'failed']
 export const isActive = (status: string) => !SETTLED.includes(status)
 
+// needs_user인데 AI가 수정 PR을 열었으면(prOpened) 학생이 할 일이 정해져 있어 따로 부른다.
+export const hasPr = (agent: Pick<AgentResult, 'prUrl'> | null | undefined) => agent?.prUrl != null
+
 // 모르는 status는 받은 값을 그대로 보인다.
-export const statusLabel = (status: string) => {
+export const statusLabel = (status: string, prOpened = false) => {
   switch (status) {
     case 'not_started':
       return '시작 전'
@@ -68,7 +73,7 @@ export const statusLabel = (status: string) => {
     case 'fixing':
       return '문제 해결 중'
     case 'needs_user':
-      return '사용자 조치 필요'
+      return prOpened ? '수정 PR 확인 필요' : '사용자 조치 필요'
     case 'succeeded':
       return '완료'
     case 'failed':

@@ -211,7 +211,7 @@ export class DeployRunsService {
     return {
       deploys: deploys.map((d) => {
         const v = view(d, runs.get(d.id))
-        return { id: d.id, repo: d.repo, slug: d.slug, commit: d.commit_sha, createdAt: iso(d.created_at), status: v.status, stage: v.stage, url: v.url }
+        return { id: d.id, repo: d.repo, slug: d.slug, commit: d.commit_sha, createdAt: iso(d.created_at), status: v.status, stage: v.stage, url: v.url, prOpened: v.status === 'needs_user' && v.agent?.prUrl != null }
       }),
     }
   }

@@ -20,7 +20,7 @@ const resultLabel = (status: string) => {
 
 // AI 동료가 이 배포에 낸 해결 결과. 무엇을 했는지(summary)와 학생이 할 일(userRequest)을 보인다.
 // 값은 서버가 외부 전송 필터를 거친 것이라 그대로 보여 줘도 된다.
-function AgentSection({ agent }: { agent: AgentResult }) {
+function AgentSection({ agent, deployId }: { agent: AgentResult; deployId: string }) {
   const { status, summary, userRequest, prUrl, evidence } = agent
   const items = evidence.filter((item) => item.ref || item.text)
   return (
@@ -32,6 +32,19 @@ function AgentSection({ agent }: { agent: AgentResult }) {
         <a href={prUrl} target="_blank" rel="noopener noreferrer" className="self-start break-all text-accent-text underline">
           수정 PR 보러 가기
         </a>
+      )}
+      {prUrl?.startsWith('https://') && (
+        <div className="flex flex-col gap-2">
+          <p className="font-bold">다음에 할 일</p>
+          <ol className="list-decimal pl-5">
+            <li>수정 PR을 열어 바뀐 내용을 확인해요.</li>
+            <li>GitHub에서 PR을 머지해요.</li>
+            <li>머지한 뒤 다시 배포해요. 가장 새 commit으로 배포돼요.</li>
+          </ol>
+          <Link to={`/deploy/new?from=${deployId}`} className="self-start text-accent-text underline">
+            다시 배포
+          </Link>
+        </div>
       )}
       {userRequest && (
         <div className="flex flex-col gap-2">

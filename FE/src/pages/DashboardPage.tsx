@@ -41,7 +41,7 @@ function ProjectCard({ project }: { project: Project }) {
       <div className="flex min-w-0 flex-col gap-1">
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-mono font-bold break-all">{project.slug}</span>
-          <StatusBadge status={latest.status} />
+          <StatusBadge status={latest.status} prOpened={latest.prOpened} />
         </div>
         <span className="font-mono text-sm break-all text-muted">{latest.repo}</span>
         {latest.url && isWebUrl(latest.url) && (

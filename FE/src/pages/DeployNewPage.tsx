@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
+import { useSearchParams } from 'react-router'
 import { Button } from '../components/ui/Button.tsx'
 import { Card } from '../components/ui/Card.tsx'
 import { Field } from '../components/ui/Field.tsx'
@@ -7,6 +8,7 @@ import { CheckIcon, WarnIcon } from '../components/ui/Icons.tsx'
 import { Spinner } from '../components/ui/Spinner.tsx'
 import CommitRef from '../deploy/CommitRef.tsx'
 import DeployConfirm from '../deploy/DeployConfirm.tsx'
+import { useSavedDeploy } from '../deploy/useSavedDeploy.ts'
 import { ApiError, apiFetch } from '../lib/api.ts'
 import DockerfileCheck from './DockerfileCheck.tsx'
 import RepoFailureAlert from './RepoFailureAlert.tsx'
@@ -27,6 +29,10 @@ function CheckItem({ warn = false, children }: { warn?: boolean; children: React
 }
 
 function DeployNewPage() {
+  // 다시 배포: ?from=<이전 배포 id>이면 그 레포로 확인을 바로 시작하고, 설정은 이전 값으로 채운다.
+  const from = useSearchParams()[0].get('from') ?? ''
+  const previous = useSavedDeploy(from).data
+  const prefilled = useRef(false)
   const [repoUrl, setRepoUrl] = useState('')
   const [urlError, setUrlError] = useState<string | undefined>()
   const [failure, setFailure] = useState<Failure | null>(null)
@@ -62,6 +68,14 @@ function DeployNewPage() {
       setChecking(false)
     }
   }
+
+  useEffect(() => {
+    if (!previous || prefilled.current) return
+    prefilled.current = true
+    const url = `https://github.com/${previous.repo}`
+    setRepoUrl(url)
+    void check(url)
+  }, [previous])
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -145,6 +159,8 @@ function DeployNewPage() {
             onRecheck={() => {
               void check(checked.repoUrl)
             }}
+            // 사용자가 다른 레포로 바꿨으면 이전 설정은 쓰지 않는다.
+            previous={previous && checked.repoUrl === `https://github.com/${previous.repo}` ? previous.spec : undefined}
           />
         </Card>
       )}

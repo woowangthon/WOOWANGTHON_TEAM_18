@@ -908,10 +908,20 @@ describe('GET /api/deploys', () => {
     expect(res.status).toBe(200)
     expect(res.body).toEqual({
       deploys: [
-        { id: newer, repo: 'Student/My-App', slug: 'my-app', commit: SHA, createdAt: expect.any(String) as string, status: 'running', stage: 'build', url: null },
-        { id: older, repo: 'Student/My-App', slug: 'old-app', commit: SHA, createdAt: expect.any(String) as string, status: 'not_started', stage: null, url: null },
+        { id: newer, repo: 'Student/My-App', slug: 'my-app', commit: SHA, createdAt: expect.any(String) as string, status: 'running', stage: 'build', url: null, prOpened: false },
+        { id: older, repo: 'Student/My-App', slug: 'old-app', commit: SHA, createdAt: expect.any(String) as string, status: 'not_started', stage: null, url: null, prOpened: false },
       ],
     })
+  })
+
+  it('marks prOpened only for a needs_user run whose agent result has a PR', async () => {
+    const [a, b, c] = [seedDeploy({ slug: 'a-app' }), seedDeploy({ slug: 'b-app' }), seedDeploy({ slug: 'c-app' })]
+    for (const id of [a, b, c]) await start(id)
+    Object.assign(run(a), { status: 'needs_user', agent_result: { status: 'pr_opened', summary: 'x', pr: { url: 'https://github.com/student/app/pull/3' } } })
+    Object.assign(run(b), { status: 'needs_user', agent_result: { status: 'needs_user', summary: 'x', userRequest: { message: 'm', secretKeys: [] }, pr: null } })
+    Object.assign(run(c), { status: 'failed', agent_result: { status: 'gave_up', summary: 'x', pr: { url: 'https://github.com/student/app/pull/4' } } })
+    const flags = Object.fromEntries(((await list()).body as { deploys: { id: string; prOpened: boolean }[] }).deploys.map((d) => [d.id, d.prOpened]))
+    expect(flags).toEqual({ [a]: true, [b]: false, [c]: false })
   })
 
   it('is empty for a user with no deploys', async () => {
