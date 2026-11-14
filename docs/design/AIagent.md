@@ -1,14 +1,16 @@
 # AI 에이전트 — 설계
 
 - **상태**: 초안
-- **관련**: [배포 워크플로우](deploy-workflow.md) §6 · [배포 입력](deploy-handoff.md) · [ADR-009](../adr/009-deploy-runs-on-leader-gocd-agent.md) · [ADR-011](../adr/011-deploy-slots-a-b.md) · [ADR-012](../adr/012-agent-acts-through-platform-gateway.md) · [ADR-014](../adr/014-agent-trial-pipeline-and-rerun.md) (시험 전용 파이프라인 · verified 뒤 다시 실행) · [ADR-002](../adr/002-bot-account-for-fix-prs.md) (봇 계정 수정 PR)
+- **관련**: [배포 워크플로우](deploy-workflow.md) §6 · [배포 입력](deploy-handoff.md) · [ADR-009](../adr/009-deploy-runs-on-leader-gocd-agent.md) · [ADR-011](../adr/011-deploy-slots-a-b.md) · [ADR-012](../adr/012-agent-acts-through-platform-gateway.md) · [ADR-014](../adr/014-agent-trial-pipeline-and-rerun.md) (시험 전용 파이프라인 · verified 뒤 다시 실행) · [ADR-016](../adr/016-planner-model-nova-gateway.md) · [ADR-017](../adr/017-planner-plans-local-executes.md) (모델 · 계획과 실행 분리) · [ADR-002](../adr/002-bot-account-for-fix-prs.md) (봇 계정 수정 PR)
 
 ![AI 에이전트 흐름](../architecture/agent-flow.drawio.svg)
+
+> **주의**: 이 그림은 ADR-014 · ADR-017 이전 내용(시험 파이프라인의 "옵션: Switch 건너뜀", "② 못 맞추면 LLM", "verified → 재확인 → Switch · W7")이 남아 있다. 다시 그리는 중이다([#230](https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/230)). 아래 본문과 ADR이 현재 기준이다.
 
 ## 범위
 
 - **한다**: 문제 티켓을 받아 원인을 분류하고, MCP 게이트웨이의 도구로 대상 슬롯에서 Build · Render · Deploy · Verify를 실행 · 관찰하며 고친 뒤, 해결 결과를 플랫폼 서버에 돌려준다.
-- **범위**: 사용자 코드를 직접 바꾸는 것을 빼고 배포 설정 전부다. spec, CodeBuild 빌드 설정(그 빌드에만), 대상 슬롯 운영을 에이전트가 조정한다. 코드 수정은 수정 PR로 제안하고 머지는 사용자가 한다.
+- **범위**: 사용자 코드를 직접 바꾸는 것을 빼고 배포 설정 전부다. spec과 CodeBuild 빌드 설정(그 빌드에만)을 에이전트가 조정한다. 코드 수정은 수정 PR로 제안하고 머지는 사용자가 한다.
 - **하지 않는다**: live 전환(플랫폼이 한다), live 슬롯 · 다른 프로젝트 변경, Secret 값 읽기 · 쓰기, 플랫폼이 같이 쓰는 설정(CodeBuild 프로젝트 · buildspec · IAM, ResourceQuota · LimitRange · NetworkPolicy, 차트, 기본 Dockerfile) 변경, manifest(YAML) 작성. YAML은 플랫폼 코드(Render)가 spec으로 만든다.
 
 ## 설계
@@ -19,7 +21,7 @@
 플랫폼 서버                                AI 서버 (PydanticAI 에이전트)
 문제 티켓 발행 ─────────────────────────▶ ① 정규식 대조 (장기 메모리 case의 match): 힌트로만 쓴다
                                           ② 분류 (추론 모델 API): ①의 힌트를 참고해 case를 고르거나 null
-                                          ├─ 알려진 case → ③ 추론 모델이 playbook을 참고해 계획(도구 호출 없음)
+                                          ├─ 알려진 case → ③ 추론 모델이 playbook을 참고하고 읽기 도구로 증거를 읽어 계획(바꾸는 도구는 부르지 않음)
                                           │     → 로컬 모델이 계획에 있는 도구만으로 실행
                                           │     실패 · 거절 → ④ 재계획 (추론 모델 API가 직접 도구를 부름)
                                           └─ unknown → ⑤ planning (추론 모델 API가 직접 도구를 부름)
@@ -91,17 +93,8 @@ AI 서버 (에이전트) → 플랫폼 서버 MCP 게이트웨이 → GoCD 서�
 |---|---|---|
 | `get_target_status` | 대상 슬롯의 Pod · 이벤트 · rollout 상태를 지금 시점으로 읽음 | k3s 원본 (`managedFields` 제외) |
 | `read_pod_logs` | 대상 슬롯 Pod 로그 | 로그 줄. `previous: true`면 직전 컨테이너 |
-| `read_build_logs` | CodeBuild 로그의 지정 구간 | 로그 줄 |
 | `read_repo` | 티켓의 `commitSha` 시점 파일 · 폴더 목록 | 파일 내용 |
 | `read_memory` | 장기 메모리 case 검색. **AI 서버 안의 도구다(게이트웨이를 거치지 않음)**. case와 통계를 AI 서버가 갖기 때문이다(§8) | case · playbook |
-
-**대상 슬롯 운영**
-
-| 도구 | 하는 일 | 티켓당 횟수 |
-|---|---|---|
-| `restart_target` | 대상 슬롯 Deployment 재시작 (Pod 다시 생성) | 3 |
-| `scale_target` | 대상 슬롯 Deployment를 0 또는 1개로 | 3 |
-| `wait_target_ready` | 대상 슬롯 Ready를 다시 기다림. 대기 시간은 최대 7분 | 3 |
 
 **레포 수정**
 
@@ -124,9 +117,8 @@ AI 서버 (에이전트) → 플랫폼 서버 MCP 게이트웨이 → GoCD 서�
 |---|---|
 | 진단 | 관찰 도구로 로그 · 이벤트 · 레포를 읽는다 |
 | spec 수정 + 시험 | `build` · `runtime` 전체: 포트, 헬스체크, 빌드 · 설치 · 시작 명령, Node 버전, `context` · `dockerfile` · `outputDir`, `buildEnv`, `env`, `secretKeys` 목록, `links`, `ingressPath`, `stripPrefix`, `resources`(프로젝트 쿼터 안), `startupTimeoutSeconds` |
-| `slug` · `name` 수정 | 첫 배포 전에만 (첫 배포 뒤 바꾸면 네임스페이스와 Secret을 찾지 못한다) |
+| `slug` · `name` 수정 | 하지 않는다. 슬롯과 Secret 이름이 따라가므로 대상 슬롯에서 시험할 수 없어 게이트웨이가 `PATCH_FORBIDDEN`으로 막는다 |
 | CodeBuild 빌드 설정 | 그 빌드에만, `buildOverrides` 상한 안 (§3) |
-| 대상 슬롯 운영 | 재시작, 0 · 1개 조정, Ready 다시 기다리기 |
 | 그대로 재실행 | 고칠 것이 없는 일시적 실패 (CodeBuild 준비 실패, 이미지 받기 시간 초과) |
 | dry-run 먼저 | 이름 · 포트 오류는 `run_render`로 먼저 확인한다. 자원 합계(쿼터)는 `run_render`에서 걸리지 않고 `run_deploy`의 Prepare에서 걸린다(case `P2`). `run_render`는 `source`를 받지 않아 원래 commit만 시험하므로, 레포 수정 → PR 경로는 `run_build` → `run_deploy`로 바로 간다 |
 | 레포 수정 → PR | fork 커밋으로 `run_verify`까지 통과한 변경만 |
@@ -275,7 +267,7 @@ AI 서버 (에이전트) → 플랫폼 서버 MCP 게이트웨이 → GoCD 서�
 | `needs_user` | `userRequest` | 사용자에게 요청 |
 | `gave_up` | `summary` | 보고 |
 
-- `JSON Patch`(RFC 6902) 경로는 `build` · `runtime` 전체와 `name` · `slug`를 허용한다. 게이트웨이는 `name` · `slug` 수정을 첫 배포 전에만 받는다.
+- `JSON Patch`(RFC 6902) 경로의 모양은 `build` · `runtime` 전체와 `name` · `slug`까지 받지만, 게이트웨이는 `name` · `slug` 수정을 늘 `PATCH_FORBIDDEN`으로 거절한다.
 - `summary`는 다음 티켓의 `previous.summary`로 쓴다.
 - PydanticAI 에이전트의 출력 타입을 이 스키마의 Pydantic 모델로 두어, 모양이 틀린 결과는 에이전트 안에서 다시 만들게 한다.
 
@@ -387,25 +379,25 @@ PydanticAI에서 두 모델을 OpenAI 호환 provider로 붙이고, 추론 모�
 | 프롬프트 | 티켓 JSON 대신 요약본을 넣는다: 단계 · 서비스 · 슬롯 · `errorMessage` · 직전 티켓 · 받을 때 자른 사실 · 배포 spec(4,000자까지) · 빌드의 실패 phase · Render Status · 컨테이너 상태 · 이벤트(reason · message, 같은 것은 한 번, 최근 10개) · 로그 발췌(오류 표시 줄의 앞뒤 2줄 + 마지막 20줄, 합쳐 최대 60줄, 줄마다 200자). 추론 모델에도 같은 요약본을 준다. 추론 API가 실패하면 그 요청이 로컬 모델로 넘어가기 때문이다. 더 필요한 것은 관찰 도구로 읽는다 |
 | 게이트웨이 도구 결과 | 로그(`lines` · `logTail`)는 같은 발췌, 이벤트는 같은 규칙으로 최근 10개, Pod · builds[0] · Status는 크면 필요한 칸만. 줄인 것은 결과의 `_truncated`에 적는다. 해결 결과의 `actions` 기록은 줄이기 전 원본에서 만든다 |
 | 대화 기록 | 가장 최근 도구 결과만 전체로 두고, 그 이전 결과는 한 줄 요약(도구 · 짧은 값 칸 · 목록 길이)으로 바꾼다(PydanticAI history processor) |
-| 모델 설정 | 로컬 도구 고르기 · 분류: Qwen3 생각 모드 끔(요청 본문 `chat_template_kwargs: {"enable_thinking": false}`), `max_tokens` 2048. 로컬이 계획할 때(추론 API 없음 · 실패): 생각 모드 켬, `max_tokens` 4096 |
+| 모델 설정 | 로컬 모델이 계획을 실행할 때(도구 부르기): Qwen3 생각 모드 끔(요청 본문 `chat_template_kwargs: {"enable_thinking": false}`), `max_tokens` 2048. 로컬이 분류 · 계획까지 맡을 때(추론 API 없음 · 실패): 생각 모드 켬, `max_tokens` 4096 |
 
 ## 알려진 한계
 
 - 학생 DB 자체의 문제(테이블 없음, migration 안 함)는 에이전트가 학생 DB에 닿지 못해 고칠 수 없다. `needs_user`로 넘긴다.
-- 초기 case 목록과 신호는 추정이다. 실패 주입 시험 전이다.
+- 초기 case 목록과 신호는 추정이다. 2026-11-14에 실패를 심은 레포의 9건을 실서비스에서 한 번씩 돌려 봤다(정답 3/9, [ADR-017](../adr/017-planner-plans-local-executes.md), [`ai-scope.md`](../ai-scope.md)). 한 번씩이라 해결률의 범위는 검증하지 않았다.
 - `V1` · `V2`는 `errorMessage` 문구로 대조한다. 그 문구는 파이프라인 Verify(F05)가 만든다. 정한 모양은 요청 실패 `<service>: GET <path> -> <status>`(응답 없음은 `-> error: <원인>`), Ready 실패 `<service>: not ready (<reason>)`, 빈 엔드포인트 `<service>: no endpoints`이고 테스트도 이 모양으로 했다. F05가 실제로 이렇게 내는지는 F05 머지 뒤 맞춰 봐야 한다.
 - `render` case(`R1` ~ `R3`)는 `raw.k8s.status`(코드 · `message` · `details.causes`)로 대조한다. `prepare` case(`P1` ~ `P3`)는 Status가 없어 `errorMessage` 문장으로 대조하므로, 플랫폼 서버가 쓰는 실제 문장으로 정규식을 맞춰야 한다.
 - CodeBuild API의 오류 이름 · phase 값은 AWS 문서와 대조하지 않았다.
-- 로컬 8B 모델의 분류 · 도구 호출 품질은 검증하지 않았다. 실제 모델(로컬 · 추론 API)은 아직 한 번도 붙여 돌리지 않았다.
+- 로컬 8B 모델이 계획을 어기지 않고 도구를 부르는지는 실서비스 9건을 한 번씩 돌린 결과뿐이다([ADR-017](../adr/017-planner-plans-local-executes.md)). 분류 · 계획은 추론 모델이 하므로 로컬 모델의 분류 품질은 더 이상 쟁점이 아니다.
 - 컨텍스트 예산은 글자 수로 어림했다(가장 큰 시험 티켓 · 도구 결과로 로컬 모델 입력이 도구 정의까지 합쳐 30,000자 이하). 실제 토큰 수는 vLLM에 붙인 뒤 응답의 `usage.prompt_tokens`로 재야 한다. 한글은 글자당 토큰이 더 많아 어림이 빗나갈 수 있다.
 - 요약본과 발췌는 정보를 버린다. 오류 표시 단어가 없는 원인 줄은 발췌에서 빠질 수 있고, 지난 도구 결과는 한 줄만 남는다. 에이전트가 필요하면 관찰 도구로 다시 읽는다.
 - 결과를 내기 직전에 코드가 게이트웨이 검사(`BE/src/gateway/result.ts` · `tools.ts`)에 맞춘다: `verified`가 아니면(`pr_opened` · `needs_user` · `gave_up`) `specPatch` · `buildOverrides`를 뺀다(있으면 비어 있어도 `INVALID_RESULT`). `pr_opened`의 `pr.url`은 이 티켓의 `open_pr`가 돌려준 주소로 채운다. 2026-11-14 실측에서 `pr_opened` 6건이 모두 `INVALID_RESULT`로 거절되어 최소 `gave_up`이 된 것을 보고 넣었다. 거절되면 그 이유를 AI 서버 경고 로그에 남긴다.
 - `verified`의 패치가 env · buildEnv에 넣는 값이 티켓 · 도구 결과 어디에도 없으면 AI 서버 코드가 `needs_user`로 바꾼다(지어낸 값. 모델은 비밀값을 모른다). 2026-11-14 실서비스 측정에서 로컬 모델이 비밀값 `VITE_API_KEY`에 지어낸 값을 넣어 시험을 통과시키고 `verified`를 낸 것을 보고 넣었다(`loop._invented_env_keys`).
 - 에이전트가 낸 `verified`가 정말 `run_verify` 통과 뒤인지 AI 서버는 따로 확인하지 않는다. 게이트웨이가 이 티켓의 시험 기록(같은 `specPatch`로 `run_deploy` → `run_verify` 통과)과 맞춰 보고(B2), 다시 실행의 Verify가 대상 슬롯을 한 번 더 확인한다(§1).
 - 가림 필터는 정해진 모양만 가린다. 이름 없이 나온 임의의 비밀 문자열은 못 가린다.
-- 게이트웨이가 지금 여는 도구는 열 개다: 관찰 셋(`get_target_status` · `read_pod_logs` · `read_repo`), 시험 넷(`run_build` · `run_render` · `run_deploy` · `run_verify`, F11b), 레포 수정 둘(`edit_repo_file` · `open_pr`, F13), `submit_result`. 대상 슬롯 운영 · `read_build_logs`는 그 뒤다. `verified`는 이 티켓에서 같은 `specPatch`로 `run_deploy` → `run_verify`를 통과했을 때만 받는다(B2). 빌드 값을 고쳤으면 그 서비스의 `run_build`도 같은 패치로 통과했어야 한다(B3). 그래서 지금 에이전트가 낼 수 있는 결과는 `verified` · `needs_user` · `gave_up` · `pr_opened`이다.
+- 게이트웨이가 지금 여는 도구는 열 개다: 관찰 셋(`get_target_status` · `read_pod_logs` · `read_repo`), 시험 넷(`run_build` · `run_render` · `run_deploy` · `run_verify`, F11b), 레포 수정 둘(`edit_repo_file` · `open_pr`, F13), `submit_result`. `verified`는 이 티켓에서 같은 `specPatch`로 `run_deploy` → `run_verify`를 통과했을 때만 받는다(B2). 빌드 값을 고쳤으면 그 서비스의 `run_build`도 같은 패치로 통과했어야 한다(B3). 그래서 지금 에이전트가 낼 수 있는 결과는 `verified` · `needs_user` · `gave_up` · `pr_opened`이다.
 - 수정 PR(F13, FR-077)은 게이트웨이(`BE/src/gateway/repo-edits.ts` · `bot-repo.ts`)가 봇 계정 `wanggane-bot`으로 한다. 토큰(`BOT_GITHUB_TOKEN`, classic PAT `public_repo`, 2026-12-10 만료)은 BE에만 있고 AI 서버에는 가지 않으며, 비어 있으면 `edit_repo_file` · `open_pr`은 `BOT_UNAVAILABLE`로 거절한다. 바뀐 줄은 지운 줄 + 넣은 줄이고(한 줄을 고치면 2줄), 파일 5개 · 50줄은 호출마다가 아니라 티켓 전체 기준이다(같은 티켓에서 다시 부르면 앞서 고친 것에 이어 쌓는다). 비밀값 검사는 값의 모양(토큰 · 키 · 인증 헤더 · 주소 속 비밀번호)만 보고, 이름만 민감한 줄(`"jsonwebtoken": "^9"`)은 막지 않는다. `pr_opened`는 `open_pr`이 이 티켓에 돌려준 주소와 같을 때만 받는다. 이 기능은 가짜 GitHub 응답과 가짜 GoCD로만 자동 테스트했고, **실제 GitHub · 실제 봇 토큰 · 실제 CodeBuild로는 돌려 보지 않았다(미검증)**: 이미 있는 fork에 fork 요청을 다시 보내면 그 fork가 돌아오는지, 봇 fork에서 학생 레포의 commit으로 git tree를 만들 수 있는지, CodeBuild의 `git fetch`가 fork의 commit SHA를 받는지, 로컬 모델이 `source`를 이어 넘기는지는 확인하지 않았다. 수정 기록(작업 브랜치 · 이 티켓의 commit)은 BE 메모리에 있어 서버가 다시 뜨면 이어 쓰지 못한다. 비공개 레포는 fork할 수 없다(`BOT_UNAVAILABLE`, 제출 단계에서 공개 레포만 받는다, [ADR-002](../adr/002-bot-account-for-fix-prs.md)). 한 `source`로 여러 서비스의 빌드 입력이 바뀌면(예: be의 빌드 컨텍스트가 레포 전체) `run_build`는 대상이 아닌 서비스 자리를 실행 기록의 이미지로 채워(빌드 단계는 reuse 서비스를 건드리지 않는다) 하나씩 빌드할 수 있게 한다. 그 서비스에 실행 기록의 이미지도 없으면(한 번도 빌드를 통과하지 못함) 그 서비스를 먼저 빌드해야 하고, 두 서비스 모두 이미지가 없으면 빌드할 수 없다.
-- 시험 실행은 게이트웨이 쪽(F11b: `run_build` · `run_render` · `run_deploy` · `run_verify`, `BE/src/gateway/trials.ts` · `tools.ts`)과 파이프라인 쪽의 Switch CLI `TRIAL_ID` 가드 · Build CLI `buildOverrides` 받기를 구현했다. 결과를 모아 보내는 `trial-report`, 입력 task의 시험 분기(`?counter`, `build-overrides.json`), 시험 파이프라인 정의(`Infra/gocd/student-trial.gocd.yaml`)도 구현했지만 실제 GoCD로는 아직 돌려 보지 않았다. 시험 기록과 기다림은 플랫폼 서버 메모리에 있어, 서버가 다시 뜨면 기다리던 `run_*` 호출은 끊긴다(에이전트는 게이트웨이에 닿지 못한 것으로 본다). `name` · `slug`는 슬롯 · Secret 이름이 따라 바뀌어 시험할 수 없어 `PATCH_FORBIDDEN`이다. 빌드 값을 고친 서비스의 해시는 같은 commit의 GitHub 트리로 다시 계산한다(배포 입력을 만들 때와 같은 규칙, 가짜 응답으로만 시험했다). `verified` 뒤에는 고친 입력으로 배포 파이프라인을 처음부터 다시 실행한다(B2, 가짜 GoCD로만 자동 테스트했다).
+- 시험 실행은 게이트웨이 쪽(F11b: `run_build` · `run_render` · `run_deploy` · `run_verify`, `BE/src/gateway/trials.ts` · `tools.ts`)과 파이프라인 쪽의 Switch CLI `TRIAL_ID` 가드 · Build CLI `buildOverrides` 받기를 구현했다. 결과를 모아 보내는 `trial-report`, 입력 task의 시험 분기(`?counter`, `build-overrides.json`), 시험 파이프라인 정의(`Infra/gocd/student-trial.gocd.yaml`)도 구현했다. 운영 GoCD의 `student-trial`로 `run_render` · `run_deploy` · `run_verify`가 한 번씩 통과했다(2026-11-14 3차 리허설, [`ai-scope.md`](../ai-scope.md)). `run_build`와 시험이 실패하는 경로는 가짜 GoCD 응답으로만 시험했다. 시험 기록과 기다림은 플랫폼 서버 메모리에 있어, 서버가 다시 뜨면 기다리던 `run_*` 호출은 끊긴다(에이전트는 게이트웨이에 닿지 못한 것으로 본다). `name` · `slug`는 슬롯 · Secret 이름이 따라 바뀌어 시험할 수 없어 `PATCH_FORBIDDEN`이다. 빌드 값을 고친 서비스의 해시는 같은 commit의 GitHub 트리로 다시 계산한다(배포 입력을 만들 때와 같은 규칙, 가짜 응답으로만 시험했다). `verified` 뒤에는 고친 입력으로 배포 파이프라인을 처음부터 다시 실행한다(B2, 가짜 GoCD로만 자동 테스트했다).
 - 티켓 하나의 전체 시간은 시험 대기를 포함해 60분이 상한이다(에이전트 작업 15분은 대기를 뺀 시간). `build` 스테이지 티켓은 `run_build`로 고쳐 본다(통과한 이미지가 이 티켓의 시험 이미지가 되고 `build_cache`에도 남는다).
 - `student-trial` 하나를 모든 프로젝트가 같이 쓰고 리더 실행기는 하나(`Infra/executor/agent.yaml`의 `replicas: 1`)라 시험과 배포가 한 줄로 선다. 데모처럼 여럿이 동시에 쓸 때 시험 대기 30분 안에 드는지는 확인하지 않았다.
 - 티켓 한도(3개)는 실행 기록마다라 프로젝트 전체로는 한도가 없다(새 배포마다 새로 3개). 프로젝트 단위 한도는 별도 이슈로 논의한다.

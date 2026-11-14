@@ -28,3 +28,11 @@
 - 쉬워지는 것: 에이전트가 고친 것을 같은 실행 안에서 확인하고 다시 시도한다. 성공하면 이미 대상 슬롯에 떠 있어 전환만 하면 된다. 권한과 사설망 규칙은 그대로다.
 - 어려워지는 것: 플랫폼 서버에 MCP 게이트웨이(도구 실행, 횟수 제한, 검사)를 만들어야 한다. 에이전트가 반복하므로 횟수 제한을 처음부터 넣어야 한다.
 - 다시 볼 조건: 에이전트 반복이 파이프라인 대기 때문에 너무 느릴 때, 게이트웨이 검사로 막지 못하는 잘못된 수정이 나올 때.
+
+## 정정 (2026-11-15)
+
+코드·설정과 대조해 사실이 달라진 곳만 적는다. 결정 자체는 바꾸지 않는다. 시험 실행 방식과 `verified` 뒤 처리는 상태 줄대로 [ADR-014](014-agent-trial-pipeline-and-rerun.md)가 바꿨다.
+
+- 결정의 "spec(`slug` · `name`은 첫 배포 전에만)"은 지금 허용하지 않는다. `slug` · `name`은 슬롯과 Secret 이름이 따라가므로 대상 슬롯에서 시험할 수 없어 게이트웨이가 늘 `PATCH_FORBIDDEN`으로 막는다(`BE/src/gateway/spec-patch.ts`).
+- 결정의 "대상 슬롯 운영(재시작 · 개수 조정)"은 게이트웨이 도구로 열지 않았다. 게이트웨이가 여는 도구는 열 개다: `get_target_status` · `read_pod_logs` · `read_repo` · `run_build` · `run_render` · `run_deploy` · `run_verify` · `edit_repo_file` · `open_pr` · `submit_result`(`BE/src/gateway/tools.ts`).
+- 결정의 CodeBuild 설정 범위(컴퓨팅 크기 · 제한 시간 · 빌드 이미지 · 캐시)는 코드에서 더 좁다. 컴퓨팅 크기는 `BUILD_GENERAL1_SMALL`만, 빌드 이미지는 프로젝트와 같은 것만, 제한 시간은 20분까지 받는다(`OVERRIDE_*`, [AI 에이전트 설계](../design/AIagent.md) §3).

@@ -1,7 +1,7 @@
 # 클러스터 호출 모듈 — 설계
 
 - **상태**: 초안 (2026-11-11, 이슈 [#111](https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/111). 실제 리더에서 확인함, 아래 "실제 리더 확인")
-- **관련**: [space.md](space.md)(연결 설정 · 공간 만들기, #81), [cluster.md](cluster.md) §8(서버 권한과 응답 코드) · §12(비밀값), [deploy-workflow.md](deploy-workflow.md) W3, [ADR-004](../adr/README.md) · [ADR-009](../adr/009-deploy-runs-on-leader-gocd-agent.md)
+- **관련**: [space.md](space.md)(연결 설정 · 공간 만들기, #81), [cluster.md](cluster.md) §8(서버 권한과 응답 코드) · §12(비밀값), [deploy-workflow.md](deploy-workflow.md) W3, [ADR-004](../adr/004-server-cluster-link-tailscale.md) · [ADR-009](../adr/009-deploy-runs-on-leader-gocd-agent.md)
 
 ## 범위
 
@@ -9,7 +9,7 @@
 
 - 하는 것: 호출 도우미를 `request(method, …)`로 넓히고 연결을 재사용하기, 오류를 종류로 나누기(`ClusterError`), 비밀값 쓰기, 읽기(Pod · 로그 · Deployment · 노드).
 - 하지 않는 것: 사용자가 부르는 HTTP 엔드포인트와 DB. 비밀값 받기 API · `secretHash` · 상태 저장은 #43, 운영자 API는 #100이 이 함수를 불러서 만든다. FE가 보는 계약이 없으므로 [api.md](api.md)는 바뀌지 않는다.
-- 서버 계정이 할 수 있는 것은 [cluster.md §8](cluster.md#8-플랫폼-서버와-배포-실행기의-권한-서버-계정-1차-구현됨-2026-11-10-나머지-예정)이 정한다. 여기서는 그 권한 안에서만 부른다.
+- 서버 계정이 할 수 있는 것은 [cluster.md §8](cluster.md#8-플랫폼-서버와-배포-실행기의-권한)이 정한다. 여기서는 그 권한 안에서만 부른다.
 
 ## 설계
 
@@ -77,7 +77,7 @@
 | `logs` | 글. `tailLines` 기본 200(최대 2000), 응답은 256 KiB에서 자른다(요청 하나의 제한 시간 5초 안에 느린 구간으로도 받을 크기). 이어 받기(follow)는 없다 |
 
 - 목록은 한 번에 받는다(쪽 나눔 없음). 공간 하나의 Pod는 상한(ResourceQuota)으로 묶여 있고 노드는 셋이다.
-- 실제 사용량(CPU · 메모리): 노드는 `nodeUsage`로 읽는다(운영자 API #171, 아래 "실제 리더 확인"에는 아직 없다: 이 호출을 서버로 돌려 본 적은 없다). Pod 사용량 호출은 아직 없다. 권한은 들어갔다([cluster.md](cluster.md) §8, #130): `GET /apis/metrics.k8s.io/v1beta1/nodes`와 `/apis/metrics.k8s.io/v1beta1/namespaces/<공간>/pods`. 응답은 다른 목록처럼 `items` 배열이고, 항목의 `metadata.name`이 노드 · Pod 이름과 같다. 값은 쿠버네티스 수량 글이다(실제 리더 응답: 노드는 `usage`에 CPU `123018642n`(나노코어) · 메모리 `6838040Ki`, Pod는 `containers[].usage`에 같은 모양). 갓 뜬 Pod와 노드는 첫 수집(수십 초) 전까지 목록에 없으므로 없는 항목은 오류가 아니라 "아직 없음"이다. 운영자 API의 응답에는 Pod 사용량 자리가 없다([api.md](api.md)는 노드의 `usage`만 정한다). Pod 사용량을 화면에 내려면 api.md부터 고친다. 디스크 사용량 · 지난 값은 Prometheus에 묻는다(2026-11-11부터 된다, [cluster.md](cluster.md) §10): `GET /api/v1/namespaces/monitoring/services/monitoring-prometheus:9090/proxy/api/v1/query?query=<PromQL>`. `GET`만 된다.
+- 실제 사용량(CPU · 메모리): 노드는 `nodeUsage`로 읽는다(운영자 API #171, 아래 "실제 리더 확인"에는 아직 없다: 이 호출을 서버로 돌려 본 적은 없다). Pod 사용량은 `podUsage`로 읽는다(서비스별 지표 `BE/src/k8s/service-metrics.ts`가 쓴다). 권한은 #130에서 들어갔다([cluster.md](cluster.md) §8): `GET /apis/metrics.k8s.io/v1beta1/nodes`와 `/apis/metrics.k8s.io/v1beta1/namespaces/<공간>/pods`. 응답은 다른 목록처럼 `items` 배열이고, 항목의 `metadata.name`이 노드 · Pod 이름과 같다. 값은 쿠버네티스 수량 글이다(실제 리더 응답: 노드는 `usage`에 CPU `123018642n`(나노코어) · 메모리 `6838040Ki`, Pod는 `containers[].usage`에 같은 모양). 갓 뜬 Pod와 노드는 첫 수집(수십 초) 전까지 목록에 없으므로 없는 항목은 오류가 아니라 "아직 없음"이다. 디스크 사용량 · 지난 값은 Prometheus에 묻는다(2026-11-11부터 된다, [cluster.md](cluster.md) §10): `GET /api/v1/namespaces/monitoring/services/monitoring-prometheus:9090/proxy/api/v1/query?query=<PromQL>`. `GET`만 된다.
 
 ### 일부러 없는 것
 
@@ -85,7 +85,7 @@
 | --- | --- |
 | `PATCH` | 서버 계정에 Secret `patch` 권한이 없다. patch의 응답은 Secret 전체라, 빈 patch 하나로 값을 읽을 수 있기 때문이다(cluster.md §8). 다른 객체도 고치기 권한이 없다 |
 | Secret 읽기 · 목록 · 삭제 | 권한이 없다(`403`). 어떤 key가 들어갔는지는 #43이 DB에 key 이름으로 남긴다 |
-| 조치(scale · 재시작), watch · 이벤트 읽기 | 끄기 · 재개(scale 0 · 1), 재시작(rollout restart), 이벤트 · Ingress 읽기 권한은 2026-11-11에 들어갔다([cluster.md](cluster.md) §8, #124 · #129). 호출은 다음 PR |
+| 조치(scale · 재시작), watch · 이벤트 읽기 | 끄기 · 재개(scale 0 · 1), 재시작(rollout restart), 이벤트 · Ingress 읽기 권한은 2026-11-11에 들어갔다([cluster.md](cluster.md) §8, #124 · #129). 부르는 코드는 끄기(`DeploymentScaler.scaleToZero`)뿐이고, 재개 · 재시작은 아직 없다 |
 | 공간 삭제 | 서버 계정에 권한은 있지만 부르는 기능이 아직 없다 |
 | 다시 시도 | `POST`는 다시 보내도 되는지 모듈이 알 수 없다. 다시 부르는 것은 부르는 쪽이 정한다(`ensureSpace`와 `write`는 다시 불러도 같은 결과다) |
 
@@ -130,5 +130,5 @@
 - 부르는 쪽이 잡는 `403` · `404`(아직 없는 공간, 사라진 Pod)도 모듈은 오류 수준으로 로그를 남긴다. 예상한 경우인지는 모듈이 알 수 없다. 자주 읽는 화면에서는 로그가 시끄러울 수 있다.
 - `422`의 로그에는 상태와 reason뿐이라 어느 검사 규칙이 거절했는지 남지 않는다(응답 `message`에 객체 값이 섞일 수 있어 싣지 않는다). 규칙 이름은 같은 요청을 운영자 계정으로 dry run 해서 본다.
 - 로그는 끝부분만 한 번 읽는다. 이어 받기와 지난 컨테이너(`previous`) 로그는 없다.
-- EC2에서 리더 API까지 닿는 길은 2026-11-12에 확인했다(토큰 없이 `401`). 이 모듈로 EC2에서 부르는 건 확인하지 않았다(서버를 EC2에 올린 뒤). 실제 리더 확인은 운영자 기기에서 했다.
+- EC2에서 리더 API까지 닿는 길은 2026-11-12에 확인했다(토큰 없이 `401`). 서버를 EC2에 올린 뒤에는 이 모듈로 EC2에서 리더를 부른다(운영 배포가 학생 공간을 만든다, 2026-11-14 리허설). 처음 실제 리더 확인은 운영자 기기에서 했다.
 - 실제 리더에서 `PUT` 뒤 Secret의 key가 통째로 바뀌었는지는 보지 않았다(서버 계정은 읽지 못한다). 응답이 `200`인 것까지 확인했다.

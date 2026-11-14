@@ -33,3 +33,10 @@ AI 검토 결과로 수정 제안을 하고, 수정된 파일을 PR로 올려 �
 - 구현(F13, 2026-11-14): 계정 `wanggane-bot`, 토큰은 classic PAT(`public_repo`, 2026-12-10 만료)를 SSM `/wcp/be/BOT_GITHUB_TOKEN`에 두고 BE만 읽는다(AI 서버에는 주지 않는다, [ADR-012](012-agent-acts-through-platform-gateway.md)). 에이전트의 `edit_repo_file` · `open_pr` 게이트웨이 도구가 쓴다([API 계약](../design/api.md) "레포 수정(F13)"). 토큰이 비면 두 도구는 `BOT_UNAVAILABLE`이다.
 - GitHub 약관상 머신 계정은 사람이 책임지고 자동화 전용으로 쓰는 경우에 허용되는 범주로 알고 있다. 계정을 만들 때 약관 문구를 다시 확인한다.
 - 다시 볼 조건: 사용자가 늘거나 PR 속도 제한에 걸릴 때 GitHub App으로 바꾼다.
+
+## 정정 (2026-11-15)
+
+코드·설정과 대조해 사실이 달라진 곳만 적는다. 결정 자체는 바꾸지 않는다.
+
+- 결정의 "그 계정의 개인 액세스 토큰(PAT)"은 하나가 아니다. 봇 계정의 토큰은 용도별로 셋이다: BE의 `BOT_GITHUB_TOKEN`(classic, `public_repo`, SSM `/wcp/be/BOT_GITHUB_TOKEN`, 수정 PR용), 학생 이미지를 GHCR에 올리는 토큰(classic, `write:packages`, Secrets Manager `wcp/codebuild/GHCR_TOKEN`, 빌드 쪽에만, [ADR-003](003-registry-ghcr.md)), BE의 선택 env `GITHUB_TOKEN`(`api.github.com` 읽기의 시간당 호출 한도를 5,000번으로 올리는 용도, 쓰기 권한이 필요 없다). 토큰은 SSM Parameter Store와 Secrets Manager에 있다([플랫폼 FE · BE 배포](../design/platform-hosting.md)).
+- 학생 로그인과 소유 확인은 [ADR-007](007-login-email-password-github-link.md)이 대체했다. 결정의 "학생 로그인(Supabase GitHub OAuth)" 항목은 지금 적용되지 않는다(상태 줄과 같다).

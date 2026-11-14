@@ -25,3 +25,10 @@
 - 쉬워지는 것: 새로 짤 코드가 거의 없다(공식 쿠버네티스 클라이언트). 지표 조회에 포트가 늘지 않는다.
 - 어려워지는 것: 서버가 클러스터 접속 정보를 가진다(권한을 좁혀 보완한다). 학교망이 직접 연결을 막으면 Tailscale 중계로 돌아 느려진다. 클러스터가 늘면 서버가 접속 정보를 클러스터 수만큼 관리한다.
 - 다시 볼 조건: 중계 지연이 배포 · 조회에 문제가 될 때, 클러스터가 여럿이 될 때.
+
+## 정정 (2026-11-15)
+
+코드·설정과 대조해 사실이 달라진 곳만 적는다. 결정 자체는 바꾸지 않는다.
+
+- "공식 클라이언트"(결정, 결과)는 쓰지 않았다. 플랫폼 서버는 `node:https`로 쿠버네티스 API를 직접 부르고 `@kubernetes/client-node`는 의존성에 없다(`BE/src/k8s/k8s.client.ts`). 리더 API가 자체 CA로 서명돼 있어 요청마다 CA를 줄 수 있어야 하고, 쓰는 호출이 여섯 가지뿐이라 의존성이 큰 라이브러리를 들이지 않았다([`space.md`](../design/space.md), [`cluster-client.md`](../design/cluster-client.md) 결정 표). 서버의 쿠버네티스 호출을 한 곳에 모으는 결정은 `BE/src/k8s/`로 지켜졌다.
+- "사설망 접근 규칙으로 서버는 리더 API에만 닿게 한다"는 지금 리더 API(6443) 외에 AI 서버가 부르는 로컬 모델(`tailscale serve` 18000)도 허용한다([ADR-017](017-planner-plans-local-executes.md), 2026-11-14). 그 밖에 리더 → GoCD 서버(8153)는 반대 방향 규칙이다([ADR-009](009-deploy-runs-on-leader-gocd-agent.md)). 팀원 공유용 `autogroup:shared`의 전 포트 허용은 운영자 부재 기간의 임시 규칙이다. 값은 `Infra/tailscale/acl.hujson`과 [`cluster.md`](../design/cluster.md) §8.

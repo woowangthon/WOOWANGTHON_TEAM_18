@@ -1,6 +1,6 @@
 # 플랫폼 FE · BE 배포 (AWS) — 설계
 
-- **상태**: 초안 (2026-11-11)
+- **상태**: 구현됨 — EC2(BE · AI 서버 · GoCD)와 S3 + CloudFront가 올라가 있다 (설계 2026-11-11, 현황 갱신 2026-11-15)
 - **관련**: SRS §2.6 · §7(BE HTTPS) · [ADR-001](../adr/001-stack-and-deployment.md) · [ADR-013](../adr/013-visitor-entry-cloudflare-tunnel.md) · [시스템 정의서 §3](../system-definition.md#3-시스템-개요)
 
 ## 범위
@@ -46,7 +46,7 @@
 | HTTPS | 터널 클라이언트(cloudflared, 컨테이너 `wcp-tunnel`)가 EC2에서 Cloudflare로 암호화된 연결을 밖으로 연다. 방문자 ↔ Cloudflare는 HTTPS, Cloudflare ↔ EC2는 이 터널이라 평문 구간이 없다. 학생 서비스 입구(리더의 cloudflared, [ADR-013](../adr/013-visitor-entry-cloudflare-tunnel.md))와는 다른 터널이다 |
 | 터널 만들기 | Cloudflare 대시보드 Zero Trust → Networks → Tunnels에서 터널을 만들고, Public Hostname `api.stairnoworks.com` → `http://localhost:3000`을 더한다. 이때 `api` CNAME이 자동으로 생긴다(같은 이름의 A 레코드가 있으면 먼저 지운다). 터널 토큰은 SSM `/wcp/tunnel/TUNNEL_TOKEN`(SecureString)에 넣는다. `/wcp/be` 밖이라 BE 설정에 섞이지 않는다 |
 | 터널 띄우기 | EC2에서 [`Infra/aws/start-tunnel.sh`](../../Infra/aws/start-tunnel.sh)를 한 번 돌린다(토큰이나 cloudflared 버전을 바꿀 때 다시) |
-| 보안 그룹 | 들어오는 규칙 없음. SSH는 Tailscale로 한다. GoCD 포트도 인터넷에 열지 않는다(리더 실행기는 Tailscale로 붙는다, [클러스터 §8](cluster.md#8-플랫폼-서버와-배포-실행기의-권한-서버-계정-1차-구현됨-2026-11-10-나머지-예정)) |
+| 보안 그룹 | 들어오는 규칙 없음. SSH는 Tailscale로 한다. GoCD 포트도 인터넷에 열지 않는다(리더 실행기는 Tailscale로 붙는다, [클러스터 §8](cluster.md#8-플랫폼-서버와-배포-실행기의-권한)) |
 | 설정값 | SSM Parameter Store `/wcp/be/<변수 이름>`(SecureString). 이름은 [`BE/.env.example`](../../BE/.env.example)과 같다. `CORS_ORIGINS=https://app.stairnoworks.com`. 값은 한 줄이어야 한다(여러 줄 값은 스크립트가 거절한다. PEM은 base64로). **필수 `/wcp/be/SECRET_HASH_KEY`**(비밀값 해시의 HMAC 키, 32자 이상, `openssl rand -hex 32`)가 없으면 BE가 부팅하지 않는다 |
 | 권한 | 인스턴스 역할에 `/wcp/be` 경로의 `ssm:GetParametersByPath`, `/wcp/tunnel/TUNNEL_TOKEN`의 `ssm:GetParameter`, `kms:Decrypt`만 |
 | 올리기 | EC2에서 [`Infra/aws/deploy-be.sh`](../../Infra/aws/deploy-be.sh) `[git-ref]`. 새 컨테이너가 `/api/health`에 답하지 않으면 이전 컨테이너(이미지 · 설정 그대로)를 다시 띄운다. 터널은 그대로 두고 BE만 바뀐다 |
@@ -105,7 +105,7 @@ EC2 ── gocd-server (GoCD 26.1.0, JVM -Xmx1g, 8153은 Tailscale 주소에만 
 | --- | --- |
 | 실행 | `AI/Dockerfile` 이미지를 컨테이너 `wcp-ai`로, `--restart unless-stopped`, 네트워크 `wcp`. 포트 `8000`은 `127.0.0.1`에만 연다(배포 스크립트의 헬스 확인용). 터널에는 붙이지 않는다: 밖에서 AI 서버에 닿을 길은 없다 |
 | 네트워크 | docker 네트워크 `wcp`(없으면 `deploy-be.sh` · `deploy-ai.sh`가 만든다). `wcp-be`도 이 네트워크에 붙는다. 게이트웨이 포트(`GATEWAY_PORT`)는 BE 컨테이너 밖으로 열지 않고, 같은 네트워크의 `wcp-ai`만 닿는다 |
-| 설정값 | SSM `/wcp/ai/<이름>`(SecureString, 한 줄). 이름은 [`AI/.env.example`](../../AI/.env.example)과 같다. **필수**: `AGENT_API_TOKEN`(32자 이상, `openssl rand -hex 32`), `GATEWAY_URL=http://wcp-be:<GATEWAY_PORT>/mcp`. 선택: `LOCAL_MODEL_URL` · `LOCAL_MODEL_NAME` · `LOCAL_MODEL_API_KEY`, `PLANNER_MODEL_URL` · `PLANNER_MODEL_NAME` · `PLANNER_MODEL_API_KEY`, `AGENT_MAX_RUNS`. `HOST` · `PORT`는 넣지 않는다(이미지가 `0.0.0.0`, 스크립트가 `8000`으로 둔다). 모델 값이 없으면 서버는 뜨고 티켓마다 "AI 모델 설정이 없어 문제 해결을 하지 않았습니다" `gave_up`을 낸다(지금은 모델 없이 올린다) |
+| 설정값 | SSM `/wcp/ai/<이름>`(SecureString, 한 줄). 이름은 [`AI/.env.example`](../../AI/.env.example)과 같다. **필수**: `AGENT_API_TOKEN`(32자 이상, `openssl rand -hex 32`), `GATEWAY_URL=http://wcp-be:<GATEWAY_PORT>/mcp`. 선택: `LOCAL_MODEL_URL` · `LOCAL_MODEL_NAME` · `LOCAL_MODEL_API_KEY`, `PLANNER_MODEL_URL` · `PLANNER_MODEL_NAME` · `PLANNER_MODEL_API_KEY`, `AGENT_MAX_RUNS`. `HOST` · `PORT`는 넣지 않는다(이미지가 `0.0.0.0`, 스크립트가 `8000`으로 둔다). 모델 값이 없으면 서버는 뜨고 티켓마다 "AI 모델 설정이 없어 문제 해결을 하지 않았습니다" `gave_up`을 낸다(운영에는 추론 모델 · 로컬 모델 값을 모두 넣어 두었다, [`ai-scope.md`](../ai-scope.md)) |
 | BE 쪽 값 | SSM `/wcp/be`에 `AI_SERVER_URL=http://wcp-ai:8000`, `AGENT_API_TOKEN`(위 `/wcp/ai/AGENT_API_TOKEN`과 **같은 값**), `GATEWAY_PORT`(`3000`이 아닌 포트, 예 `3100`)를 넣는다. 선택: `BOT_GITHUB_TOKEN`(수정 PR을 올리는 봇 계정 `wanggane-bot`의 classic PAT, `public_repo`, 비밀. 비면 AI 에이전트의 `edit_repo_file` · `open_pr`이 `BOT_UNAVAILABLE`로 거절한다) |
 | 권한 | 인스턴스 역할에 `/wcp/ai` 경로의 `ssm:GetParametersByPath`를 더한다(`kms:Decrypt`는 이미 있다) |
 | 올리기 | 처음 한 번은 `deploy-be.sh`를 먼저(네트워크 `wcp`가 생기고 `wcp-be`가 그 네트워크에 붙는다, 위 BE 쪽 값도 이때 들어간다), 그다음 [`Infra/aws/deploy-ai.sh`](../../Infra/aws/deploy-ai.sh) `[git-ref]`. 새 컨테이너가 `/health`에 답하지 않으면 이전 컨테이너(이미지 · 설정 그대로)를 다시 띄운다. 앞선 실행이 중간에 멈춰 멈춘 `wcp-ai-prev`만 남았으면, 설정을 읽기 전에 그것을 `wcp-ai`로 되살린다. 한 번에 하나만 돈다(`flock`, util-linux. Amazon Linux 2023에는 기본으로 있다, `command -v flock`으로 확인). 그 뒤로는 바뀐 쪽만 다시 돌린다 |
@@ -127,9 +127,8 @@ EC2 ── gocd-server (GoCD 26.1.0, JVM -Xmx1g, 8153은 Tailscale 주소에만 
 ## 알려진 한계
 
 - BE는 컨테이너 하나다. 배포하는 몇 초 동안 API가 응답하지 않는다.
-- AI 서버도 컨테이너 하나다. 다시 배포하는 동안 도는 에이전트 실행은 끊긴다(그 티켓은 결과 없이 시간 초과로 끝난다). `deploy-ai.sh`와 `wcp` 네트워크는 로컬 docker로만 확인했다(2026-11-13, 가짜 설정값): 두 컨테이너가 같은 네트워크에 뜨고, AI → `http://wcp-be:<GATEWAY_PORT>/mcp`, BE → `http://wcp-ai:8000/health`가 닿고, 게이트웨이 포트는 호스트에 열리지 않으며, 잘못된 설정이면 이전 컨테이너로 되돌아간다. 실제 EC2에서는 돌려 보지 않았다.
+- AI 서버도 컨테이너 하나다. 다시 배포하는 동안 도는 에이전트 실행은 끊긴다(그 티켓은 결과 없이 시간 초과로 끝난다). `deploy-ai.sh`와 `wcp` 네트워크는 먼저 로컬 docker로 확인했고(2026-11-13, 가짜 설정값: 두 컨테이너가 같은 네트워크에 뜨고, AI → `http://wcp-be:<GATEWAY_PORT>/mcp`, BE → `http://wcp-ai:8000/health`가 닿고, 게이트웨이 포트는 호스트에 열리지 않으며, 잘못된 설정이면 이전 컨테이너로 되돌아간다), 실제 EC2에도 올라가 있다(2026-11-13 ~ 14, 운영 리허설에서 AI 서버가 게이트웨이 도구를 불렀다).
 - `deploy-be.sh`에는 아직 동시 실행 잠금이 없고, 중간에 멈춘 `wcp-be-prev`를 되살리는 일도 빌드 뒤에 하며 rename만 한다(`deploy-ai.sh`는 CodeRabbit 리뷰를 받아 고쳤다). BE 배포에 주는 영향을 줄이려고 이번에는 네트워크 줄만 바꿨다. 후속에서 같은 모양으로 맞춘다.
-- 스크립트는 실제 AWS에서 아직 돌려 보지 않았다(2026-11-11). `start-gocd.sh`와 AWS 실행기도 EC2에서는 돌려 보지 않았다(로컬 docker에서 서버 기동 · 로그인 · 설정 저장소 등록 · 접근 토큰 발급까지만 확인했다).
+- 스크립트는 처음에 로컬에서만 확인했지만(2026-11-11) 지금은 실제 AWS에서 돌고 있다. `start-gocd.sh`와 AWS 실행기도 EC2에서 돌며, 운영 GoCD로 시험 파이프라인과 배포 파이프라인 리허설을 통과했다(2026-11-14, [`ai-scope.md`](../ai-scope.md)).
 - GoCD 서버와 AWS 실행기가 죽으면 새 배포가 시작되지 않는다(BE가 `503 PIPELINE_UNAVAILABLE`). (`setup`이나 artifact 받기가 실패한 job은 `job.sh`가 `STAGE_NO_REPORT`를 curl로 알린다.) 실행 중이던 job이 GoCD의 시간 제한이나 실행기가 죽어서 끝나면 알림을 보내는 task가 돌지 못해 그 배포는 `running`으로 남는다. 같은 프로젝트의 다음 시작이 그 기록을 시간 초과(`TIMED_OUT`)로 마감하지만(BE의 `STALE_RUN_MS`, 1시간), 그 전까지 학생에게는 진행 중으로 보인다.
-- BE 컨테이너가 Tailscale 주소의 8153에 닿는지(`GOCD_URL`)는 EC2에서 확인하지 않았다.
 - 보안 검사의 Trivy DB는 배포할 때만 새로 받는다. BE를 오래 다시 배포하지 않으면 새로 알려진 취약점이 늦게 잡힌다. 배포 중 DB를 받는 동안 이전 컨테이너가 검사를 돌리면 그 검사는 실패할 수 있다(`SCAN_FAILED`, 다음 저장 때 다시 검사).

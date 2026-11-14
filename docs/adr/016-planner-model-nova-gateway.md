@@ -26,3 +26,14 @@ planning 외부 모델은 충북대 생성형 AI 플랫폼 NOVA의 API Gateway�
 - 어려워지는 것: planning 요청의 문제 요약 · 로그 조각이 학교 게이트웨이(mindlogic)와 모델 업체로 나간다. 보내기 직전 가림 필터(FR-102)가 비밀값처럼 보이는 문자열을 가리지만, 정규식 · 이름 규칙이라 놓치는 모양이 있을 수 있다. 게이트웨이의 사용량 · 보관 정책은 학교 플랫폼을 따른다.
 - 확인한 것: EC2의 AI 서버에 설정을 넣어 서버가 떴다(2026-11-13). 실제 티켓으로 이 모델이 불리고 도구를 호출하는지, 토큰 수 · 비용은 아직 확인하지 않았다.
 - 다시 볼 조건: 게이트웨이를 쓸 수 없게 될 때(학교 계정 · 정책 변경), 도구 호출 품질이 실제 티켓에서 부족할 때, 비용이 예상보다 클 때.
+
+## 정정 (2026-11-15)
+
+결정은 바꾸지 않는다. 게이트웨이 레퍼런스([Chat Completions](https://docs.mindlogic.ai/docs/cbnu-ac/api-gateway/reference/chat-completions))에서 읽은 사양을 보충한다. 아래는 문서 기준이고, 실제 호출로 확인한 것이 아니다.
+
+- 도구 호출은 `tools` · `tool_choice`로 한다.
+- 구조화 출력은 `response_format`의 `json_schema`(strict)로 받을 수 있다.
+- 추론 강도는 `reasoning_effort`(`low` · `medium` · `high`)로 준다. 다만 GPT-6 계열에서 `tools`와 함께 보내면 게이트웨이가 `reasoning_effort`를 자동으로 뺀다고 적혀 있다.
+- `thinking_budget` · `thinking_level`은 Gemini 계열 전용이다.
+- 우리 AI 서버는 이 값들을 보내지 않는다(`AI/ai_server`에 `reasoning_effort` · `response_format` · `thinking_*` 없음). 에이전트 호출은 `tools`를 함께 보내므로 `reasoning_effort`를 주더라도 적용되지 않을 수 있다(문서에서 읽은 것을 바탕으로 한 추측, 미확인).
+- 결과의 "아직 확인하지 않았다"는 2026-11-13 기준이다. 이 모델은 2026-11-14 운영 리허설과 9건 실측에서 실제 티켓으로 불렸다([ADR-017](017-planner-plans-local-executes.md), [`ai-scope.md`](../ai-scope.md)).
