@@ -84,7 +84,8 @@
 | | Supabase가 `401`(우리 공개 키가 틀렸거나 교체됨) · 장애 · 네트워크 · 시간 초과 | `503 AUTH_UNAVAILABLE` (로그를 남긴다) |
 | 3. 연동한 GitHub 확인 | `github` identity가 없음 | `403 GITHUB_NOT_LINKED` |
 | 4. GitHub에서 레포 조회 | 없는 레포, 비공개 레포(GitHub는 둘 다 `404`로 답한다) | `404 REPO_NOT_FOUND` |
-| | 한도 초과(`403` · `429`) · GitHub 장애 · 네트워크 · 시간 초과 | `503 GITHUB_UNAVAILABLE` |
+| | 한도 초과(`403` · `429`이고 `x-ratelimit-remaining: 0` 또는 `retry-after`가 있음) | `503 GITHUB_RATE_LIMITED`(`retryAt`: 다시 시도할 시각, 로그를 남긴다) |
+| | 그 밖의 `403` · `429` · GitHub 장애 · 네트워크 · 시간 초과 | `503 GITHUB_UNAVAILABLE` |
 | 5. 개인 레포인가 | 소유자가 조직(`type`이 `User`가 아님). MVP는 공개 개인 레포만 지원한다([ADR-002](../adr/002-bot-account-for-fix-prs.md)) | `422 REPO_NOT_PERSONAL` |
 | 6. 소유자 대조 | 소유자 ID ≠ 연동한 GitHub ID | `403 REPO_NOT_OWNED` |
 
@@ -140,7 +141,7 @@ Supabase `GET /auth/v1/user`의 `401`과 `403`은 책임이 다르다(2026-11-09
 - 사용자당 저장 개수나 요청 횟수 제한은 없다. 본문 100KB 제한만 있다.
 - 예약 `slug` 목록과 `resources`의 모양은 인프라 담당이 정하는 값이다. 지금은 임시 목록과 `null`만 받는다.
 
-- GitHub 공개 API를 인증 없이 부르면 서버 IP당 시간당 60번까지다. 소유 확인(`repos/check`)은 두 번(레포 조회 + commit), Dockerfile 확인은 두 번, 배포 설정 초안은 `commit`을 주면 세 번이라, 사용자 한 명이 제출 한 번에 일곱 번을 쓴다(서버 IP당 시간당 약 8건). 여러 사용자가 같은 서버 IP를 쓰므로 데모 인원이 많으면 모자랄 수 있다. 데모 전에 봇 계정(ADR-002)의 토큰(5000번까지) 또는 결과 캐시로 다시 본다(구현은 아직 없다). 한도에 걸리면 `503 GITHUB_UNAVAILABLE`이다.
+- GitHub 공개 API를 인증 없이 부르면 서버 IP당 시간당 60번까지다. 소유 확인(`repos/check`)은 두 번(레포 조회 + commit), Dockerfile 확인은 두 번, 배포 설정 초안은 `commit`을 주면 세 번이고, 저장(`POST /api/deploys`) · 배포 조건(트리 · 루트 tree) · 게이트웨이(`run_build` 해시 · `read_repo`)도 부른다. 여러 사용자가 같은 서버 IP를 쓰므로 2026-11-14 실서비스에서 한도가 바닥나 저장이 실패했다. 그래서 BE env `GITHUB_TOKEN`(운영은 봇 GitHub 계정 토큰, 권한 없는 fine-grained PAT여도 됨)이 있으면 모든 `api.github.com` 호출에 `Authorization: Bearer`로 붙여 시간당 5,000번을 쓴다. 없으면 지금처럼 인증 없이 부른다. 토큰은 `api.github.com`으로만 보내고 `raw.githubusercontent.com` · Supabase에는 보내지 않는다. 한도에 걸리면(`403` · `429`에 `x-ratelimit-remaining: 0` 또는 `retry-after`) `503 GITHUB_RATE_LIMITED`이고, 오류에 다시 시도할 시각 `retryAt`(ISO, `x-ratelimit-reset` 또는 `retry-after`에서, 둘 다 없으면 1분 뒤)을 싣는다.
 - 배포 설정 초안(`deploy-spec`)의 `package.json` 읽기는 `raw.githubusercontent.com`을 쓴다. 이 주소의 응답에는 한도 헤더가 없고 API 한도(`core`)가 줄지 않는 것을 2026-11-09에 직접 확인했다. 다만 이 주소에도 따로 정해지지 않은 한도가 있을 수 있고 응답이 5분 캐시된다(`cache-control: max-age=300`). 그래서 방금 push한 변경이 초안에 늦게 보일 수 있다. `commit`을 주지 않아 `HEAD`를 읽으면 파일 목록과 내용을 서로 다른 시점에 읽게 되어 그 사이 push가 있으면 어긋날 수 있다. `commit`을 주면 SHA 경로는 바뀌지 않으므로 어긋남도 5분 캐시 문제도 없다([#41](https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/41) · [#60](https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/60)).
 - `commit`은 클라이언트가 보낸 값이라 아직 서버가 믿을 SHA가 아니다. 지금은 읽기 전용 초안에만 쓰이고 공개 레포라 노출되는 정보가 없다. 검사한 commit과 확정 spec의 commit이 같은지는 확정 spec을 저장하는 작업에서 확인한다. GitHub는 같은 포크 네트워크의 다른 레포 commit을 이 레포 주소로 읽게 해 줄 수 있는데, 이는 직접 확인하지 못했다.
 - 토큰은 수명(기본 1시간) 동안 유효하다. 로그아웃 · 계정 정지 · 관리자 해제가 플랫폼 서버에 바로 반영되지 않는다. 계정 정지 기능을 만들 때 DB 확인을 더할지 다시 본다.

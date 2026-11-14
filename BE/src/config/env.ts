@@ -40,6 +40,8 @@ export interface Env {
   CLUSTER_FULL_PERCENT: number
   /** 운영자 Discord 채널의 웹후크(운영 알림, docs/design/incidents.md). 비밀이라 로그 · 응답에 남기지 않는다. 비워 두면 운영자 Discord로 보내지 않는다. */
   DISCORD_WEBHOOK_URL: string | undefined
+  /** api.github.com에 Bearer로 붙이는 토큰(운영은 봇 계정 토큰, 권한 없는 PAT여도 된다. 비밀). 비우면 인증 없이 서버 IP당 시간당 60번이고, 있으면 5,000번이다. api.github.com으로만 보낸다. */
+  GITHUB_TOKEN: string | undefined
 }
 
 // 값이 틀리면 부팅을 멈춘다. 틀린 설정으로 뜬 서버가 조용히 다르게 동작하지 않게 한다.
@@ -65,6 +67,7 @@ export function validateEnv(raw: Record<string, string | undefined>): Env {
     TRIVY_CACHE_DIR: parseOptionalDir(raw.TRIVY_CACHE_DIR, 'TRIVY_CACHE_DIR'),
     CLUSTER_FULL_PERCENT: parseClusterFullPercent(raw.CLUSTER_FULL_PERCENT),
     DISCORD_WEBHOOK_URL: parseOptionalWebhook(raw.DISCORD_WEBHOOK_URL),
+    GITHUB_TOKEN: parseOptionalSecret(raw.GITHUB_TOKEN, 'GITHUB_TOKEN'),
   }
 }
 

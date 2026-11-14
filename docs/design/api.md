@@ -50,6 +50,7 @@ FE·BE·AI가 서로를 기다리지 않도록 **요청·응답 모양을 먼저
 - `404 REPO_NOT_FOUND`: 없는 레포이거나 비공개 레포다
 - `422 REPO_NOT_PERSONAL`: 소유자가 조직이다 (MVP는 공개 개인 레포만)
 - `503 AUTH_UNAVAILABLE` · `503 GITHUB_UNAVAILABLE`: 인증 서버 또는 GitHub에 닿지 못했거나(HEAD commit을 못 읽은 경우 포함), 서버가 가진 Supabase 공개 키가 거부당했다. 사용자 잘못이 아니므로 다시 시도하게 한다
+- `503 GITHUB_RATE_LIMITED`: 플랫폼 서버가 GitHub API 한도에 걸렸다. `error.retryAt`(ISO 시각)에 다시 시도할 수 있는 때가 온다(`{ "error": { "code": "GITHUB_RATE_LIMITED", "message": "...", "retryAt": "2026-11-14T08:30:00.000Z" } }`). GitHub를 부르는 모든 API(`repos/*` · `POST /api/deploys` 등)에서 나올 수 있다. 사용자 잘못이 아니고 연결 불가와 달리 기다리면 풀린다
 
 ### `POST /api/repos/dockerfiles` — 내 레포의 어느 폴더에 Dockerfile이 있는지 확인 (이슈 #25)
 

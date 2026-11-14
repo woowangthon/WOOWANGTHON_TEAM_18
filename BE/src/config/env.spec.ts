@@ -294,3 +294,15 @@ describe('DISCORD_WEBHOOK_URL', () => {
     }
   })
 })
+
+describe('GITHUB_TOKEN', () => {
+  it('is optional: unset or empty means GitHub is called without a token', () => {
+    expect(validateEnv(base).GITHUB_TOKEN).toBeUndefined()
+    expect(validateEnv({ ...base, GITHUB_TOKEN: '' }).GITHUB_TOKEN).toBeUndefined()
+    expect(validateEnv({ ...base, GITHUB_TOKEN: 'github_pat_x' }).GITHUB_TOKEN).toBe('github_pat_x')
+  })
+
+  it('stops the boot on whitespace without putting the value in the message', () => {
+    expect(() => validateEnv({ ...base, GITHUB_TOKEN: 'github_pat_secret value' })).toThrow(/^(?=.*GITHUB_TOKEN)(?!.*github_pat_secret)/s)
+  })
+})
