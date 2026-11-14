@@ -34,3 +34,23 @@ export function countProjects(projects: Project[]): ProjectCounts {
     needsAttention: count(['failed', 'needs_user']),
   }
 }
+
+// 대시보드의 상태별 보기. 모음은 위 countProjects와 같다: 실행 중 = 완료, 배포 중 = queued · running · fixing, 확인 필요 = failed · needs_user.
+// "중지"는 두지 않는다: 배포 목록 응답에는 운영자가 멈췄는지가 없어서(중지해도 최신 배포는 완료로 남는다) 지어낼 수 없다.
+export type ProjectFilter = 'all' | 'running' | 'inProgress' | 'needsAttention'
+export type ProjectSort = 'recent' | 'name'
+
+const FILTER_STATUSES: Record<Exclude<ProjectFilter, 'all'>, string[]> = {
+  running: ['succeeded'],
+  inProgress: ['queued', 'running', 'fixing'],
+  needsAttention: ['failed', 'needs_user'],
+}
+
+export const filterProjects = (projects: Project[], filter: ProjectFilter): Project[] =>
+  filter === 'all' ? projects : projects.filter((project) => FILTER_STATUSES[filter].includes(project.latest.status))
+
+// 최근순은 groupProjects가 이미 만든 순서다. 이름순은 ko 순서로 새 배열을 만든다(받은 배열을 바꾸지 않는다).
+export const sortProjects = (projects: Project[], sort: ProjectSort): Project[] =>
+  sort === 'name'
+    ? [...projects].sort((a, b) => a.slug.localeCompare(b.slug, 'ko'))
+    : [...projects].sort((a, b) => Date.parse(b.latest.createdAt) - Date.parse(a.latest.createdAt))

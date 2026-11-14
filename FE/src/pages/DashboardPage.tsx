@@ -1,11 +1,13 @@
+import { useState } from 'react'
 import { Link } from 'react-router'
 import NoticeBanner from '../components/NoticeBanner.tsx'
 import { primaryLinkClass } from '../components/primaryLinkClass.ts'
 import { Button } from '../components/ui/Button.tsx'
 import { Card } from '../components/ui/Card.tsx'
+import { SelectField } from '../components/ui/Select.tsx'
 import { LoadingBlock } from '../components/ui/Skeleton.tsx'
-import { countProjects, groupProjects } from '../deploy/projects.ts'
-import type { Project, ProjectCounts } from '../deploy/projects.ts'
+import { countProjects, filterProjects, groupProjects, sortProjects } from '../deploy/projects.ts'
+import type { Project, ProjectCounts, ProjectFilter, ProjectSort } from '../deploy/projects.ts'
 import StatusBadge from '../deploy/StatusBadge.tsx'
 import { useDeploys } from '../deploy/useDeploys.ts'
 import IncidentNotice from '../incidents/IncidentNotice.tsx'
@@ -18,13 +20,24 @@ const tiles: { key: keyof ProjectCounts; label: string }[] = [
   { key: 'needsAttention', label: '확인 필요' },
 ]
 
+const filterOptions: { value: ProjectFilter; label: string }[] = [
+  { value: 'all', label: '전체' },
+  { value: 'running', label: '실행 중' },
+  { value: 'inProgress', label: '배포 중' },
+  { value: 'needsAttention', label: '실패 · 확인 필요' },
+]
+const sortOptions: { value: ProjectSort; label: string }[] = [
+  { value: 'recent', label: '최근 배포순' },
+  { value: 'name', label: '이름순' },
+]
+
 // 공개 주소는 서버가 준 값이지만 http(s)일 때만 링크로 건다.
 const isWebUrl = (url: string) => /^https?:\/\//i.test(url)
 
-function ProjectRow({ project }: { project: Project }) {
+function ProjectCard({ project }: { project: Project }) {
   const { latest } = project
   return (
-    <li className="flex flex-col gap-2 p-4 sm:flex-row sm:items-center sm:justify-between">
+    <li className="flex flex-col justify-between gap-3 rounded-md border border-line bg-bg p-4">
       <div className="flex min-w-0 flex-col gap-1">
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-mono font-bold">{project.slug}</span>
@@ -43,7 +56,7 @@ function ProjectRow({ project }: { project: Project }) {
           </a>
         )}
       </div>
-      <div className="flex items-center justify-between gap-4 sm:flex-col sm:items-end sm:gap-1">
+      <div className="flex items-center justify-between gap-4">
         <span className="text-xs text-muted">
           마지막 배포 {new Date(latest.createdAt).toLocaleString('ko-KR')}
         </span>
@@ -61,6 +74,9 @@ function DashboardPage() {
   const { link } = useGithubLink()
   const projects = state.status === 'ready' ? groupProjects(state.deploys) : []
   const counts = countProjects(projects)
+  const [filter, setFilter] = useState<ProjectFilter>('all')
+  const [sort, setSort] = useState<ProjectSort>('recent')
+  const shown = sortProjects(filterProjects(projects, filter), sort)
 
   return (
     <>
@@ -129,11 +145,38 @@ function DashboardPage() {
                 내 배포 모두 보기
               </Link>
             </div>
-            <ul className="flex flex-col divide-y divide-line rounded-md border border-line bg-bg">
-              {projects.map((project) => (
-                <ProjectRow key={project.slug} project={project} />
-              ))}
-            </ul>
+            <div className="flex flex-wrap items-end gap-3">
+              <SelectField
+                label="상태"
+                value={filter}
+                onChange={(value) => {
+                  setFilter(value as ProjectFilter)
+                }}
+                options={filterOptions}
+                className="w-40"
+              />
+              <SelectField
+                label="정렬"
+                value={sort}
+                onChange={(value) => {
+                  setSort(value as ProjectSort)
+                }}
+                options={sortOptions}
+                className="w-40"
+              />
+              <p role="status" className="pb-1 text-sm text-muted">
+                {shown.length}개 보는 중 (전체 {projects.length}개)
+              </p>
+            </div>
+            {shown.length === 0 ? (
+              <p className="text-sm text-muted">이 상태의 프로젝트가 없어요.</p>
+            ) : (
+              <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {shown.map((project) => (
+                  <ProjectCard key={project.slug} project={project} />
+                ))}
+              </ul>
+            )}
           </section>
         </>
       )}
