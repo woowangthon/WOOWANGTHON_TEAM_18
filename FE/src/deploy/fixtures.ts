@@ -1,3 +1,4 @@
+import type { Explanation } from './progress.ts'
 import type { DeploySpecDraft, DraftProject } from './types.ts'
 
 // docs/design/api.md의 deploy-spec 예시(BE는 Dockerfile 있음 · 프레임워크 모름, FE는 vite-react).
@@ -38,4 +39,17 @@ export const draftOf = (projects: DraftProject[], truncated = false): DeploySpec
   commit: COMMIT,
   projects,
   truncated,
+})
+
+// 끝난 배포의 설명(Explanation) 시험용 값. 실제 AI가 만든 글이 아니라 시험 전용 대역이다.
+export const explanationOf = (extra: Partial<Explanation> = {}): Explanation => ({
+  summary: '이번 배포는 새 슬롯에 올려 확인한 뒤 주소를 바꿨어요.',
+  steps: [
+    { stage: 'build', did: '이미지를 만들었어요', meaning: '코드가 컨테이너가 돼요' },
+    { stage: 'switch', did: '주소를 바꿨어요', meaning: '새 버전이 공개돼요' },
+  ],
+  cause: null,
+  actions: [],
+  terms: [],
+  ...extra,
 })
