@@ -803,6 +803,7 @@ describe('GET /api/deploys/:id/status', () => {
       // 시험 서버에는 TRIVY_CACHE_DIR이 없어 보안 검사를 돌리지 않는다. 그 사실을 경고로 알린다("문제 없음"이 아니다).
       warnings: [{ code: 'SCAN_UNAVAILABLE', message: '이 서버에는 보안 검사가 설정되어 있지 않아 검사하지 못했어요.', service: null }],
       queue: null,
+      explanation: null,
       updatedAt: '2026-11-11T01:00:00.000Z',
     })
   })
@@ -1114,7 +1115,9 @@ describe('POST /api/pipeline/notify', () => {
     expect(db.projects).toEqual([expect.objectContaining({ slug: 'my-app', live_slot: 'a' })])
     expect(db.build_cache).toEqual(cached)
     expect(run(id)).toMatchObject({ status: 'succeeded', stage: null })
-    expect((await status(id)).body).toMatchObject({ status: 'succeeded', url: 'https://my-app.stairnoworks.com' })
+    // 설명 플래그는 기본이 꺼짐이라 explanation은 null이고 AI 서버를 부르지 않는다.
+    expect((await status(id)).body).toMatchObject({ status: 'succeeded', url: 'https://my-app.stairnoworks.com', explanation: null })
+    expect(fetchMock.mock.calls.filter(([u]) => urlOf(u).endsWith('/agent/explanations'))).toEqual([])
     // 티켓 없이 성공한 실행이라 종료 알림이 없다.
     expect(fetchMock.mock.calls.filter(([u]) => urlOf(u).endsWith('/close'))).toEqual([])
 

@@ -7,6 +7,7 @@ import { ReposModule } from '../repos/repos.module.js'
 import { ClusterSecretWriter } from './cluster-secret-writer.js'
 import { DeployConditionService } from './deploy-condition.service.js'
 import { DeployEvents } from './deploy-events.js'
+import { DeployExplainer } from './deploy-explainer.js'
 import { AgentClient } from './agent.client.js'
 import { DeployPreparer } from './deploy-preparer.js'
 import { DeployReadinessService } from './deploy-readiness.service.js'
@@ -34,6 +35,8 @@ import { SlotScaleDown } from './slot-scale-down.js'
     DeployConditionService,
     DeployRunsService,
     AgentProgress,
+    // 학생용 배포 설명(FR-105): 배포가 끝나면 AI 서버에 묻고 메모리에 둔다. DEPLOY_EXPLAIN_ENABLED가 꺼져 있으면 아무것도 하지 않는다.
+    DeployExplainer,
     DeployQueue,
     DeployMetricsService,
     SlotScaleDown,

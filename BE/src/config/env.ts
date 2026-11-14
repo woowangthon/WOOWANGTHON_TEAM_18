@@ -42,6 +42,8 @@ export interface Env {
   DISCORD_WEBHOOK_URL: string | undefined
   /** api.github.com에 Bearer로 붙이는 토큰(운영은 봇 계정 토큰, 권한 없는 PAT여도 된다. 비밀). 비우면 인증 없이 서버 IP당 시간당 60번이고, 있으면 5,000번이다. api.github.com으로만 보낸다. */
   GITHUB_TOKEN: string | undefined
+  /** 학생용 배포 설명(docs/design/deploy-explain.md). `true`일 때만 켠다(기본 꺼짐). 끄면 AI 서버를 부르지 않고 진행 상태의 `explanation`은 null이다. */
+  DEPLOY_EXPLAIN_ENABLED: boolean
 }
 
 // 값이 틀리면 부팅을 멈춘다. 틀린 설정으로 뜬 서버가 조용히 다르게 동작하지 않게 한다.
@@ -68,6 +70,7 @@ export function validateEnv(raw: Record<string, string | undefined>): Env {
     CLUSTER_FULL_PERCENT: parseClusterFullPercent(raw.CLUSTER_FULL_PERCENT),
     DISCORD_WEBHOOK_URL: parseOptionalWebhook(raw.DISCORD_WEBHOOK_URL),
     GITHUB_TOKEN: parseOptionalSecret(raw.GITHUB_TOKEN, 'GITHUB_TOKEN'),
+    DEPLOY_EXPLAIN_ENABLED: parseFlag(raw.DEPLOY_EXPLAIN_ENABLED, 'DEPLOY_EXPLAIN_ENABLED'),
   }
 }
 
@@ -79,6 +82,13 @@ function parseOptionalWebhook(value: string | undefined): string | undefined {
   if (value === undefined || value === '') return undefined
   if (!DISCORD_WEBHOOK.test(value)) throw new Error('DISCORD_WEBHOOK_URL must be a Discord webhook URL like https://discord.com/api/webhooks/<id>/<token>')
   return value
+}
+
+// 비어 있거나 false면 꺼짐. 오타(`ture`)가 조용히 꺼진 채로 뜨지 않게 그 밖의 값은 멈춘다.
+function parseFlag(value: string | undefined, name: string): boolean {
+  if (value === undefined || value === '' || value === 'false') return false
+  if (value === 'true') return true
+  throw new Error(`${name} must be true or false, got "${value}"`)
 }
 
 function parseClusterFullPercent(value: string | undefined): number {

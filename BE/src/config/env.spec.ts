@@ -306,3 +306,19 @@ describe('GITHUB_TOKEN', () => {
     expect(() => validateEnv({ ...base, GITHUB_TOKEN: 'github_pat_secret value' })).toThrow(/^(?=.*GITHUB_TOKEN)(?!.*github_pat_secret)/s)
   })
 })
+
+describe('DEPLOY_EXPLAIN_ENABLED', () => {
+  it('defaults to false when unset or empty', () => {
+    expect(validateEnv(base).DEPLOY_EXPLAIN_ENABLED).toBe(false)
+    expect(validateEnv({ ...base, DEPLOY_EXPLAIN_ENABLED: '' }).DEPLOY_EXPLAIN_ENABLED).toBe(false)
+  })
+
+  it('parses true and false', () => {
+    expect(validateEnv({ ...base, DEPLOY_EXPLAIN_ENABLED: 'true' }).DEPLOY_EXPLAIN_ENABLED).toBe(true)
+    expect(validateEnv({ ...base, DEPLOY_EXPLAIN_ENABLED: 'false' }).DEPLOY_EXPLAIN_ENABLED).toBe(false)
+  })
+
+  it.each(['yes', 'TRUE', '1', 'ture'])('rejects "%s" naming the variable', (v) => {
+    expect(() => validateEnv({ ...base, DEPLOY_EXPLAIN_ENABLED: v })).toThrow(/DEPLOY_EXPLAIN_ENABLED/)
+  })
+})
