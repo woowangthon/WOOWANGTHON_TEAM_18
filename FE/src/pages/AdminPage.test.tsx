@@ -649,3 +649,10 @@ describe('운영 알림', () => {
     expect(reads(INCIDENTS)).toBe(before + 1)
   })
 })
+
+it('refreshes with an icon-only button that keeps its name', async () => {
+  await show()
+  const button = screen.getByRole('button', { name: '지금 새로 읽기' })
+  expect(button.textContent).toBe('')
+  expect(button.querySelector('svg')).toBeTruthy()
+})

@@ -4,6 +4,7 @@ import type { FormEvent } from 'react'
 import NoticeBanner from '../components/NoticeBanner.tsx'
 import PasswordField from '../components/PasswordField.tsx'
 import { Button } from '../components/ui/Button.tsx'
+import { DiscordIcon } from '../components/ui/Icons.tsx'
 import { ApiError, apiFetch } from '../lib/api.ts'
 import { queryKeys } from '../lib/query.ts'
 import ProfileSection from './ProfileSection.tsx'
@@ -56,7 +57,7 @@ function DiscordSection() {
 
   const webhook = current.data
   return (
-    <ProfileSection id="discord" title="Discord 알림">
+    <ProfileSection id="discord" title="Discord 알림" icon={<DiscordIcon width={20} height={20} />}>
       <p>서비스에 문제가 생기면 이 Discord 채널로 알려 드려요.</p>
       {current.isError && (
         <NoticeBanner variant="warn" title="등록 상태를 읽지 못했어요">

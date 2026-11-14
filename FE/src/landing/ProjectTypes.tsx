@@ -25,7 +25,7 @@ const TYPES = [
 function ProjectTypes() {
   return (
     <section id="types" className="border-t border-line bg-surface">
-      <div className="mx-auto flex max-w-300 flex-col gap-8 px-4 py-16 sm:px-8">
+      <div className="mx-auto flex max-w-300 flex-col gap-8 px-3 py-16 sm:px-4">
         <div className="flex max-w-2xl flex-col gap-3">
           <h2 className="text-2xl">어떤 프로젝트를 올릴 수 있나요</h2>
           <p className="text-lg text-muted">서비스 유형은 레포를 제출할 때 직접 골라요. 잘 모르겠으면 아래 설명을 보고 고르면 돼요.</p>
