@@ -461,6 +461,7 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
   ],
   "failure": null,
   "agent": null,
+  "agentProgress": null,
   "url": null,
   "warnings": [],
   "queue": null,
@@ -473,6 +474,7 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
 - `failure.code`: `BUILD_FAILED` · `DEPLOY_FAILED`(prepare · render · apply) · `VERIFY_FAILED` · `SWITCH_FAILED` · 플랫폼 문제(코드는 열려 있다: `^[A-Za-z][A-Za-z0-9_]{2,63}$`면 받는다. 예: `CODEBUILD_API_ERROR` · `IMAGE_PULL_FAILED` · `LIVE_SLOT_PROTECTED` · `STAGE_NO_REPORT`(스테이지의 결과 파일이 없거나 읽을 수 없음) · `BUILD_WAIT_TIMEOUT` · `NO_IMAGE_DIGEST` · `CHART_RENDER_FAILED` · `SPACE_MISSING` · `K8S_UNREACHABLE`. AI를 부르지 않고 실패로 마감하며, 모르는 코드는 일반 문구로 보여 준다) · `AGENT_UNAVAILABLE`(AI 서버가 티켓을 받지 못함) · `TIMED_OUT`(진행 중인 실행이 1시간 넘게 아무 알림 없이 멈춰 있어 중단함. 대기열이 보는 `running`은 30분, `fixing`은 게이트웨이 토큰이 만료되고 2분 뒤 — AI 결과가 반영되지 않은 경우. `stage`는 실패했던 스테이지) · `PIPELINE_UNAVAILABLE`(대기열이 출발시키려 했지만 GoCD가 받지 않음).
 - `failure.code`에 `AGENT_GAVE_UP`(AI 에이전트가 해결하지 못하고 결과를 냄)도 있다.
 - `agent`: AI 에이전트가 이 실행에 해결 결과(`submit_result`)를 냈으면 `{ "status", "summary", "userRequest": { "message", "secretKeys" } | null, "prUrl": string | null, "evidence": [{ "ref", "text" }] }`, 아니면 `null`. `status`는 `verified` · `pr_opened` · `needs_user` · `gave_up`이다. 학생에게 무엇을 했고(`summary`) 무엇을 해 달라는지(`userRequest`) 보여 주려는 것이다. 외부 전송 필터를 한 번 더 거친 값이고 도구 호출 원본 · 로그는 담지 않는다. `secretKeys`는 다시 넣어야 할 비밀값 key 이름(값 아님)이고 없으면 `[]`, `evidence`는 없으면 `[]`, `ref` · `text`는 없으면 `null`.
+- `agentProgress`: `status`가 `fixing`이고 AI 에이전트가 이 티켓에서 도구를 한 번이라도 불렀으면 `{ "tool": string, "calls": number, "limit": number, "at": string }`, 아니면 `null`. `tool`은 가장 최근에 부른 도구 이름(`read_repo` · `read_pod_logs` · `get_target_status` · `edit_repo_file` · `run_build` · `run_render` · `run_deploy` · `run_verify` · `open_pr`), `calls`는 지금까지 센 호출 수, `limit`는 티켓당 상한(20), `at`은 그 호출 시각(ISO). 학생 화면이 긴 기다림 동안 AI가 무엇을 하는지 보여 주려는 읽기 전용 값이다. 도구 이름과 횟수만 싣고 인자 · 결과는 싣지 않는다(비밀값이 들 수 있다). BE 메모리에만 두므로(DB 없음) 서버가 다시 뜨면 `null`로 돌아가고, 결과를 내거나 티켓이 끝나면 지운다. `agent`(결과)와는 따로 둔다: 결과가 나오기 전에는 `agent`가 `null`이어야 하기 때문이다.
 - `url`: `succeeded`면 `https://<slug>.stairnoworks.com`, 아니면 `null`.
 - `warnings`: 보안 검사(UC-10, #45) 경고. 항목은 `{ "code": string, "message": string, "service": string | null }`이고 `message`는 그대로 보여 줘도 되는 문장이다(비밀값 자체는 싣지 않는다). 배포를 막지 않는다. `service`는 파일이 든 서비스 폴더(spec `dir` 중 가장 긴 접두어)이고 모르면 `null`이다.
   - 검사: 배포 입력을 저장하면(`POST /api/deploys`) 서버가 기다리지 않고 그 레포 · commit을 검사한다. gitleaks(비밀값)와 Trivy(의존성 취약점, HIGH · CRITICAL)를 쓰고, 같은 레포 · commit은 한 번만 검사한다(`security_scans` 표). 동시에 하나만 돈다.

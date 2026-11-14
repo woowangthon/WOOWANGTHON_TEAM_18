@@ -9,7 +9,7 @@ import IncidentNotice from '../incidents/IncidentNotice.tsx'
 import { ApiError, apiFetch } from '../lib/api.ts'
 import AgentSection from './AgentSection.tsx'
 import DeployStages from './DeployStages.tsx'
-import { isActive, isPlatformProblem, POLL_MS, stageStatesOf } from './progress.ts'
+import { agentProgressText, isActive, isPlatformProblem, POLL_MS, stageStatesOf } from './progress.ts'
 import type { Progress } from './progress.ts'
 import ServiceMap from './ServiceMap.tsx'
 import { readinessText } from './serviceMap.ts'
@@ -276,6 +276,7 @@ function DeployProgress({ deployId }: { deployId: string }) {
         {progress.status === 'fixing' && (
           <Alert variant="info" title="문제를 해결하는 중이에요">
             {failure?.message}
+            {progress.agentProgress && <p>{agentProgressText(progress.agentProgress)}</p>}
           </Alert>
         )}
         {progress.status === 'needs_user' && (

@@ -3,6 +3,7 @@ import { HttpException, Injectable, Logger } from '@nestjs/common'
 import { isRecord } from '../common/is-record.js'
 import { redact, redactString } from '../common/redact.js'
 import { AgentClient } from '../deploys/agent.client.js'
+import { AgentProgress } from '../deploys/agent-progress.js'
 import type { ServiceConditions } from '../deploys/deploy-condition.js'
 import { DeployConditionService } from '../deploys/deploy-condition.service.js'
 import { ticketCount } from '../deploys/deploy-run.js'
@@ -11,7 +12,7 @@ import { PipelineClient } from '../deploys/pipeline.client.js'
 import { SlotScaleDown } from '../deploys/slot-scale-down.js'
 import { ClusterReader, newestPod } from '../k8s/cluster-reader.js'
 import type { Issue, Spec } from '../deploys/deploy-input.js'
-import { type BudgetCode, ToolBudget } from './budget.js'
+import { type BudgetCode, TOTAL_CALLS, ToolBudget } from './budget.js'
 import { RepoEdits, type SourceRef } from './repo-edits.js'
 import { RepoReader, repoPath } from './repo-reader.js'
 import { type AgentResult, checkResult, storedResult } from './result.js'
@@ -196,6 +197,7 @@ export class GatewayTools {
     private readonly conditions: DeployConditionService,
     private readonly slots: SlotScaleDown,
     private readonly edits: RepoEdits,
+    private readonly progress: AgentProgress,
   ) {}
 
   async call(ticket: GatewayTicket, name: string, args: Record<string, unknown>): Promise<ToolAnswer> {
@@ -210,6 +212,7 @@ export class GatewayTools {
     if (name !== 'submit_result') {
       const limited = this.budget.take(ticket.ticketId, name, args, ticket.ticketStart, ticket.expiresAt)
       if (limited) return reject(limited, limitMessage[limited])
+      this.progress.record(ticket.ticketId, name, this.budget.calls(ticket.ticketId), TOTAL_CALLS)
     }
     switch (name) {
       case 'get_target_status':
@@ -457,6 +460,7 @@ export class GatewayTools {
     if (result.status === 'verified') {
       if (run?.status === 'fixing') return this.submitVerified(ticket, run, result, agentResult)
       this.budget.forget(ticket.ticketId)
+      this.progress.forget(ticket.ticketId)
       this.edits.forget(ticket.ticketId)
       await this.trials.endTicket(ticket.ticketId)
       return reject('TICKET_CLOSED', 'the ticket is no longer open')
@@ -470,6 +474,7 @@ export class GatewayTools {
           { status: 'needs_user' as const }
     const applied = await this.store.updateRun(ticket.deployId, { status: 'fixing' }, { ...patch, agent_result: agentResult, gateway_token_hash: null })
     this.budget.forget(ticket.ticketId)
+      this.progress.forget(ticket.ticketId)
     this.edits.forget(ticket.ticketId)
     await this.trials.endTicket(ticket.ticketId)
     if (!applied) return reject('TICKET_CLOSED', 'the ticket is no longer open')
@@ -505,6 +510,7 @@ export class GatewayTools {
 
     // 여기부터 티켓은 끝난다. 기다리는 시험을 취소하고, 같은 프로젝트의 이전 시험이 끝났음을 확인한 뒤에만 다시 실행한다.
     this.budget.forget(ticket.ticketId)
+      this.progress.forget(ticket.ticketId)
     this.edits.forget(ticket.ticketId)
     await this.trials.endTicket(ticket.ticketId)
     const stage = ticket.failure?.stage ?? 'build'

@@ -122,6 +122,23 @@ it('keeps reading while a problem is being fixed', async () => {
   expect(screen.getByText('문제를 살펴보는 중이에요')).toBeTruthy()
 })
 
+it('shows what the AI is doing while a problem is being fixed, from the tool name and counts only', async () => {
+  api.apiFetch.mockResolvedValue(
+    progressOf('fixing', 'deploy', { failure: failureWith('DEPLOY_FAILED', '문제를 살펴보는 중이에요'), agentProgress: { tool: 'read_repo', calls: 5, limit: 20, at: '2026-11-11T01:00:00.000Z' } }),
+  )
+  await show()
+  expect(screen.getByText('AI가 레포 파일을 읽는 중 · 도구 5/20')).toBeTruthy()
+})
+
+it('says nothing about the AI when no call was seen yet, and shows an unknown tool by its name', async () => {
+  api.apiFetch.mockResolvedValueOnce(progressOf('fixing', 'deploy', { agentProgress: null }))
+  await show()
+  expect(screen.queryByText(/AI가 .* · 도구/)).toBeNull()
+  api.apiFetch.mockResolvedValue(progressOf('fixing', 'deploy', { agentProgress: { tool: 'new_tool', calls: 1, limit: 20, at: '2026-11-11T01:00:00.000Z' } }))
+  await advance(3000)
+  expect(screen.getByText('AI가 new_tool · 도구 1/20')).toBeTruthy()
+})
+
 it.each([
   ['succeeded', null],
   ['failed', 'build'],

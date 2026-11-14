@@ -16,6 +16,9 @@ export type AgentResult = {
   evidence: { ref: string | null; text: string | null }[]
 }
 
+// 문제 해결 중(fixing)에 AI가 가장 최근에 부른 도구와 지금까지 쓴 횟수(티켓당 limit). 도구 이름과 횟수만 온다.
+export type AgentProgress = { tool: string; calls: number; limit: number; at: string }
+
 export type DeployWarning = { code: string; message: string; service: string | null }
 
 export type Progress = {
@@ -26,6 +29,8 @@ export type Progress = {
   failure: DeployFailure | null
   // 결과를 낸 에이전트가 없으면 null. 이 칸이 없던 응답도 같은 뜻으로 읽는다.
   agent?: AgentResult | null
+  // fixing이고 AI가 도구를 부른 뒤에만 온다. 서버가 다시 뜨면 null로 돌아간다. 이 칸이 없던 응답도 같은 뜻(없음)으로 읽는다.
+  agentProgress?: AgentProgress | null
   url: string | null
   // 보안 검사 경고(#45). 배포를 막지 않는다. message는 그대로 보여 줘도 되는 문장이다. 빈 배열은 검사가 끝나고 문제가 없다는 뜻이다(검사 중 · 실패 · 미설정은 항목으로 온다).
   warnings: DeployWarning[]
@@ -72,6 +77,21 @@ export const statusLabel = (status: string) => {
       return status
   }
 }
+
+// AI가 지금 하는 일을 학생 말로. 모르는 도구는 받은 이름을 그대로 보인다.
+const TOOL_TEXT: Record<string, string> = {
+  read_repo: '레포 파일을 읽는 중',
+  read_pod_logs: '서버 로그를 읽는 중',
+  get_target_status: '서비스 상태를 확인하는 중',
+  edit_repo_file: '레포 파일을 고치는 중',
+  run_build: '빌드를 시험하는 중',
+  run_render: '배포 설정을 확인하는 중',
+  run_deploy: '시험 배포를 하는 중',
+  run_verify: '동작을 확인하는 중',
+  open_pr: '수정 PR을 여는 중',
+  submit_result: '결과를 정리하는 중',
+}
+export const agentProgressText = ({ tool, calls, limit }: AgentProgress) => `AI가 ${TOOL_TEXT[tool] ?? tool} · 도구 ${calls}/${limit}`
 
 // 학생이 고칠 수 있는 실패. 계약(docs/design/api.md)은 이 세 코드만 학생의 코드 · 설정에서 난 실패로 정하고,
 // 그 밖의 코드(SWITCH_FAILED · TIMED_OUT · AGENT_UNAVAILABLE · 열려 있는 플랫폼 코드)는 학생 잘못이 아니다.
