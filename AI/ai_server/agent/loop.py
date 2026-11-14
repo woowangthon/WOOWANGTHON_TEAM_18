@@ -104,12 +104,24 @@ def models_from_settings(settings: Settings) -> Models | None:
     def local(model_settings: OpenAIChatModelSettings) -> Model:
         return _openai_compatible(url, name, settings.local_model_api_key, model_settings)
 
-    api = None
-    if settings.planner_model_url is not None and settings.planner_model_name is not None:
-        api = _openai_compatible(
-            settings.planner_model_url, settings.planner_model_name, settings.planner_model_api_key
-        )
-    return make_models(local(LOCAL_ACT_SETTINGS), api, local(LOCAL_PLAN_SETTINGS))
+    return make_models(local(LOCAL_ACT_SETTINGS), api_model(settings), local(LOCAL_PLAN_SETTINGS))
+
+
+def local_act_model(settings: Settings) -> Model | None:
+    """로컬 모델(생각 모드 끔). 설정이 없으면 None."""
+    url, name = settings.local_model_url, settings.local_model_name
+    if url is None or name is None:
+        return None
+    return _openai_compatible(url, name, settings.local_model_api_key, LOCAL_ACT_SETTINGS)
+
+
+def api_model(settings: Settings) -> Model | None:
+    """추론 모델 API(가림 필터 없이). 설정이 없으면 None."""
+    if settings.planner_model_url is None or settings.planner_model_name is None:
+        return None
+    return _openai_compatible(
+        settings.planner_model_url, settings.planner_model_name, settings.planner_model_api_key
+    )
 
 
 class CaseChoice(BaseModel):

@@ -58,6 +58,16 @@ export interface RangeSeries {
   points: { t: number; v: number }[]
 }
 
+/** Prometheus가 평가 중인 경고 하나(`/api/v1/alerts`). 라벨은 글 값만, 설명은 `annotations.summary`만 고른다. */
+export interface AlertInfo {
+  labels: Record<string, string>
+  /** pending(조건이 맞았지만 for 시간 전) · firing */
+  state: string
+  /** 조건이 처음 맞은 때(RFC 3339). 없으면 null */
+  activeAt: string | null
+  summary: string
+}
+
 const POD_NAME = /^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$/
 const CONTAINER_NAME = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/
 const DEFAULT_TAIL = 200
@@ -184,6 +194,31 @@ export class ClusterReader {
       })
       return [{ pod, points }]
     })
+  }
+
+  /**
+   * Prometheus가 평가 중인 경고 전부(GET `/api/v1/alerts`). 기본 규칙(kube-prometheus-stack)이 평가하고, Alertmanager는 꺼져 있어
+   * 여기서 읽는 것이 전부다(docs/design/incidents.md). 오류로 답하거나 모양이 다르면 ClusterError('unexpected')다.
+   */
+  async alerts(): Promise<AlertInfo[]> {
+    const body = await this.k8s.request('GET', `${PROMETHEUS}/alerts`)
+    let alerts: unknown
+    try {
+      const parsed: unknown = JSON.parse(body)
+      if (isRecord(parsed) && parsed.status === 'success') alerts = record(parsed.data).alerts
+    } catch {
+      // 아래에서 던진다.
+    }
+    if (!Array.isArray(alerts)) {
+      this.logger.error(`GET ${PROMETHEUS}/alerts answered 200 without alerts`)
+      throw new ClusterError('unexpected', 200)
+    }
+    return records(alerts).map((alert) => ({
+      labels: strings(alert.labels),
+      state: text(alert.state) ?? '',
+      activeAt: text(alert.activeAt) ?? null,
+      summary: text(record(alert.annotations).summary) ?? '',
+    }))
   }
 
   /**

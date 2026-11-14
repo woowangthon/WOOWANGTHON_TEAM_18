@@ -1,0 +1,166 @@
+import { Injectable, Logger, type OnApplicationBootstrap, type OnModuleDestroy } from '@nestjs/common'
+import { ConfigService } from '@nestjs/config'
+import { redactString } from '../common/redact.js'
+import type { Env } from '../config/env.js'
+import { SLUG } from '../deploys/deploy-input.js'
+import { DeploysStore } from '../deploys/deploys.store.js'
+import { ClusterError } from '../k8s/cluster-error.js'
+import { type AlertInfo, ClusterReader } from '../k8s/cluster-reader.js'
+import { DeploymentScaler } from '../k8s/deployment-scaler.js'
+import { DiscordNotifier } from './discord.notifier.js'
+import { IncidentJudge } from './incident-judge.js'
+import { operatorMessage, studentMessage } from './incident-text.js'
+import { type IncidentAi, type IncidentRow, IncidentsStore } from './incidents.store.js'
+
+const TICK_MS = 20_000
+// 규칙 코드가 바로 멈추는 경고. 나머지는 AI가 판단하고 사람이 정한다.
+export const AUTO_STOP = 'KubePodCrashLooping'
+// 늘 울리는 점검용 · 감시 도구 자신의 경고는 보지 않는다.
+const IGNORED = (name: string) => name === 'Watchdog' || name === 'InfoInhibitor' || name.startsWith('Prometheus')
+// 저장 · AI로 보내는 라벨. 나머지(endpoint · instance · job 등)는 판단에 쓸모가 없다.
+const KEPT_LABELS = ['namespace', 'pod', 'container', 'deployment', 'job_name', 'resource', 'reason', 'severity']
+const LABEL_CHARS = 200
+
+export const PENDING_AI: IncidentAi = { status: 'pending', risk: null, recommendation: null, cause: null, reason: null, model: null }
+const SKIPPED_AI: IncidentAi = { ...PENDING_AI, status: 'skipped' }
+
+const keyOf = (slug: string, alertname: string) => `${slug}\u0000${alertname}`
+const clip = (s: string) => redactString(s).slice(0, LABEL_CHARS)
+
+/**
+ * 스파이크 감지(docs/design/incidents.md). 20초마다 Prometheus 경고를 읽어 학생 프로젝트(`proj-<slug>`)마다 운영 알림을 열고 닫는다.
+ * 재시작 반복은 진행 중인 배포가 없으면 바로 멈춘다. 그 밖의 경고는 AI가 판단하고 운영자가 정한다. 노드 경고는 운영자 Discord로만 한 번 보낸다.
+ * 확인은 하나씩 차례로 돈다(DeployQueue와 같은 방식). AI 판단(최대 90초)은 확인을 막지 않게 따로 돈다.
+ */
+@Injectable()
+export class AlertWatcher implements OnApplicationBootstrap, OnModuleDestroy {
+  private readonly logger = new Logger(AlertWatcher.name)
+  private readonly enabled: boolean
+  private chain: Promise<void> = Promise.resolve()
+  private timer: NodeJS.Timeout | undefined
+  private readonly judging = new Set<Promise<void>>()
+  // 지금 울리는 노드 경고. 새로 울릴 때만 보내고, 꺼졌다가 다시 울리면 다시 보낸다(서버가 다시 뜨면 한 번 더 간다).
+  private nodeAlerts = new Set<string>()
+
+  constructor(
+    config: ConfigService<Env, true>,
+    private readonly reader: ClusterReader,
+    private readonly scaler: DeploymentScaler,
+    private readonly store: IncidentsStore,
+    private readonly deploys: DeploysStore,
+    private readonly judge: IncidentJudge,
+    private readonly discord: DiscordNotifier,
+  ) {
+    this.enabled = config.get('K8S_API_URL', { infer: true }) !== undefined
+  }
+
+  onApplicationBootstrap(): void {
+    if (!this.enabled) return
+    this.timer = setInterval(() => this.kick(), TICK_MS)
+    this.timer.unref()
+  }
+
+  onModuleDestroy(): void {
+    clearInterval(this.timer)
+  }
+
+  kick(): void {
+    this.chain = this.chain.then(() => this.check()).catch((err: unknown) => this.logger.error(`alert check stopped: ${err instanceof Error ? err.name : 'error'}`))
+  }
+
+  /** 확인과 그 뒤 AI 판단이 모두 끝날 때까지(시험용). */
+  async idle(): Promise<void> {
+    await this.chain
+    await Promise.all(this.judging)
+  }
+
+  private async check(): Promise<void> {
+    let alerts: AlertInfo[]
+    try {
+      alerts = await this.reader.alerts()
+    } catch (err) {
+      // 리더가 잠깐 안 보이면 다음 확인에서 다시 본다. 열린 알림은 그대로 둔다(경고가 사라진 것과 구분할 수 없다).
+      this.logger.warn(`alerts not read: ${err instanceof ClusterError ? err.kind : 'error'}`)
+      return
+    }
+    const firing = alerts.filter((a) => a.state === 'firing' && a.labels.alertname && !IGNORED(a.labels.alertname))
+    const projects = new Map<string, { slug: string; alert: AlertInfo }>()
+    const nodes = new Map<string, AlertInfo>()
+    for (const alert of firing) {
+      const slug = /^proj-(.+)$/.exec(alert.labels.namespace ?? '')?.[1]
+      if (slug !== undefined && SLUG.test(slug)) {
+        const key = keyOf(slug, alert.labels.alertname)
+        if (!projects.has(key)) projects.set(key, { slug, alert })
+      } else if (alert.labels.alertname.startsWith('Node')) {
+        nodes.set(`${alert.labels.alertname}/${alert.labels.instance ?? ''}`, alert)
+      }
+    }
+
+    const open = await this.store.open()
+    const openKeys = new Set(open.map((i) => keyOf(i.slug, i.alertname)))
+    for (const incident of open) if (!projects.has(keyOf(incident.slug, incident.alertname))) await this.store.resolve(incident.id)
+    for (const [key, { slug, alert }] of projects) if (!openKeys.has(key)) await this.opened(slug, alert)
+
+    for (const [key, alert] of nodes) {
+      if (!this.nodeAlerts.has(key)) await this.discord.toOperator(`[노드] ${alert.labels.alertname} ${alert.labels.instance ?? ''}\n${clip(alert.summary)}`)
+    }
+    this.nodeAlerts = new Set(nodes.keys())
+  }
+
+  private async opened(slug: string, alert: AlertInfo): Promise<void> {
+    const labels = Object.fromEntries(KEPT_LABELS.flatMap((k) => (alert.labels[k] ? [[k, clip(alert.labels[k])]] : [])))
+    const incident = await this.store.insert({
+      slug,
+      alertname: alert.labels.alertname,
+      labels,
+      summary: clip(alert.summary),
+      fired_at: alert.activeAt ?? new Date().toISOString(),
+      action: 'pending',
+      ai: PENDING_AI,
+    })
+    if (!incident) return
+    this.logger.log(`incident opened: ${slug} ${incident.alertname}`)
+    if (incident.alertname === AUTO_STOP && (await this.autoStop(incident))) return
+    const judging = this.judgeAndNotify(incident).finally(() => this.judging.delete(judging))
+    this.judging.add(judging)
+  }
+
+  /**
+   * 진행 중인 배포가 없으면 프로젝트의 Deployment를 모두 0으로 내린다. 멈췄으면 true.
+   * 배포 중의 재시작 반복은 파이프라인 확인(verify)과 AI 에이전트가 다룬다. 그때는 멈추지 않고 AI 판단으로 넘긴다.
+   */
+  private async autoStop(incident: IncidentRow): Promise<boolean> {
+    if (await this.deploys.findActiveRun(incident.slug)) return false
+    if (!(await stopProject(this.reader, this.scaler, incident.slug))) return false
+    const stopped = await this.store.update(incident.id, { action: 'auto_stopped', ai: SKIPPED_AI, decided_by: 'rule', decided_at: new Date().toISOString() }, 'pending')
+    if (!stopped) return true
+    this.logger.log(`incident auto-stopped: ${incident.slug}`)
+    await this.notify(stopped)
+    return true
+  }
+
+  private async judgeAndNotify(incident: IncidentRow): Promise<void> {
+    try {
+      const ai = await this.judge.judge(incident)
+      const judged = await this.store.update(incident.id, { ai })
+      await this.notify(judged ?? { ...incident, ai })
+    } catch (err) {
+      this.logger.error(`incident judgment not saved: ${err instanceof Error ? err.name : 'error'}`)
+    }
+  }
+
+  private async notify(incident: IncidentRow): Promise<void> {
+    const owner = await this.deploys.findSlugOwner(incident.slug).catch(() => undefined)
+    const url = owner ? await this.store.webhook(owner.user_id).catch(() => null) : null
+    await Promise.all([this.discord.toOperator(operatorMessage(incident)), this.discord.toStudent(url, studentMessage(incident))])
+  }
+}
+
+/** 프로젝트의 Deployment를 모두 replicas 0으로. 하나라도 내렸거나 내릴 것이 없으면 true. */
+export async function stopProject(reader: ClusterReader, scaler: DeploymentScaler, slug: string): Promise<boolean> {
+  const names = (await reader.deployments(slug).catch(() => null))?.map((d) => d.name)
+  if (!names) return false
+  if (names.length === 0) return true
+  const results = await Promise.allSettled(names.map((name) => scaler.scaleToZero(slug, name)))
+  return results.some((r) => r.status === 'fulfilled')
+}

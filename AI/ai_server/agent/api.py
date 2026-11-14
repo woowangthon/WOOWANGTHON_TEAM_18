@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Request, Response
 from pydantic import ValidationError
 
+from ai_server.agent.incident import IncidentRequest, Judges, judge
 from ai_server.agent.models import CloseNotice, TicketRequest
 from ai_server.agent.runs import RunRegistry
 from ai_server.config import Settings
@@ -40,7 +41,7 @@ _AUTH_REQUIRED = (401, "AUTH_REQUIRED", "missing or wrong Authorization bearer t
 _BAD_JSON = (400, "BAD_REQUEST", "body must be a JSON object")
 
 
-def build_router(settings: Settings, runs: RunRegistry) -> APIRouter:
+def build_router(settings: Settings, runs: RunRegistry, judges: Judges) -> APIRouter:
     router = APIRouter(prefix="/agent")
 
     @router.post("/tickets", status_code=202)
@@ -81,5 +82,23 @@ def build_router(settings: Settings, runs: RunRegistry) -> APIRouter:
         if run is not None:
             runs.close(run, success=notice.reason == "success")
         return Response(status_code=204)
+
+    @router.post("/incidents")
+    async def judge_incident(request: Request) -> Any:
+        """운영 알림 판단(docs/design/incidents.md). 동기로 답한다: 판단만 하고 실행하지 않는다."""
+        if not _authorized(request, settings):
+            return error(*_AUTH_REQUIRED)
+        body = await _json_object(request)
+        if body is None:
+            return error(*_BAD_JSON)
+        try:
+            req = IncidentRequest.model_validate(body)
+        except ValidationError as e:
+            return _invalid("INVALID_INCIDENT", "incident", e)
+        judged = await judge(req, judges)
+        if judged is None:
+            return error(503, "MODEL_UNAVAILABLE", "no model could judge this incident")
+        out, model = judged
+        return {**out.model_dump(), "model": model}
 
     return router
