@@ -742,6 +742,12 @@ type Incident = {
         recommendation: 'stop' | 'watch' | 'ignore' | null
         cause: string | null; reason: string | null; model: 'local' | 'planner' | null }
   decidedAt: string | null
+  // 알림을 연 때 모은 근거(멈추기 전). 모으기 전이거나 모으지 못했으면 null
+  evidence: { pod: string | null        // 근거를 읽은 Pod(경고의 Pod, 없으면 가장 많이 재시작한 Pod)
+              restarts: number           // 그 Pod의 컨테이너 재시작 수
+              waiting: string | null     // 기다리는 이유(CrashLoopBackOff 등)
+              lastExit: { reason: string; exitCode: number } | null  // 직전 컨테이너가 끝난 이유 · 종료 코드
+              logs: string[] } | null    // 그 Pod 로그의 마지막 20줄(재시작했으면 직전 컨테이너). 비밀값 필터를 거쳤다
 }
 ```
 

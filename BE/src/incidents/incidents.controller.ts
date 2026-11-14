@@ -30,6 +30,7 @@ function view(i: IncidentRow) {
     action: i.action,
     ai: i.ai,
     decidedAt: iso(i.decided_at),
+    evidence: i.evidence ?? null,
   }
 }
 const adminView = (i: IncidentRow) => ({ ...view(i), decidedBy: i.decided_by })

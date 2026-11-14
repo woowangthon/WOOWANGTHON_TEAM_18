@@ -505,6 +505,7 @@ describe('운영 알림', () => {
     ai: ai(),
     decidedAt: null,
     decidedBy: null,
+    evidence: null,
     ...over,
   })
   const incidentsOf = (incidents: AdminIncident[]): AdminIncidentsResponse => ({ incidents })
@@ -531,6 +532,17 @@ describe('운영 알림', () => {
     expect(alert.getByText('자동 중지')).toBeTruthy()
     expect(alert.getByText('자동으로 멈췄어요')).toBeTruthy()
     expect(alert.queryByRole('button')).toBeNull()
+  })
+
+  it('shows why it stopped and the last log lines it kept, as plain text', async () => {
+    const evidence = { pod: 'be-a-1', restarts: 4, waiting: 'CrashLoopBackOff', lastExit: { reason: 'Error', exitCode: 1 }, logs: ['booting', '<b>Error</b>: ENOENT'] }
+    serve({ [INCIDENTS]: incidentsOf([incident({ action: 'auto_stopped', evidence })]) })
+    await show()
+    const card = within(incidentCard())
+    expect(card.getByText('알림 근거: 재시작 4번 · 마지막 종료: Error (코드 1) · 시작하자마자 계속 꺼지고 있어요')).toBeTruthy()
+    expect(card.getByText('로그 마지막 2줄')).toBeTruthy()
+    expect(incidentCard().querySelector('pre')!.textContent).toBe('booting\n<b>Error</b>: ENOENT')
+    expect(incidentCard().querySelector('pre b')).toBeNull()
   })
 
   it('offers stop and dismiss only while the alert waits for a decision', async () => {
