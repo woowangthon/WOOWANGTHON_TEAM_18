@@ -249,6 +249,21 @@ def test_a_plan_with_a_tool_the_platform_does_not_have_is_made_again() -> None:
     assert "unknown tools ['read_build_logs']" in planner.sent(2)
 
 
+def test_a_plan_with_edit_args_outside_files_is_made_again() -> None:
+    gw = FakeGateway()
+    edit = {"tool": "edit_repo_file", "args": {"path": "server.js", "find": "a", "replace": "b"}}
+    planner = Script(
+        classify("A2"),
+        plan(edit, FINISH),
+        plan(FINISH),
+        final(status="gave_up", summary="모름"),
+    )
+    local = Script(final(status="gave_up", summary="모름"))
+    solve(make_run(**SIGNALS["A2"]), gw, local, planner)
+    assert "put each file inside files" in planner.sent(2)
+    assert "files: [{ path, find, replace }], message" in planner.sent(1)
+
+
 # ---- ④ 재계획 ----
 
 

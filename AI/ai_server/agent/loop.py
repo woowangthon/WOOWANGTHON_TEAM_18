@@ -146,10 +146,19 @@ class Plan(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _known_tools_and_size(self) -> "Plan":
+    def _valid_plan(self) -> "Plan":
         unknown = sorted({s.tool for s in self.steps} - prompts.GATEWAY_TOOLS)
         if unknown:
             raise ValueError(f"unknown tools {unknown}; use only {sorted(prompts.GATEWAY_TOOLS)}")
+        # 2026-11-14 TEST_3: 계획이 path · find · replace를 files 밖에 적어 실행 첫 단계가 거절됐다.
+        if any(
+            s.tool == "edit_repo_file" and s.args and not isinstance(s.args.get("files"), list)
+            for s in self.steps
+        ):
+            raise ValueError(
+                "edit_repo_file args are { files: [{ path, find, replace }], message }; "
+                "put each file inside files"
+            )
         if len(self.model_dump_json()) > PLAN_CHARS:
             raise ValueError(f"the plan is longer than {PLAN_CHARS} characters; shorten it")
         return self
