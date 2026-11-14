@@ -561,6 +561,25 @@ def test_field_errors_survive_the_replan_prompt_clip_before_a_long_message() -> 
     assert "services[0].runtime.health.port:UNKNOWN_KEY" in replan
 
 
+def test_field_errors_longer_than_the_replan_clip_are_marked_as_cut() -> None:
+    gw = FakeGateway()
+    fields = [
+        {"path": f"services[0].runtime.env[{i}].value", "code": "INVALID_TYPE"} for i in range(12)
+    ]
+    gw.script["run_render"] = [reject("INVALID_SPEC", "see fields", fields)]
+    local = Script(
+        call("run_render", specPatch=PORT_PATCH),
+        final(status="gave_up", summary="모름"),
+    )
+    planner = Script(final(status="gave_up", summary="모름"))
+    solve(make_run(**SIGNALS["A1"]), gw, local, planner)
+    replan = planner.sent(0)
+    # 앞쪽 칸은 남고, 잘린 뒤쪽은 잘렸다고 적힌다(조용히 사라지지 않는다).
+    assert "services[0].runtime.env[0].value:INVALID_TYPE" in replan
+    assert "services[0].runtime.env[11].value" not in replan
+    assert "…[truncated " in replan
+
+
 def test_the_playbook_prompt_says_a_port_is_a_number() -> None:
     gw = FakeGateway()
     local = Script(final(status="gave_up", summary="모름"))

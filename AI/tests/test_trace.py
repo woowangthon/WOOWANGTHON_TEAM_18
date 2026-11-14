@@ -99,6 +99,13 @@ def test_fields_show_path_and_code_only() -> None:
     assert trace.fields_shape(None) == "-" and trace.fields_shape([]) == "-"
 
 
+def test_fields_past_the_limit_are_counted_not_dropped_silently() -> None:
+    fields = [{"path": f"env[{i}]", "code": "REQUIRED"} for i in range(25)]
+    out = trace.fields_shape(fields)
+    assert out.startswith("env[0]:REQUIRED,") and "env[19]:REQUIRED" in out
+    assert "env[20]" not in out and out.endswith(",+5 more")
+
+
 def test_exception_shape_is_class_names_only() -> None:
     try:
         try:

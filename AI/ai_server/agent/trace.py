@@ -96,6 +96,8 @@ def fields_shape(fields: Any) -> str:
         for f in fields[:_FIELDS_LIMIT]
         if isinstance(f, dict)
     ]
+    if len(fields) > _FIELDS_LIMIT:
+        parts.append(f"+{len(fields) - _FIELDS_LIMIT} more")
     return ",".join(parts) if parts else "-"
 
 
