@@ -206,5 +206,5 @@ it('offers the statuses it can tell and no "stopped", which the deploy list does
   serveRuns([run('1', 'shop', 'succeeded', '2026-11-13T10:00:00Z')])
   show()
   await screen.findByRole('list')
-  expect([...screen.getByLabelText('상태').querySelectorAll('option')].map((o) => o.textContent)).toEqual(['전체', '실행 중', '배포 중', '실패 · 확인 필요'])
+  expect([...screen.getByLabelText('상태').querySelectorAll('option')].map((o) => o.textContent)).toEqual(['전체', '실행 중', '진행 중', '확인 필요'])
 })

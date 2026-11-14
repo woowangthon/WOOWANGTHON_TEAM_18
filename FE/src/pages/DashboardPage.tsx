@@ -20,11 +20,10 @@ const tiles: { key: keyof ProjectCounts; label: string }[] = [
   { key: 'needsAttention', label: '확인 필요' },
 ]
 
+// 상태 보기는 타일과 같은 모음 · 이름이다.
 const filterOptions: { value: ProjectFilter; label: string }[] = [
   { value: 'all', label: '전체' },
-  { value: 'running', label: '실행 중' },
-  { value: 'inProgress', label: '배포 중' },
-  { value: 'needsAttention', label: '실패 · 확인 필요' },
+  ...tiles.flatMap(({ key, label }) => (key === 'total' ? [] : [{ value: key, label }])),
 ]
 const sortOptions: { value: ProjectSort; label: string }[] = [
   { value: 'recent', label: '최근 배포순' },
