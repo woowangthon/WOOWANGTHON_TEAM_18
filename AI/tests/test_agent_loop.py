@@ -1,6 +1,7 @@
 """에이전트 흐름 ① ~ ⑤를 대역 모델(FunctionModel)과 대역 게이트웨이로 시험한다."""
 
 import asyncio
+import json
 from typing import Any, cast
 
 import pytest
@@ -893,3 +894,95 @@ def test_only_verified_gets_the_trial_patch() -> None:
     )
     solve(make_run(**SIGNALS["A1"]), gw, local)
     assert "specPatch" not in only_result(gw)
+
+
+# ---- 지어낸 env 값 막기 (2026-11-14 실서비스 B3: 비밀값에 지어낸 값으로 verified) ----
+
+ENV_EXAMPLE = {
+    "type": "file",
+    "content": '# 비밀값\nVITE_API_KEY=\nVITE_THEME=light\nVITE_TITLE=say "hi"\n',
+}
+
+
+def _env_patch(key: str, value: Any, where: str = "build/buildEnv") -> list[dict[str, Any]]:
+    return [{"op": "add", "path": f"/spec/services/0/{where}/{key}", "value": value}]
+
+
+def _b3_run_with(patch: list[dict[str, Any]]) -> dict[str, Any]:
+    gw = FakeGateway()
+    gw.script["read_repo"] = [ENV_EXAMPLE]
+    local = Script(
+        call("read_repo", path=".env.example"),
+        call("run_build", service="be", specPatch=patch),
+        call("run_deploy", specPatch=patch),
+        call("run_verify"),
+        final(status="verified", specPatch=patch, summary="빌드 env를 넣어 통과했습니다."),
+    )
+    solve(make_run(**SIGNALS["B3"]), gw, local)
+    return only_result(gw)
+
+
+def test_an_env_value_found_in_no_evidence_turns_verified_into_needs_user() -> None:
+    result = _b3_run_with(_env_patch("VITE_API_KEY", "sk-made-up-1234"))
+    assert result["status"] == "needs_user"
+    assert "specPatch" not in result or result["specPatch"] is None
+    assert "VITE_API_KEY" in result["userRequest"]["message"]
+    # 지어낸 값은 학생에게 보이는 글에 싣지 않는다(시도 기록 actions에는 인자로 남는다).
+    shown = json.dumps([result["summary"], result["userRequest"]], ensure_ascii=False)
+    assert "sk-made-up-1234" not in shown
+
+
+def test_an_env_value_read_from_the_repository_stays_verified() -> None:
+    patch = _env_patch("VITE_THEME", "light")
+    result = _b3_run_with(patch)
+    assert result["status"] == "verified"
+    assert result["specPatch"] == patch
+
+
+@pytest.mark.parametrize(
+    "patch",
+    [
+        _env_patch("API_TOKEN", "made-up", where="runtime/env"),
+        [{"op": "replace", "path": "/spec/services/0/build/buildEnv", "value": {"K": "made-up"}}],
+        [{"op": "add", "path": "/spec/services/0/runtime/env", "value": {"K": "made-up"}}],
+    ],
+)
+def test_runtime_env_and_whole_env_objects_are_checked_too(patch: list[dict[str, Any]]) -> None:
+    assert _b3_run_with(patch)["status"] == "needs_user"
+
+
+def test_non_env_values_are_not_checked() -> None:
+    # 포트 같은 값은 증거에서 그대로 오지 않아도 된다(문자열이 아니다).
+    patch = [{"op": "replace", "path": "/spec/services/0/build/nodeVersion", "value": "22"}]
+    assert _b3_run_with(patch)["status"] == "verified"
+
+
+@pytest.mark.parametrize(
+    "patch",
+    [
+        _env_patch("VITE_TITLE", 'say "hi"'),
+        [
+            {
+                "op": "add",
+                "path": "/spec/services/0/build/buildEnv",
+                "value": {"VITE_THEME": "light"},
+            }
+        ],
+        [{"op": "remove", "path": "/spec/services/0/build/buildEnv/OLD_KEY"}],
+        # 게이트웨이가 모양을 검사한다. 객체가 아닌 값이 와도 결과를 잃지 않는다.
+        [{"op": "replace", "path": "/spec/services/0/runtime/env", "value": None}],
+    ],
+)
+def test_values_from_the_repository_and_removals_stay_verified(patch: list[dict[str, Any]]) -> None:
+    assert _b3_run_with(patch)["status"] == "verified"
+
+
+def test_a_needs_user_from_the_model_keeps_its_own_request() -> None:
+    gw = FakeGateway()
+    patch = _env_patch("VITE_API_KEY", "made-up")
+    request = {"message": "VITE_API_KEY를 넣어 주세요.", "secretKeys": []}
+    local = Script(
+        final(status="needs_user", specPatch=patch, userRequest=request, summary="키 없음")
+    )
+    solve(make_run(**SIGNALS["B3"]), gw, local)
+    assert only_result(gw)["userRequest"]["message"] == request["message"]

@@ -397,6 +397,7 @@ PydanticAI에서 두 모델을 OpenAI 호환 provider로 붙이고, 추론 모�
 - 로컬 8B 모델의 분류 · 도구 호출 품질은 검증하지 않았다. 실제 모델(로컬 · 추론 API)은 아직 한 번도 붙여 돌리지 않았다.
 - 컨텍스트 예산은 글자 수로 어림했다(가장 큰 시험 티켓 · 도구 결과로 로컬 모델 입력이 도구 정의까지 합쳐 30,000자 이하). 실제 토큰 수는 vLLM에 붙인 뒤 응답의 `usage.prompt_tokens`로 재야 한다. 한글은 글자당 토큰이 더 많아 어림이 빗나갈 수 있다.
 - 요약본과 발췌는 정보를 버린다. 오류 표시 단어가 없는 원인 줄은 발췌에서 빠질 수 있고, 지난 도구 결과는 한 줄만 남는다. 에이전트가 필요하면 관찰 도구로 다시 읽는다.
+- `verified`의 패치가 env · buildEnv에 넣는 값이 티켓 · 도구 결과 어디에도 없으면 AI 서버 코드가 `needs_user`로 바꾼다(지어낸 값. 모델은 비밀값을 모른다). 2026-11-14 실서비스 측정에서 로컬 모델이 비밀값 `VITE_API_KEY`에 지어낸 값을 넣어 시험을 통과시키고 `verified`를 낸 것을 보고 넣었다(`loop._invented_env_keys`).
 - 에이전트가 낸 `verified`가 정말 `run_verify` 통과 뒤인지 AI 서버는 따로 확인하지 않는다. 게이트웨이가 이 티켓의 시험 기록(같은 `specPatch`로 `run_deploy` → `run_verify` 통과)과 맞춰 보고(B2), 다시 실행의 Verify가 대상 슬롯을 한 번 더 확인한다(§1).
 - 가림 필터는 정해진 모양만 가린다. 이름 없이 나온 임의의 비밀 문자열은 못 가린다.
 - 게이트웨이가 지금 여는 도구는 열 개다: 관찰 셋(`get_target_status` · `read_pod_logs` · `read_repo`), 시험 넷(`run_build` · `run_render` · `run_deploy` · `run_verify`, F11b), 레포 수정 둘(`edit_repo_file` · `open_pr`, F13), `submit_result`. 대상 슬롯 운영 · `read_build_logs`는 그 뒤다. `verified`는 이 티켓에서 같은 `specPatch`로 `run_deploy` → `run_verify`를 통과했을 때만 받는다(B2). 빌드 값을 고쳤으면 그 서비스의 `run_build`도 같은 패치로 통과했어야 한다(B3). 그래서 지금 에이전트가 낼 수 있는 결과는 `verified` · `needs_user` · `gave_up` · `pr_opened`이다.

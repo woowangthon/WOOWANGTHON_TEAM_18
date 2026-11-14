@@ -5,7 +5,9 @@
 """
 
 import asyncio
+import json
 import logging
+import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -41,6 +43,7 @@ from ai_server.agent.models import (
     SpecPatchOp,
     Stage,
     Ticket,
+    UserRequest,
 )
 from ai_server.agent.redact import RedactingModel
 from ai_server.agent.runs import Runner, TicketRun
@@ -221,6 +224,50 @@ def _verified_patch(actions: list[Action]) -> list[SpecPatchOp] | None:
         return None
 
 
+# env · buildEnv 값을 넣는 패치 경로. 키 하나(`.../buildEnv/KEY`)이거나 객체 통째(`.../buildEnv`)다.
+_ENV_PATH = re.compile(r"^/spec/services/\d+/(?:build/buildEnv|runtime/env)(?:/(?P<key>[^/]+))?$")
+
+
+def _invented_env_keys(patch: list[SpecPatchOp], evidence: list[str]) -> list[str]:
+    """패치가 넣는 env 값 중 티켓 · 도구 결과 어디에도 없는 값의 키.
+
+    모델은 비밀값을 모른다. 레포 · 로그에 없는 값은 지어낸 것이라 시험을 통과해도 해결로
+    내지 않는다(2026-11-14 실서비스 B3: 비밀값 VITE_API_KEY에 지어낸 값을 넣어 verified).
+    """
+    invented: list[str] = []
+    for op in patch:
+        m = _ENV_PATH.match(op.path)
+        if m is None or op.op == "remove":
+            continue
+        pairs = {m["key"]: op.value} if m["key"] else op.value
+        if not isinstance(pairs, dict):
+            continue
+        for key, value in pairs.items():
+            # 증거는 모두 JSON 글이라 값도 JSON 문자열 안의 모양(이스케이프)으로 찾는다.
+            escaped = json.dumps(str(value), ensure_ascii=False)[1:-1]
+            if not any(escaped in seen for seen in evidence):
+                invented.append(str(key))
+    return invented
+
+
+def _invented_needs_user(outcome: Outcome, keys: list[str]) -> Outcome:
+    names = ", ".join(keys)
+    return Outcome(
+        status="needs_user",
+        user_request=UserRequest(
+            message=(
+                f"env 값({names})을 레포나 로그에서 찾지 못했습니다. 비밀값이거나 학생만 아는 "
+                "값이라 AI가 채우지 않았습니다. 배포 설정에 값을 직접 넣고 다시 배포해 주세요."
+            )
+        ),
+        evidence=outcome.evidence,
+        summary=(
+            f"빌드 · 실행 env {names}가 없어 실패했습니다. 값을 레포에서 찾을 수 없어 "
+            "학생이 넣어야 합니다."
+        ),
+    )
+
+
 # 제출이 전송 오류로 실패하면 이만큼 기다렸다 다시 낸다(초).
 SUBMIT_RETRY_DELAYS = (2.0, 5.0, 10.0)
 
@@ -378,6 +425,17 @@ def make_agent_runner(
             outcome = Outcome(status="gave_up", summary=_model_failure(e, gateway.actions))
         if outcome.status == "verified" and (patch := _verified_patch(gateway.actions)) is not None:
             outcome = outcome.model_copy(update={"spec_patch": patch})
+        if outcome.status == "verified" and (
+            invented := _invented_env_keys(
+                outcome.spec_patch or [], [run.ticket.model_dump_json(), *gateway.seen]
+            )
+        ):
+            trace(
+                ticket.ticket_id,
+                f"verified env not in evidence keys={','.join(clean(k) for k in invented)} "
+                "-> needs_user",
+            )
+            outcome = _invented_needs_user(outcome, invented)
         result = AgentResult(
             **outcome.model_dump(),
             ticket_id=ticket.ticket_id,

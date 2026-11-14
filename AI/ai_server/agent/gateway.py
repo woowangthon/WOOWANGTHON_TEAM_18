@@ -61,6 +61,8 @@ class GatewayToolset(MCPToolset[Any]):
     def __init__(self, client: Any, **kwargs: Any) -> None:
         super().__init__(client, max_retries=3, **kwargs)
         self.actions: list[Action] = []
+        # 받은 도구 결과 원문(JSON). verified의 env 값이 증거에서 왔는지 코드가 확인한다.
+        self.seen: list[str] = []
         # 추적 로그(`trace ticket=…`)에 붙일 티켓 id. 실행기가 티켓을 받은 뒤 채운다.
         self.trace_id = "-"
 
@@ -122,6 +124,7 @@ class GatewayToolset(MCPToolset[Any]):
                 raise GatewayStop(code, message)
             raise ModelRetry(f"gateway rejected {name}: {code}: {detail}")
         ok = content.get("ok", True) if isinstance(content, dict) else True
+        self.seen.append(json.dumps(content, ensure_ascii=False, default=str))
         self.actions.append(Action(tool=name, args=args, ok=bool(ok), result=_short(content)))
         trace(self.trace_id, f"tool={clean(name)} ok={bool(ok)} args={args_shape(args)}")
         # 모델에는 예산 안으로 줄인 결과를 준다(로그 발췌, 큰 원본은 필요한 칸만).
