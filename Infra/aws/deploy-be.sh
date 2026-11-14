@@ -14,7 +14,7 @@ cd "$(dirname "$0")/../.."
 answers() { curl -fsS --max-time 5 http://127.0.0.1:3000/api/health >/dev/null; }
 healthy() {
   for _ in $(seq 30); do
-    answers && return 0
+    answers 2>/dev/null && return 0  # refused/reset while the server is still booting
     sleep 2
   done
   return 1
