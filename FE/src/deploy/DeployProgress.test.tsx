@@ -122,6 +122,23 @@ it('keeps reading while a problem is being fixed', async () => {
   expect(screen.getByText('문제를 살펴보는 중이에요')).toBeTruthy()
 })
 
+it('shows what the AI is doing while a problem is being fixed, from the tool name and counts only', async () => {
+  api.apiFetch.mockResolvedValue(
+    progressOf('fixing', 'deploy', { failure: failureWith('DEPLOY_FAILED', '문제를 살펴보는 중이에요'), agentProgress: { tool: 'read_repo', calls: 5, limit: 20, at: '2026-11-11T01:00:00.000Z' } }),
+  )
+  await show()
+  expect(screen.getByText('AI가 레포 파일을 읽는 중 · 도구 5/20')).toBeTruthy()
+})
+
+it('says nothing about the AI when no call was seen yet, and shows an unknown tool by its name', async () => {
+  api.apiFetch.mockResolvedValueOnce(progressOf('fixing', 'deploy', { agentProgress: null }))
+  await show()
+  expect(screen.queryByText(/AI가 .* · 도구/)).toBeNull()
+  api.apiFetch.mockResolvedValue(progressOf('fixing', 'deploy', { agentProgress: { tool: 'new_tool', calls: 1, limit: 20, at: '2026-11-11T01:00:00.000Z' } }))
+  await advance(3000)
+  expect(screen.getByText('AI가 new_tool · 도구 1/20')).toBeTruthy()
+})
+
 it.each([
   ['succeeded', null],
   ['failed', 'build'],
@@ -533,6 +550,30 @@ it('links to the fix PR when the agent opened one, and only for an https address
   await show()
   expect(agentCard().getByText('수정 PR을 열었어요')).toBeTruthy()
   expect(agentCard().getByRole('link', { name: '수정 PR 보러 가기' }).getAttribute('href')).toBe('https://github.com/o/r/pull/3')
+})
+
+it('tells the student what to do with a fix PR and offers 다시 배포 that carries this deploy id; the badge names the PR', async () => {
+  api.apiFetch.mockResolvedValue(
+    progressOf('needs_user', 'deploy', { agent: agentOf({ status: 'pr_opened', prUrl: 'https://github.com/o/r/pull/3' }) }),
+  )
+  await show()
+  expect(screen.getByText('수정 PR 확인 필요')).toBeTruthy()
+  expect(agentCard().getByText('GitHub에서 PR을 머지해요.')).toBeTruthy()
+  expect(agentCard().getByRole('link', { name: '다시 배포' }).getAttribute('href')).toBe(`/deploy/new?from=${ID}`)
+})
+
+it('keeps the generic label and no 다시 배포 for a needs_user run without a PR', async () => {
+  api.apiFetch.mockResolvedValue(progressOf('needs_user', 'deploy', { agent: agentOf({ status: 'needs_user' }) }))
+  await show()
+  expect(screen.getAllByText('사용자 조치 필요').length).toBeGreaterThan(0)
+  expect(screen.queryByText('수정 PR 확인 필요')).toBeNull()
+  expect(screen.queryByRole('link', { name: '다시 배포' })).toBeNull()
+})
+
+it('shows no next steps for a result that is not a PR waiting for the student', async () => {
+  api.apiFetch.mockResolvedValue(progressOf('failed', 'deploy', { agent: agentOf({ status: 'gave_up', prUrl: 'https://github.com/o/r/pull/3' }) }))
+  await show()
+  expect(screen.queryByRole('link', { name: '다시 배포' })).toBeNull()
 })
 
 it('does not link a PR address that is not https', async () => {

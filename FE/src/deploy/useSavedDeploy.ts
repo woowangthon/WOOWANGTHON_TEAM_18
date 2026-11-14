@@ -10,5 +10,7 @@ export function useSavedDeploy(deployId: string) {
     queryKey: queryKeys.deploy(deployId),
     queryFn: () => apiFetch<SavedDeploy>(`/api/deploys/${deployId}`),
     staleTime: Infinity,
+    // 빈 id면 부르지 않는다(다시 배포로 온 때만 이전 배포를 읽는 화면이 쓴다).
+    enabled: deployId !== '',
   })
 }

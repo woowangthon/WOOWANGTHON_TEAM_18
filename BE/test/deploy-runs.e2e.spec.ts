@@ -3,6 +3,7 @@ import { ConflictException, type INestApplication, Logger, ServiceUnavailableExc
 import request from 'supertest'
 import type { App } from 'supertest/types.js'
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from 'vitest'
+import { AgentProgress } from '../src/deploys/agent-progress.js'
 import { AgentClient } from '../src/deploys/agent.client.js'
 import { DeployConditionService } from '../src/deploys/deploy-condition.service.js'
 import { DeployPreparer } from '../src/deploys/deploy-preparer.js'
@@ -797,12 +798,24 @@ describe('GET /api/deploys/:id/status', () => {
       ],
       failure: null,
       agent: null,
+      agentProgress: null,
       url: null,
       // 시험 서버에는 TRIVY_CACHE_DIR이 없어 보안 검사를 돌리지 않는다. 그 사실을 경고로 알린다("문제 없음"이 아니다).
       warnings: [{ code: 'SCAN_UNAVAILABLE', message: '이 서버에는 보안 검사가 설정되어 있지 않아 검사하지 못했어요.', service: null }],
       queue: null,
       updatedAt: '2026-11-11T01:00:00.000Z',
     })
+  })
+
+  it('shows the latest AI tool and call count only while the run is fixing and the ticket is remembered', async () => {
+    const id = seedDeploy()
+    await start(id)
+    Object.assign(run(id), { status: 'fixing', ticket_id: 't_progress' })
+    expect(((await status(id)).body as { agentProgress: unknown }).agentProgress).toBeNull()
+    app.get(AgentProgress).record('t_progress', 'run_build', 5, 20)
+    expect(((await status(id)).body as { agentProgress: unknown }).agentProgress).toMatchObject({ tool: 'run_build', calls: 5, limit: 20 })
+    run(id).status = 'needs_user'
+    expect(((await status(id)).body as { agentProgress: unknown }).agentProgress).toBeNull()
   })
 
   describe('security scan warnings (UC-10)', () => {
@@ -951,10 +964,20 @@ describe('GET /api/deploys', () => {
     expect(res.status).toBe(200)
     expect(res.body).toEqual({
       deploys: [
-        { id: newer, repo: 'Student/My-App', slug: 'my-app', commit: SHA, createdAt: expect.any(String) as string, status: 'running', stage: 'build', url: null },
-        { id: older, repo: 'Student/My-App', slug: 'old-app', commit: SHA, createdAt: expect.any(String) as string, status: 'not_started', stage: null, url: null },
+        { id: newer, repo: 'Student/My-App', slug: 'my-app', commit: SHA, createdAt: expect.any(String) as string, status: 'running', stage: 'build', url: null, prOpened: false },
+        { id: older, repo: 'Student/My-App', slug: 'old-app', commit: SHA, createdAt: expect.any(String) as string, status: 'not_started', stage: null, url: null, prOpened: false },
       ],
     })
+  })
+
+  it('marks prOpened only for a needs_user run whose agent result has a PR', async () => {
+    const [a, b, c] = [seedDeploy({ slug: 'a-app' }), seedDeploy({ slug: 'b-app' }), seedDeploy({ slug: 'c-app' })]
+    for (const id of [a, b, c]) await start(id)
+    Object.assign(run(a), { status: 'needs_user', agent_result: { status: 'pr_opened', summary: 'x', pr: { url: 'https://github.com/student/app/pull/3' } } })
+    Object.assign(run(b), { status: 'needs_user', agent_result: { status: 'needs_user', summary: 'x', userRequest: { message: 'm', secretKeys: [] }, pr: null } })
+    Object.assign(run(c), { status: 'failed', agent_result: { status: 'gave_up', summary: 'x', pr: { url: 'https://github.com/student/app/pull/4' } } })
+    const flags = Object.fromEntries(((await list()).body as { deploys: { id: string; prOpened: boolean }[] }).deploys.map((d) => [d.id, d.prOpened]))
+    expect(flags).toEqual({ [a]: true, [b]: false, [c]: false })
   })
 
   it('is empty for a user with no deploys', async () => {

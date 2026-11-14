@@ -64,7 +64,7 @@ function DeploysPage() {
                 <Td className="font-mono">{deploy.slug}</Td>
                 <Td className="font-mono">{deploy.repo}</Td>
                 <Td>
-                  <StatusBadge status={deploy.status} />
+                  <StatusBadge status={deploy.status} prOpened={deploy.prOpened} />
                 </Td>
                 <Td>{new Date(deploy.createdAt).toLocaleString('ko-KR')}</Td>
                 <Td className="relative">

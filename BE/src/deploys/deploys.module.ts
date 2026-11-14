@@ -12,6 +12,7 @@ import { DeployPreparer } from './deploy-preparer.js'
 import { DeployReadinessService } from './deploy-readiness.service.js'
 import { DeployMetricsService } from './deploy-metrics.service.js'
 import { DeployQueue } from './deploy-queue.js'
+import { AgentProgress } from './agent-progress.js'
 import { DeployRunsService } from './deploy-runs.service.js'
 import { DeploysController } from './deploys.controller.js'
 import { DeploysService } from './deploys.service.js'
@@ -32,6 +33,7 @@ import { SlotScaleDown } from './slot-scale-down.js'
     DeployEvents,
     DeployConditionService,
     DeployRunsService,
+    AgentProgress,
     DeployQueue,
     DeployMetricsService,
     SlotScaleDown,
@@ -50,6 +52,6 @@ import { SlotScaleDown } from './slot-scale-down.js'
   ],
   // 게이트웨이(src/gateway)가 실행 기록 · AI 서버 연결을 같이 쓰고, verified 뒤 다시 실행을 대기열(DeployQueue)에 세운다.
   // DeployEvents: 운영 알림 모듈이 배포 결과를 학생 Discord로 보낸다.
-  exports: [DeployConditionService, DeploysStore, DeployEvents, AgentClient, PipelineClient, PipelineTokenGuard, SlotScaleDown, DeployQueue],
+  exports: [DeployConditionService, DeploysStore, DeployEvents, AgentClient, AgentProgress, PipelineClient, PipelineTokenGuard, SlotScaleDown, DeployQueue],
 })
 export class DeploysModule {}

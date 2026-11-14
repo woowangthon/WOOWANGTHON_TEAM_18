@@ -158,6 +158,40 @@ export function formFromDraft(draft: DeploySpecDraft, repo: string, dockerfiles:
   }
 }
 
+const toRows = (env: EnvMap): EnvRow[] => Object.entries(env).map(([name, value]) => ({ name, value }))
+
+// 저장한 spec을 다시 폼 값으로(다시 배포가 이전 설정을 채울 때). 초안이 알려 주는 출처 · 확인 표시는 없다.
+// 정적이면 toSpec이 포트를 8080으로 고정해 저장하므로, 입력값은 초안과 같은 규칙으로 비워 둔다.
+export function formFromSpec(spec: Spec): SpecForm {
+  return {
+    slug: spec.project.slug,
+    repo: spec.project.repo,
+    services: spec.services.map((s) => ({
+      ...blankService(s.dir),
+      name: s.name,
+      role: s.role,
+      dockerfile: s.build.dockerfile ?? '',
+      context: s.build.context,
+      framework: s.build.framework ?? '',
+      nodeVersion: s.build.nodeVersion ?? '',
+      install: s.build.install ?? '',
+      build: s.build.build ?? '',
+      start: s.build.start ?? '',
+      outputDir: s.build.outputDir ?? '',
+      buildEnv: toRows(s.build.buildEnv),
+      kind: s.runtime.kind === 'static' ? 'static' : 'server',
+      port: s.runtime.kind === 'static' ? '' : String(s.runtime.port),
+      healthType: s.runtime.health.type === 'tcp' ? 'tcp' : 'http',
+      healthPath: s.runtime.health.path ?? '/',
+      timeout: String(s.runtime.health.startupTimeoutSeconds),
+      ingressPath: s.runtime.ingressPath ?? '',
+      env: toRows(s.runtime.env),
+      secretKeys: s.runtime.secretKeys,
+      links: s.runtime.links.map((l) => ({ ...l })),
+    })),
+  }
+}
+
 // 역할을 바꾸면 손대지 않은 이름 · 공개 경로를 새 역할의 기본값으로 따라 바꾼다.
 export function withRole(service: ServiceForm, role: string): ServiceForm {
   const oldIngress = isRole(service.role) ? DEFAULT_INGRESS[service.role] : ''

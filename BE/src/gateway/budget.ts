@@ -103,6 +103,11 @@ export class ToolBudget {
     return Math.min(u.ticketStart + TICKET_MS, Math.max(u.expiryFloor, u.ticketStart + WORK_MS + u.waited))
   }
 
+  /** 지금까지 센 호출 수(없으면 0). */
+  calls(ticketId: string): number {
+    return this.usage.get(ticketId)?.total ?? 0
+  }
+
   /** 결과를 받았거나 티켓이 끝났다. */
   forget(ticketId: string): void {
     this.usage.delete(ticketId)

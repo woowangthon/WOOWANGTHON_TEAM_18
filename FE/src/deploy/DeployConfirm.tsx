@@ -13,9 +13,9 @@ import DeploySaved from './DeploySaved.tsx'
 import { issueMap, issuesOf, issueText, withoutField } from './issues.ts'
 import { MAX_SERVICES } from './limits.ts'
 import SpecFormFields from './SpecFormFields.tsx'
-import { formFromDraft, localIssues, toSpec } from './spec-form.ts'
+import { formFromDraft, formFromSpec, localIssues, toSpec } from './spec-form.ts'
 import type { SpecForm } from './spec-form.ts'
-import type { DeploySpecDraft, Issue, SavedDeploy } from './types.ts'
+import type { DeploySpecDraft, Issue, SavedDeploy, Spec } from './types.ts'
 
 type Props = {
   repoUrl: string
@@ -25,6 +25,8 @@ type Props = {
   dockerfiles: string[]
   // 접수한 뒤 레포가 바뀌어 commit을 찾을 수 없을 때, 확인부터 다시 하게 한다.
   onRecheck: () => void
+  // 다시 배포: 이전 배포에서 저장한 설정. 있으면 초안 대신 이 값으로 폼을 채운다(commit은 새 값이다).
+  previous?: Spec
 }
 
 type Load =
@@ -33,7 +35,7 @@ type Load =
   | { status: 'done'; draft: DeploySpecDraft }
 
 // 확인한 레포의 초안을 미리 채운 폼으로 보여 주고, 사용자가 확정하면 POST /api/deploys로 저장한다.
-function DeployConfirm({ repoUrl, repo, commit, dockerfiles, onRecheck }: Props) {
+function DeployConfirm({ repoUrl, repo, commit, dockerfiles, onRecheck, previous }: Props) {
   // commit이 없으면(빈 레포) 초안을 부르지 않는다. 읽을 코드가 없다.
   const [load, setLoad] = useState<Load>({ status: 'loading' })
   const [attempt, setAttempt] = useState(0)
@@ -51,7 +53,7 @@ function DeployConfirm({ repoUrl, repo, commit, dockerfiles, onRecheck }: Props)
     apiFetch<DeploySpecDraft>('/api/repos/deploy-spec', { repoUrl, commit })
       .then((draft) => {
         if (ignore) return
-        setForm(formFromDraft(draft, repo, dockerfiles))
+        setForm(previous ? formFromSpec(previous) : formFromDraft(draft, repo, dockerfiles))
         setLoad({ status: 'done', draft })
       })
       .catch((error: unknown) => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { beProject, draftOf, feProject, none } from './fixtures.ts'
-import { blankService, formFromDraft, localIssues, nodeVersionOf, serviceFromProject, slugFromRepo, toSpec, withRole } from './spec-form.ts'
+import { blankService, formFromDraft, formFromSpec, localIssues, nodeVersionOf, serviceFromProject, slugFromRepo, toSpec, withRole } from './spec-form.ts'
 import type { SpecForm } from './spec-form.ts'
 
 describe('slugFromRepo', () => {
@@ -131,6 +131,19 @@ function exampleForm(): SpecForm {
   }
   return { slug: 'my-app', repo: 'student/my-app', services: [fe, be] }
 }
+
+describe('formFromSpec', () => {
+  it('turns a saved spec back into a form that saves as the same spec', () => {
+    const spec = toSpec(exampleForm())
+    expect(toSpec(formFromSpec(spec))).toEqual(spec)
+  })
+
+  it('keeps the saved values the user chose, and leaves a static service port empty', () => {
+    const form = formFromSpec(toSpec(exampleForm()))
+    expect(form.services[1]).toMatchObject({ name: 'be', port: '3000', healthPath: '/api/health', secretKeys: ['DATABASE_URL'] })
+    expect(form.services[0]).toMatchObject({ kind: 'static', port: '' })
+  })
+})
 
 describe('toSpec', () => {
   it('turns the form into the request example of api.md', () => {

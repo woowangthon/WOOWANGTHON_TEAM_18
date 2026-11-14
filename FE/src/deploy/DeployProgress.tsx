@@ -9,7 +9,7 @@ import IncidentNotice from '../incidents/IncidentNotice.tsx'
 import { ApiError, apiFetch } from '../lib/api.ts'
 import AgentSection from './AgentSection.tsx'
 import DeployStages from './DeployStages.tsx'
-import { isActive, isPlatformProblem, POLL_MS, stageStatesOf } from './progress.ts'
+import { agentProgressText, hasPr, isActive, isPlatformProblem, POLL_MS, stageStatesOf } from './progress.ts'
 import type { Progress } from './progress.ts'
 import ServiceMap from './ServiceMap.tsx'
 import { readinessText } from './serviceMap.ts'
@@ -234,7 +234,7 @@ function DeployProgress({ deployId }: { deployId: string }) {
           </p>
         )}
         <div className="flex items-center gap-2">
-          <StatusBadge status={progress.status} />
+          <StatusBadge status={progress.status} prOpened={hasPr(progress.agent)} />
           {/* 진행 중이라는 것은 왼쪽 단계의 움직임이 보인다. 여기서는 읽는 간격만 말하고 스피너는 두지 않는다. */}
           {isActive(progress.status) && offline !== 'stopped' && <span className="text-sm text-muted">3초마다 새로 읽고 있어요</span>}
         </div>
@@ -276,6 +276,7 @@ function DeployProgress({ deployId }: { deployId: string }) {
         {progress.status === 'fixing' && (
           <Alert variant="info" title="문제를 해결하는 중이에요">
             {failure?.message}
+            {progress.agentProgress && <p>{agentProgressText(progress.agentProgress)}</p>}
           </Alert>
         )}
         {progress.status === 'needs_user' && (
@@ -302,7 +303,7 @@ function DeployProgress({ deployId }: { deployId: string }) {
           </Alert>
         )}
 
-        {progress.agent && <AgentSection agent={progress.agent} />}
+        {progress.agent && <AgentSection agent={progress.agent} deployId={progress.deployId} />}
 
         {progress.warnings.length > 0 && (
           <Alert variant="warn" title="보안 검사 경고가 있어요">

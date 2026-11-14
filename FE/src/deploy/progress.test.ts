@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { isActive, isPlatformProblem, stageStatesOf, statusLabel, statusVariant } from './progress.ts'
+import { hasPr, isActive, isPlatformProblem, stageStatesOf, statusLabel, statusVariant } from './progress.ts'
 import type { DeployStatus } from './progress.ts'
 import type { StageKey } from './stages.ts'
 
@@ -86,4 +86,13 @@ it('counts a failure as the platform fault unless the code is one of the student
 it('does not count AGENT_GAVE_UP as a platform problem, since the AI looked at the student failure and could not fix it', () => {
   expect(isPlatformProblem('AGENT_GAVE_UP')).toBe(false)
   expect(isPlatformProblem('AGENT_UNAVAILABLE')).toBe(true)
+})
+
+it('names a needs_user run with a fix PR apart from other needs_user runs', () => {
+  expect(statusLabel('needs_user', true)).toBe('수정 PR 확인 필요')
+  expect(statusLabel('needs_user')).toBe('사용자 조치 필요')
+  expect(statusLabel('failed', true)).toBe('실패')
+  expect(hasPr({ prUrl: 'https://github.com/o/r/pull/3' })).toBe(true)
+  expect(hasPr({ prUrl: null })).toBe(false)
+  expect(hasPr(null)).toBe(false)
 })

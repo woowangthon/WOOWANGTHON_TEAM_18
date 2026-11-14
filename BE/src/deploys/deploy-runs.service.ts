@@ -10,6 +10,7 @@ import { SpaceService } from '../k8s/space.service.js'
 import type { DeployWarning } from '../security/findings.js'
 import { SecurityScanService } from '../security/security-scan.service.js'
 import { AgentClient } from './agent.client.js'
+import { type AgentProgressView, AgentProgress } from './agent-progress.js'
 import { type ServiceConditions, targetSlot } from './deploy-condition.js'
 import { DeployPreparer } from './deploy-preparer.js'
 import {
@@ -54,6 +55,8 @@ export interface DeployStatusView {
   steps: { key: StepKey; state: StepState }[]
   failure: Failure | null
   agent: AgentView | null
+  /** fixing인 동안 AI가 부른 가장 최근 도구(메모리, 재시작하면 null). */
+  agentProgress: AgentProgressView | null
   url: string | null
   warnings: DeployWarning[]
   /** 배포 대기(`queued`)일 때만. position은 앞에 있는 배포 수(먼저 기다리는 배포 + 지금 도는 배포), waitingForRoom은 클러스터에 자리가 없어 기다리는 중. */
@@ -88,7 +91,7 @@ export function toAgent(stored: Record<string, unknown>): AgentView {
 const iso = (t: string) => new Date(t).toISOString()
 
 /** 실행 기록(없을 수 있다)에서 읽기 응답을 만든다. 원본 · 로그 · 비밀값은 저장하지 않으므로 여기 올 수 없다. */
-function view(deploy: DeployRow, run: DeployRunRow | undefined, warnings: DeployWarning[] = [], queue: DeployStatusView['queue'] = null): DeployStatusView {
+function view(deploy: DeployRow, run: DeployRunRow | undefined, warnings: DeployWarning[] = [], queue: DeployStatusView['queue'] = null, agentProgress: AgentProgressView | null = null): DeployStatusView {
   const status: DeployStatus = run?.status ?? 'not_started'
   const stage = run?.stage ?? null
   return {
@@ -98,6 +101,7 @@ function view(deploy: DeployRow, run: DeployRunRow | undefined, warnings: Deploy
     steps: buildSteps(status, stage),
     failure: run?.failure ? toFailure(run.failure) : null,
     agent: run?.agent_result ? toAgent(run.agent_result) : null,
+    agentProgress,
     url: status === 'succeeded' ? publicUrl(deploy.slug) : null,
     // 보안 검사 경고(#45). 목록은 이 칸을 쓰지 않아 비워 둔다.
     warnings,
@@ -120,6 +124,7 @@ export class DeployRunsService {
     private readonly queue: DeployQueue,
     private readonly capacity: ClusterCapacity,
     private readonly space: SpaceService,
+    private readonly progress: AgentProgress,
   ) {}
 
   /** 내 배포 하나. 없는 id · 남의 id · UUID가 아닌 id는 모두 404다. */
@@ -190,7 +195,8 @@ export class DeployRunsService {
     const uuid = parseUuid(id)
     const [deploy, run] = await Promise.all([this.owned(user, id), uuid ? this.store.findRun(uuid) : undefined])
     const queue = run?.status === 'queued' ? await this.queueView(run) : null
-    return view(deploy, run, await this.scans.warningsFor(deploy), queue)
+    const progress = run?.status === 'fixing' && run.ticket_id ? this.progress.read(run.ticket_id) : null
+    return view(deploy, run, await this.scans.warningsFor(deploy), queue, progress)
   }
 
   private async queueView(run: DeployRunRow): Promise<NonNullable<DeployStatusView['queue']>> {
@@ -205,7 +211,7 @@ export class DeployRunsService {
     return {
       deploys: deploys.map((d) => {
         const v = view(d, runs.get(d.id))
-        return { id: d.id, repo: d.repo, slug: d.slug, commit: d.commit_sha, createdAt: iso(d.created_at), status: v.status, stage: v.stage, url: v.url }
+        return { id: d.id, repo: d.repo, slug: d.slug, commit: d.commit_sha, createdAt: iso(d.created_at), status: v.status, stage: v.stage, url: v.url, prOpened: v.status === 'needs_user' && v.agent?.prUrl != null }
       }),
     }
   }

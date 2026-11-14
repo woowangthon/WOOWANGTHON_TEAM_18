@@ -1,5 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
+import { WithQuery } from '../test-utils.tsx'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { COMMIT, draftOf, feProject } from '../deploy/fixtures.ts'
 import { ApiError } from '../lib/api.ts'
@@ -16,11 +17,13 @@ beforeEach(() => {
   api.apiFetch.mockReset()
 })
 
-const renderPage = () =>
+const renderPage = (entry = '/deploy/new') =>
   render(
-    <MemoryRouter>
-      <DeployNewPage />
-    </MemoryRouter>,
+    <WithQuery>
+      <MemoryRouter initialEntries={[entry]}>
+        <DeployNewPage />
+      </MemoryRouter>
+    </WithQuery>,
   )
 const urlInput = () => screen.getByRole('textbox', { name: '레포 주소' })
 const checkButton = () => screen.getByRole('button', { name: '레포 확인' })
@@ -253,4 +256,30 @@ it('hides the Dockerfile section when the address is edited after a pass', async
   await screen.findByRole('heading', { name: 'Dockerfile' })
   fireEvent.change(urlInput(), { target: { value: 'https://github.com/student/other' } })
   expect(screen.queryByRole('heading', { name: 'Dockerfile' })).toBeNull()
+})
+
+it('starts the check for the earlier deploy repo and fills the settings from it when opened with ?from', async () => {
+  const saved = {
+    id: 'old',
+    repo: 'student/my-app',
+    commit: 'a'.repeat(40),
+    createdAt: '2026-11-11T00:00:00Z',
+    spec: { project: { slug: 'my-chosen-slug', repo: 'student/my-app' }, services: [] },
+  }
+  api.apiFetch.mockImplementation((path: string) =>
+    Promise.resolve(
+      path === '/api/deploys/old'
+        ? saved
+        : path === '/api/repos/dockerfiles'
+          ? { repo: 'student/my-app', dockerfiles: ['Dockerfile'], truncated: false }
+          : path === '/api/repos/deploy-spec'
+            ? draftOf([feProject])
+            : { repo: 'student/my-app', commit: COMMIT },
+    ),
+  )
+  renderPage('/deploy/new?from=old')
+  expect(await screen.findByDisplayValue('my-chosen-slug')).toBeTruthy()
+  // 이전 commit을 쓰지 않고 레포 확인이 새로 정한 commit으로 간다.
+  expect(callsTo('/api/repos/check')[0][1]).toEqual({ repoUrl: 'https://github.com/student/my-app' })
+  expect(callsTo('/api/repos/deploy-spec')[0][1]).toEqual({ repoUrl: 'https://github.com/student/my-app', commit: COMMIT })
 })

@@ -3,6 +3,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import type { App } from 'supertest/types.js'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { AgentProgress } from '../src/deploys/agent-progress.js'
 import { DeploysStore, type DeployRunRow } from '../src/deploys/deploys.store.js'
 import { GatewayServer } from '../src/gateway/gateway.server.js'
 import { RepoReader, type RepoEntry } from '../src/gateway/repo-reader.js'
@@ -198,6 +199,21 @@ describe('MCP gateway', () => {
   ])('answers TICKET_CLOSED for an %s', async (_label, token) => {
     const client = await connect(token())
     expect(rejected(await call(client, 'read_repo', { path: '.' }))).toBe('TICKET_CLOSED')
+    await client.close()
+  })
+
+  it('remembers the latest tool and the count for the student screen, not the blocked calls, and forgets at the result', async () => {
+    const progress = app.get(AgentProgress)
+    const client = await connect()
+    expect(progress.read('t_abc')).toBeNull()
+    await call(client, 'read_repo', { path: '.' })
+    await call(client, 'get_target_status')
+    expect(progress.read('t_abc')).toMatchObject({ tool: 'get_target_status', calls: 2, limit: 20 })
+    await call(client, 'get_target_status')
+    expect(rejected(await call(client, 'get_target_status'))).toBe('REPEATED_CALL')
+    expect(progress.read('t_abc')?.calls).toBe(3)
+    await call(client, 'submit_result', { result: result() })
+    expect(progress.read('t_abc')).toBeNull()
     await client.close()
   })
 
