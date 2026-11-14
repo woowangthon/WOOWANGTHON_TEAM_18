@@ -11,7 +11,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from pydantic_ai import Agent, ModelRetry
 from pydantic_ai.capabilities import ProcessHistory
 from pydantic_ai.exceptions import AgentRunError, FallbackExceptionGroup, UnexpectedModelBehavior
@@ -19,6 +19,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
 from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.usage import RunUsage
 
 from ai_server.agent import budget, prompts
 from ai_server.agent.gateway import (
@@ -37,6 +38,7 @@ from ai_server.agent.models import (
     ClassifyMethod,
     Outcome,
     ResultPath,
+    SpecPatchOp,
     Stage,
     Ticket,
 )
@@ -139,7 +141,10 @@ async def _llm_classify(
         instructions=prompts.CLASSIFY_INSTRUCTIONS,
         retries=OUTPUT_RETRIES,
     )
-    choice = (await agent.run(prompts.classify_prompt(ticket, notes, cases))).output
+    started = time.monotonic()
+    result = await agent.run(prompts.classify_prompt(ticket, notes, cases))
+    trace(ticket.ticket_id, f"classify llm {_usage(result.usage, started)}")
+    choice = result.output
     # 목록에 없는 id는 모르는 것으로 본다(모델이 지어낸 case로 playbook을 돌리지 않는다).
     case = next((c for c in cases if c.case_id == choice.case_id), None)
     if case is not None:
@@ -163,10 +168,46 @@ async def _act(
     # 어느 모델이 돌았는지 남긴다. planner는 추론 API가 안 되면 로컬로 넘어가므로
     # 실제로 응답한 모델 이름(ran)도 함께 남긴다.
     trace(gateway.trace_id, f"act model={label} name={clean(model.model_name)}")
+    started = time.monotonic()
     result = await agent.run(prompt)
     ran = result.response.model_name
-    trace(gateway.trace_id, f"act done model={label} ran={clean(ran) if ran else '-'}")
+    trace(
+        gateway.trace_id,
+        f"act done model={label} ran={clean(ran) if ran else '-'} {_usage(result.usage, started)}",
+    )
     return result.output
+
+
+def _usage(usage: RunUsage, started: float) -> str:
+    """모델 요청 수 · 입출력 토큰 · 걸린 시간(측정용, 값이 아니라 수만)."""
+    return (
+        f"requests={usage.requests} in_tokens={usage.input_tokens} "
+        f"out_tokens={usage.output_tokens} seconds={time.monotonic() - started:.1f}"
+    )
+
+
+def _verified_patch(actions: list[Action]) -> list[SpecPatchOp] | None:
+    """통과한 시험의 specPatch: 마지막 run_deploy가 성공했고 그 뒤 run_verify가 통과했을 때.
+
+    게이트웨이는 verified의 specPatch가 그 시험 입력과 같아야 받는다(api.md 5번). 모델이 결과에
+    다시 적으며 달라지면 시험을 통과한 해결이 INVALID_RESULT로 버려지므로 코드가 채운다.
+    """
+    deployed: list[Any] | None = None
+    passed: list[Any] | None = None
+    for action in actions:
+        if action.tool == "run_deploy":
+            # 성공 · 실패 모두 대상 슬롯을 다시 올리므로 앞의 확인은 쓰지 않는다.
+            deployed = ((action.args or {}).get("specPatch") or []) if action.ok else None
+            passed = None
+        elif action.tool == "run_verify" and action.ok and deployed is not None:
+            passed = deployed
+    if passed is None:
+        return None
+    try:
+        return [SpecPatchOp.model_validate(op) for op in passed]
+    except ValidationError:
+        # 게이트웨이가 받은 패치는 이 모양을 지킨다. 아니면 모델이 낸 값을 그대로 둔다.
+        return None
 
 
 # 제출이 전송 오류로 실패하면 이만큼 기다렸다 다시 낸다(초).
@@ -324,6 +365,8 @@ def make_agent_runner(
             raised = exc_shape(e)
             log.warning("ticket %s model failure: %r", ticket.ticket_id, e)
             outcome = Outcome(status="gave_up", summary=_model_failure(e, gateway.actions))
+        if outcome.status == "verified" and (patch := _verified_patch(gateway.actions)) is not None:
+            outcome = outcome.model_copy(update={"spec_patch": patch})
         result = AgentResult(
             **outcome.model_dump(),
             ticket_id=ticket.ticket_id,

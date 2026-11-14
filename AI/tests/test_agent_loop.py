@@ -13,7 +13,7 @@ from ai_server.agent.gateway import connect_gateway
 from ai_server.agent.loop import Models, make_agent_runner, make_models, models_from_settings
 from ai_server.agent.memory import CaseMemory, load_cases
 from ai_server.agent.models import GatewayGrant, Ticket
-from ai_server.agent.prompts import INSTRUCTIONS
+from ai_server.agent.prompts import GATEWAY_TOOLS, INSTRUCTIONS
 from ai_server.agent.runs import TicketRun
 from ai_server.config import Settings
 from ai_server.main import create_app
@@ -120,7 +120,6 @@ def test_model_gets_gateway_tools_and_read_memory_but_not_submit_result() -> Non
         "run_render",
         "run_deploy",
         "run_verify",
-        "open_pr",
     } <= names
 
 
@@ -638,3 +637,140 @@ def test_verify_ticket_runs_the_v2_playbook() -> None:
     # verify 티켓은 통과하지 못한 검사를 errorMessage로, 그 서비스의 Pod를 raw.k8s로 싣는다.
     assert '"caseId":"V2"' in first and "Error: be: GET /api/health -> 404" in first
     assert "stage=verify" in first
+
+
+# ---- 성능 정리(2026-11-14) ----
+
+
+def test_gateway_tools_match_the_platform() -> None:
+    # 대역 게이트웨이가 BE에 없는 도구를 열면 playbook의 없는 도구가 테스트에서 드러나지 않는다.
+    gw = FakeGateway()
+    local = Script(final(status="gave_up", summary="모름"))
+    solve(make_run(**SIGNALS["A1"]), gw, local, Script(final(status="gave_up", summary="모름")))
+    offered = {t.name for t in local.infos[0].function_tools} - {"read_memory"}
+    assert offered | {"submit_result"} == GATEWAY_TOOLS
+
+
+def test_verified_carries_the_specpatch_that_passed_the_trial() -> None:
+    # 모델이 결과에 다른 패치를 적어도 시험한 패치를 낸다(INVALID_RESULT 방지).
+    gw = FakeGateway()
+    other = [{"op": "replace", "path": "/spec/services/0/runtime/port", "value": 8080}]
+    local = Script(
+        call("run_deploy", specPatch=PORT_PATCH),
+        call("run_verify"),
+        final(status="verified", specPatch=other, summary="포트를 고쳤습니다."),
+    )
+    solve(make_run(**SIGNALS["A1"]), gw, local)
+    assert only_result(gw)["specPatch"] == PORT_PATCH
+
+
+def test_verified_after_a_failed_redeploy_keeps_the_model_patch() -> None:
+    # 마지막 run_deploy가 실패했으면 앞의 확인은 쓰지 않는다(게이트웨이도 받지 않는다).
+    gw = FakeGateway()
+    gw.script["run_deploy"] = [{"ok": True}, {"ok": False}]
+    local = Script(
+        call("run_deploy", specPatch=PORT_PATCH),
+        call("run_verify"),
+        call("run_deploy", specPatch=[]),
+        final(status="verified", specPatch=[], summary="고쳤습니다."),
+    )
+    solve(make_run(**SIGNALS["A1"]), gw, local)
+    assert only_result(gw)["specPatch"] == []
+
+
+def test_only_rerunning_is_verified_with_an_empty_patch() -> None:
+    gw = FakeGateway()
+    local = Script(
+        call("run_deploy"),
+        call("run_verify"),
+        final(status="verified", specPatch=PORT_PATCH, summary="다시 실행해 통과했습니다."),
+    )
+    solve(make_run(**SIGNALS["A1"]), gw, local)
+    assert only_result(gw)["specPatch"] == []
+
+
+def test_instructions_match_the_gateway_rules() -> None:
+    for gone in (
+        "edit_repo_file",
+        "open_pr",
+        "pr_opened",
+        "/spec/project/slug",
+        "Retry a transient",
+    ):
+        assert gone not in INSTRUCTIONS
+    assert "run_build 2, run_render 5, run_deploy 2, run_verify 3, 20 tool calls" in INSTRUCTIONS
+
+
+def test_finish_steps_are_shown_as_results_not_tools() -> None:
+    gw = FakeGateway()
+    local = Script(
+        final(status="needs_user", userRequest={"message": "키를 넣어 주세요"}, summary="키")
+    )
+    solve(make_run(**SIGNALS["B3"]), gw, local)
+    first = local.sent(0)
+    assert '"finish":"값을 알 수 없거나 비밀값이면 needs_user로"' in first
+    assert '"tool":"submit_result"' not in first
+
+
+def test_playbook_prompt_says_the_ticket_already_has_the_logs() -> None:
+    with_logs = {
+        **SIGNALS["A1"],
+        "logs": {
+            "from": "2026-11-10T13:02:00Z",
+            "to": "2026-11-10T13:12:00Z",
+            "lines": ["listening on 3000"],
+        },
+    }
+    for overrides, said in ((with_logs, True), (SIGNALS["A1"], False)):
+        gw = FakeGateway()
+        local = Script(final(status="gave_up", summary="모름"))
+        solve(make_run(**overrides), gw, local, Script(final(status="gave_up", summary="모름")))
+        assert ("already carries the latest log lines" in local.sent(0)) is said
+
+
+def test_replan_prompt_counts_the_calls_left() -> None:
+    gw = FakeGateway()
+    gw.script["run_deploy"] = [{"ok": False}]
+    local = Script(
+        call("run_render", specPatch=PORT_PATCH),
+        call("run_deploy", specPatch=PORT_PATCH),
+        final(status="gave_up", summary="안 됨"),
+    )
+    planner = Script(final(status="gave_up", summary="안 됨"))
+    solve(make_run(**SIGNALS["A1"]), gw, local, planner)
+    assert (
+        "Calls left: run_build 2, run_render 4, run_deploy 1, run_verify 3, 18 calls in all"
+        in planner.sent(0)
+    )
+
+
+OTHER_PATCH = [{"op": "replace", "path": "/spec/services/0/runtime/port", "value": 8080}]
+
+
+@pytest.mark.parametrize(
+    ("tool", "outcome"),
+    [("run_deploy", {"ok": False}), ("run_verify", {"ok": False, "failure": None})],
+)
+def test_a_failed_trial_does_not_replace_the_model_patch(
+    tool: str, outcome: dict[str, Any]
+) -> None:
+    gw = FakeGateway()
+    gw.script[tool] = [outcome]
+    local = Script(
+        call("run_deploy", specPatch=PORT_PATCH),
+        call("run_verify"),
+        final(status="verified", specPatch=OTHER_PATCH, summary="고쳤습니다."),
+    )
+    solve(make_run(**SIGNALS["A1"]), gw, local)
+    assert only_result(gw)["specPatch"] == OTHER_PATCH
+
+
+def test_only_verified_gets_the_trial_patch() -> None:
+    gw = FakeGateway()
+    local = Script(
+        call("run_deploy", specPatch=PORT_PATCH),
+        call("run_verify"),
+        final(status="needs_user", userRequest={"message": "확인해 주세요"}, summary="확인"),
+    )
+    solve(make_run(**SIGNALS["A1"]), gw, local)
+    assert "specPatch" not in only_result(gw)

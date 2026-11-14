@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from ai_server.agent.memory import CaseMemory, PathCond, load_cases, select
 from ai_server.agent.models import Ticket
+from ai_server.agent.prompts import GATEWAY_TOOLS
 from tests.samples import ticket
 
 # ---- 경로 ----
@@ -303,3 +304,58 @@ def test_verify_cases_only_match_verify_tickets() -> None:
     t = ticket(**SIGNALS["A1"])
     assert memory.classify(Ticket.model_validate(t)) is not None
     assert all(c.stage == "verify" for c in memory.cases if c.case_id.startswith("V"))
+
+
+# ---- 성능 정리(2026-11-14): playbook은 실제 게이트웨이 도구만, B2는 경고에 걸리지 않는다 ----
+
+
+def test_playbooks_only_name_tools_the_gateway_opens() -> None:
+    # read_build_logs · edit_repo_file · open_pr는 게이트웨이에 없다(BE/src/gateway/tools.ts).
+    for case in load_cases():
+        for step in case.playbook:
+            assert step.tool in GATEWAY_TOOLS, (case.case_id, step.tool)
+
+
+def test_repo_and_name_fixes_end_with_needs_user() -> None:
+    # 레포 수정 도구가 없고 name · slug는 시험할 수 없어(PATCH_FORBIDDEN) 학생에게 안내한다.
+    for case_id in ("B1", "B4", "R1"):
+        case = CaseMemory(load_cases()).get(case_id)
+        assert case is not None
+        last = case.playbook[-1]
+        assert last.tool == "submit_result" and "needs_user" in (last.when or "")
+        assert all("/name" not in json.dumps(s.args) for s in case.playbook)
+
+
+@pytest.mark.parametrize(
+    ("lines", "case_id"),
+    [
+        # npm의 engines 경고만 있고 실제 실패는 COPY 대상 없음(2026-11-14 bench/b5-copy-missing)
+        (
+            [
+                "npm warn EBADENGINE Unsupported engine {",
+                "npm warn EBADENGINE   required: { node: '18' },",
+                'ERROR: failed to solve: failed to compute cache key: "/dist": not found',
+            ],
+            "B5",
+        ),
+        (
+            [
+                "npm warn EBADENGINE Unsupported engine {",
+                "Error: Cannot find module '../lib/Helper'",
+            ],
+            "B4",
+        ),
+        (["SyntaxError: Unexpected token '<'", "Error: VITE_API_KEY is required"], "B3"),
+        (["npm error code EBADENGINE", "npm error engine Unsupported engine"], "B2"),
+    ],
+)
+def test_build_warnings_do_not_win_over_the_real_failure(lines: list[str], case_id: str) -> None:
+    case = CaseMemory(load_cases()).classify(Ticket.model_validate(ticket(**_build(*lines))))
+    assert case is not None and case.case_id == case_id
+
+
+def test_engine_warning_alone_is_not_a_node_version_failure() -> None:
+    lines = ["npm warn EBADENGINE Unsupported engine {", "added 0 packages in 120ms"]
+    assert (
+        CaseMemory(load_cases()).classify(Ticket.model_validate(ticket(**_build(*lines)))) is None
+    )

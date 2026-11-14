@@ -138,7 +138,11 @@ def test_a_playbook_run_logs_classification_model_calls_and_outcome(
     assert any(
         line.startswith("trace ticket=t_0013 act model=local name=function:") for line in out
     )
-    assert any(line.startswith("trace ticket=t_0013 act done model=local ran=") for line in out)
+    done = next(
+        line for line in out if line.startswith("trace ticket=t_0013 act done model=local ")
+    )
+    # 측정용 수: 모델 요청 4번(도구 3 + 결과 1), 토큰과 걸린 시간
+    assert " requests=4 in_tokens=" in done and " out_tokens=" in done and " seconds=" in done
     render = next(line for line in out if " tool=run_render " in line)
     assert render.endswith(
         "ok=True args=specPatch=[add /spec/services/0/env/DB_PASSWORD str; "
