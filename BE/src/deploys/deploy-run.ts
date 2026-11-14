@@ -9,7 +9,8 @@ export const STAGES = ['build', 'prepare', 'render', 'apply', 'verify', 'switch'
 export type Stage = (typeof STAGES)[number]
 export const isStage = (v: unknown): v is Stage => (STAGES as readonly unknown[]).includes(v)
 
-export type RunStatus = 'running' | 'fixing' | 'needs_user' | 'succeeded' | 'failed'
+/** queued: 시작했지만 차례가 오지 않았다(배포 대기열). 서버가 한 번에 하나씩 running으로 바꾼다. */
+export type RunStatus = 'queued' | 'running' | 'fixing' | 'needs_user' | 'succeeded' | 'failed'
 export type DeployStatus = RunStatus | 'not_started'
 
 /** 스테이지가 통과하면 다음 스테이지가 돈다. 마지막(switch)은 null: 완료다. */
@@ -44,6 +45,7 @@ const PLATFORM_MESSAGES: Record<string, string> = {
   SCHEDULING_FAILED: '클러스터에 자리가 없어 앱을 띄우지 못했습니다. 잠시 뒤 다시 시도해 주세요.',
   LIVE_SLOT_PROTECTED: '서비스 중인 슬롯을 보호하기 위해 배포를 중단했습니다. 운영자에게 알려 주세요.',
   UNEXPECTED_REFUSAL: '클러스터가 예상하지 못한 이유로 요청을 거절해 배포를 중단했습니다. 운영자에게 알려 주세요.',
+  PIPELINE_UNAVAILABLE: '배포 파이프라인을 시작하지 못했습니다. 잠시 뒤 다시 시도해 주세요.',
   TRAEFIK_UNREACHABLE: '동작 확인 중 공개 진입점(Traefik)에 닿지 못했습니다. 잠시 뒤 다시 시도해 주세요.',
   SWITCH_REFUSED: '공개 주소를 바꾸는 요청을 클러스터가 거절했습니다. 운영자에게 알려 주세요.',
   OPEN_MANIFEST_MISSING: '공개 주소를 바꾸는 데 필요한 파일이 없어 아무것도 바꾸지 않고 중단했습니다. 운영자에게 알려 주세요.',
@@ -102,6 +104,8 @@ export function buildSteps(status: DeployStatus, stage: Stage | null): { key: St
     state: i < at ? 'done' : i > at ? 'pending' : status === 'failed' ? 'failed' : 'active',
   }))
 }
+
+export const commitOf = (run: { input: Record<string, unknown> }) => (run.input as { commitSha: string }).commitSha
 
 export const publicUrl = (slug: string) => `https://${slug}.stairnoworks.com`
 

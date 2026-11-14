@@ -253,3 +253,18 @@ describe('SECRET_HASH_KEY', () => {
     expect(() => validateEnv({ ...base, SECRET_HASH_KEY: key })).not.toThrow(/kkkk/)
   })
 })
+
+describe('CLUSTER_FULL_PERCENT', () => {
+  it('defaults to 80 when unset or empty', () => {
+    expect(validateEnv(base).CLUSTER_FULL_PERCENT).toBe(80)
+    expect(validateEnv({ ...base, CLUSTER_FULL_PERCENT: '' }).CLUSTER_FULL_PERCENT).toBe(80)
+  })
+
+  it.each([['1', 1], ['65', 65], ['100', 100]])('reads %s', (value, expected) => {
+    expect(validateEnv({ ...base, CLUSTER_FULL_PERCENT: value }).CLUSTER_FULL_PERCENT).toBe(expected)
+  })
+
+  it.each(['0', '101', '-1', '80.5', '80%', 'abc'])('stops on %j', (value) => {
+    expect(() => validateEnv({ ...base, CLUSTER_FULL_PERCENT: value })).toThrow(/CLUSTER_FULL_PERCENT/)
+  })
+})

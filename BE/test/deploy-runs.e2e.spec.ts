@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } fr
 import { AgentClient } from '../src/deploys/agent.client.js'
 import { DeployConditionService } from '../src/deploys/deploy-condition.service.js'
 import { DeployPreparer } from '../src/deploys/deploy-preparer.js'
+import { DeployQueue, QUEUE_STALE_MS } from '../src/deploys/deploy-queue.js'
+import { ClusterCapacity } from '../src/k8s/cluster-capacity.js'
 import { ClusterError } from '../src/k8s/cluster-error.js'
 import { ClusterReader } from '../src/k8s/cluster-reader.js'
 import { DeploymentScaler } from '../src/k8s/deployment-scaler.js'
@@ -46,6 +48,8 @@ let podLog: string
 let clusterCalls: unknown[][]
 let scaled: { slug: string; name: string }[]
 let scaleFails: Record<string, Error>
+// 가짜 클러스터 사용률: true면 자리가 없다.
+let clusterFull: boolean
 let app: INestApplication<App>
 let logError: MockInstance<Logger['error']>
 
@@ -76,6 +80,7 @@ function rest(url: URL, init: RequestInit | undefined): Response {
   if (method === 'GET') {
     let out = rows.filter((r) => matches(r, url.searchParams))
     if (url.searchParams.get('order') === 'created_at.desc') out = [...out].sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))
+    if (url.searchParams.get('order') === 'created_at.asc') out = [...out].sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)))
     return Response.json(out.slice(0, Number(url.searchParams.get('limit') ?? out.length)))
   }
   if (method === 'PATCH') {
@@ -102,7 +107,7 @@ function rest(url: URL, init: RequestInit | undefined): Response {
     }
     if (table === 'deploy_runs') {
       if (rows.some((r) => r.deploy_id === input.deploy_id)) return conflict('deploy_runs_pkey')
-      if (rows.some((r) => r.slug === input.slug && ['running', 'fixing'].includes(r.status as string))) return conflict('deploy_runs_active_slug_idx')
+      if (rows.some((r) => r.slug === input.slug && ['queued', 'running', 'fixing'].includes(r.status as string))) return conflict('deploy_runs_active_slug_idx')
       const now = new Date().toISOString()
       Object.assign(input, { failure: null, ticket_id: null, gateway_token_hash: null, gateway_expires_at: null, images: null, created_at: now, updated_at: now })
     }
@@ -179,6 +184,7 @@ beforeEach(async () => {
   aiAnswer = () => Response.json({ ticketId: 't_x' }, { status: 202 })
   prepare = (id) => Promise.resolve(preparedFor(id))
   restOverride = undefined
+  clusterFull = false
   spaceDeployments = []
   slotPods = []
   podLog = ''
@@ -205,6 +211,8 @@ beforeEach(async () => {
           return Promise.resolve(podLog)
         },
       })
+      .overrideProvider(ClusterCapacity)
+      .useValue({ isFull: () => Promise.resolve(clusterFull) })
       .overrideProvider(DeploymentScaler)
       .useValue({
         scaleToZero: (slug: string, name: string) => {
@@ -454,6 +462,137 @@ describe('POST /api/deploys/:id/start with the real readiness check', () => {
   })
 })
 
+describe('deploy queue', () => {
+  const queue = () => app.get(DeployQueue)
+  const settle = async () => {
+    queue().kick()
+    await queue().idle()
+  }
+  // 시작하지 않고 곧바로 queued 기록을 둔다(타이머가 보는 줄).
+  const seedQueued = (slug: string, over: Row = {}) => {
+    const id = seedDeploy({ slug })
+    const now = new Date(Date.now() + clock * 1000).toISOString()
+    ;(db.deploy_runs ??= []).push({
+      deploy_id: id, user_id: USER, slug, target_slot: 'a', input: preparedFor(id).input, status: 'queued', stage: 'build',
+      failure: null, ticket_id: null, gateway_token_hash: null, gateway_expires_at: null, images: null, created_at: now, updated_at: now, ...over,
+    })
+    return id
+  }
+  const failBuild = (id: string) => notify({ deployId: id, stage: 'build', result: 'failed', failure: { code: 'CODEBUILD_API_ERROR', service: null, message: 'x' } })
+
+  it('runs one deploy at a time: the first of two projects runs and the second waits', async () => {
+    const first = seedDeploy({ slug: 'app-one' })
+    const second = seedDeploy({ slug: 'app-two' })
+    expect((await start(first)).body).toMatchObject({ status: 'running', stage: 'build' })
+    const res = await start(second)
+    expect(res.status).toBe(202)
+    expect(res.body).toEqual({ deployId: second, status: 'queued', stage: 'build', targetSlot: 'a' })
+    expect(callsTo(GOCD_URL)).toHaveLength(1)
+    const waiting = (await status(second)).body as StatusBody & { queue: unknown }
+    expect(waiting).toMatchObject({ status: 'queued', stage: 'build', queue: { position: 1, waitingForRoom: false } })
+    expect(stateLetters(waiting)).toBe('ddddappp')
+  })
+
+  it('starts the next deploy when the running one ends, oldest first', async () => {
+    const first = seedDeploy({ slug: 'app-one' })
+    await start(first)
+    const second = seedDeploy({ slug: 'app-two' })
+    const third = seedDeploy({ slug: 'app-three' })
+    await start(second)
+    await start(third)
+    expect(((await status(third)).body as { queue: unknown }).queue).toEqual({ position: 2, waitingForRoom: false })
+
+    await failBuild(first)
+    await queue().idle()
+    expect(run(second)).toMatchObject({ status: 'running', stage: 'build' })
+    expect(run(third).status).toBe('queued')
+    expect(callsTo(GOCD_URL)).toHaveLength(2)
+    expect(bodyOf(callsTo(GOCD_URL)[1])).toBeDefined()
+  })
+
+  it('answers 409 CLUSTER_FULL and records nothing when the cluster has no room', async () => {
+    clusterFull = true
+    const res = await start(seedDeploy())
+    expect(res.status).toBe(409)
+    expect(res.body).toEqual(errorBody('CLUSTER_FULL'))
+    expect(db.deploy_runs ?? []).toEqual([])
+    expect(callsTo(GOCD_URL)).toHaveLength(0)
+  })
+
+  it('keeps a queued deploy waiting while the cluster is full and sends it when there is room', async () => {
+    const id = seedQueued('app-one')
+    clusterFull = true
+    await settle()
+    expect(run(id).status).toBe('queued')
+    expect(callsTo(GOCD_URL)).toHaveLength(0)
+    expect(((await status(id)).body as { queue: unknown }).queue).toEqual({ position: 0, waitingForRoom: true })
+
+    clusterFull = false
+    await settle()
+    expect(run(id)).toMatchObject({ status: 'running', stage: 'build' })
+    expect(callsTo(GOCD_URL)).toHaveLength(1)
+  })
+
+  it('does not wait for a fixing run (the agent is working on it)', async () => {
+    seedQueued('app-one', { status: 'fixing', stage: 'apply' })
+    const id = seedQueued('app-two')
+    await settle()
+    expect(run(id).status).toBe('running')
+  })
+
+  it('closes a running deploy that has not changed for over 30 minutes as TIMED_OUT and goes on', async () => {
+    const stuck = seedQueued('app-one', { status: 'running', updated_at: new Date(Date.now() - QUEUE_STALE_MS - 1000).toISOString() })
+    const id = seedQueued('app-two')
+    await settle()
+    expect(run(stuck)).toMatchObject({ status: 'failed', failure: { code: 'TIMED_OUT', stage: 'build', service: null } })
+    expect(run(id).status).toBe('running')
+  })
+
+  it('does not close a stale-looking running deploy that a notice moved on right after it was read', async () => {
+    const stuck = seedQueued('app-one', { status: 'running', updated_at: new Date(Date.now() - QUEUE_STALE_MS - 1000).toISOString() })
+    const id = seedQueued('app-two')
+    let moved = false
+    // 대기열이 오래된 running을 읽은 직후, 빌드 알림이 그 실행을 prepare로 넘긴다.
+    restOverride = (table, method) => {
+      if (moved || table !== 'deploy_runs' || method !== 'GET') return undefined
+      moved = true
+      const row = db.deploy_runs.find((r) => r.deploy_id === stuck)!
+      const stale = { ...row }
+      Object.assign(row, { stage: 'prepare', updated_at: new Date().toISOString() })
+      return Response.json([stale])
+    }
+    await settle()
+    expect(run(stuck)).toMatchObject({ status: 'running', stage: 'prepare', failure: null })
+    expect(run(id).status).toBe('queued')
+  })
+
+  it('waits behind a running deploy that changed within 30 minutes', async () => {
+    seedQueued('app-one', { status: 'running', updated_at: new Date(Date.now() - QUEUE_STALE_MS + 60_000).toISOString() })
+    const id = seedQueued('app-two')
+    await settle()
+    expect(run(id).status).toBe('queued')
+  })
+
+  it('ends a deploy as failed PIPELINE_UNAVAILABLE when GoCD does not take it, and goes on to the next', async () => {
+    const broken = seedQueued('app-one')
+    const next = seedQueued('app-two')
+    let calls = 0
+    gocdAnswer = () => (++calls === 1 ? new Response('{}', { status: 500 }) : new Response('{}', { status: 202 }))
+    await settle()
+    expect(run(broken)).toMatchObject({ status: 'failed', failure: { code: 'PIPELINE_UNAVAILABLE', stage: 'build', service: null } })
+    expect(((await status(broken)).body as StatusBody).failure?.message).toContain('파이프라인')
+    expect(run(next).status).toBe('running')
+  })
+
+  it('does not take a deploy another request already moved on', async () => {
+    const id = seedQueued('app-one')
+    restOverride = (table, method) => (table === 'deploy_runs' && method === 'PATCH' ? Response.json([]) : undefined)
+    await settle()
+    expect(callsTo(GOCD_URL)).toHaveLength(0)
+    expect(run(id).status).toBe('queued')
+  })
+})
+
 describe('GET /api/deploys/:id/status', () => {
   it('shows a saved deploy that was not started as waiting at the secrets step', async () => {
     const id = seedDeploy()
@@ -478,6 +617,7 @@ describe('GET /api/deploys/:id/status', () => {
       url: null,
       // 시험 서버에는 TRIVY_CACHE_DIR이 없어 보안 검사를 돌리지 않는다. 그 사실을 경고로 알린다("문제 없음"이 아니다).
       warnings: [{ code: 'SCAN_UNAVAILABLE', message: '이 서버에는 보안 검사가 설정되어 있지 않아 검사하지 못했어요.', service: null }],
+      queue: null,
       updatedAt: '2026-11-11T01:00:00.000Z',
     })
   })

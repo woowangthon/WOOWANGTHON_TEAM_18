@@ -212,12 +212,32 @@ export class DeploysStore {
     return rows[0]
   }
 
-  /** 이 프로젝트에서 진행 중(running · fixing)인 실행. 없으면 undefined. */
-  async findActiveRun(slug: string): Promise<DeployRunRow | undefined> {
-    const rows = await this.call('deploy_runs', 'GET', { select: '*', slug: `eq.${slug}`, status: 'in.(running,fixing)', limit: '1' })
+  private async firstRun(query: Record<string, string>): Promise<DeployRunRow | undefined> {
+    const rows = await this.call('deploy_runs', 'GET', { select: '*', ...query, limit: '1' })
     if (rows.length === 0) return undefined
     if (!isRunRow(rows[0])) throw this.unreadable('deploy_runs', 'GET')
     return rows[0]
+  }
+
+  /** 이 프로젝트에서 진행 중(queued · running · fixing)인 실행. 없으면 undefined. */
+  findActiveRun(slug: string): Promise<DeployRunRow | undefined> {
+    return this.firstRun({ slug: `eq.${slug}`, status: 'in.(queued,running,fixing)' })
+  }
+
+  /** 파이프라인이 돌고 있는 실행(대기열은 한 번에 하나만 출발시킨다). 없으면 undefined. */
+  findRunning(): Promise<DeployRunRow | undefined> {
+    return this.firstRun({ status: 'eq.running', order: 'created_at.asc' })
+  }
+
+  /** 가장 오래 기다린 queued 실행. 없으면 undefined. */
+  findOldestQueued(): Promise<DeployRunRow | undefined> {
+    return this.firstRun({ status: 'eq.queued', order: 'created_at.asc' })
+  }
+
+  /** 이 실행 앞에 있는 배포의 수: 먼저 시작한 queued와 지금 도는 running. */
+  async lineAhead(run: DeployRunRow): Promise<number> {
+    const rows = await this.call('deploy_runs', 'GET', { select: 'deploy_id,status,created_at', status: 'in.(queued,running)' })
+    return rows.filter((r) => isRecord(r) && (r.status === 'running' || (r.status === 'queued' && Date.parse(String(r.created_at)) < Date.parse(run.created_at)))).length
   }
 
   /** 프로젝트에서 마지막으로 성공한 실행(live 슬롯에 떠 있는 배포 입력). 없으면 undefined. */
@@ -245,12 +265,13 @@ export class DeploysStore {
 
   /**
    * 조건이 맞는 실행 기록만 바꾼다(읽고 쓰는 사이에 다른 알림이 먼저 바꿨다면 아무것도 바꾸지 않는다). 바꿨으면 true.
-   * `where`의 값은 우리 코드의 상수다.
+   * `where`의 값은 우리 코드의 상수이거나, `updatedAt`처럼 방금 읽은 기록의 값이다.
    */
-  async updateRun(deployId: string, where: { status?: RunStatus; stage?: Stage }, patch: RunPatch): Promise<boolean> {
+  async updateRun(deployId: string, where: { status?: RunStatus; stage?: Stage; updatedAt?: string }, patch: RunPatch): Promise<boolean> {
     const query: Record<string, string> = { deploy_id: `eq.${deployId}`, select: 'deploy_id' }
     if (where.status) query.status = `eq.${where.status}`
     if (where.stage) query.stage = `eq.${where.stage}`
+    if (where.updatedAt) query.updated_at = `eq.${where.updatedAt}`
     const rows = await this.call('deploy_runs', 'PATCH', query, { ...patch, updated_at: new Date().toISOString() })
     return rows.length > 0
   }

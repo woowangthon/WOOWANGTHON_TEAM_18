@@ -22,7 +22,7 @@ export function groupProjects(deploys: DeployListItem[]): Project[] {
   )
 }
 
-// 실행 중 = 최신 배포가 완료. 진행 중 = running · fixing. 확인 필요 = failed · needs_user.
+// 실행 중 = 최신 배포가 완료. 진행 중 = queued · running · fixing. 확인 필요 = failed · needs_user.
 // 시작 전(not_started)은 전체에만 든다. 알 수 없는 상태도 어느 칸에도 넣지 않는다(지어내지 않는다).
 export function countProjects(projects: Project[]): ProjectCounts {
   const count = (statuses: string[]) =>
@@ -30,7 +30,7 @@ export function countProjects(projects: Project[]): ProjectCounts {
   return {
     total: projects.length,
     running: count(['succeeded']),
-    inProgress: count(['running', 'fixing']),
+    inProgress: count(['queued', 'running', 'fixing']),
     needsAttention: count(['failed', 'needs_user']),
   }
 }

@@ -49,16 +49,26 @@ it('leaves a stage the server did not mention, or gave a value we do not know, a
   expect(states.done).toBe('pending')
 })
 
-it('polls only while the deploy is running or being fixed', () => {
-  const polled: DeployStatus[] = ['running', 'fixing']
-  const all: DeployStatus[] = ['not_started', 'running', 'fixing', 'needs_user', 'succeeded', 'failed']
+it('polls only while the deploy is waiting, running or being fixed', () => {
+  const polled: DeployStatus[] = ['queued', 'running', 'fixing']
+  const all: DeployStatus[] = ['not_started', 'queued', 'running', 'fixing', 'needs_user', 'succeeded', 'failed']
   expect(all.filter(isActive)).toEqual(polled)
 })
 
 it('keeps polling a status it does not know, and labels it with the raw value', () => {
-  expect(isActive('queued')).toBe(true)
-  expect(statusLabel('queued')).toBe('queued')
-  expect(statusVariant('queued')).toBe('neutral')
+  expect(isActive('paused')).toBe(true)
+  expect(statusLabel('paused')).toBe('paused')
+  expect(statusVariant('paused')).toBe('neutral')
+})
+
+it('labels a waiting deploy and shows its build stage as waiting for its turn', () => {
+  expect(statusLabel('queued')).toBe('배포 대기')
+  expect(statusVariant('queued')).toBe('info')
+  const atBuild = steps({
+    intake: 'done', analysis: 'done', config: 'done', secrets: 'done', build: 'active',
+    deploy: 'pending', verify: 'pending', done: 'pending',
+  })
+  expect(stageStatesOf({ status: 'queued', steps: atBuild })).toMatchObject({ secrets: 'done', build: 'queued', deploy: 'pending' })
 })
 
 it('counts a failure as the platform fault unless the code is one of the student-side codes', () => {

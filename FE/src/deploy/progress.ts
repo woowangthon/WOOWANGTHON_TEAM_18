@@ -2,7 +2,7 @@ import { STAGES } from './stages.ts'
 import type { StageKey, StageState } from './stages.ts'
 
 // BE의 배포 시작 · 진행 상태 계약(이슈 #44 · #98, docs/design/api.md "배포 시작 · 진행 상태")의 응답 모양.
-export type DeployStatus = 'not_started' | 'running' | 'fixing' | 'needs_user' | 'succeeded' | 'failed'
+export type DeployStatus = 'not_started' | 'queued' | 'running' | 'fixing' | 'needs_user' | 'succeeded' | 'failed'
 
 export type DeployFailure = { code: string; stage: string; service: string | null; message: string }
 
@@ -29,6 +29,8 @@ export type Progress = {
   url: string | null
   // 보안 검사 경고(#45). 배포를 막지 않는다. message는 그대로 보여 줘도 되는 문장이다. 빈 배열은 검사가 끝나고 문제가 없다는 뜻이다(검사 중 · 실패 · 미설정은 항목으로 온다).
   warnings: DeployWarning[]
+  // 배포 대기(queued)일 때만 온다. position은 앞에 있는 배포 수, waitingForRoom은 클러스터에 자리가 없어 기다리는 중. 이 칸이 없던 응답도 같은 뜻(없음)으로 읽는다.
+  queue?: { position: number; waitingForRoom: boolean } | null
   updatedAt: string
 }
 
@@ -54,6 +56,8 @@ export const statusLabel = (status: string) => {
   switch (status) {
     case 'not_started':
       return '시작 전'
+    case 'queued':
+      return '배포 대기'
     case 'running':
       return '진행 중'
     case 'fixing':
@@ -84,8 +88,9 @@ export const isPlatformProblem = (code: string) => !NOT_PLATFORM.includes(code)
 // 그때 하는 중인 단계는 active로 남기므로, 그 단계에 상태를 겹친다. 시작 전의 active(비밀값)는 사용자가 할 차례라는 뜻이다.
 // 서버가 모르는 key나 값을 주면 그 단계는 대기로 둔다(그리지 못하는 단계가 없게).
 export function stageStatesOf({ status, steps }: Pick<Progress, 'status' | 'steps'>): Record<StageKey, StageState> {
+  // 배포 대기: 서버는 빌드 단계를 active로 주지만 아직 시작하지 않았다.
   const activeState: StageState =
-    status === 'fixing' ? 'fixing' : status === 'needs_user' || status === 'not_started' ? 'action' : 'active'
+    status === 'queued' ? 'queued' : status === 'fixing' ? 'fixing' : status === 'needs_user' || status === 'not_started' ? 'action' : 'active'
   const stateOf = (key: StageKey): StageState => {
     switch (steps.find((step) => step.key === key)?.state) {
       case 'done':
@@ -105,6 +110,7 @@ export const statusVariant = (status: string) => {
   switch (status) {
     case 'succeeded':
       return 'ok'
+    case 'queued':
     case 'running':
     case 'fixing':
       return 'info'

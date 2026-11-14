@@ -411,7 +411,7 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
 
 **상태 값**
 
-`status`: `not_started`(저장만 했고 시작하지 않음) · `running` · `fixing`(문제 해결 중: 문제 티켓을 AI 서버가 받아 처리하는 중) · `needs_user`(사용자 조치 필요) · `succeeded` · `failed`. `not_started`만 실행 기록 행이 없는 상태다. `needs_user`는 AI 에이전트의 해결 결과를 받는 쪽(별도 이슈)이 정하므로 이 이슈의 코드는 내지 않는다. 배포 대기(FR-054)도 슬롯 대기가 생기면 추가하고 지금은 내지 않는다.
+`status`: `not_started`(저장만 했고 시작하지 않음) · `queued`(배포 대기: 시작했지만 차례가 오지 않음, FR-054) · `running` · `fixing`(문제 해결 중: 문제 티켓을 AI 서버가 받아 처리하는 중) · `needs_user`(사용자 조치 필요) · `succeeded` · `failed`. `not_started`만 실행 기록 행이 없는 상태다. `needs_user`는 AI 에이전트의 해결 결과를 받는 쪽(별도 이슈)이 정하므로 이 이슈의 코드는 내지 않는다. `queued`는 배포 대기열이 낸다([배포 워크플로우](deploy-workflow.md) "배포 대기열").
 
 `stage`(지금 도는 파이프라인 스테이지): `build` · `prepare` · `render` · `apply` · `verify` · `switch`. 시작 전이거나 끝난 뒤(`succeeded`)는 `null`이다. 실패하면 실패한 스테이지가 남는다.
 
@@ -419,21 +419,23 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
 
 - 배포 입력이 저장돼 있으면 `intake` · `analysis` · `config`는 `done`이다.
 - `secrets`는 시작 전에는 `active`, 시작한 뒤에는 `done`이다(시작은 비밀값이 준비된 때만 받는다).
+- `queued`이면 `stage`는 `build`이고 `build` 단계가 `active`다(FE가 "배포 대기"로 보여 준다).
 - `stage`가 `build`면 빌드, `prepare` · `render` · `apply`면 배포, `verify`면 동작 확인, `switch`면 완료 단계가 `active`다(그 앞 단계는 `done`, 뒤는 `pending`). `succeeded`면 모두 `done`.
 - `failed`이면 실패한 스테이지가 속한 단계가 `failed`다. `fixing`이면 그 단계가 `active`로 남는다(해결 중).
 
 ### `POST /api/deploys/:id/start` — 배포 시작 (소유자만)
 
-요청 본문은 없어도 되고 `{}`(JSON)도 받는다. 응답 `202`: `{ "deployId", "status": "running", "stage": "build", "targetSlot": "a" | "b" }`. GoCD 파이프라인을 실행하고 바로 돌려준다(끝나기를 기다리지 않는다). FE는 이어서 `GET /api/deploys/:id/status`를 다시 읽는다.
+요청 본문은 없어도 되고 `{}`(JSON)도 받는다. 응답 `202`: `{ "deployId", "status": "queued" | "running", "stage": "build", "targetSlot": "a" | "b" }`. 실행 기록을 `queued`로 저장해 대기열에 세우고, 바로 출발할 수 있으면(도는 배포가 없고 클러스터에 자리가 있음) 그 자리에서 `running`으로 바꾸며 GoCD 파이프라인을 실행한 뒤 돌려준다. 아니면 `queued`로 돌려주고 차례가 오면 서버가 파이프라인을 실행한다(끝나기를 기다리지 않는다). FE는 이어서 `GET /api/deploys/:id/status`를 다시 읽는다.
 
-서버가 확인하는 것(순서대로): 내 배포인지(`404`) → 준비 상태가 "준비됨"인지(비밀값 · 필수 env, #82) → 배포 입력과 대상 슬롯을 만들고(`prepare`, #93) → 같은 프로젝트(`slug`)의 배포가 진행 중이 아닌지 → 실행 기록 저장 → 파이프라인 실행.
+서버가 확인하는 것(순서대로): 내 배포인지(`404`) → 이미 시작했는지 → 클러스터에 자리가 있는지(`409 CLUSTER_FULL`) → 준비 상태가 "준비됨"인지(비밀값 · 필수 env, #82) → 배포 입력과 대상 슬롯을 만들고(`prepare`, #93) → 같은 프로젝트(`slug`)의 배포가 줄에 있거나 진행 중이 아닌지 → 실행 기록을 `queued`로 저장 → 대기열이 차례대로 파이프라인 실행.
 
 오류:
 - `401` · `404 DEPLOY_NOT_FOUND`: 위와 같다(남의 배포 포함)
 - `409 NOT_READY`: 준비가 안 됐다. 빠진 항목은 다른 검증 오류처럼 `error.fields`에 칸마다 `{ path: "secrets.<service>.<KEY>", code: "REQUIRED" }`로 온다(#82의 `DeployReadinessService`가 낸다)
-- `409 DEPLOY_IN_PROGRESS`: 같은 프로젝트의 다른 배포가 `running` · `fixing`이다. 그 실행이 1시간 넘게 바뀌지 않았으면 끝난 것으로 보고 `failed`(`TIMED_OUT`)로 마감한 뒤 이 배포를 시작한다(알림이 오지 않거나 `fixing`을 풀 해결 결과 처리가 없어도 프로젝트가 영영 막히지 않게)
+- `409 CLUSTER_FULL`: 클러스터에 새 배포가 들어갈 자리가 없다(워커 노드의 CPU · 메모리 사용률 중 큰 값이 `CLUSTER_FULL_PERCENT`(기본 80) 이상). 실행 기록을 남기지 않으므로 잠시 뒤 같은 요청을 다시 보내면 된다. 사용률을 읽지 못하면(지표 서버 문제) 막지 않는다
+- `409 DEPLOY_IN_PROGRESS`: 같은 프로젝트의 다른 배포가 `queued` · `running` · `fixing`이다. 그 실행이 1시간 넘게 바뀌지 않았으면 끝난 것으로 보고 `failed`(`TIMED_OUT`)로 마감한 뒤 이 배포를 시작한다(알림이 오지 않거나 `fixing`을 풀 해결 결과 처리가 없어도 프로젝트가 영영 막히지 않게)
 - `409 ALREADY_STARTED`: 이 배포는 이미 시작했다(다시 배포하려면 새로 저장한다)
-- `503 PIPELINE_UNAVAILABLE`: GoCD에 닿지 못했거나 거절했다. 실행 기록은 남기지 않으므로 같은 요청을 다시 보내도 된다
+- `503 PIPELINE_UNAVAILABLE`: 바로 출발할 수 있었는데 GoCD에 닿지 못했거나 거절했다. 실행 기록은 남기지 않으므로 같은 요청을 다시 보내도 된다. (이미 `queued`로 기다리던 배포가 나중에 출발할 때 GoCD가 받지 않으면 요청이 끝난 뒤이므로 `failed`(`PIPELINE_UNAVAILABLE`)로 마감한다)
 - `503 DATABASE_UNAVAILABLE`
 
 ### `GET /api/deploys/:id/status` — 진행 상태 읽기 (소유자만)
@@ -459,12 +461,14 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
   "agent": null,
   "url": null,
   "warnings": [],
+  "queue": null,
   "updatedAt": "2026-11-11T01:00:00.000Z"
 }
 ```
 
+- `queue`: `status`가 `queued`일 때만 `{ "position": number, "waitingForRoom": boolean }`, 아니면 `null`. `position`은 앞에 있는 배포의 수(먼저 시작한 `queued`와 지금 도는 `running`)이고 0이면 다음 차례다. `waitingForRoom`이 `true`이면 차례인데 클러스터에 자리가 없어 기다리는 중이다(마지막 확인 값, 10초 안에 읽은 것).
 - `failure`: `status`가 `failed`이거나 `fixing` · `needs_user`면 `{ "code", "stage", "service", "message" }`, 아니면 `null`. `message`는 학생에게 그대로 보여 줘도 되는 고정 문장이고 로그 · 원본 · 비밀값을 담지 않는다. `service`는 모르면 `null`.
-- `failure.code`: `BUILD_FAILED` · `DEPLOY_FAILED`(prepare · render · apply) · `VERIFY_FAILED` · `SWITCH_FAILED` · 플랫폼 문제(코드는 열려 있다: `^[A-Za-z][A-Za-z0-9_]{2,63}$`면 받는다. 예: `CODEBUILD_API_ERROR` · `IMAGE_PULL_FAILED` · `LIVE_SLOT_PROTECTED` · `STAGE_NO_REPORT`(스테이지의 결과 파일이 없거나 읽을 수 없음) · `BUILD_WAIT_TIMEOUT` · `NO_IMAGE_DIGEST` · `CHART_RENDER_FAILED` · `SPACE_MISSING` · `K8S_UNREACHABLE`. AI를 부르지 않고 실패로 마감하며, 모르는 코드는 일반 문구로 보여 준다) · `AGENT_UNAVAILABLE`(AI 서버가 티켓을 받지 못함) · `TIMED_OUT`(진행 중인 실행이 1시간 넘게 아무 알림 없이 멈춰 있어 중단함).
+- `failure.code`: `BUILD_FAILED` · `DEPLOY_FAILED`(prepare · render · apply) · `VERIFY_FAILED` · `SWITCH_FAILED` · 플랫폼 문제(코드는 열려 있다: `^[A-Za-z][A-Za-z0-9_]{2,63}$`면 받는다. 예: `CODEBUILD_API_ERROR` · `IMAGE_PULL_FAILED` · `LIVE_SLOT_PROTECTED` · `STAGE_NO_REPORT`(스테이지의 결과 파일이 없거나 읽을 수 없음) · `BUILD_WAIT_TIMEOUT` · `NO_IMAGE_DIGEST` · `CHART_RENDER_FAILED` · `SPACE_MISSING` · `K8S_UNREACHABLE`. AI를 부르지 않고 실패로 마감하며, 모르는 코드는 일반 문구로 보여 준다) · `AGENT_UNAVAILABLE`(AI 서버가 티켓을 받지 못함) · `TIMED_OUT`(진행 중인 실행이 1시간 넘게 아무 알림 없이 멈춰 있어 중단함. 대기열이 보는 `running`은 30분) · `PIPELINE_UNAVAILABLE`(대기열이 출발시키려 했지만 GoCD가 받지 않음).
 - `failure.code`에 `AGENT_GAVE_UP`(AI 에이전트가 해결하지 못하고 결과를 냄)도 있다.
 - `agent`: AI 에이전트가 이 실행에 해결 결과(`submit_result`)를 냈으면 `{ "status", "summary", "userRequest": { "message", "secretKeys" } | null, "prUrl": string | null, "evidence": [{ "ref", "text" }] }`, 아니면 `null`. `status`는 `verified` · `pr_opened` · `needs_user` · `gave_up`이다. 학생에게 무엇을 했고(`summary`) 무엇을 해 달라는지(`userRequest`) 보여 주려는 것이다. 외부 전송 필터를 한 번 더 거친 값이고 도구 호출 원본 · 로그는 담지 않는다. `secretKeys`는 다시 넣어야 할 비밀값 key 이름(값 아님)이고 없으면 `[]`, `evidence`는 없으면 `[]`, `ref` · `text`는 없으면 `null`.
 - `url`: `succeeded`면 `https://<slug>.stairnoworks.com`, 아니면 `null`.
@@ -473,7 +477,7 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
   - 코드: `SECRET_FOUND`(파일 · 줄 · gitleaks 규칙), `ENV_FILE_COMMITTED`(커밋된 `.env` · `.env.*`. 예시 파일 `.example` · `.sample` · `.template` · `.dist`는 뺀다. 빌드에서 빼지는 않는다), `VULNERABLE_DEPENDENCY`(락 파일 · 패키지 · 버전마다 한 줄, 취약점 수 · 가장 높은 심각도 · ID 최대 3개 · 고친 버전), `MORE_FINDINGS`(20줄을 넘으면 마지막 줄이 남은 수), `SCAN_RUNNING`(검사 중. 진행 상태 polling이 멈춘 뒤라면 새로 고침해야 보인다), `SCAN_FAILED`(검사가 끝나지 못했거나 기록을 읽지 못함. "문제 없음"이 아니다), `SCAN_UNAVAILABLE`(서버에 검사가 설정되지 않음, `TRIVY_CACHE_DIR`).
   - 순서: 비밀값 → `.env` → 취약한 패키지(CRITICAL이 있는 것 먼저). 깨끗한 레포는 `[]`다.
   - 검사 기록이 없는 배포(이 기능 전에 저장한 배포)는 읽을 때 검사를 시작하고 `SCAN_RUNNING`을 돌려준다. 15분 넘게 `running`인 기록은 서버가 멈춘 것으로 보고 다시 검사한다.
-- **갱신**: FE가 `running` · `fixing`인 동안 3초마다 다시 읽는다(polling). `succeeded` · `failed` · `needs_user`면 멈춘다. 응답은 작게 유지한다(원본 · 로그 없음). SSE · WebSocket은 MVP 밖이다.
+- **갱신**: FE가 `queued` · `running` · `fixing`인 동안 3초마다 다시 읽는다(polling). `succeeded` · `failed` · `needs_user`면 멈춘다. 응답은 작게 유지한다(원본 · 로그 없음). SSE · WebSocket은 MVP 밖이다.
 
 오류: `401`, `404 DEPLOY_NOT_FOUND`(없는 id · 남의 id · UUID가 아닌 id 모두), `503 DATABASE_UNAVAILABLE`.
 

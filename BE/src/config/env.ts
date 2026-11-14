@@ -34,6 +34,8 @@ export interface Env {
   K8S_CA_CERT: string | undefined
   /** Trivy 취약점 DB 폴더(절대 경로). 비어 있으면 보안 검사(UC-10)를 돌리지 않고, 진행 상태에 SCAN_UNAVAILABLE을 보인다. 운영은 Infra/aws/deploy-be.sh가 넣는다. */
   TRIVY_CACHE_DIR: string | undefined
+  /** 워커 노드의 CPU · 메모리 사용률(%) 중 큰 값이 이 값 이상이면 클러스터에 자리가 없는 것으로 본다(배포 시작은 409 CLUSTER_FULL, 대기열은 출발하지 않는다). 1–100, 기본 80. */
+  CLUSTER_FULL_PERCENT: number
 }
 
 // 값이 틀리면 부팅을 멈춘다. 틀린 설정으로 뜬 서버가 조용히 다르게 동작하지 않게 한다.
@@ -56,7 +58,15 @@ export function validateEnv(raw: Record<string, string | undefined>): Env {
     GATEWAY_PORT: parseGatewayPort(raw.GATEWAY_PORT, raw.PORT),
     ...parseCluster(raw),
     TRIVY_CACHE_DIR: parseOptionalDir(raw.TRIVY_CACHE_DIR, 'TRIVY_CACHE_DIR'),
+    CLUSTER_FULL_PERCENT: parseClusterFullPercent(raw.CLUSTER_FULL_PERCENT),
   }
+}
+
+function parseClusterFullPercent(value: string | undefined): number {
+  if (value === undefined || value === '') return 80
+  const percent = /^\d+$/.test(value) ? Number(value) : NaN
+  if (!(percent >= 1 && percent <= 100)) throw new Error(`CLUSTER_FULL_PERCENT must be an integer from 1 to 100, got "${value}"`)
+  return percent
 }
 
 function parseGatewayPort(value: string | undefined, publicPort: string | undefined): number | undefined {
