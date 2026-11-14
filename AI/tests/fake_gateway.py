@@ -54,8 +54,11 @@ DEFAULTS: dict[str, Json] = {
 }
 
 
-def reject(code: str, message: str = "rejected") -> Json:
-    return {"__reject__": {"code": code, "message": message}}
+def reject(code: str, message: str = "rejected", fields: list[Json] | None = None) -> Json:
+    body: Json = {"code": code, "message": message}
+    if fields is not None:
+        body["fields"] = fields
+    return {"__reject__": body}
 
 
 class _FakeToolset(GatewayToolset):

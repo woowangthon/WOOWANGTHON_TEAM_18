@@ -101,11 +101,15 @@ class GatewayToolset(MCPToolset[Any]):
         if result.is_error:
             code = str((content or {}).get("code", "UNKNOWN"))
             message = str((content or {}).get("message", ""))
-            self.actions.append(
-                Action(tool=name, args=args, ok=False, result=f"rejected {code}: {message}")
-            )
-            # 거절 메시지는 값을 되풀이할 수 있어 싣지 않는다. 코드와 칸별 오류(경로 · 코드)만.
+            # 칸별 오류(경로 · 코드). INVALID_SPEC은 메시지가 "see fields"뿐이라
+            # 이것이 없으면 모델이 무엇이 틀렸는지 모른 채 같은 패치를 되풀이한다
+            # (2026-11-14 리허설: 포트를 문자열로 네 번).
             fields = fields_shape((content or {}).get("fields"))
+            detail = message if fields == "-" else f"{message} (fields: {fields})"
+            self.actions.append(
+                Action(tool=name, args=args, ok=False, result=f"rejected {code}: {detail}")
+            )
+            # 추적 로그에는 거절 메시지를 싣지 않는다(값을 되풀이할 수 있다). 코드와 칸별 오류만.
             trace(
                 self.trace_id,
                 f"tool={clean(name)} rejected={clean(code)} fields={fields} "
@@ -113,7 +117,7 @@ class GatewayToolset(MCPToolset[Any]):
             )
             if code in STOP_CODES:
                 raise GatewayStop(code, message)
-            raise ModelRetry(f"gateway rejected {name}: {code}: {message}")
+            raise ModelRetry(f"gateway rejected {name}: {code}: {detail}")
         ok = content.get("ok", True) if isinstance(content, dict) else True
         self.actions.append(Action(tool=name, args=args, ok=bool(ok), result=_short(content)))
         trace(self.trace_id, f"tool={clean(name)} ok={bool(ok)} args={args_shape(args)}")

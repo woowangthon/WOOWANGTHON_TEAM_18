@@ -148,7 +148,9 @@ def classify_prompt(ticket: Ticket, notes: list[str], cases: list[Case]) -> str:
 def playbook_prompt(ticket: Ticket, notes: list[str], case: Case) -> str:
     return (
         f"{_case(case)}\n\nFollow the playbook steps in order. A `when` says when a step applies; "
-        "placeholders like {i} or {listenPort} are for you to fill from the evidence.\n\n"
+        "placeholders like {i} or {listenPort} are for you to fill from the evidence. "
+        "Fill a placeholder with a value of the JSON type that field takes: ports and counts are "
+        'numbers (3000, not "3000"); the quotes around a placeholder are not part of the value.\n\n'
         f"{digest(ticket, notes)}"
     )
 
