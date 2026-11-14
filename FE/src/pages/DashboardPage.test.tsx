@@ -107,7 +107,15 @@ it('shows a loading state, then an empty state with no tiles when there are no d
 })
 
 it('says the list failed to load (not "no deploys") and retries', async () => {
-  api.apiFetch.mockRejectedValueOnce(new Error('down')).mockResolvedValue({ deploys: [run('1', 'a', 'succeeded', '2026-11-13T10:00:00Z')] })
+  // 운영 알림도 같은 apiFetch로 읽으므로, 처음 실패하는 것은 배포 목록(경로)에만 건다.
+  let deployReads = 0
+  api.apiFetch.mockImplementation((path: string) => {
+    if (path === '/api/incidents') return Promise.resolve({ incidents: [] })
+    deployReads += 1
+    return deployReads === 1
+      ? Promise.reject(new Error('down'))
+      : Promise.resolve({ deploys: [run('1', 'a', 'succeeded', '2026-11-13T10:00:00Z')] })
+  })
   show()
   expect(await screen.findByText('배포 목록을 불러오지 못했어요')).toBeTruthy()
   expect(screen.queryByText('아직 배포가 없어요.')).toBeNull()
@@ -135,4 +143,33 @@ it('shows no GitHub notice when linked or when the link state cannot be read', a
     expect(screen.getAllByText('아직 배포가 없어요.').length).toBe(2)
   })
   expect(screen.queryByText('GitHub 미연동')).toBeNull()
+})
+
+it('shows an operations alert above the projects, and nothing when there are none', async () => {
+  const alert = {
+    id: 'i-1',
+    slug: 'shop',
+    alertname: 'PodMemoryHigh',
+    title: '메모리 사용량이 너무 높아요',
+    state: 'firing',
+    firedAt: '2026-11-14T01:00:00.000Z',
+    resolvedAt: null,
+    action: 'auto_stopped',
+    ai: { status: 'done', risk: 'high', recommendation: 'stop', cause: '메모리가 계속 늘었어요', reason: null, model: 'local' },
+    decidedAt: '2026-11-14T01:01:00.000Z',
+  }
+  api.apiFetch.mockImplementation((path: string) =>
+    Promise.resolve(path === '/api/incidents' ? { incidents: [alert] } : { deploys: [run('1', 'shop', 'succeeded', '2026-11-13T10:00:00Z')] }),
+  )
+  const { unmount } = show()
+  expect(await screen.findByText('서비스를 멈췄어요')).toBeTruthy()
+  expect(screen.getByText(/AI가 본 원인: 메모리가 계속 늘었어요/)).toBeTruthy()
+  unmount()
+
+  api.apiFetch.mockImplementation((path: string) =>
+    Promise.resolve(path === '/api/incidents' ? { incidents: [] } : { deploys: [run('1', 'shop', 'succeeded', '2026-11-13T10:00:00Z')] }),
+  )
+  show()
+  await screen.findByRole('list')
+  expect(screen.queryByText('서비스를 멈췄어요')).toBeNull()
 })

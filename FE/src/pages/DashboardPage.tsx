@@ -8,6 +8,7 @@ import { countProjects, groupProjects } from '../deploy/projects.ts'
 import type { Project, ProjectCounts } from '../deploy/projects.ts'
 import StatusBadge from '../deploy/StatusBadge.tsx'
 import { useDeploys } from '../deploy/useDeploys.ts'
+import IncidentNotice from '../incidents/IncidentNotice.tsx'
 import { useGithubLink } from './useGithubLink.ts'
 
 const tiles: { key: keyof ProjectCounts; label: string }[] = [
@@ -83,6 +84,8 @@ function DashboardPage() {
           </p>
         </NoticeBanner>
       )}
+
+      <IncidentNotice />
 
       {state.status === 'loading' && <LoadingBlock />}
 

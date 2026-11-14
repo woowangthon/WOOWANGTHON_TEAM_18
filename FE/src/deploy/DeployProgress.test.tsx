@@ -16,6 +16,9 @@ vi.mock('../lib/api.ts', async (importOriginal) => ({
 // 서비스 상태 카드는 자기 시험(ServiceStatus.test.tsx)이 있다. 여기서는 어느 상태에서 나오는지만 본다.
 vi.mock('./ServiceStatus.tsx', () => ({ default: ({ deployId }: { deployId: string }) => <p>서비스 상태 카드 {deployId}</p> }))
 
+// 운영 알림 배너는 자기 시험(incidents/IncidentNotice.test.tsx)이 있다. 여기서는 어느 배포의 것으로 부르는지만 본다.
+vi.mock('../incidents/IncidentNotice.tsx', () => ({ default: ({ deployId }: { deployId: string }) => <p>운영 알림 {deployId}</p> }))
+
 const ID = '0b6f0c1e-4a52-4d8e-9a1b-3f7d2c5e8a90'
 const STATUS = `/api/deploys/${ID}/status`
 const START = `/api/deploys/${ID}/start`
@@ -457,6 +460,24 @@ it('shows the service status card only for a succeeded deploy', async () => {
   api.apiFetch.mockResolvedValue(progressOf('succeeded', null, { url: 'https://my-app.example.com' }))
   await show()
   expect(screen.getByText(`서비스 상태 카드 ${ID}`)).toBeTruthy()
+})
+
+it('shows the operations alerts of this deploy in every status, and not while the status is still loading', async () => {
+  api.apiFetch.mockReturnValue(new Promise(() => undefined))
+  const loading = render(
+    <MemoryRouter>
+      <DeployProgress deployId={ID} />
+    </MemoryRouter>,
+  )
+  expect(screen.queryByText(/운영 알림/)).toBeNull()
+  loading.unmount()
+
+  for (const status of ['running', 'succeeded', 'failed'] as const) {
+    api.apiFetch.mockResolvedValue(progressOf(status, status === 'running' ? 'build' : null))
+    const { unmount } = await show()
+    expect(screen.getByText(`운영 알림 ${ID}`)).toBeTruthy()
+    unmount()
+  }
 })
 
 const agentOf = (extra: Partial<NonNullable<Progress['agent']>> = {}): NonNullable<Progress['agent']> => ({
