@@ -9,6 +9,7 @@ from pydantic_ai.mcp import MCPToolset
 
 from ai_server.agent.budget import trim_tool_result
 from ai_server.agent.models import Action, AgentResult
+from ai_server.agent.trace import args_shape, clean, fields_shape, trace
 
 log = logging.getLogger(__name__)
 
@@ -59,6 +60,8 @@ class GatewayToolset(MCPToolset[Any]):
     def __init__(self, client: Any, **kwargs: Any) -> None:
         super().__init__(client, max_retries=3, **kwargs)
         self.actions: list[Action] = []
+        # 추적 로그(`trace ticket=…`)에 붙일 티켓 id. 실행기가 티켓을 받은 뒤 채운다.
+        self.trace_id = "-"
 
     async def __aenter__(self) -> "GatewayToolset":
         try:
@@ -82,6 +85,7 @@ class GatewayToolset(MCPToolset[Any]):
         try:
             return await self._raw_call(name, args)
         except Exception as e:
+            trace(self.trace_id, f"tool={clean(name)} transport_error={type(e).__name__}")
             raise GatewayUnreachable(f"{name} failed in transport: {e!r}") from e
 
     async def direct_call_tool(
@@ -100,11 +104,19 @@ class GatewayToolset(MCPToolset[Any]):
             self.actions.append(
                 Action(tool=name, args=args, ok=False, result=f"rejected {code}: {message}")
             )
+            # 거절 메시지는 값을 되풀이할 수 있어 싣지 않는다. 코드와 칸별 오류(경로 · 코드)만.
+            fields = fields_shape((content or {}).get("fields"))
+            trace(
+                self.trace_id,
+                f"tool={clean(name)} rejected={clean(code)} fields={fields} "
+                f"args={args_shape(args)}",
+            )
             if code in STOP_CODES:
                 raise GatewayStop(code, message)
             raise ModelRetry(f"gateway rejected {name}: {code}: {message}")
         ok = content.get("ok", True) if isinstance(content, dict) else True
         self.actions.append(Action(tool=name, args=args, ok=bool(ok), result=_short(content)))
+        trace(self.trace_id, f"tool={clean(name)} ok={bool(ok)} args={args_shape(args)}")
         # 모델에는 예산 안으로 줄인 결과를 준다(로그 발췌, 큰 원본은 필요한 칸만).
         return trim_tool_result(content)
 
