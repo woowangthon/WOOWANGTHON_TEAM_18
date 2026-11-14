@@ -33,7 +33,7 @@ function AgentSection({ agent, deployId }: { agent: AgentResult; deployId: strin
           수정 PR 보러 가기
         </a>
       )}
-      {prUrl?.startsWith('https://') && (
+      {status === 'pr_opened' && prUrl?.startsWith('https://') && (
         <div className="flex flex-col gap-2">
           <p className="font-bold">다음에 할 일</p>
           <ol className="list-decimal pl-5">

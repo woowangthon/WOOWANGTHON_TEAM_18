@@ -570,6 +570,12 @@ it('keeps the generic label and no 다시 배포 for a needs_user run without a 
   expect(screen.queryByRole('link', { name: '다시 배포' })).toBeNull()
 })
 
+it('shows no next steps for a result that is not a PR waiting for the student', async () => {
+  api.apiFetch.mockResolvedValue(progressOf('failed', 'deploy', { agent: agentOf({ status: 'gave_up', prUrl: 'https://github.com/o/r/pull/3' }) }))
+  await show()
+  expect(screen.queryByRole('link', { name: '다시 배포' })).toBeNull()
+})
+
 it('does not link a PR address that is not https', async () => {
   api.apiFetch.mockResolvedValue(progressOf('failed', 'deploy', { agent: agentOf({ status: 'pr_opened', prUrl: 'javascript:alert(1)' }) }))
   await show()
