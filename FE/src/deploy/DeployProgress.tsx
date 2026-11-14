@@ -148,7 +148,7 @@ function DeployProgress({ deployId }: { deployId: string }) {
         setOffline(null)
         const explaining = isExplaining(progress)
         if (explaining) explainUntil ??= Date.now() + EXPLAIN_WAIT_MS
-        const waitOver = explaining && Date.now() >= (explainUntil ?? 0)
+        const waitOver = explainUntil !== null && explaining && Date.now() >= explainUntil
         setExplainWaitOver(waitOver)
         again = isActive(progress.status) || (explaining && !waitOver)
       } catch (error) {

@@ -3,7 +3,9 @@ import { ConfigService } from '@nestjs/config'
 import { isRecord } from '../common/is-record.js'
 import { redact, redactString } from '../common/redact.js'
 import type { Env } from '../config/env.js'
-import { ENDED_STATUSES, isStage, toAgent, toFailure } from './deploy-run.js'
+import type { ServiceConditions } from './deploy-condition.js'
+import type { Spec } from './deploy-input.js'
+import { ENDED_STATUSES, isStage, strOrNull as str, toAgent, toFailure } from './deploy-run.js'
 import { DeployEvents } from './deploy-events.js'
 import { type DeployRunRow, DeploysStore } from './deploys.store.js'
 
@@ -64,7 +66,6 @@ const cleanAll = (value: unknown): unknown => {
   return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, cleanAll(v)]))
 }
 
-const str = (v: unknown): string | null => (typeof v === 'string' ? v : null)
 const records = (v: unknown): Record<string, unknown>[] => (Array.isArray(v) ? v.filter(isRecord) : [])
 const rec = (v: unknown): Record<string, unknown> => (isRecord(v) ? v : {})
 
@@ -87,20 +88,14 @@ export function materialOf(ticket: Record<string, unknown>): FailureMaterial {
   const render = isRecord(k8s.status) ? k8s.status : null
   const causes = render ? records(rec(render.details).causes).map((c) => str(c.message) ?? '').filter(Boolean) : []
   const renderStatus = render ? [`${str(render.reason) ?? ''}: ${str(render.message) ?? ''}`, ...causes].join('\n') : null
+  const lines = rec(ticket.logs).lines
   return {
     errorMessage: str(ticket.errorMessage) ?? '',
-    logs: records([ticket.logs]).flatMap((l) => (Array.isArray(l.lines) ? l.lines.filter((x): x is string => typeof x === 'string') : [])).slice(-200),
+    logs: Array.isArray(lines) ? lines.filter((x): x is string => typeof x === 'string').slice(-200) : [],
     pods: pods.slice(0, 10),
     events,
     renderStatus,
   }
-}
-
-interface SpecService {
-  name: string
-  role: string
-  build: { dockerfile: string | null; framework: string | null; build: string | null; start: string | null }
-  runtime: { kind: string; port: number; ingressPath: string | null; health: { type: string; path: string | null }; env: Record<string, string>; secretKeys: string[] }
 }
 
 /** AI 서버 `POST /agent/explanations`의 요청 본문을 만든다(api.md). 설명하지 않을 실행이면 null(skipped). */
@@ -109,8 +104,8 @@ export function explainRequest(run: DeployRunRow, material: FailureMaterial | un
   if (outcome !== 'succeeded' && outcome !== 'failed' && outcome !== 'needs_user') return null
   if (outcome !== 'succeeded' && (run.ticket_id === null || !run.failure || !STUDENT_CODES.includes(run.failure.code))) return null
   // 시작 때 검증한 입력이라 모양은 믿는다(deploy-runs.service의 conditionsOf와 같다).
-  const input = run.input as { spec: { services: SpecService[] }; deploy_condition?: { services?: Record<string, { build?: string }> } }
-  const conditions = input.deploy_condition?.services ?? {}
+  const input = run.input as { spec: Spec; deploy_condition?: { services?: ServiceConditions } }
+  const conditions: Partial<ServiceConditions> = input.deploy_condition?.services ?? {}
   const services = input.spec.services.map((s) => {
     const build = conditions[s.name]?.build
     return {
@@ -166,7 +161,7 @@ export function explainRequest(run: DeployRunRow, material: FailureMaterial | un
   return safe
 }
 
-const text = (v: unknown, limit: number): string | null => (typeof v === 'string' ? redactString(maskInternal(v)).slice(0, limit) : null)
+const text = (v: unknown, limit: number): string | null => (typeof v === 'string' ? clean(v, limit) : null)
 
 /** AI 서버의 답을 확인하고 자르고 다시 가린다. 모양이 틀리면 null(failed). */
 export function parseExplanation(v: unknown): Explanation | null {
@@ -267,12 +262,12 @@ export class DeployExplainer implements OnModuleInit {
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(TIMEOUT_MS),
       })
-      const answer: unknown = await res.json().catch(() => null)
       if (res.status !== 200) {
+        void res.body?.cancel()
         this.logger.warn(`AI server answered ${res.status} to POST /agent/explanations`)
         return null
       }
-      return parseExplanation(answer)
+      return parseExplanation(await res.json().catch(() => null))
     } catch (err) {
       this.logger.warn(`AI server not reached for a deploy explanation: ${err instanceof Error ? err.name : 'error'}`)
       return null

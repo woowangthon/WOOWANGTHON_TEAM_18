@@ -1,7 +1,7 @@
 import { Injectable, Logger, type OnModuleInit } from '@nestjs/common'
 import { DeployEvents } from '../deploys/deploy-events.js'
 import { toFailure } from '../deploys/deploy-run.js'
-import { toAgent } from '../deploys/deploy-runs.service.js'
+import { toAgent } from '../deploys/deploy-run.js'
 import { type DeployRunRow, DeploysStore } from '../deploys/deploys.store.js'
 import { DiscordNotifier } from './discord.notifier.js'
 import { IncidentsStore } from './incidents.store.js'

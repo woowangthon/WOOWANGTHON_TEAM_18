@@ -271,7 +271,7 @@ export interface AgentView {
   evidence: { ref: string | null; text: string | null }[]
 }
 
-const strOrNull = (v: unknown): string | null => (typeof v === 'string' ? v : null)
+export const strOrNull = (v: unknown): string | null => (typeof v === 'string' ? v : null)
 
 /** 게이트웨이가 검사하고 저장한 값이다. 빠진 칸만 빈 값으로 읽는다. */
 export function toAgent(stored: Record<string, unknown>): AgentView {

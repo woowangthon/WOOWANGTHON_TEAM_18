@@ -18,7 +18,7 @@ function StaticGuide({ progress }: { progress: Progress }) {
 // 끝난 배포의 설명. 서버가 준 AI 설명(ready)이 있으면 그것을, 없으면 고정 단계 안내를 보인다. 고정 안내를 "AI 설명"이라고 부르지 않는다.
 // waitOver: 설명을 기다리다 읽기 상한에 닿았다(pending인 채로 멈춤).
 function ExplainSection({ progress, waitOver = false }: { progress: Progress; waitOver?: boolean }) {
-  const view = progress.explanation ?? null
+  const view = progress.explanation
   if (view?.state === 'ready') {
     const { summary, steps, cause, actions, terms } = view.content
     return (

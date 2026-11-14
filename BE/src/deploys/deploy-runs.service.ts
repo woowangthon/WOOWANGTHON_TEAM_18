@@ -69,9 +69,6 @@ export interface DeployStatusView {
   updatedAt: string
 }
 
-// 다른 모듈(배포 결과 알림)이 이 이름으로 읽는다.
-export { toAgent, type AgentView }
-
 const iso = (t: string) => new Date(t).toISOString()
 
 /** 실행 기록(없을 수 있다)에서 읽기 응답을 만든다. 원본 · 로그 · 비밀값은 저장하지 않으므로 여기 올 수 없다. */
