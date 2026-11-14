@@ -39,7 +39,10 @@ interface Changed {
 interface TicketEdits {
   startedAt: number
   fork: string
-  branch: string
+  /** edit_repo_file의 commit이 쌓이는 branch. PR branch와 따로라, 확인하지 않은 commit이 열린 PR에 들어가지 않는다(서버가 다시 떠 기록을 잃어도). */
+  editBranch: string
+  /** PR의 head. open_pr만 확인한 commit으로 옮긴다. */
+  prBranch: string
   baseTree: string
   /** 티켓의 commitSha 시점 파일 목록(경로 → 모드 · blob). */
   base: Map<string, BaseEntry>
@@ -49,8 +52,8 @@ interface TicketEdits {
   files: Map<string, Changed>
   /** edit_repo_file이 돌려준 commit(과 그 commit까지 고친 파일 · 바뀐 줄). `source`는 이 안의 것만 받는다. */
   sources: Map<string, { files: string[]; changedLines: number }>
-  /** open_pr의 답. 티켓당 PR은 하나라 다시 부르면 이 답을 돌려준다. */
-  pr: { source: string; content: Record<string, unknown>; url: string | null } | null
+  /** open_pr의 답. 티켓당 PR은 하나라 다시 부르면 이 답을 돌려준다. PR을 못 열었으면 학생에게 줄 patch. */
+  pr: { source: string; content: Record<string, unknown>; url: string | null; patch: string | null } | null
 }
 
 /** `source`가 가리키는 곳: 봇 fork의 commit. 시험 입력의 `project.repo` · `commitSha`가 된다. */
@@ -78,6 +81,11 @@ export class RepoEdits {
     const pr = this.tickets.get(ticketId)?.pr
     if (!pr?.url) return null
     return { url: pr.url, ...this.tickets.get(ticketId)!.sources.get(pr.source)! }
+  }
+
+  /** PR을 열지 못했을 때 학생에게 줄 patch. 모델이 옮겨 쓰지 않고 플랫폼이 결과에 붙인다(길이 · 잘림 걱정 없이). */
+  patchFor(ticketId: string): string | null {
+    return this.tickets.get(ticketId)?.pr?.patch ?? null
   }
 
   /**
@@ -131,12 +139,15 @@ export class RepoEdits {
     if (!verified(source)) return refuse('NOT_VERIFIED', 'run_deploy and then run_verify must pass with this source before open_pr')
     const { title, body } = args
     return this.exclusive(ticket.ticketId, async () => {
-      // branch가 확인한 commit을 가리키게 한다(그 뒤 edit_repo_file을 또 불렀을 수 있다).
-      await this.bot.moveBranch(mine.fork, mine.branch, source.commitSha)
-      const pull = await this.bot.pull(ticket.repo, mine.branch, title.trim(), body)
-      // PR을 못 열면(학생 레포가 막음) patch를 돌려준다. 학생이 직접 적용한다.
-      const content = pull.opened ? { url: pull.url } : { url: null, patch: redactString(await this.bot.patch(mine.fork, ticket.commitSha, source.commitSha)) }
-      mine.pr = { source: source.commitSha, content, url: pull.opened ? pull.url : null }
+      // PR branch가 확인한 commit을 가리키게 한다.
+      await this.bot.moveBranch(mine.fork, mine.prBranch, source.commitSha)
+      // 그 사이 티켓이 끝났으면(forget이 busy를 지운다) PR을 열지 않는다.
+      if (!this.busy.has(ticket.ticketId)) return refuse('INVALID_ARGUMENT', 'the ticket ended before the pull request was opened')
+      const pull = await this.bot.pull(ticket.repo, mine.prBranch, title.trim(), body)
+      // PR을 못 열면(학생 레포가 막음) patch를 기억해 두고 needs_user 결과에 플랫폼이 붙인다. 에이전트에게는 patch 글을 주지 않는다.
+      const patch = pull.opened ? null : redactString(await this.bot.patch(mine.fork, ticket.commitSha, source.commitSha))
+      const content = pull.opened ? { url: pull.url } : { url: null, patchAttached: true }
+      mine.pr = { source: source.commitSha, content, url: pull.opened ? pull.url : null, patch }
       return { ok: true, content }
     })
   }
@@ -147,7 +158,7 @@ export class RepoEdits {
     if (!mine) {
       const fork = await this.bot.fork(ticket.repo)
       const tree = await this.bot.tree(fork, ticket.commitSha)
-      mine = { startedAt: Date.now(), fork, branch: `wcp-fix-${ticket.ticketId}`, baseTree: tree.treeSha, base: tree.entries, truncated: tree.truncated, files: new Map(), sources: new Map(), pr: null }
+      mine = { startedAt: Date.now(), fork, editBranch: `wcp-edit-${ticket.ticketId}`, prBranch: `wcp-fix-${ticket.ticketId}`, baseTree: tree.treeSha, base: tree.entries, truncated: tree.truncated, files: new Map(), sources: new Map(), pr: null }
     }
     if (mine.pr) return refuse('INVALID_ARGUMENT', 'this ticket already opened a pull request')
     const merged = new Map(mine.files)
@@ -195,7 +206,7 @@ export class RepoEdits {
       mine.fork,
       ticket.commitSha,
       mine.baseTree,
-      mine.branch,
+      mine.editBranch,
       [...merged].map(([path, c]) => ({ path, mode: c.mode, content: c.after })),
       message,
     )

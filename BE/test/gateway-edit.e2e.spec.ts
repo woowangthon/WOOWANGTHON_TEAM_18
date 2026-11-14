@@ -35,11 +35,13 @@ const PR_URL = 'https://github.com/student/my-app/pull/12'
 
 let run: DeployRunRow
 const hashed: unknown[][] = []
-// 봇 fork의 commit에서는 be의 빌드 컨텍스트('.', 레포 전체)만 내용이 바뀌었다. fe는 그대로라 해시가 같다.
+// 봇 fork의 commit은 FE/App.tsx를 고쳤다: fe의 빌드 컨텍스트(FE)도 be의 컨텍스트('.', 레포 전체)도 내용이 바뀌어 두 해시가 모두 바뀐다.
+// unchanged에 든 컨텍스트는 fork에서도 해시가 같다(내용이 그대로인 서비스).
+const unchanged = new Set<string>()
 const fakeConditions = {
   buildHash: (repo: string, commit: string, build: { context: string }) => {
     hashed.push([repo, commit, build.context])
-    if (repo === FORK) return Promise.resolve(build.context === '.' ? HASH('9') : HASH('a'))
+    if (repo === FORK && !unchanged.has(build.context)) return Promise.resolve(build.context === '.' ? HASH('9') : HASH('8'))
     return Promise.resolve(build.context === '.' ? HASH('b') : HASH('a'))
   },
 }
@@ -163,6 +165,7 @@ beforeEach(async () => {
   }
   bot = new FakeBot()
   hashed.length = 0
+  unchanged.clear()
   reads.length = 0
   readInputs.length = 0
   scheduled = []
@@ -234,7 +237,7 @@ describe('edit_repo_file', () => {
     const answer = await call(client, 'edit_repo_file', { files: fix, message: 'fix: import 대소문자' })
     expect(answer.structuredContent).toEqual({ source: { commitSha: expect.stringMatching(/^a{39}1$/) as string }, files: ['FE/App.tsx'], changedLines: 2 })
     expect(bot.forks).toEqual(['student/my-app'])
-    expect(bot.commits).toEqual([{ parent: SHA, branch: 'wcp-fix-t_edit', files: [{ ...fix[0], mode: '100644' }], message: 'fix: import 대소문자' }])
+    expect(bot.commits).toEqual([{ parent: SHA, branch: 'wcp-edit-t_edit', files: [{ ...fix[0], mode: '100644' }], message: 'fix: import 대소문자' }])
     await client.close()
   })
 
@@ -300,7 +303,8 @@ describe('source', () => {
     await client.close()
   })
 
-  it('builds from the bot fork commit: the trial input carries the fork and the commit, and only the service whose content changed is built', async () => {
+  it('builds from the bot fork commit: the trial input carries the fork and the commit, and a service whose content did not change keeps its image', async () => {
+    unchanged.add('FE')
     const client = await connect()
     const source = await edited(client)
     behave = answering('build', buildOk)
@@ -316,6 +320,22 @@ describe('source', () => {
     await client.close()
   })
 
+  it('builds two services whose content both changed with one source, one after the other (neither waits for the other image)', async () => {
+    const client = await connect()
+    const source = await edited(client)
+    behave = answering('build', buildOk)
+    // be를 빌드할 때 fe는 아직 새 이미지가 없다: 빌드 단계는 fe를 건드리지 않으므로 실행 기록의 이미지로 자리만 채운다.
+    expect(rejected(await call(client, 'run_build', { service: 'be', source }))).toBeNull()
+    expect(readInputs[0].input.deploy_condition).toEqual({ services: { fe: { buildInputHash: HASH('8'), build: 'reuse', image: FE_IMAGE }, be: { buildInputHash: HASH('9'), build: 'run', image: null } } })
+    expect(rejected(await call(client, 'run_build', { service: 'fe', source }))).toBeNull()
+    expect(readInputs[1].input.deploy_condition).toEqual({ services: { fe: { buildInputHash: HASH('8'), build: 'run', image: null }, be: { buildInputHash: HASH('9'), build: 'reuse', image: NEW_IMAGE } } })
+    // 배포에는 자리 채움이 아니라 둘 다 새 이미지가 쓰인다.
+    behave = answering('apply', deployOk)
+    expect(rejected(await call(client, 'run_deploy', { source }))).toBeNull()
+    expect(readInputs[2].input.deploy_condition).toEqual({ services: { fe: { buildInputHash: HASH('8'), build: 'reuse', image: NEW_IMAGE }, be: { buildInputHash: HASH('9'), build: 'reuse', image: NEW_IMAGE } } })
+    await client.close()
+  })
+
   it('cannot deploy the source before the changed service was built from it', async () => {
     const client = await connect()
     const source = await edited(client)
@@ -325,10 +345,14 @@ describe('source', () => {
 })
 
 describe('the whole fix: edit → run_build → run_deploy → run_verify → open_pr → pr_opened', () => {
+  async function buildBoth(client: Client, source: { commitSha: string }): Promise<void> {
+    behave = answering('build', buildOk)
+    expect(rejected(await call(client, 'run_build', { service: 'be', source }))).toBeNull()
+    expect(rejected(await call(client, 'run_build', { service: 'fe', source }))).toBeNull()
+  }
   async function verifiedSource(client: Client): Promise<{ commitSha: string }> {
     const source = await edited(client)
-    behave = answering('build', buildOk)
-    await call(client, 'run_build', { service: 'be', source })
+    await buildBoth(client, source)
     behave = answering('apply', deployOk)
     expect(rejected(await call(client, 'run_deploy', { source }))).toBeNull()
     behave = answering('verify', verifyOk)
@@ -340,8 +364,8 @@ describe('the whole fix: edit → run_build → run_deploy → run_verify → op
     const client = await connect()
     const source = await verifiedSource(client)
     // run_deploy · run_verify는 같은 입력(봇 fork commit)이다.
-    expect(readInputs[1].input.commitSha).toBe(source.commitSha)
     expect(readInputs[2].input.commitSha).toBe(source.commitSha)
+    expect(readInputs[3].input.commitSha).toBe(source.commitSha)
     const opened = await call(client, 'open_pr', prArgs(source))
     expect(opened.structuredContent).toEqual({ url: PR_URL })
     expect(bot.pulls).toEqual([{ upstream: 'student/my-app', branch: 'wcp-fix-t_edit', title: 'fix: import 대소문자', body: expect.stringContaining('import 경로') as string }])
@@ -379,8 +403,7 @@ describe('the whole fix: edit → run_build → run_deploy → run_verify → op
   it('refuses open_pr when run_deploy with the source passed but run_verify did not', async () => {
     const client = await connect()
     const source = await edited(client)
-    behave = answering('build', buildOk)
-    await call(client, 'run_build', { service: 'be', source })
+    await buildBoth(client, source)
     behave = answering('apply', deployOk)
     await call(client, 'run_deploy', { source })
     expect(rejected(await call(client, 'open_pr', prArgs(source)))).toMatchObject({ code: 'NOT_VERIFIED' })
@@ -402,14 +425,26 @@ describe('the whole fix: edit → run_build → run_deploy → run_verify → op
     const client = await connect()
     const first = await edited(client)
     const second = await edited(client, [{ path: 'FE/App.tsx', content: "import y from './App'\n" }])
-    behave = answering('build', buildOk)
-    await call(client, 'run_build', { service: 'be', source: second })
+    await buildBoth(client, second)
     behave = answering('apply', deployOk)
     await call(client, 'run_deploy', { source: second })
     behave = answering('verify', verifyOk)
     await call(client, 'run_verify')
     expect(rejected(await call(client, 'open_pr', prArgs(first)))).toMatchObject({ code: 'NOT_VERIFIED' })
     expect(rejected(await call(client, 'open_pr', prArgs(second)))).toBeNull()
+    await client.close()
+  })
+
+  it('refuses open_pr when the source passed only together with a specPatch (the pull request would not carry the spec change)', async () => {
+    const client = await connect()
+    const source = await edited(client)
+    await buildBoth(client, source)
+    behave = answering('apply', deployOk)
+    expect(rejected(await call(client, 'run_deploy', { source, specPatch: [{ op: 'replace', path: '/spec/services/1/runtime/port', value: 8000 }] }))).toBeNull()
+    behave = answering('verify', verifyOk)
+    expect(rejected(await call(client, 'run_verify'))).toBeNull()
+    expect(rejected(await call(client, 'open_pr', prArgs(source)))).toMatchObject({ code: 'NOT_VERIFIED' })
+    expect(bot.pulls).toEqual([])
     await client.close()
   })
 
@@ -422,16 +457,17 @@ describe('the whole fix: edit → run_build → run_deploy → run_verify → op
     await client.close()
   })
 
-  it('answers the patch without a url when the student repository does not take the pull request, and then pr_opened is refused', async () => {
+  it('answers without a url when the student repository does not take the pull request, refuses pr_opened, and attaches the patch to needs_user itself', async () => {
     bot.pullOutcome = { opened: false }
     const client = await connect()
     const source = await verifiedSource(client)
     const opened = await call(client, 'open_pr', prArgs(source))
-    expect(opened.structuredContent).toEqual({ url: null, patch: expect.stringContaining('diff --git') as string })
+    // 에이전트는 patch 글을 받지 않는다(모델 출력 상한에 잘리지 않게).
+    expect(opened.structuredContent).toEqual({ url: null, patchAttached: true })
     expect(rejected(await call(client, 'submit_result', pr(PR_URL)))).toMatchObject({ code: 'INVALID_RESULT' })
-    // 학생에게 patch를 보여 주려면 needs_user로 낸다.
-    const needs = { result: { ...pr(PR_URL).result, status: 'needs_user', pr: undefined, userRequest: { message: '아래 patch를 직접 적용해 주세요.' } } }
+    const needs = { result: { ...pr(PR_URL).result, status: 'needs_user', pr: undefined, userRequest: { message: 'FE/App.tsx의 import를 고친 patch를 붙입니다.' } } }
     expect((await call(client, 'submit_result', needs)).structuredContent).toEqual({ accepted: true })
+    expect(run.agent_result).toMatchObject({ status: 'needs_user', userRequest: { message: 'FE/App.tsx의 import를 고친 patch를 붙입니다.\n\ndiff --git a/FE/App.tsx b/FE/App.tsx\n' } })
     await client.close()
   })
 

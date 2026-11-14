@@ -729,9 +729,9 @@ def test_without_a_bot_account_the_model_gets_the_code_and_asks_the_student() ->
     assert gw.tool_calls() == ["edit_repo_file"]
 
 
-def test_a_pull_request_the_student_repo_refused_is_reported_with_its_patch() -> None:
+def test_a_pull_request_the_student_repo_refused_is_reported_as_needs_user() -> None:
     gw = FakeGateway()
-    gw.script["open_pr"] = [{"url": None, "patch": "diff --git a/x b/x\n"}]
+    gw.script["open_pr"] = [{"url": None, "patchAttached": True}]
     local = Script(
         call("edit_repo_file", files=FIX_FILES, message="fix: import"),
         call("run_deploy", source=SOURCE),
@@ -739,13 +739,15 @@ def test_a_pull_request_the_student_repo_refused_is_reported_with_its_patch() ->
         call("open_pr", source=SOURCE, title="t", body="b"),
         final(
             status="needs_user",
-            userRequest={"message": "PR을 열 수 없어 patch를 드립니다.\ndiff --git a/x b/x"},
+            userRequest={
+                "message": "PR을 열 수 없어 src/App.tsx의 import 대소문자를 고친 patch를 붙입니다."
+            },
             summary="수정은 확인했지만 PR을 열지 못했습니다.",
         ),
     )
     solve(make_run(**SIGNALS["B4"]), gw, local)
-    # 모델은 url이 없고 patch가 있는 도구 결과를 그대로 본다.
-    assert "diff --git a/x b/x" in local.sent(-1)
+    # 모델은 patch 글을 받지 않는다(플랫폼이 결과에 붙인다).
+    assert "patchAttached" in local.sent(-1)
     assert only_result(gw)["status"] == "needs_user"
 
 
@@ -753,7 +755,8 @@ def test_the_instructions_tell_the_model_the_pull_request_rules() -> None:
     for text in (
         "open_pr is refused (NOT_VERIFIED)",
         "BOT_UNAVAILABLE",
-        "`{ url: null, patch }`",
+        "`{ url: null, patchAttached: true }`",
+        "Do not copy the patch",
         "the platform checks it",
     ):
         assert text in INSTRUCTIONS

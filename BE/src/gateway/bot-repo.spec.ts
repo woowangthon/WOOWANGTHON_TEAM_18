@@ -59,7 +59,19 @@ describe('BotRepo.fork', () => {
     expect(await b.fork('student/app')).toBe('wanggane-bot/app')
     expect(await b.fork('student/app')).toBe('wanggane-bot/app')
     expect(seen.map((s) => `${s.method} ${s.url.replace('https://api.github.com', '')}`)).toEqual(['GET /user', 'POST /repos/student/app/forks', 'GET /repos/wanggane-bot/app'])
-    expect(seen[1].body).toEqual({ default_branch_only: true })
+    expect(seen[1].body).toEqual({ name: 'student_app', default_branch_only: true })
+  })
+
+  it('names each fork after the owner too, so two students with the same repository name do not collide', async () => {
+    const b = bot()
+    routes['POST /repos/other/app/forks'] = () => ({ status: 202, body: { ...FORK, full_name: 'wanggane-bot/other_app', parent: { full_name: 'other/app' } } })
+    routes['GET /repos/wanggane-bot/other_app'] = () => ({ status: 200, body: {} })
+    await b.fork('student/app')
+    expect(await b.fork('other/app')).toBe('wanggane-bot/other_app')
+    expect(seen.filter((s) => s.method === 'POST').map((s) => s.body)).toEqual([
+      { name: 'student_app', default_branch_only: true },
+      { name: 'other_app', default_branch_only: true },
+    ])
   })
 
   it('sends the token only to api.github.com, as a bearer header', async () => {
@@ -132,6 +144,21 @@ describe('BotRepo.tree and blob', () => {
         ['src', { mode: '040000', type: 'tree', sha: 't2', size: 0 }],
       ]),
     })
+  })
+
+  it('waits for the git objects of a new fork (404 or 409) and then reads the commit', async () => {
+    const sha = 'a'.repeat(40)
+    let tries = 0
+    routes[`GET /repos/wanggane-bot/app/git/commits/${sha}`] = () => (++tries < 3 ? { status: tries === 1 ? 409 : 404 } : { status: 200, body: { tree: { sha: 'tree1' } } })
+    routes['GET /repos/wanggane-bot/app/git/trees/tree1?recursive=1'] = () => ({ status: 200, body: { truncated: false, tree: [] } })
+    expect((await bot().tree('wanggane-bot/app', sha)).treeSha).toBe('tree1')
+    expect(tries).toBe(3)
+  })
+
+  it('gives up with a bot error when the commit never shows up', async () => {
+    const sha = 'a'.repeat(40)
+    await expect(bot().tree('wanggane-bot/app', sha)).rejects.toMatchObject({ kind: 'github' })
+    expect(seen.filter((s) => s.url.includes('/git/commits/'))).toHaveLength(15)
   })
 
   it('reads a blob as bytes', async () => {
@@ -217,11 +244,21 @@ describe('BotRepo.pull', () => {
 })
 
 describe('BotRepo.patch', () => {
-  it('asks for the patch format and cuts a very long answer', async () => {
-    routes['GET /repos/wanggane-bot/app/compare/aaa...bbb'] = () => ({ status: 200, text: 'x'.repeat(150_000) })
-    const text = await bot().patch('wanggane-bot/app', 'aaa', 'bbb')
-    expect(text).toHaveLength(100_000)
+  it('asks for the patch format and returns the whole patch', async () => {
+    routes['GET /repos/wanggane-bot/app/compare/aaa...bbb'] = () => ({ status: 200, text: 'x'.repeat(100_000) })
+    expect(await bot().patch('wanggane-bot/app', 'aaa', 'bbb')).toHaveLength(100_000)
     expect(seen[0].headers.Accept).toBe('application/vnd.github.patch')
+  })
+
+  it('fails instead of cutting a patch longer than the limit (a cut patch cannot be applied)', async () => {
+    routes['GET /repos/wanggane-bot/app/compare/aaa...bbb'] = () => ({ status: 200, text: 'x'.repeat(100_001) })
+    await expect(bot().patch('wanggane-bot/app', 'aaa', 'bbb')).rejects.toMatchObject({ kind: 'github' })
+  })
+
+  it('turns a body that breaks off while reading into a bot error', async () => {
+    const broken = new Response(new ReadableStream({ start: (c) => c.error(new TypeError('terminated')) }), { status: 200 })
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(broken)))
+    await expect(bot().patch('wanggane-bot/app', 'aaa', 'bbb')).rejects.toMatchObject({ kind: 'github' })
   })
 })
 

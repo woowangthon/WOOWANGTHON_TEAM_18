@@ -225,8 +225,11 @@ export class GatewayTools {
         return this.runTrial(ticket, name, args)
       case 'edit_repo_file':
         return this.edits.edit(ticket, args)
-      case 'open_pr':
-        return this.edits.openPr(ticket, args, (source) => this.verifiedWith(ticket, source))
+      case 'open_pr': {
+        const run = await this.store.findRun(ticket.deployId)
+        if (!run) return reject('TICKET_CLOSED', 'the deploy run is gone')
+        return this.edits.openPr(ticket, args, (source) => this.verifiedWith(ticket, source, run))
+      }
       default:
         return this.submit(ticket, args.result)
     }
@@ -314,7 +317,10 @@ export class GatewayTools {
       const same = sameBuild && hash === c.buildInputHash
       if (!same) changed.push({ service: svc.name, hash })
       const fromRun = same ? (c.build === 'reuse' ? c.image : (run.images?.[svc.name] ?? null)) : null
-      const image = fromRun ?? this.trials.trialImage(ticket.ticketId, svc.name, hash) ?? (await this.store.cachedImage(ticket.slug, svc.name, hash))
+      let image = fromRun ?? this.trials.trialImage(ticket.ticketId, svc.name, hash) ?? (await this.store.cachedImage(ticket.slug, svc.name, hash))
+      // run_build는 그 서비스만 빌드하고 reuse 서비스는 빌드 단계가 건드리지 않는다. source 하나로 여러 서비스의 해시가 바뀌면 서로 이미지가 없어
+      // 아무것도 먼저 빌드하지 못하므로, run_build에서는 다른 서비스 자리를 실행 기록의 이미지로 채운다(이 입력은 배포하지 않는다).
+      if (!image && build !== undefined && svc.name !== build) image = c.build === 'reuse' ? c.image : (run.images?.[svc.name] ?? null)
       if (!image && svc.name !== build) {
         return reject('INVALID_ARGUMENT', `service ${svc.name} has no image for these build settings yet; call run_build for it first`)
       }
@@ -410,10 +416,15 @@ export class GatewayTools {
     return { ok: true, content: redact(outcome.result) as Record<string, unknown> }
   }
 
-  /** 이 source로 run_deploy → run_verify를 통과했는가(통과한 입력의 commit · 레포가 source와 같다). */
-  private verifiedWith(ticket: GatewayTicket, source: SourceRef): boolean {
-    const input = this.trials.verifiedInput(ticket.ticketId) as { commitSha?: unknown; spec?: { project?: { repo?: unknown } } } | undefined
-    return input?.commitSha === source.commitSha && input.spec?.project?.repo === source.repo
+  /**
+   * 이 source로 run_deploy → run_verify를 통과했는가: 통과한 입력의 commit · 레포가 source와 같고, spec이 실행 기록과 같다(레포만 fork로 바뀜).
+   * specPatch를 같이 써야만 통과한 source는 PR로 열지 않는다. PR에는 spec 변경이 실리지 않아 학생이 머지해도 같은 실패가 난다.
+   */
+  private verifiedWith(ticket: GatewayTicket, source: SourceRef, run: DeployRunRow): boolean {
+    const input = this.trials.verifiedInput(ticket.ticketId) as { commitSha?: unknown; spec?: Spec } | undefined
+    if (input?.commitSha !== source.commitSha || input.spec?.project?.repo !== source.repo) return false
+    const original = run.input.spec as Spec
+    return isDeepStrictEqual({ ...input.spec, project: { ...input.spec.project, repo: original.project.repo } }, original)
   }
 
   /** 토큰 만료를 쓴다. 실행 기록이 이미 fixing이 아니면(티켓이 끝났다) false. */
@@ -436,6 +447,12 @@ export class GatewayTools {
       const opened = this.edits.openedPr(ticket.ticketId)
       if (opened === null || result.pr?.url !== opened.url) return reject('INVALID_RESULT', 'pr_opened needs pr.url to be the url open_pr returned in this ticket')
       agentResult.pr = { url: opened.url, files: opened.files, changedLines: opened.changedLines }
+    }
+    // PR을 열지 못했다(학생 레포가 막음): 확인한 patch를 플랫폼이 학생 안내에 붙인다. 에이전트는 patch 글을 받지도 옮겨 쓰지도 않는다.
+    const patchText = result.status === 'needs_user' ? this.edits.patchFor(ticket.ticketId) : null
+    if (patchText) {
+      const u = agentResult.userRequest as { message: string; secretKeys: string[] }
+      agentResult.userRequest = { ...u, message: `${u.message}\n\n${patchText}` }
     }
     if (result.status === 'verified') {
       if (run?.status === 'fixing') return this.submitVerified(ticket, run, result, agentResult)

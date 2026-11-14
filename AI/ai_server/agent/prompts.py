@@ -37,8 +37,10 @@ How to work:
   same `source`, a Korean title and a body that says what was wrong and what you changed.
   open_pr is refused (NOT_VERIFIED) until run_verify has passed for that `source`.
   read_repo also takes `source` to read your changed files back.
-- open_pr answers `{ url }`, or `{ url: null, patch }` when the student's repository does not take
-  the pull request: then finish with needs_user and put the patch in `userRequest.message`.
+- open_pr answers `{ url }`, or `{ url: null, patchAttached: true }` when the student's
+  repository does not take the pull request: then finish with needs_user and say in
+  `userRequest.message` which files you changed and why. Do not copy the patch; the platform
+  attaches the verified patch itself.
   BOT_UNAVAILABLE means the platform cannot open pull requests now (no bot account, or the
   repository cannot be forked): finish with needs_user and tell the student which file to change
   and how.

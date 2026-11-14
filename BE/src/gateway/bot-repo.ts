@@ -12,8 +12,10 @@ const TIMEOUT_MS = 20_000
 const REPO_NAME = /^(?!\.{1,2}\/)[A-Za-z0-9_.-]+\/(?!\.{1,2}$)[A-Za-z0-9_.-]+$/
 /** fork는 GitHub가 비동기로 만든다. 이 시간 안에 안 보이면 못 만든 것으로 본다. */
 const FORK_WAIT_TRIES = 15
-/** compare patch의 최대 글자 수(파일 5개 · 50줄 수정이면 넉넉하다). */
+/** compare patch의 최대 글자 수. 넘으면 자르지 않고 실패로 본다(잘린 patch는 적용할 수 없다). */
 const PATCH_LIMIT = 100_000
+/** fork 이름: `owner_name`. owner에는 `_`를 쓸 수 없어 학생 레포마다 다르다(이름이 같은 다른 학생의 레포와 겹치지 않는다). */
+export const forkName = (repo: string) => repo.replace('/', '_').slice(0, 100)
 
 /** `none`: 토큰이 없음. `cannot-fork`: 이 레포를 fork할 수 없음(막혔거나 비공개). `github`: GitHub가 안 닿거나 거절. */
 export class BotError extends Error {
@@ -55,13 +57,13 @@ export class BotRepo {
     return this.token !== undefined
   }
 
-  /** `owner/name`의 봇 fork(`bot/name`)를 돌려준다. 없으면 만든다(있으면 GitHub가 그 fork를 돌려준다). */
+  /** `owner/name`의 봇 fork(`bot/owner_name`)를 돌려준다. 없으면 만든다(있으면 GitHub가 그 fork를 돌려준다). */
   async fork(repo: string): Promise<string> {
     const known = this.forks.get(repo)
     if (known) return known
     if (!REPO_NAME.test(repo)) throw new BotError('cannot-fork')
     const login = await this.login()
-    const res = await this.request('POST', `/repos/${repo}/forks`, { default_branch_only: true })
+    const res = await this.request('POST', `/repos/${repo}/forks`, { name: forkName(repo), default_branch_only: true })
     // 막힌 레포(비공개 · fork 금지)는 403 · 404 · 422로 답한다. 인증 · 한도 · 서버 오류는 막힌 것이 아니다.
     if ([403, 404, 422].includes(res.status)) throw new BotError('cannot-fork')
     if (res.status !== 202 && res.status !== 200) throw this.failed('fork', res.status)
@@ -78,14 +80,24 @@ export class BotRepo {
         return full
       }
       if (seen.status !== 404) throw this.failed('fork check', seen.status)
-      await new Promise((resolve) => setTimeout(resolve, this.waitMs))
+      await this.wait()
     }
     throw new BotError('cannot-fork')
   }
 
+  private wait(): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, this.waitMs))
+  }
+
   /** commit의 파일 목록(경로 → 모드 · blob). 너무 커서 잘렸으면 `truncated`. */
   async tree(fork: string, commitSha: string): Promise<{ treeSha: string; entries: Map<string, BaseEntry>; truncated: boolean }> {
-    const commit = this.ok('read commit', await this.request('GET', `/repos/${fork}/git/commits/${commitSha}`))
+    // 새 fork는 저장소 정보가 먼저 보이고 git 객체는 늦게 보일 수 있다(404 · 409). 그동안은 기다렸다가 다시 읽는다.
+    let read = await this.request('GET', `/repos/${fork}/git/commits/${commitSha}`)
+    for (let i = 1; i < FORK_WAIT_TRIES && (read.status === 404 || read.status === 409); i++) {
+      await this.wait()
+      read = await this.request('GET', `/repos/${fork}/git/commits/${commitSha}`)
+    }
+    const commit = this.ok('read commit', read)
     const treeSha = isRecord(commit.tree) && typeof commit.tree.sha === 'string' ? commit.tree.sha : ''
     if (!treeSha) throw this.failed('read commit', 200)
     const tree = this.ok('read tree', await this.request('GET', `/repos/${fork}/git/trees/${treeSha}?recursive=1`))
@@ -162,7 +174,8 @@ export class BotRepo {
   async patch(fork: string, base: string, head: string): Promise<string> {
     const res = await this.request('GET', `/repos/${fork}/compare/${base}...${head}`, undefined, PATCH_FORMAT)
     if (res.status !== 200 || typeof res.body !== 'string') throw this.failed('read patch', res.status)
-    return res.body.slice(0, PATCH_LIMIT)
+    if (res.body.length > PATCH_LIMIT) throw this.failed('read patch (longer than the limit)', res.status)
+    return res.body
   }
 
   private async login(): Promise<string> {
@@ -187,9 +200,8 @@ export class BotRepo {
 
   private async request(method: string, path: string, body?: unknown, accept = 'application/vnd.github+json'): Promise<Reply> {
     if (!this.token) throw new BotError('none')
-    let res: Response
     try {
-      res = await fetch(`${API}${path}`, {
+      const res = await fetch(`${API}${path}`, {
         method,
         headers: {
           Authorization: `Bearer ${this.token}`,
@@ -201,17 +213,19 @@ export class BotRepo {
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         signal: AbortSignal.timeout(TIMEOUT_MS),
       })
+      // 본문 읽기도 끊길 수 있다(헤더 뒤 연결 끊김 · 시간 초과). 그것도 GitHub 오류다.
+      if (accept === PATCH_FORMAT) return { status: res.status, body: res.ok ? await res.text() : undefined }
+      const text = await res.text()
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(text)
+      } catch {
+        parsed = undefined
+      }
+      return { status: res.status, body: parsed }
     } catch (err) {
       this.logger.error(`GitHub ${method} request failed: ${err instanceof Error ? err.name : 'error'}`)
       throw new BotError('github')
     }
-    if (accept === PATCH_FORMAT) return { status: res.status, body: res.ok ? await res.text() : undefined }
-    let parsed: unknown
-    try {
-      parsed = await res.json()
-    } catch {
-      parsed = undefined
-    }
-    return { status: res.status, body: parsed }
   }
 }

@@ -41,9 +41,10 @@ class FakeBot {
     this.commits.push({ fork, parent, baseTree, branch, files, message })
     return String(this.commits.length).padStart(40, 'c')
   }
-  moveBranch(_fork: string, branch: string, sha: string): Promise<void> {
+  moveGate: Promise<void> | null = null
+  async moveBranch(_fork: string, branch: string, sha: string): Promise<void> {
     this.moves.push({ branch, sha })
-    return Promise.resolve()
+    if (this.moveGate) await this.moveGate
   }
   pull(upstream: string, branch: string, title: string, body: string): Promise<PullOutcome> {
     this.pulls.push({ upstream, branch, title, body })
@@ -112,7 +113,7 @@ describe('edit_repo_file', () => {
     expect(answer).toEqual({ ok: true, content: { source: { commitSha: expect.stringMatching(/^c{39}1$/) as string }, files: ['package.json'], changedLines: 2 } })
     expect(bot.forks).toEqual(['student/app'])
     expect(bot.commits).toEqual([
-      { fork: 'wanggane-bot/app', parent: BASE, baseTree: 'tree0', branch: 'wcp-fix-t_a', files: [{ path: 'package.json', mode: '100644', content: expect.stringContaining('react') as string }], message: 'fix: import case' },
+      { fork: 'wanggane-bot/app', parent: BASE, baseTree: 'tree0', branch: 'wcp-edit-t_a', files: [{ path: 'package.json', mode: '100644', content: expect.stringContaining('react') as string }], message: 'fix: import case' },
     ])
   })
 
@@ -231,7 +232,7 @@ describe('edit_repo_file', () => {
     await edit([put('a', '1')], 'm', ticket('t_a'))
     const other = await edit([put('b', '1')], 'm', ticket('t_b'))
     expect(other).toMatchObject({ ok: true, content: { files: ['b'] } })
-    expect(bot.commits.map((c) => c.branch)).toEqual(['wcp-fix-t_a', 'wcp-fix-t_b'])
+    expect(bot.commits.map((c) => c.branch)).toEqual(['wcp-edit-t_a', 'wcp-edit-t_b'])
   })
 })
 
@@ -338,13 +339,36 @@ describe('open_pr', () => {
     expect(await edits.edit(ticket(), { files: [put('c', '1')], message: 'm' })).toMatchObject({ ok: false, code: 'INVALID_ARGUMENT', message: expect.stringContaining('already opened') as string })
   })
 
-  it('returns the patch (without a secret-looking value) when the student repository does not take the pull request', async () => {
+  it('keeps the patch (without a secret-looking value) for the platform when the student repository does not take the pull request', async () => {
     bot.pullOutcome = { opened: false }
-    const answer = await open()
-    expect(answer).toMatchObject({ ok: true, content: { url: null, patch: expect.stringContaining('diff --git') as string } })
-    expect(JSON.stringify(answer)).not.toContain(TOKEN)
+    // 에이전트는 patch 글을 받지 않는다(모델이 옮겨 쓰다 잘리지 않게). 플랫폼이 needs_user 결과에 붙인다.
+    expect(await open()).toEqual({ ok: true, content: { url: null, patchAttached: true } })
+    expect(edits.patchFor('t_a')).toContain('diff --git')
+    expect(edits.patchFor('t_a')).not.toContain(TOKEN)
     // 주소가 없으므로 pr_opened로 낼 수 없다.
     expect(edits.openedPr('t_a')).toBeNull()
+  })
+
+  it('has no patch when the pull request opened', async () => {
+    await open()
+    expect(edits.patchFor('t_a')).toBeNull()
+  })
+
+  it('moves only the pull request branch, never the branch the edits go to', async () => {
+    await open()
+    expect(bot.commits.map((c) => c.branch)).toEqual(['wcp-edit-t_a'])
+    expect(bot.moves.map((m) => m.branch)).toEqual(['wcp-fix-t_a'])
+  })
+
+  it('does not open a pull request when the ticket ended while the branch was moving', async () => {
+    let release = () => {}
+    bot.moveGate = new Promise((r) => (release = r))
+    const pending = open()
+    await Promise.resolve()
+    edits.forget('t_a')
+    release()
+    expect(await pending).toMatchObject({ ok: false, code: 'INVALID_ARGUMENT', message: expect.stringContaining('ended') as string })
+    expect(bot.pulls).toEqual([])
   })
 
   it('answers BOT_UNAVAILABLE when GitHub fails', async () => {
