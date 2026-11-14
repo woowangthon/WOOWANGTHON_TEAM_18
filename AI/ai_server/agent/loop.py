@@ -195,20 +195,30 @@ async def _llm_classify(
     return case
 
 
-async def _plan_steps(model: Model, prompt: str, trace_id: str) -> Plan:
-    """추론 모델이 도구 없이 계획만 낸다(게이트웨이 호출 한도를 쓰지 않는다)."""
+async def _plan_steps(model: Model, prompt: str, gateway: GatewayToolset) -> Plan:
+    """추론 모델이 읽기 도구로 증거를 본 뒤 계획을 낸다(edit_repo_file은 파일 전체 내용이 든다).
+
+    읽기 거절은 모델에 돌려준다(strict가 아니다). 읽은 결과도 가림 필터를 거쳐 추론 API로 간다.
+    """
     agent = Agent(
-        model, output_type=Plan, instructions=prompts.PLAN_INSTRUCTIONS, retries=OUTPUT_RETRIES
+        model,
+        output_type=Plan,
+        instructions=prompts.PLAN_INSTRUCTIONS,
+        toolsets=[gateway.filtered(lambda ctx, tool: tool.name in prompts.READ_TOOLS)],
+        # 지난 읽기 결과를 줄이지 않는다(compact_history 없음): 읽은 파일 전체로 새 내용을 쓴다.
+        retries=OUTPUT_RETRIES,
     )
-    trace(trace_id, f"act model=planner name={clean(model.model_name)} (plan)")
+    trace(gateway.trace_id, f"act model=planner name={clean(model.model_name)} (plan)")
     started = time.monotonic()
+    before = len(gateway.actions)
     result = await agent.run(prompt)
     ran = result.response.model_name
+    reads = ",".join(clean(a.tool) for a in gateway.actions[before:]) or "-"
     tools = ",".join(clean(s.tool) for s in result.output.steps)
     trace(
-        trace_id,
-        f"plan done ran={clean(ran) if ran else '-'} steps={len(result.output.steps)} "
-        f"tools={tools} {_usage(result.usage, started)}",
+        gateway.trace_id,
+        f"plan done ran={clean(ran) if ran else '-'} reads={reads} "
+        f"steps={len(result.output.steps)} tools={tools} {_usage(result.usage, started)}",
     )
     plan: Plan = result.output
     return plan
@@ -495,7 +505,7 @@ def make_agent_runner(
                             plan = await _plan_steps(
                                 models.planner,
                                 prompts.plan_steps_prompt(ticket, notes, case),
-                                ticket.ticket_id,
+                                gateway,
                             )
                             outcome = await _execute(
                                 models.local,

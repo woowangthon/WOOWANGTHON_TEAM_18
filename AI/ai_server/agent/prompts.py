@@ -70,10 +70,13 @@ follow the excerpt.
 PLAN_INSTRUCTIONS = (
     INSTRUCTIONS
     + """
-You are the planner now: you call no tools. Answer with a plan that a small local model carries out
-step by step; it cannot reason much, so:
+You are the planner now. You may call only the read tools (read_repo, get_target_status,
+read_pod_logs) to see the evidence; each read counts toward the call limits, so read only what the
+plan needs and do not repeat a read as a plan step. Then answer with a plan that a small local model
+carries out step by step; it cannot reason much, so:
 - give each step its tool and exact args: the whole `specPatch` with real values, the whole new
-  content of each file for edit_repo_file; put a condition in `when` only where one is needed;
+  content of each file for edit_repo_file, written from the file you read; put a condition in
+  `when` only where one is needed;
 - `{...}` placeholders are only for values an earlier step returns (the `source` of edit_repo_file);
 - end with a submit_result step whose `when` says which result to finish with and when, by the
   rules above; a plan can be that one step alone (a secret only the student knows).
@@ -173,6 +176,9 @@ def digest(ticket: Ticket, notes: list[str]) -> str:
     return "\n".join(parts)
 
 
+# 계획 단계에서 추론 모델이 부를 수 있는 도구. 읽기만 하고 대상 슬롯 · 레포를 바꾸지 않는다.
+READ_TOOLS = frozenset({"get_target_status", "read_pod_logs", "read_repo"})
+
 # 플랫폼이 실제로 여는 도구(BE/src/gateway/tools.ts TOOLS)와 도구별 한도(BE/src/gateway/budget.ts).
 GATEWAY_TOOLS = frozenset(
     {
@@ -221,7 +227,7 @@ def classify_prompt(ticket: Ticket, notes: list[str], cases: list[Case], hints: 
 
 
 def plan_steps_prompt(ticket: Ticket, notes: list[str], case: Case) -> str:
-    """추론 모델이 case의 playbook을 참고해 계획을 낸다(도구는 부르지 않는다)."""
+    """추론 모델이 case의 playbook을 참고해 계획을 낸다(읽기 도구만 부른다)."""
     # 티켓에 로그가 있으면(빌드 로그, apply · verify 실패의 Pod 로그) 첫 관찰을 건너뛸 수 있다.
     logs = (
         "The ticket below already carries the latest log lines; skip a log-reading step when "

@@ -32,6 +32,7 @@ from tests.scripted import Script, Step, call, fail, final, text_of
 from tests.test_memory import SIGNALS
 from tests.test_tickets_api import wait_until
 
+READ_TOOLS = {"get_target_status", "read_pod_logs", "read_repo"}
 PORT_PATCH = [{"op": "replace", "path": "/spec/services/0/runtime/port", "value": 3000}]
 FINISH = {"tool": "submit_result", "when": "gave_up"}
 # 추론 모델의 계획(AIagent.md §10). 단계를 주지 않으면 모든 게이트웨이 도구를 쓰는 계획이다.
@@ -148,8 +149,8 @@ def test_the_planner_classifies_and_plans_and_the_local_model_calls_the_tools() 
     # 분류에는 정규식 힌트가 참고로 들어가고, 도구는 없다.
     assert "Regex hint (may be wrong): A1" in planner.sent(0)
     assert planner.infos[0].function_tools == []
-    # 계획 단계도 도구를 부르지 않는다(게이트웨이 호출 한도를 쓰지 않는다).
-    assert planner.infos[1].function_tools == []
+    # 계획 단계에는 읽기 도구만 준다(바꾸는 도구 · 시험 도구는 로컬 모델이 계획대로 부른다).
+    assert {t.name for t in planner.infos[1].function_tools} == READ_TOOLS
     plan_sent = planner.sent(1)
     assert PLAN_INSTRUCTIONS in plan_sent and '"caseId":"A1"' in plan_sent
     # 로컬 모델은 계획을 받고, 계획 지시문은 받지 않는다.
@@ -758,6 +759,100 @@ def test_a_code_fix_is_edit_then_the_same_source_through_build_deploy_verify_the
     assert result["pr"] == {"url": PR_URL, "files": ["FE/src/App.tsx"], "changedLines": 2}
     # 실제로 한 호출이 모두 남는다(결과의 actions는 코드가 채운다).
     assert [a["tool"] for a in result["actions"]] == gw.tool_calls()
+
+
+GAVE_UP = {"status": "gave_up", "summary": "모름"}
+APP_FILE = {"type": "file", "path": "FE/src/App.tsx", "content": "import Header from './h'\n"}
+B4_STEPS: list[dict[str, Any]] = [
+    {"tool": "edit_repo_file", "args": {"files": FIX_FILES, "message": "fix: import 대소문자"}},
+    {"tool": "run_build", "args": {"service": "fe", "source": "{source}"}},
+    {"tool": "run_deploy", "args": {"source": "{source}"}},
+    {"tool": "run_verify"},
+    {"tool": "open_pr", "args": {"source": "{source}", "title": "fix", "body": "b"}},
+    {"tool": "submit_result", "when": "open_pr가 url을 주면 pr_opened"},
+]
+
+
+def test_the_planner_reads_the_file_before_it_plans_the_whole_new_content() -> None:
+    # 2026-11-14 운영 B4: 계획 단계에서 파일을 못 읽어 "읽고 needs_user"로 계획했다.
+    gw = FakeGateway()
+    gw.script["read_repo"] = [APP_FILE]
+    planner = Script(classify("B4"), call("read_repo", path="FE/src/App.tsx"), plan(*B4_STEPS))
+    local = Script(
+        call("edit_repo_file", files=FIX_FILES, message="fix: import 대소문자"),
+        call("run_build", service="fe", source=SOURCE),
+        call("run_deploy", source=SOURCE),
+        call("run_verify"),
+        call("open_pr", source=SOURCE, title="fix", body="b"),
+        final(status="pr_opened", pr={"url": PR_URL}, summary="import 경로를 고쳤습니다."),
+    )
+    solve(make_run(**SIGNALS["B4"]), gw, local, planner)
+    # 읽기는 추론 모델이 계획 단계에서 하고, 로컬 모델은 계획의 도구만 부른다.
+    assert gw.tool_calls() == [
+        "read_repo",
+        "edit_repo_file",
+        "run_build",
+        "run_deploy",
+        "run_verify",
+        "open_pr",
+    ]
+    assert "import Header from './h'" in planner.sent(2)
+    assert "read_repo" not in {t.name for t in local.infos[0].function_tools}
+    result = only_result(gw)
+    assert result["status"] == "pr_opened" and result["classification"]["path"] == "playbook"
+    # 계획 단계의 읽기도 실제 호출이라 기록에 남는다.
+    assert [a["tool"] for a in result["actions"]] == gw.tool_calls()
+    assert planner.done and local.done
+
+
+def test_files_read_earlier_in_planning_stay_whole_for_the_plan() -> None:
+    # 두 파일을 고치는 계획은 둘 다 전체 내용이 있어야 쓸 수 있다.
+    gw = FakeGateway()
+    other = {"type": "file", "path": "FE/src/main.tsx", "content": "import App from './App'\n"}
+    # 요약은 짧은 값을 그대로 두므로 80자가 넘는 파일로 본다.
+    long_file = {**APP_FILE, "content": "import Header from './h'\n" + "// x\n" * 40}
+    gw.script["read_repo"] = [long_file, other]
+    planner = Script(
+        classify("B4"),
+        call("read_repo", path="FE/src/App.tsx"),
+        call("read_repo", path="FE/src/main.tsx"),
+        plan(FINISH),
+        final(**GAVE_UP),
+    )
+    solve(make_run(**SIGNALS["B4"]), gw, Script(final(**GAVE_UP)), planner)
+    # 도구 결과는 JSON 글로 들어가므로 이스케이프된 모양으로 찾는다.
+    assert json.dumps(long_file["content"])[1:-1] in planner.sent(3)
+
+
+def test_a_read_rejected_while_planning_goes_back_to_the_planner() -> None:
+    gw = FakeGateway()
+    gw.script["read_repo"] = [reject("NOT_FOUND", "no such path")]
+    planner = Script(
+        classify("B4"),
+        call("read_repo", path="FE/src/app.tsx"),
+        plan({"tool": "submit_result", "when": "needs_user"}),
+    )
+    local = Script(
+        final(status="needs_user", userRequest={"message": "파일을 확인해 주세요."}, summary="s")
+    )
+    solve(make_run(**SIGNALS["B4"]), gw, local, planner)
+    # 계획 중 거절은 재계획(PlanBroken)이 아니라 추론 모델이 읽고 계획을 고친다.
+    assert "gateway rejected read_repo: NOT_FOUND: no such path" in planner.sent(2)
+    result = only_result(gw)
+    assert result["status"] == "needs_user" and result["classification"]["path"] == "playbook"
+
+
+def test_the_planner_api_gets_files_read_while_planning_redacted() -> None:
+    gw = FakeGateway()
+    gw.script["read_repo"] = [
+        {"type": "file", "path": "BE/.env.example", "content": "DATABASE_PASSWORD=s3cr3tvalue\n"}
+    ]
+    api = Script(
+        classify("B4"), call("read_repo", path="BE/.env.example"), plan(FINISH), final(**GAVE_UP)
+    )
+    local = Script(final(**GAVE_UP))
+    solve(make_run(**SIGNALS["B4"]), gw, local, models=make_models(local.model, api.model))
+    assert "s3cr3tvalue" not in api.sent(2) and "DATABASE_PASSWORD=[REDACTED]" in api.sent(2)
 
 
 ENV_FILE = [{"path": ".env", "content": "A=1\n"}]
