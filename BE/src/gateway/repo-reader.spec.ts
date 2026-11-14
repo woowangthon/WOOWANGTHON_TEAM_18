@@ -1,5 +1,7 @@
 import { Logger, ServiceUnavailableException } from '@nestjs/common'
+import { ConfigService } from '@nestjs/config'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { Env } from '../config/env.js'
 import { RepoReader, repoPath } from './repo-reader.js'
 
 // api.md `read_repo`: 200KB 넘으면 자른다.
@@ -31,7 +33,8 @@ describe('RepoReader', () => {
     if (answer instanceof Error) return Promise.reject(answer)
     return Promise.resolve(answer ?? new Response('{}', { status: 404 }))
   })
-  const reader = new RepoReader()
+  const readerWith = (GITHUB_TOKEN?: string) => new RepoReader(new ConfigService<Env, true>({ GITHUB_TOKEN }))
+  const reader = readerWith()
   afterEach(() => {
     answers.clear()
     vi.restoreAllMocks()
@@ -90,7 +93,7 @@ describe('RepoReader', () => {
   })
 
   it.each([
-    ['a 403 (rate limit)', new Response('{}', { status: 403 })],
+    ['a 403 that is not a rate limit', new Response('{}', { status: 403 })],
     ['a network error', new TypeError('fetch failed')],
   ])('throws GITHUB_UNAVAILABLE on %s', async (_label, answer) => {
     stub()
@@ -99,5 +102,30 @@ describe('RepoReader', () => {
     const err = await reader.read('student/app', SHA, 'a').catch((e: unknown) => e)
     expect(err).toBeInstanceOf(ServiceUnavailableException)
     expect((err as ServiceUnavailableException).getResponse()).toMatchObject({ code: 'GITHUB_UNAVAILABLE' })
+  })
+
+  it.each([
+    ['a token', 'github_pat_x', 'Bearer github_pat_x'],
+    ['no token', undefined, undefined],
+  ])('with %s, sends Authorization %s to the API (never to raw)', async (_, token, auth) => {
+    stub()
+    answers.set(`${API}/big.txt?ref=${SHA}`, Response.json({ type: 'file', encoding: 'none', content: '' }))
+    answers.set(`${RAW}/big.txt`, new Response('x'))
+    await readerWith(token).read('student/app', SHA, 'big.txt')
+    const headers = fetchMock.mock.calls.map(([url, init]) => [url as string, (init?.headers as Record<string, string>).Authorization])
+    expect(headers).toEqual([
+      [`${API}/big.txt?ref=${SHA}`, auth],
+      [`${RAW}/big.txt`, undefined],
+    ])
+  })
+
+  it('throws GITHUB_RATE_LIMITED with the reset time when no requests remain', async () => {
+    stub()
+    vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+    const reset = Math.floor(Date.UTC(2026, 10, 14, 8, 30) / 1000)
+    answers.set(`${API}/a?ref=${SHA}`, new Response('{}', { status: 403, headers: { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(reset) } }))
+    const err = await reader.read('student/app', SHA, 'a').catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(ServiceUnavailableException)
+    expect((err as ServiceUnavailableException).getResponse()).toMatchObject({ code: 'GITHUB_RATE_LIMITED', retryAt: '2026-11-14T08:30:00.000Z' })
   })
 })

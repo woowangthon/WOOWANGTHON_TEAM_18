@@ -316,6 +316,17 @@ it('tells the user to try again on DATABASE_UNAVAILABLE and sends the same input
   expect(calls('/api/deploys')[1]).toEqual(calls('/api/deploys')[0])
 })
 
+it('says the GitHub limit is used up (not "could not connect") on GITHUB_RATE_LIMITED at save time, and lets the user try again', async () => {
+  rejectSave(new ApiError(503, 'GITHUB_RATE_LIMITED', 'x'))
+  renderConfirm()
+  await ready()
+  fireEvent.click(confirmButton())
+  expect(await screen.findByText('GitHub 조회 한도를 잠시 다 썼어요')).toBeTruthy()
+  expect(screen.queryByText('저장하지 못했어요')).toBeNull()
+  fireEvent.click(confirmButton())
+  await waitFor(() => { expect(calls('/api/deploys')).toHaveLength(2) })
+})
+
 it('sends the user back to the check when the commit is gone at save time', async () => {
   rejectSave(new ApiError(404, 'COMMIT_NOT_FOUND', 'x'))
   renderConfirm()

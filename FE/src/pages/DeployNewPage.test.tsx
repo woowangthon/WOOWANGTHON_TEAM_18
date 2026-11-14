@@ -128,6 +128,7 @@ it.each([
   [422, 'REPO_NOT_PERSONAL', '지금은 개인 레포만 지원해요'],
   [503, 'GITHUB_UNAVAILABLE', '서버와 연결하지 못했어요'],
   [503, 'AUTH_UNAVAILABLE', '서버와 연결하지 못했어요'],
+  [503, 'GITHUB_RATE_LIMITED', 'GitHub 조회 한도를 잠시 다 썼어요'],
   [0, 'NETWORK_ERROR', '서버와 연결하지 못했어요'],
   [500, 'HTTP_500', '레포를 확인하지 못했어요'],
 ])('%i %s shows "%s" and no passed result', async (status, code, title) => {

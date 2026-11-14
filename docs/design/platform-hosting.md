@@ -83,6 +83,7 @@ EC2 ── gocd-server (GoCD 26.1.0, JVM -Xmx1g, 8153은 Tailscale 주소에만 
 | `PIPELINE_NOTIFY_TOKEN` | 위 `/wcp/gocd/PIPELINE_NOTIFY_TOKEN`과 같은 값 |
 | `CLUSTER_FULL_PERCENT` | 선택(1–100, 없으면 80). 워커 노드의 CPU · 메모리 사용률 중 큰 값이 이 값 이상이면 새 배포를 거절하고(`409 CLUSTER_FULL`) 대기 중인 배포는 출발하지 않는다 |
 | `DISCORD_WEBHOOK_URL` | 선택. 운영자 Discord 채널의 웹후크(운영 알림, [`incidents.md`](incidents.md)). `https://discord.com/api/webhooks/<id>/<token>` 모양이 아니면 BE가 뜨지 않는다. 비우면 운영자 Discord로 보내지 않는다. **SecureString** |
+| `GITHUB_TOKEN` | 선택이지만 운영에는 넣는다. BE가 `api.github.com`에 `Authorization: Bearer`로 붙이는 토큰. 공개 레포만 읽으므로 권한 없는 fine-grained PAT(Repository access는 Public repositories, 권한 없음)면 된다. 없으면 인증 없이 EC2 IP당 시간당 60번이라 모든 학생 배포가 그 60번을 나눠 쓴다(2026-11-14 실서비스에서 바닥나 배포 저장이 503으로 실패했다). 있으면 시간당 5,000번. 한도에 걸리면 `503 GITHUB_RATE_LIMITED`(`retryAt`)다. **SecureString** |
 
 **콘솔에서 만들 AWS 리소스** (서울 `ap-northeast-2`, 이름은 파이프라인이 그대로 쓴다):
 

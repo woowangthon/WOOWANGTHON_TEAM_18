@@ -15,6 +15,8 @@ export class ApiExceptionFilter implements ExceptionFilter {
       const error: Record<string, unknown> = { code: codeOf(body, status), message: isBodyParseError(exception) ? 'Request body is not valid JSON' : exception.message }
       // 검증 오류가 칸마다 알리는 목록(INVALID_SPEC). 다른 오류에는 없다.
       if (typeof body === 'object' && 'fields' in body && Array.isArray(body.fields)) error.fields = body.fields
+      // 다시 시도할 수 있는 시각(ISO, GITHUB_RATE_LIMITED). 다른 오류에는 없다.
+      if (typeof body === 'object' && 'retryAt' in body && typeof body.retryAt === 'string') error.retryAt = body.retryAt
       res.status(status).json({ error })
       return
     }
