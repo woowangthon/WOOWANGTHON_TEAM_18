@@ -2,7 +2,6 @@ import { ConfigService } from '@nestjs/config'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Env } from '../config/env.js'
 import { DeployEvents } from './deploy-events.js'
-import { ENDED_STATUSES } from './deploy-run.js'
 import { DeploysStore } from './deploys.store.js'
 
 const ID = '6f1c0a52-3b7e-4a40-9a6c-2f5d8e1b7c90'
@@ -32,9 +31,9 @@ describe('DeploysStore.updateRun end events', () => {
     const s = new DeploysStore(new ConfigService<Env, true>({ SUPABASE_URL: 'https://test.supabase.co', SUPABASE_SECRET_KEY: 'k' }), events)
     const fetchMock = vi.fn<typeof fetch>(() => Promise.resolve(Response.json([{}])))
     vi.stubGlobal('fetch', fetchMock)
-    for (const status of ENDED_STATUSES) await s.updateRun(ID, {}, { status })
+    for (const status of ['succeeded', 'failed', 'needs_user'] as const) await s.updateRun(ID, {}, { status })
     expect(ended).toEqual([ID, ID, ID])
-    await s.updateRun(ID, {}, { status: 'fixing' })
+    for (const status of ['queued', 'running', 'fixing'] as const) await s.updateRun(ID, {}, { status })
     await s.updateRun(ID, {}, { stage: 'verify' })
     expect(ended).toHaveLength(3)
     // 다른 쪽이 먼저 바꿔 이 호출은 아무것도 바꾸지 못했다: 알리지 않는다.

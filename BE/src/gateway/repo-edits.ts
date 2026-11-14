@@ -197,6 +197,8 @@ export class RepoEdits {
       const after = 'content' in f ? f.content : replaceOnce(f.path, current.after, f.find, f.replace)
       if (typeof after !== 'string') return after
       if (Buffer.byteLength(after) > MAX_FILE_BYTES) return forbid('size', `${f.path}: the new content is larger than ${MAX_FILE_BYTES / 1024}KB`)
+      // 원래 내용에 NUL이 있었으면 find/replace 결과에도 남는다: 결과로 다시 본다.
+      if (after.includes('\0')) return forbid('not-text', `${f.path}: only text files can be written`)
       merged.set(f.path, { ...current, after })
     }
     // 처음 내용으로 되돌린 파일은 바뀐 파일이 아니다.

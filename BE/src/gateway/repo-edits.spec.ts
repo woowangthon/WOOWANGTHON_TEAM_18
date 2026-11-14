@@ -289,6 +289,12 @@ describe('edit_repo_file find/replace', () => {
     expect((answer as { message: string }).message).not.toContain('find, replace')
   })
 
+  it('refuses a find/replace on a file whose other text keeps a NUL byte', async () => {
+    bot.files.set('odd.txt', file('a\0b\nfix me\n'))
+    expect(await edit([swap('odd.txt', 'fix me', 'fixed')])).toMatchObject({ ok: false, code: 'EDIT_FORBIDDEN' })
+    expect(bot.commits).toEqual([])
+  })
+
   it('refuses a replace that makes the file larger than 200KB', async () => {
     bot.files.set('mid.txt', file(`${'x'.repeat(199 * 1024)}\nMARK\n`))
     expect(await edit([swap('mid.txt', 'MARK', 'y'.repeat(2 * 1024))])).toMatchObject({ ok: false, code: 'EDIT_FORBIDDEN', message: expect.stringContaining('200KB') as string })

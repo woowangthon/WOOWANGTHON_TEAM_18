@@ -27,6 +27,7 @@ let deployments: Record<string, DeploymentInfo[]>
 let pods: Record<string, PodInfo[]>
 let scaled: { slug: string; name: string }[]
 let aiAnswer: () => Response
+let aiGate: Promise<void> | undefined
 let discord: { url: string; content: string; mentions: unknown }[]
 let aiBodies: Row[]
 let discordDown: boolean
@@ -104,7 +105,7 @@ const fetchMock = vi.fn<typeof fetch>((input, init) => {
   if (url.startsWith(REST)) return Promise.resolve().then(() => rest(new URL(url), init))
   if (url === AI) {
     aiBodies.push(JSON.parse(init?.body as string) as Row)
-    return Promise.resolve(aiAnswer())
+    return (aiGate ?? Promise.resolve()).then(() => aiAnswer())
   }
   if (url.startsWith('https://discord.com/api/webhooks/')) {
     if (discordDown) return Promise.reject(new Error('down'))
@@ -153,6 +154,7 @@ beforeEach(async () => {
   scaleFails = new Set()
   incidentsDown = false
   aiAnswer = () => Response.json(judgment)
+  aiGate = undefined
   fetchMock.mockClear()
   vi.stubGlobal('fetch', fetchMock)
   vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
@@ -395,6 +397,26 @@ describe('operator incidents API', () => {
     expect(byKey('my-app', 'KubeContainerWaiting')).toMatchObject({ action: 'dismissed', decided_by: null })
     expect(byKey('other-app', 'KubePodNotReady')).toMatchObject({ action: 'pending', decided_by: null })
     expect(scaled).toEqual([{ slug: 'my-app', name: 'be-a' }])
+  })
+
+  it('keeps a judgment that arrives after the stop, but does not send it to Discord', async () => {
+    seedProject('my-app')
+    deployments['my-app'] = [deployment('be-a')]
+    let release = () => {}
+    aiGate = new Promise((r) => (release = r))
+    alerts = [alert('KubePodNotReady', 'proj-my-app'), alert('CPUThrottlingHigh', 'proj-my-app')]
+    const watcher = app.get(AlertWatcher)
+    watcher.kick()
+    await vi.waitFor(() => expect(aiBodies).toHaveLength(2))
+    const id = db.incidents[0].id as string
+    expect((await call('post', `/api/admin/incidents/${id}/stop`, await adminAuth())).status).toBe(200)
+    release()
+    await watcher.idle()
+    expect(db.incidents.map((i) => [i.action, (i.ai as Row).status])).toEqual([
+      ['stopped', 'done'],
+      ['stopped', 'done'],
+    ])
+    expect(discord).toEqual([])
   })
 
   it('leaves the other waiting incidents open when the cluster could not stop anything', async () => {

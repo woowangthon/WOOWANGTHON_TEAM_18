@@ -172,7 +172,8 @@ export class AlertWatcher implements OnApplicationBootstrap, OnModuleDestroy {
     const ai = await this.judge.judge(incident)
     // 아직 판단 전인 것만 채운다(다른 처리가 먼저 끝냈으면 알림을 다시 보내지 않는다).
     const judged = await this.store.update(incident.id, { ai }, undefined, 'pending')
-    if (judged) await this.notify(judged)
+    // 판단을 기다리는 사이 운영자가 정했거나 같은 프로젝트의 중지로 닫혔으면, 판단은 화면에 남기고 Discord는 보내지 않는다.
+    if (judged?.action === 'pending') await this.notify(judged)
   }
 
   private async notify(incident: IncidentRow): Promise<void> {
