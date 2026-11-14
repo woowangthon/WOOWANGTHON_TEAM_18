@@ -87,7 +87,7 @@ EC2 ── gocd-server (GoCD 26.1.0, JVM -Xmx1g, 8153은 Tailscale 주소에만 
 
 | 리소스 | 설정 |
 | --- | --- |
-| CodeBuild 프로젝트 `student-apps` | 소스 없음(NO_SOURCE). 환경: 관리형 Ubuntu 표준 이미지, Linux, **권한 있는 모드(privileged) 켬**(`docker build`), 컴퓨팅 MEDIUM 이상. **VPC 밖**. 시간 제한 **15분**(파이프라인이 대기 상한을 이것에 맞춘다, `build.ts`의 `MAX_WAIT_MS`). buildspec은 자리만 채운다(`version: 0.2`와 `echo`; 실제 buildspec은 StartBuild가 넘긴다). 로그 그룹 `/aws/codebuild/student-apps` |
+| CodeBuild 프로젝트 `student-apps` | 소스 없음(NO_SOURCE). 환경: 관리형 이미지 `aws/codebuild/amazonlinux-x86_64-standard:5.0`(Amazon Linux), `LINUX_CONTAINER`, **권한 있는 모드(privileged) 켬**(`docker build`), 컴퓨팅 **`BUILD_GENERAL1_SMALL`**(무료 티어가 적용되는 크기. AI 시험 빌드도 SMALL만 쓴다, `BE/src/gateway/tools.ts`). **VPC 밖**. 시간 제한 **15분**(파이프라인이 대기 상한을 이것에 맞춘다, `build.ts`의 `MAX_WAIT_MS`), 대기열 제한 10분, 캐시 없음. 프로젝트에 저장된 buildspec은 `Infra/build/buildspec.yml`과 같은 내용(주석만 없음)이지만, StartBuild가 매번 `buildspecOverride`로 넘기므로 저장된 값은 쓰이지 않는다. 로그 그룹 `/aws/codebuild/student-apps`. 위 값은 2026-11-14 `aws codebuild batch-get-projects`로 확인했다. 콘솔에서 만든 프로젝트라 다른 계정으로 옮기면 이 값대로 다시 만든다 |
 | 위 프로젝트의 서비스 역할 | CloudWatch Logs 쓰기와 `secretsmanager:GetSecretValue`(비밀 `wcp/codebuild/GHCR_TOKEN` 하나만). 그 밖의 권한은 없다 |
 | Secrets Manager 비밀 `wcp/codebuild/GHCR_TOKEN` | 평문(JSON 아님). 값은 봇 GitHub 계정의 토큰(classic, `write:packages`). 파이프라인의 `GHCR_TOKEN_SECRET_ID`에 이 이름이 들어 있다 |
 | IAM 사용자 `wcp-gocd-aws-agent` (AWS 실행기 전용) | `codebuild:StartBuild` · `codebuild:BatchGetBuilds`는 프로젝트 `student-apps`에만, `logs:GetLogEvents`는 그 로그 그룹(`/aws/codebuild/student-apps:log-stream:*`)에만. 콘솔 로그인은 없고 액세스 키만 만들어 SSM `/wcp/gocd/AWS_ACCESS_KEY_ID` · `AWS_SECRET_ACCESS_KEY`에 넣는다 |
