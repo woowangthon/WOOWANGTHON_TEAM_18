@@ -919,8 +919,13 @@ def test_the_instructions_tell_the_model_the_pull_request_rules() -> None:
         "the platform checks it",
         # D3(2026-11-14): run_render는 source를 받지 않아 수정 PR 경로에서 호출이 낭비됐다.
         "Skip run_render on this path",
+        # D8(2026-11-14): "run_deploy, run_verify and open_pr with the same source"로 합친 뒤
+        # 로컬 모델이 run_verify에 source를 붙여 INVALID_ARGUMENT로 계획이 깨졌다.
+        "run_verify with no arguments",
+        "then run_deploy with the same `source`",
     ):
         assert text in INSTRUCTIONS
+    assert "run_verify and open_pr with the same" not in INSTRUCTIONS
 
 
 # ---- 성능 정리(2026-11-14) ----

@@ -33,8 +33,9 @@ How to work:
   once in the file; for a few lines) or `{ path, content }` (a whole file). At most 5 files and 50
   changed lines (added plus removed) per ticket, never .env or .github/, never a secret value. It
   commits to the platform's bot fork and returns `source`. Test that exact `source`: run_build for
-  each service whose files changed, then run_deploy, run_verify and open_pr with the same `source`
-  (a Korean title and a body saying what was wrong and what you changed).
+  each service whose files changed, then run_deploy with the same `source`,
+  run_verify with no arguments, and open_pr with the same `source` (a Korean title and a body
+  saying what was wrong and what you changed).
   Skip run_render on this path: it takes no `source` and only renders the original commit.
   open_pr is refused (NOT_VERIFIED) until run_verify has passed for that `source`.
   read_repo also takes `source` to read your changed files back.
