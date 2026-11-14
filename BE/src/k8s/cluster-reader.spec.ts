@@ -292,6 +292,47 @@ describe('ClusterReader', () => {
       expect(fake.paths).toEqual([])
     })
   })
+
+  describe('alerts', () => {
+    const ALERTS = '/api/v1/namespaces/monitoring/services/monitoring-prometheus:9090/proxy/api/v1/alerts'
+
+    it('reads the alerts Prometheus evaluates, keeping only string labels and the summary', async () => {
+      fake.answers.set(ALERTS, {
+        status: 200,
+        body: {
+          status: 'success',
+          data: {
+            alerts: [
+              {
+                labels: { alertname: 'KubePodCrashLooping', namespace: 'proj-my-app', pod: 'be-a-1', weird: 3 },
+                annotations: { summary: 'Pod is crash looping.', description: 'long text', runbook_url: 'https://x' },
+                state: 'firing',
+                activeAt: '2026-11-14T10:00:00Z',
+                value: '1e+00',
+              },
+              { labels: { alertname: 'Watchdog' }, state: 'firing' },
+              'junk',
+            ],
+          },
+        },
+      })
+      expect(await reader.alerts()).toEqual([
+        { labels: { alertname: 'KubePodCrashLooping', namespace: 'proj-my-app', pod: 'be-a-1' }, state: 'firing', activeAt: '2026-11-14T10:00:00Z', summary: 'Pod is crash looping.' },
+        { labels: { alertname: 'Watchdog' }, state: 'firing', activeAt: null, summary: '' },
+      ])
+      expect(fake.paths).toEqual([ALERTS])
+    })
+
+    it.each([
+      ['an error status', { status: 'error' }],
+      ['no alerts list', { status: 'success', data: {} }],
+      ['not an object', 'text'],
+    ])('throws unexpected for %s', async (_name, body) => {
+      vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      fake.answers.set(ALERTS, { status: 200, body })
+      await expect(reader.alerts()).rejects.toMatchObject({ kind: 'unexpected' })
+    })
+  })
 })
 
 describe('newestPod', () => {
