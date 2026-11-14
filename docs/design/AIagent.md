@@ -17,11 +17,12 @@
 
 ```
 플랫폼 서버                                AI 서버 (PydanticAI 에이전트)
-문제 티켓 발행 ─────────────────────────▶ ① 분류: 코드 대조 (장기 메모리 case의 match)
-                                          ② 못 맞추면 LLM 분류 (로컬 모델)
-                                          ├─ 알려진 case → ③ playbook (정해진 툴 순서)
-                                          │     실패 → ④ 실패 기반 planning (추론 모델 API)
-                                          └─ unknown → ⑤ planning (추론 모델 API)
+문제 티켓 발행 ─────────────────────────▶ ① 정규식 대조 (장기 메모리 case의 match): 힌트로만 쓴다
+                                          ② 분류 (추론 모델 API): ①의 힌트를 참고해 case를 고르거나 null
+                                          ├─ 알려진 case → ③ 추론 모델이 playbook을 참고해 계획(도구 호출 없음)
+                                          │     → 로컬 모델이 계획에 있는 도구만으로 실행
+                                          │     실패 · 거절 → ④ 재계획 (추론 모델 API가 직접 도구를 부름)
+                                          └─ unknown → ⑤ planning (추론 모델 API가 직접 도구를 부름)
                                           도구 실행 → 결과(원본) 관찰 → 다시 계획 … (횟수 제한 안에서)
 해결 결과 수신 ◀──────────────────────── submit_result
   verified → 고친 입력으로 배포 파이프라인을 처음부터 다시 실행(Verify가 재확인) → Switch → W7
@@ -320,8 +321,8 @@ AI 서버 (에이전트) → 플랫폼 서버 MCP 게이트웨이 → GoCD 서�
   - 조건 하나는 `{ "path", 시험 하나 }`이고 시험은 `equals` · `notEquals` · `regex` 중 하나다. 경로가 가리키는 값 하나라도 맞으면 참이다(`[*]`는 배열 전체, `[0]`은 한 칸, 없는 칸은 거짓). `regex`는 문자열 값에만 댄다.
   - 조건은 `{ "all": [...] }` · `{ "any": [...] }`로 묶는다. `all` 안의 조건은 서로 다른 원소에서 맞아도 된다(같은 이벤트인지 보지 않는다).
   - 코드 분류는 티켓의 `stage`와 같은 case만 파일 순서대로 대조해 처음 맞는 것을 고른다. 그래서 좁은 case를 넓은 case 앞에 둔다(`A3` OOMKilled는 `A2` CrashLoopBackOff 앞).
-  - 초기 case 데이터는 [`AI/ai_server/agent/cases.json`](../../AI/ai_server/agent/cases.json)이다. `playbook`의 `when`과 `{i}` 같은 자리 표시는 에이전트에게 주는 설명이고 코드가 판정하지 않는다.
-  - `verify` stage의 case는 `V1` · `V2`다. `verify` 티켓에는 검사 결과 원본이 없으므로 `errorMessage`(통과하지 못한 검사 하나의 경로와 응답 상태)를 정규식으로 대조한다. 그 밖의 `verify` 실패(Ready 아닌 Pod, 빈 엔드포인트, 404가 아닌 상태)는 ② LLM 분류 → ⑤ planning으로 간다.
+  - 초기 case 데이터는 [`AI/ai_server/agent/cases.json`](../../AI/ai_server/agent/cases.json)이다. `playbook`의 `when`과 `{i}` 같은 자리 표시는 에이전트에게 주는 설명이고 코드가 판정하지 않는다. playbook의 `tool`은 게이트웨이가 여는 도구만 쓴다(테스트가 확인한다). `submit_result` 단계는 모델에게 도구가 아니라 끝내는 조건(`finish`)으로 보인다(결과는 코드가 낸다).
+  - `verify` stage의 case는 `V1` · `V2`다. `verify` 티켓에는 검사 결과 원본이 없으므로 `errorMessage`(통과하지 못한 검사 하나의 경로와 응답 상태)를 정규식으로 대조한다. 그 밖의 `verify` 실패(Ready 아닌 Pod, 빈 엔드포인트, 404가 아닌 상태)는 정규식 힌트 없이 ② 분류로 간다.
   - `stats`(`hits` · `solved`)는 AI 서버 메모리에만 있어 재시작하면 0부터다.
 - planning으로 해결한 새 case는 바로 넣지 않는다. 사람이 확인한 뒤 넣는다.
 
@@ -329,15 +330,15 @@ AI 서버 (에이전트) → 플랫폼 서버 MCP 게이트웨이 → GoCD 서�
 
 | case | 단계 | 오류 | 신호 | 처리 |
 |---|---|---|---|---|
-| `B1` | build | 락 파일 불일치 | `INSTALL` 실패, `ERR_PNPM_OUTDATED_LOCKFILE`, `npm ci` sync 오류 | 수정 PR (락 파일 갱신) |
-| `B2` | build | Node 버전 불일치 | `engine "node" is incompatible`, `SyntaxError: Unexpected token` | `build.nodeVersion` |
+| `B1` | build | 락 파일 불일치 | `INSTALL` 실패, `ERR_PNPM_OUTDATED_LOCKFILE`, `npm ci` sync 오류 | `needs_user`로 다시 만들 락 파일과 명령을 알림(락 파일은 패키지 매니저를 돌려야 다시 만들 수 있고 `edit_repo_file` 50줄을 넘기 쉽다) |
+| `B2` | build | Node 버전 불일치 | `engine "node" is incompatible`, `ERR_PNPM_UNSUPPORTED_ENGINE`, `npm error code EBADENGINE`. npm의 `EBADENGINE` **경고**와 일반 `SyntaxError`는 신호로 쓰지 않고, 대조는 `B5` · `B3` · `B4` 뒤에 한다(경고가 섞인 다른 실패를 B2로 잘못 고르지 않게, 2026-11-14) | `build.nodeVersion` |
 | `B3` | build | 빌드 시점 env 누락 | `BUILD` 실패, `import.meta.env.VITE_*` undefined | `build.buildEnv` 또는 사용자 요청 |
-| `B4` | build | 대소문자 · import 경로 | `Module not found`, `Cannot find module` | 수정 PR |
+| `B4` | build | 대소문자 · import 경로 | `Module not found`, `Cannot find module` | 수정 PR(`edit_repo_file` → 같은 `source`로 `run_build` · `run_deploy` · `run_verify` → `open_pr`). `BOT_UNAVAILABLE`이거나 PR이 막히면(`patchAttached`) `needs_user`로 import 파일 · 고칠 경로를 알림 |
 | `B5` | build | `COPY` 대상 없음 | `COPY failed`, `"/dist": not found` | `build.context` · `outputDir` · `dockerfile` |
 | `P1` | prepare | 필수 Secret key 없음 | W3 상태 "빠짐" | 사용자 요청 |
 | `P2` | prepare | 자원 합계 초과 | 검증 규칙 `resources` 합계 | `runtime.resources` |
 | `P3` | prepare | `ingressPath` 충돌 | 검증 규칙 `ingressPath` | `runtime.ingressPath` |
-| `R1` | render | 이름 규칙 위반 | `422 Invalid`, `FieldValueInvalid`, `DNS-1035` | 첫 배포 전이면 `name` 수정, 그 뒤면 사용자 요청 |
+| `R1` | render | 이름 규칙 위반 | `422 Invalid`, `FieldValueInvalid`, `DNS-1035` | 사용자 요청(`needs_user`). `name` · `slug`는 대상 슬롯에서 시험할 수 없어 게이트웨이가 `PATCH_FORBIDDEN`으로 막는다. 배포 입력 검사(`SERVICE_NAME`)가 이미 같은 규칙이라 실제로는 거의 오지 않는다 |
 | `R2` | render | 포트 · probe 값 오류 | `422 Invalid`, field `...containerPort` | `runtime.port` · `health` |
 | `R3` | render | 쿼터 초과 | `403 Forbidden`, `exceeded quota` | `runtime.resources`. render에서는 드묾: ResourceQuota는 Pod가 생길 때 걸려 Deployment dry-run은 통과한다(2026-11-11 로컬 k3s, CPU 9 Deployment가 통과). 실제로는 Prepare의 `P2`나 apply의 `A4`(FailedCreate)로 온다 |
 | `A1` | apply | 헬스체크 실패 | 이벤트 `Unhealthy` | `runtime.port` · `health.path` · `startupTimeoutSeconds` |
@@ -353,8 +354,8 @@ AI 서버 (에이전트) → 플랫폼 서버 MCP 게이트웨이 → GoCD 서�
 
 | 쓰는 곳 | 모델 |
 |---|---|
-| ② LLM 분류, 도구 고르기 | 로컬 Qwen3-8B (리더 vLLM, OpenAI 호환 API) |
-| ④ · ⑤ planning | 추론 모델 `gpt-6.1-sol` (충북대 NOVA API Gateway, OpenAI 호환. [ADR-016](../adr/016-planner-model-nova-gateway.md), [배포 워크플로우](deploy-workflow.md) §7) |
+| ③ 계획 실행(도구 부르기 · 인자 채우기 · 학생에게 보일 글) | 로컬 Qwen3-8B (리더 vLLM, OpenAI 호환 API) |
+| ② 분류, ③ 계획, ④ · ⑤ planning | 추론 모델 `gpt-6.1-sol` (충북대 NOVA API Gateway, OpenAI 호환. [ADR-016](../adr/016-planner-model-nova-gateway.md), [배포 워크플로우](deploy-workflow.md) §7) |
 
 PydanticAI에서 두 모델을 OpenAI 호환 provider로 붙이고, 추론 모델 API를 못 쓰면 로컬 모델로 넘긴다.
 
@@ -362,19 +363,20 @@ PydanticAI에서 두 모델을 OpenAI 호환 provider로 붙이고, 추론 모�
 
 | 단계 | 모델 | 하는 일 |
 |---|---|---|
-| ① 코드 분류 | 없음 | §8 `match`로 같은 stage의 case를 고른다 |
-| ② LLM 분류 | 로컬 | 같은 stage의 case 목록(id · 제목)에서 하나를 고르거나 null. 목록에 없는 id는 모르는 것으로 본다 |
-| ③ playbook | 로컬 | case의 playbook을 따라 도구를 부르고 해결 결과(§6의 status · `specPatch` · `pr` · `userRequest` · `evidence` · `summary`)를 낸다 |
-| ④ 재계획 | 추론 API | ③이 `gave_up`이면 playbook · 지금까지의 도구 호출 · ③의 요약을 받아 다시 계획하고 실행한다 |
-| ⑤ planning | 추론 API | ②가 null이면 처음부터 계획하고 실행한다 |
+| ① 정규식 대조 | 없음 | §8 `match`로 같은 stage에서 맞는 case를 **전부** 고른다(`CaseMemory.candidates`). 최종 판단에 쓰지 않고 ②에 `Regex hint (may be wrong)`로만 준다 |
+| ② 분류 | 추론 API | 같은 stage의 case 목록(id · 제목)과 ①의 힌트로 하나를 고르거나 null. 힌트가 로그 발췌와 다르면 발췌를 따른다. 목록에 없는 id는 모르는 것으로 본다. 고른 case에 hits를 올린다. 결과의 `method`는 `llm` |
+| ③ 계획 → 실행 | 추론 API → 로컬 | 추론 모델은 도구를 부르지 않고 계획(`cause` + `steps`: 도구 · 실제 인자 · `when`, 마지막은 끝내는 조건)만 낸다(게이트웨이 호출 한도를 쓰지 않는다). 게이트웨이에 없는 도구 · 8,000자를 넘는 계획은 다시 만들게 한다. 로컬 모델은 계획에 있는 도구만 받아 그대로 부르고 해결 결과(§6의 status · `specPatch` · `pr` · `userRequest` · `evidence` · `summary`)를 낸다 |
+| ④ 재계획 | 추론 API | ③이 `gave_up`이거나, 실행 중 게이트웨이 거절(같은 호출 반복 `REPEATED_CALL` 포함)을 받았거나, 출력이 계속 깨지면 playbook · 지금까지의 도구 호출 · 멈춘 이유를 받아 다시 계획하고 직접 실행한다 |
+| ⑤ planning | 추론 API | ②가 null이면 처음부터 계획하고 직접 실행한다 |
 
 - **결과는 코드가 낸다.** 모델에게 `submit_result`를 주지 않는다. 모델의 출력(위 ③의 칸들)이 모양에 맞지 않으면 PydanticAI가 다시 만들게 하고(2번까지), 코드가 봉투(`ticketId` · `commitSha` · `classification` · `actions`)를 붙여 게이트웨이 `submit_result`를 한 번 부른다. `actions`는 모델이 말한 것이 아니라 게이트웨이에 실제로 한 호출의 기록이다(`ok`는 결과의 `ok`, 거절은 `ok: false`와 `rejected <code>`).
-- **거절 코드.** `TOOL_LIMIT` · `TIME_LIMIT` · `LIVE_SLOT_PROTECTED`는 실행을 멈추고 이유와 할 일을 담은 `gave_up`을 낸다(재계획하지 않는다). `TICKET_CLOSED`는 토큰이 무효라 아무것도 내지 않는다. 그 밖의 거절은 코드와 메시지를 모델에게 돌려줘 인자를 고치게 한다.
+- **거절 코드.** `TOOL_LIMIT` · `TIME_LIMIT` · `LIVE_SLOT_PROTECTED`는 실행을 멈추고 이유와 할 일을 담은 `gave_up`을 낸다(재계획하지 않는다). `TICKET_CLOSED`는 토큰이 무효라 아무것도 내지 않는다. ③에서 로컬 모델이 받은 그 밖의 거절은 모델에 돌려주지 않고 그 자리에서 ④로 간다(2026-11-14 실측: 로컬 모델이 거절된 호출을 되풀이하다 `TOOL_LIMIT`). ④ · ⑤에서 추론 모델이 받은 거절은 코드와 메시지를 돌려줘 인자를 고치게 한다.
+- **왜 이렇게 나눴나**(2026-11-14 실서비스 실측. ADR은 결정이 확정된 뒤 따로 쓴다). 예전에는 ①이 맞으면 그 case로 분류가 끝났고, 못 맞추면 로컬 모델이 case를 골랐으며, case가 정해지면 로컬 모델이 playbook의 계획과 도구 호출을 모두 했다. 실측 9건에서 로컬 모델은 playbook에 없는 실패 5건을 모두 엉뚱한 case(B1 · B2 · B4)로 골랐고, 9건 중 7건이 도구를 부르기 전에 계획이 틀렸다(정답 0/9).
 - **모델 호출 실패**(연결 실패, 출력이 계속 틀림)는 `gave_up`과 그 사실을 적은 `summary`로 낸다. 그럴듯한 결과로 대신하지 않는다. 게이트웨이 거절이 반복되어 도구 재시도 한도(3번)를 넘긴 것은 모델 실패가 아니라 "배포 설정 수정이 플랫폼 검사에서 계속 거절되어 멈췄습니다(마지막 거절: <code>)"로 알린다.
 - **게이트웨이 장애**: 연결 실패 · 도구 호출 중 전송 오류 · 시간 초과는 "플랫폼 게이트웨이에 닿지 못해 멈췄습니다"라는 `gave_up`으로 바꾼다. 결과 제출이 전송 오류면 2 · 5 · 10초 뒤 다시 낸다(모두 4번). `INVALID_RESULT`로 거절되면 모델이 정한 칸을 빼고 봉투와 사실 요약만 담은 `gave_up`으로 한 번 더 낸다. 그래도 안 되면 로그만 남는다.
 - **모델 설정이 없으면**(`LOCAL_MODEL_*` 비움) 서버는 뜨고, 티켓마다 코드 분류만 한 뒤 "AI 모델 설정이 없어 문제 해결을 하지 않았습니다"라는 `gave_up`을 낸다.
 - **가림 필터**(FR-102): 추론 모델 API로 가는 요청의 지시문 · 프롬프트 · 도구 결과 · 이전 도구 인자에서 비밀값 같은 키의 값, Authorization 헤더 값, 주소 안의 비밀번호, 모양으로 아는 토큰(GitHub · OpenAI · AWS · Slack · Supabase · 게이트웨이 · JWT · 개인 키)을 `[REDACTED]`로 바꾼다. 로컬 모델은 클러스터 안이라 걸지 않는다. 게이트웨이로 내는 결과의 기록은 원본이다.
-- **모델 연결**: 두 모델 모두 OpenAI 호환 API이고 env로 받는다(`LOCAL_MODEL_*` · `PLANNER_MODEL_*` 모두 선택, 주소와 이름은 함께). 추론 API가 없으면 ④ · ⑤도 로컬 모델이 하고, 있는데 호출이 실패하면 그 요청은 로컬 모델로 넘어간다.
+- **모델 연결**: 두 모델 모두 OpenAI 호환 API이고 env로 받는다(`LOCAL_MODEL_*` · `PLANNER_MODEL_*` 모두 선택, 주소와 이름은 함께). 추론 API가 없으면 ② ~ ⑤ 모두 로컬 모델이 하고, 있는데 호출이 실패하면 그 요청은 로컬 모델로 넘어간다.
 - **모델로 보내는 글**은 `prompts.py` 한 곳에서 만든다.
 
 **로컬 모델 16K 컨텍스트 예산** (`AI/ai_server/agent/budget.py`). vLLM `--max-model-len 16384`는 입력 + 출력의 합이라 입력은 약 10K 토큰을 목표로 한다. 플랫폼이 보내는 크기에 기대지 않고 AI 서버가 받는 쪽에서 줄인다.
@@ -397,6 +399,7 @@ PydanticAI에서 두 모델을 OpenAI 호환 provider로 붙이고, 추론 모�
 - 로컬 8B 모델의 분류 · 도구 호출 품질은 검증하지 않았다. 실제 모델(로컬 · 추론 API)은 아직 한 번도 붙여 돌리지 않았다.
 - 컨텍스트 예산은 글자 수로 어림했다(가장 큰 시험 티켓 · 도구 결과로 로컬 모델 입력이 도구 정의까지 합쳐 30,000자 이하). 실제 토큰 수는 vLLM에 붙인 뒤 응답의 `usage.prompt_tokens`로 재야 한다. 한글은 글자당 토큰이 더 많아 어림이 빗나갈 수 있다.
 - 요약본과 발췌는 정보를 버린다. 오류 표시 단어가 없는 원인 줄은 발췌에서 빠질 수 있고, 지난 도구 결과는 한 줄만 남는다. 에이전트가 필요하면 관찰 도구로 다시 읽는다.
+- `verified`의 패치가 env · buildEnv에 넣는 값이 티켓 · 도구 결과 어디에도 없으면 AI 서버 코드가 `needs_user`로 바꾼다(지어낸 값. 모델은 비밀값을 모른다). 2026-11-14 실서비스 측정에서 로컬 모델이 비밀값 `VITE_API_KEY`에 지어낸 값을 넣어 시험을 통과시키고 `verified`를 낸 것을 보고 넣었다(`loop._invented_env_keys`).
 - 에이전트가 낸 `verified`가 정말 `run_verify` 통과 뒤인지 AI 서버는 따로 확인하지 않는다. 게이트웨이가 이 티켓의 시험 기록(같은 `specPatch`로 `run_deploy` → `run_verify` 통과)과 맞춰 보고(B2), 다시 실행의 Verify가 대상 슬롯을 한 번 더 확인한다(§1).
 - 가림 필터는 정해진 모양만 가린다. 이름 없이 나온 임의의 비밀 문자열은 못 가린다.
 - 게이트웨이가 지금 여는 도구는 열 개다: 관찰 셋(`get_target_status` · `read_pod_logs` · `read_repo`), 시험 넷(`run_build` · `run_render` · `run_deploy` · `run_verify`, F11b), 레포 수정 둘(`edit_repo_file` · `open_pr`, F13), `submit_result`. 대상 슬롯 운영 · `read_build_logs`는 그 뒤다. `verified`는 이 티켓에서 같은 `specPatch`로 `run_deploy` → `run_verify`를 통과했을 때만 받는다(B2). 빌드 값을 고쳤으면 그 서비스의 `run_build`도 같은 패치로 통과했어야 한다(B3). 그래서 지금 에이전트가 낼 수 있는 결과는 `verified` · `needs_user` · `gave_up` · `pr_opened`이다.

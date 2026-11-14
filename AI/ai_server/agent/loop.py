@@ -5,13 +5,15 @@
 """
 
 import asyncio
+import json
 import logging
+import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError, model_validator
 from pydantic_ai import Agent, ModelRetry
 from pydantic_ai.capabilities import ProcessHistory
 from pydantic_ai.exceptions import AgentRunError, FallbackExceptionGroup, UnexpectedModelBehavior
@@ -19,6 +21,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
 from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.usage import RunUsage
 
 from ai_server.agent import budget, prompts
 from ai_server.agent.gateway import (
@@ -27,9 +30,10 @@ from ai_server.agent.gateway import (
     GatewayStop,
     GatewayToolset,
     GatewayUnreachable,
+    PlanBroken,
     connect_gateway,
 )
-from ai_server.agent.memory import Case, CaseMemory
+from ai_server.agent.memory import Case, CaseMemory, PlaybookStep
 from ai_server.agent.models import (
     Action,
     AgentResult,
@@ -37,8 +41,10 @@ from ai_server.agent.models import (
     ClassifyMethod,
     Outcome,
     ResultPath,
+    SpecPatchOp,
     Stage,
     Ticket,
+    UserRequest,
 )
 from ai_server.agent.redact import RedactingModel
 from ai_server.agent.runs import Runner, TicketRun
@@ -127,6 +133,28 @@ class CaseChoice(BaseModel):
     case_id: str | None = Field(description="caseId from the list, or null")
 
 
+# 계획 하나의 JSON 글자 수 상한. 로컬 모델 입력 예산(budget.LOCAL_INPUT_CHARS) 안에 들게 한다.
+PLAN_CHARS = 8_000
+
+
+class Plan(BaseModel):
+    """추론 모델이 case의 playbook을 참고해 내는 계획. 로컬 모델이 그대로 실행한다."""
+
+    cause: str = Field(min_length=1, description="the likely cause in one line")
+    steps: list[PlaybookStep] = Field(
+        min_length=1, description="tool steps in order; the last is a submit_result finish step"
+    )
+
+    @model_validator(mode="after")
+    def _known_tools_and_size(self) -> "Plan":
+        unknown = sorted({s.tool for s in self.steps} - prompts.GATEWAY_TOOLS)
+        if unknown:
+            raise ValueError(f"unknown tools {unknown}; use only {sorted(prompts.GATEWAY_TOOLS)}")
+        if len(self.model_dump_json()) > PLAN_CHARS:
+            raise ValueError(f"the plan is longer than {PLAN_CHARS} characters; shorten it")
+        return self
+
+
 def _read_memory_tool(memory: CaseMemory) -> Callable[..., dict[str, Any]]:
     def read_memory(stage: Stage | None = None, case_id: str | None = None) -> dict[str, Any]:
         """Search the long-term memory of known failure cases and their playbooks."""
@@ -141,8 +169,9 @@ def _read_memory_tool(memory: CaseMemory) -> Callable[..., dict[str, Any]]:
 
 
 async def _llm_classify(
-    ticket: Ticket, notes: list[str], memory: CaseMemory, model: Model
+    ticket: Ticket, notes: list[str], memory: CaseMemory, model: Model, hints: list[Case]
 ) -> Case | None:
+    """분류는 추론 모델이 한다. 정규식이 맞힌 case는 힌트로만 준다(최종 판단이 아니다)."""
     cases = [c for c in memory.cases if c.stage == ticket.stage]
     agent = Agent(
         model,
@@ -150,12 +179,67 @@ async def _llm_classify(
         instructions=prompts.CLASSIFY_INSTRUCTIONS,
         retries=OUTPUT_RETRIES,
     )
-    choice = (await agent.run(prompts.classify_prompt(ticket, notes, cases))).output
+    started = time.monotonic()
+    result = await agent.run(prompts.classify_prompt(ticket, notes, cases, hints))
+    choice = result.output
     # 목록에 없는 id는 모르는 것으로 본다(모델이 지어낸 case로 playbook을 돌리지 않는다).
     case = next((c for c in cases if c.case_id == choice.case_id), None)
+    regex = ",".join(clean(c.case_id) for c in hints) or "none"
+    trace(
+        ticket.ticket_id,
+        f"classify regex={regex} llm={clean(case.case_id) if case else 'none'} "
+        f"{_usage(result.usage, started)}",
+    )
     if case is not None:
         memory.hit(case)
     return case
+
+
+async def _plan_steps(model: Model, prompt: str, trace_id: str) -> Plan:
+    """추론 모델이 도구 없이 계획만 낸다(게이트웨이 호출 한도를 쓰지 않는다)."""
+    agent = Agent(
+        model, output_type=Plan, instructions=prompts.PLAN_INSTRUCTIONS, retries=OUTPUT_RETRIES
+    )
+    trace(trace_id, f"act model=planner name={clean(model.model_name)} (plan)")
+    started = time.monotonic()
+    result = await agent.run(prompt)
+    ran = result.response.model_name
+    tools = ",".join(clean(s.tool) for s in result.output.steps)
+    trace(
+        trace_id,
+        f"plan done ran={clean(ran) if ran else '-'} steps={len(result.output.steps)} "
+        f"tools={tools} {_usage(result.usage, started)}",
+    )
+    plan: Plan = result.output
+    return plan
+
+
+async def _execute(model: Model, prompt: str, gateway: GatewayToolset, plan: Plan) -> Outcome:
+    """로컬 모델이 계획을 실행한다. 계획에 있는 도구만 주고, 거절이면 PlanBroken으로 멈춘다."""
+    allowed = {s.tool for s in plan.steps} - {SUBMIT_TOOL}
+    agent = Agent(
+        model,
+        output_type=Outcome,
+        instructions=prompts.EXECUTE_INSTRUCTIONS,
+        toolsets=[gateway.filtered(lambda ctx, tool: tool.name in allowed)],
+        retries=OUTPUT_RETRIES,
+        # 가장 최근 도구 결과만 전체로 두고 그 이전 결과는 한 줄 요약으로 바꾼다(컨텍스트 예산).
+        capabilities=[ProcessHistory(budget.compact_history)],
+    )
+    trace(gateway.trace_id, f"act model=local name={clean(model.model_name)}")
+    started = time.monotonic()
+    gateway.strict = True
+    try:
+        result = await agent.run(prompt)
+    finally:
+        gateway.strict = False
+    ran = result.response.model_name
+    trace(
+        gateway.trace_id,
+        f"act done model=local ran={clean(ran) if ran else '-'} {_usage(result.usage, started)}",
+    )
+    outcome: Outcome = result.output
+    return outcome
 
 
 async def _act(
@@ -174,10 +258,90 @@ async def _act(
     # 어느 모델이 돌았는지 남긴다. planner는 추론 API가 안 되면 로컬로 넘어가므로
     # 실제로 응답한 모델 이름(ran)도 함께 남긴다.
     trace(gateway.trace_id, f"act model={label} name={clean(model.model_name)}")
+    started = time.monotonic()
     result = await agent.run(prompt)
     ran = result.response.model_name
-    trace(gateway.trace_id, f"act done model={label} ran={clean(ran) if ran else '-'}")
+    trace(
+        gateway.trace_id,
+        f"act done model={label} ran={clean(ran) if ran else '-'} {_usage(result.usage, started)}",
+    )
     return result.output
+
+
+def _usage(usage: RunUsage, started: float) -> str:
+    """모델 요청 수 · 입출력 토큰 · 걸린 시간(측정용, 값이 아니라 수만)."""
+    return (
+        f"requests={usage.requests} in_tokens={usage.input_tokens} "
+        f"out_tokens={usage.output_tokens} seconds={time.monotonic() - started:.1f}"
+    )
+
+
+def _verified_patch(actions: list[Action]) -> list[SpecPatchOp] | None:
+    """통과한 시험의 specPatch: 마지막 run_deploy가 성공했고 그 뒤 run_verify가 통과했을 때.
+
+    게이트웨이는 verified의 specPatch가 그 시험 입력과 같아야 받는다(api.md 5번). 모델이 결과에
+    다시 적으며 달라지면 시험을 통과한 해결이 INVALID_RESULT로 버려지므로 코드가 채운다.
+    """
+    deployed: list[Any] | None = None
+    passed: list[Any] | None = None
+    for action in actions:
+        if action.tool == "run_deploy":
+            # 성공 · 실패 모두 대상 슬롯을 다시 올리므로 앞의 확인은 쓰지 않는다.
+            deployed = ((action.args or {}).get("specPatch") or []) if action.ok else None
+            passed = None
+        elif action.tool == "run_verify" and action.ok and deployed is not None:
+            passed = deployed
+    if passed is None:
+        return None
+    try:
+        return [SpecPatchOp.model_validate(op) for op in passed]
+    except ValidationError:
+        # 게이트웨이가 받은 패치는 이 모양을 지킨다. 아니면 모델이 낸 값을 그대로 둔다.
+        return None
+
+
+# env · buildEnv 값을 넣는 패치 경로. 키 하나(`.../buildEnv/KEY`)이거나 객체 통째(`.../buildEnv`)다.
+_ENV_PATH = re.compile(r"^/spec/services/\d+/(?:build/buildEnv|runtime/env)(?:/(?P<key>[^/]+))?$")
+
+
+def _invented_env_keys(patch: list[SpecPatchOp], evidence: list[str]) -> list[str]:
+    """패치가 넣는 env 값 중 티켓 · 도구 결과 어디에도 없는 값의 키.
+
+    모델은 비밀값을 모른다. 레포 · 로그에 없는 값은 지어낸 것이라 시험을 통과해도 해결로
+    내지 않는다(2026-11-14 실서비스 B3: 비밀값 VITE_API_KEY에 지어낸 값을 넣어 verified).
+    """
+    invented: list[str] = []
+    for op in patch:
+        m = _ENV_PATH.match(op.path)
+        if m is None or op.op == "remove":
+            continue
+        pairs = {m["key"]: op.value} if m["key"] else op.value
+        if not isinstance(pairs, dict):
+            continue
+        for key, value in pairs.items():
+            # 증거는 모두 JSON 글이라 값도 JSON 문자열 안의 모양(이스케이프)으로 찾는다.
+            escaped = json.dumps(str(value), ensure_ascii=False)[1:-1]
+            if not any(escaped in seen for seen in evidence):
+                invented.append(str(key))
+    return invented
+
+
+def _invented_needs_user(outcome: Outcome, keys: list[str]) -> Outcome:
+    names = ", ".join(keys)
+    return Outcome(
+        status="needs_user",
+        user_request=UserRequest(
+            message=(
+                f"env 값({names})을 레포나 로그에서 찾지 못했습니다. 비밀값이거나 학생만 아는 "
+                "값이라 AI가 채우지 않았습니다. 배포 설정에 값을 직접 넣고 다시 배포해 주세요."
+            )
+        ),
+        evidence=outcome.evidence,
+        summary=(
+            f"빌드 · 실행 env {names}가 없어 실패했습니다. 값을 레포에서 찾을 수 없어 "
+            "학생이 넣어야 합니다."
+        ),
+    )
 
 
 # 제출이 전송 오류로 실패하면 이만큼 기다렸다 다시 낸다(초).
@@ -262,6 +426,13 @@ async def _submit(gateway: GatewayToolset, result: AgentResult) -> None:
     log.error("ticket %s result not delivered: gateway unreachable", result.ticket_id)
 
 
+def _rejected_summary(code: str) -> str:
+    return (
+        f"배포 설정 수정이 플랫폼 검사에서 거절되어 멈췄습니다(거절: {code}). "
+        "시도한 조치는 기록에 남아 있습니다. 배포 설정을 확인해 고친 뒤 다시 배포해 주세요."
+    )
+
+
 def make_agent_runner(
     models: Models | None, gateway_for: Callable[[str], GatewayToolset]
 ) -> Runner:
@@ -276,42 +447,59 @@ def make_agent_runner(
         started = time.monotonic()
         gateway = gateway_for(run.gateway.token)
         gateway.trace_id = ticket.ticket_id
-        case = memory.classify(run.ticket)
-        method: ClassifyMethod = "code" if case else "llm"
-        path: ResultPath = "playbook" if case else "plan"
-        run.case_id = case.case_id if case else None
-        trace(ticket.ticket_id, classification(case.case_id if case else None, "code"))
+        # 정규식(①)은 힌트다. 분류는 추론 모델이 한다(models가 없을 때만 정규식으로 기록한다).
+        hints = memory.candidates(run.ticket)
+        case: Case | None = None
+        method: ClassifyMethod = "llm"
+        path: ResultPath = "plan"
+        run.case_id = None
         raised = "-"
         try:
             if models is None:
+                case = memory.classify(run.ticket)
                 method = "code"
+                path = "playbook" if case else "plan"
+                run.case_id = case.case_id if case else None
+                trace(ticket.ticket_id, classification(run.case_id, "code"))
                 outcome = Outcome(status="gave_up", summary=_NO_MODEL)
             else:
                 async with gateway:
-                    if case is None:
-                        case = await _llm_classify(ticket, notes, memory, models.local)
-                        path = "playbook" if case else "plan"
-                        run.case_id = case.case_id if case else None
-                        trace(
-                            ticket.ticket_id, classification(case.case_id if case else None, "llm")
-                        )
+                    case = await _llm_classify(ticket, notes, memory, models.planner, hints)
+                    path = "playbook" if case else "plan"
+                    run.case_id = case.case_id if case else None
                     if case is None:
                         prompt = prompts.plan_prompt(ticket, notes)
                         outcome = await _act(models.planner, "planner", prompt, gateway, memory)
                     else:
-                        prompt = prompts.playbook_prompt(ticket, notes, case)
                         try:
-                            outcome = await _act(models.local, "local", prompt, gateway, memory)
+                            # 계획은 추론 모델, 도구 호출은 로컬 모델.
+                            plan = await _plan_steps(
+                                models.planner,
+                                prompts.plan_steps_prompt(ticket, notes, case),
+                                ticket.ticket_id,
+                            )
+                            outcome = await _execute(
+                                models.local,
+                                prompts.execute_prompt(ticket, notes, plan.cause, plan.steps),
+                                gateway,
+                                plan,
+                            )
+                        except PlanBroken as e:
+                            # 로컬 모델이 거절을 받으면 혼자 다시 시도하지 않고 바로 재계획한다.
+                            trace(
+                                ticket.ticket_id,
+                                f"plan broken tool={clean(e.tool)} rejected={clean(e.code)}",
+                            )
+                            outcome = Outcome(status="gave_up", summary=_rejected_summary(e.code))
                         except UnexpectedModelBehavior as e:
-                            # 거절이 되풀이되어 재시도 한도를 넘었거나 출력이 계속 깨졌다.
-                            # 끝내지 않고 아래에서 추론 모델로 다시 계획한다.
-                            trace(ticket.ticket_id, f"act failed model=local exc={exc_shape(e)}")
+                            # 출력이 계속 깨졌다. 끝내지 않고 아래에서 추론 모델로 다시 계획한다.
+                            trace(ticket.ticket_id, f"act failed exc={exc_shape(e)}")
                             outcome = Outcome(
                                 status="gave_up", summary=_model_failure(e, gateway.actions)
                             )
                         if outcome.status == "gave_up":
                             path = "replan_after_playbook"
-                            trace(ticket.ticket_id, f"path={path} (playbook gave up)")
+                            trace(ticket.ticket_id, f"path={path} (plan gave up)")
                             prompt = prompts.replan_prompt(
                                 ticket, notes, case, gateway.actions, outcome.summary
                             )
@@ -335,6 +523,19 @@ def make_agent_runner(
             raised = exc_shape(e)
             log.warning("ticket %s model failure: %r", ticket.ticket_id, e)
             outcome = Outcome(status="gave_up", summary=_model_failure(e, gateway.actions))
+        if outcome.status == "verified" and (patch := _verified_patch(gateway.actions)) is not None:
+            outcome = outcome.model_copy(update={"spec_patch": patch})
+        if outcome.status == "verified" and (
+            invented := _invented_env_keys(
+                outcome.spec_patch or [], [run.ticket.model_dump_json(), *gateway.seen]
+            )
+        ):
+            trace(
+                ticket.ticket_id,
+                f"verified env not in evidence keys={','.join(clean(k) for k in invented)} "
+                "-> needs_user",
+            )
+            outcome = _invented_needs_user(outcome, invented)
         result = AgentResult(
             **outcome.model_dump(),
             ticket_id=ticket.ticket_id,

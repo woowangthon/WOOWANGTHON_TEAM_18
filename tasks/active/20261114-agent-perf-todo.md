@@ -1,0 +1,29 @@
+# AI agent performance pass (before/after measured on the live service)
+
+- **SRS**: FR-075~FR-077, FR-098~FR-102
+- **Owner**: suda5936
+- **Branch**: claude/new-session-25ecwq
+
+## Plan
+
+Apply only the items of the perf note that the code confirms; no ADR change. Measure before (prod `wcp-ai:4385d98`) and after (this branch, deployed after merge) on the live service with real broken repos (`suda5936/WOOWANGTHON_TEST_2`: `main` = A1 port, `bench/b3-build-env`, `bench/b4-import-case`, `bench/b5-copy-missing`). Sources: `wcp-ai` trace log (SSM), `deploy_runs` rows, vLLM `/metrics` token counters.
+
+Applied: playbooks only use gateway tools (no `read_build_logs` / `edit_repo_file` / `open_pr`; repo fixes end in `needs_user`), instructions match gateway rules (name/slug forbidden, per-tool limits, remaining calls in the replan prompt), code fills the `verified` specPatch from the passing trial, B2 regex narrowed and moved after B5/B3/B4, ticket logs noted so the first observation step can be skipped, usage + time on the trace line.
+Not applied: planner timeout/max_tokens (no measurement to pick values; a reasoning model's output could be cut), history compaction, `read_memory` trim, temperature (all wait for measurement).
+
+## Todo
+
+- [x] baseline runs on prod (A1, B3, B4, B5w)
+- [x] code changes + tests — files: `AI/ai_server/agent/{cases.json,prompts.py,loop.py}`, `AI/tests/*`
+- [x] 5 off-playbook cases in TEST_2 (`bench/n1-build-arg` … `bench/n5-eacces`) and a fresh 9-run baseline on prod `wcp-ai:5c7e72a`
+- [x] guard: a `verified` env/buildEnv value found in no evidence becomes `needs_user`
+- [x] planner classifies every ticket (regex = hint), plans a known case without tools, local model executes the plan's tools, rejection while executing → replan (user spec; ADR in a follow-up PR)
+- [ ] later PR: regex noise filter (`drop_noise`) and one-line signal summary (`summarize_signals`) in the model digest (spec 2-3)
+- [ ] PR, merge, `deploy-ai.sh`
+- [ ] after runs on prod, same repos
+- [ ] test log (Claude Docs) + `docs/ai-scope.md`
+
+## Done when
+
+- [ ] before/after numbers for every scenario in the test log
+- [ ] `uv run` verify green; mutation survivors resolved or explained

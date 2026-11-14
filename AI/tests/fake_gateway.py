@@ -1,5 +1,8 @@
 """대역 게이트웨이: api.md "MCP 게이트웨이 — 도구"의 인자 · 결과 모양을 따르는 FastMCP 서버.
 
+도구는 BE가 실제로 여는 것(`BE/src/gateway/tools.ts` TOOLS)만 둔다. 없는 도구를 두면
+playbook이 없는 도구를 불러도 테스트가 통과한다(test_gateway_tools_match_the_platform).
+
 테스트는 `script`로 도구마다 돌려줄 결과를 정하고 `calls`로 무엇이 불렸는지 본다.
 거절은 api.md대로 `isError: true`와 `structuredContent: { code, message }`다.
 """
@@ -40,14 +43,10 @@ DEFAULTS: dict[str, Json] = {
     },
     "get_target_status": {"pods": [], "events": [], "rollouts": []},
     "read_pod_logs": {"lines": ["Server listening on port 3000"]},
-    "read_build_logs": {"fromLine": 0, "lines": []},
     "read_repo": {
         "type": "dir",
         "entries": [{"name": "package.json", "type": "file", "size": 300}],
     },
-    "restart_target": {"ok": True},
-    "scale_target": {"ok": True},
-    "wait_target_ready": {"ok": True, "pods": [], "events": []},
     "edit_repo_file": {"source": {"commitSha": "b" * 40}, "files": ["src/a.ts"], "changedLines": 2},
     "open_pr": {"url": "https://github.com/student/app/pull/1"},
     "submit_result": {"accepted": True},
@@ -151,26 +150,8 @@ class FakeGateway:
             return a("read_pod_logs", {"service": service, "lines": lines, "previous": previous})
 
         @s.tool
-        def read_build_logs(
-            service: str, fromLine: int | None = None, lines: int | None = None
-        ) -> ToolResult:
-            return a("read_build_logs", {"service": service, "fromLine": fromLine, "lines": lines})
-
-        @s.tool
         def read_repo(path: str, source: Json | None = None) -> ToolResult:
             return a("read_repo", {"path": path, "source": source})
-
-        @s.tool
-        def restart_target(service: str) -> ToolResult:
-            return a("restart_target", {"service": service})
-
-        @s.tool
-        def scale_target(service: str, replicas: int) -> ToolResult:
-            return a("scale_target", {"service": service, "replicas": replicas})
-
-        @s.tool
-        def wait_target_ready(service: str, timeoutSeconds: int | None = None) -> ToolResult:
-            return a("wait_target_ready", {"service": service, "timeoutSeconds": timeoutSeconds})
 
         @s.tool
         def edit_repo_file(files: list[Json], message: str) -> ToolResult:

@@ -156,6 +156,11 @@ class CaseMemory:
                 return case
         return None
 
+    def candidates(self, ticket: Ticket) -> list[Case]:
+        """정규식 힌트: 같은 단계에서 match가 맞는 case 전부(파일 순서). hits는 올리지 않는다."""
+        doc = ticket.model_dump(mode="json", by_alias=True)
+        return [c for c in self.cases if c.stage == ticket.stage and c.match.holds(doc)]
+
     def hit(self, case: Case) -> None:
         case.stats.hits += 1
 

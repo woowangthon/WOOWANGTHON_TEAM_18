@@ -42,6 +42,16 @@ class GatewayRejected(Exception):
         self.code = code
 
 
+class PlanBroken(Exception):
+    """계획을 실행하던 모델이 거절을 받았다. 혼자 다시 시도하지 않고 재계획한다(AIagent.md §10)."""
+
+    def __init__(self, tool: str, code: str, detail: str) -> None:
+        super().__init__(f"{tool} rejected {code}")
+        self.tool = tool
+        self.code = code
+        self.detail = detail
+
+
 class GatewayUnreachable(Exception):
     """게이트웨이에 연결하지 못했거나 호출 중 전송이 끊김(시간 초과 포함). 거절과 다르다."""
 
@@ -61,6 +71,10 @@ class GatewayToolset(MCPToolset[Any]):
     def __init__(self, client: Any, **kwargs: Any) -> None:
         super().__init__(client, max_retries=3, **kwargs)
         self.actions: list[Action] = []
+        # 받은 도구 결과 원문(JSON). verified의 env 값이 증거에서 왔는지 코드가 확인한다.
+        self.seen: list[str] = []
+        # 계획 실행 중이면 거절을 모델에 돌려주지 않고 PlanBroken으로 멈춘다.
+        self.strict = False
         # 추적 로그(`trace ticket=…`)에 붙일 티켓 id. 실행기가 티켓을 받은 뒤 채운다.
         self.trace_id = "-"
 
@@ -120,8 +134,11 @@ class GatewayToolset(MCPToolset[Any]):
             )
             if code in STOP_CODES:
                 raise GatewayStop(code, message)
+            if self.strict:
+                raise PlanBroken(name, code, detail)
             raise ModelRetry(f"gateway rejected {name}: {code}: {detail}")
         ok = content.get("ok", True) if isinstance(content, dict) else True
+        self.seen.append(json.dumps(content, ensure_ascii=False, default=str))
         self.actions.append(Action(tool=name, args=args, ok=bool(ok), result=_short(content)))
         trace(self.trace_id, f"tool={clean(name)} ok={bool(ok)} args={args_shape(args)}")
         # 모델에는 예산 안으로 줄인 결과를 준다(로그 발췌, 큰 원본은 필요한 칸만).
