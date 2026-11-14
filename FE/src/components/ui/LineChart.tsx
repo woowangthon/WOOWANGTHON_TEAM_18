@@ -71,11 +71,14 @@ export function LineChart({ values, label, format = String, emptyText, xAt, refe
   const min = Math.min(...present)
   const max = Math.max(...present)
   const top = niceMax(Math.max(max, reference?.value ?? 0))
+  // 값 → 세로 위치(%, 위가 0).
+  const yOf = (v: number) => 100 - (v / top) * 100
   const current = values[values.length - 1]
   const summary = `최저 ${format(min)} · 최고 ${format(max)} · 지금 ${current === null ? emptyText : format(current)}`
   const n = values.length
   const rows = Array.from({ length: GRID_ROWS + 1 }, (_, r) => (top * r) / GRID_ROWS)
-  const ticks = n === 1 ? [0] : Array.from({ length: X_TICKS }, (_, k) => Math.round(((n - 1) * k) / (X_TICKS - 1)))
+  // 점이 적으면(2개) 반올림한 눈금이 겹친다: 같은 자리는 한 번만 쓴다.
+  const ticks = [...new Set(Array.from({ length: X_TICKS }, (_, k) => Math.round(((n - 1) * k) / (X_TICKS - 1))))]
   const shown = hover === null ? null : values[hover]
   const shownAt = hover === null ? 0 : xFraction(hover, n)
 
@@ -91,7 +94,7 @@ export function LineChart({ values, label, format = String, emptyText, xAt, refe
       <div aria-hidden="true" className="flex gap-2">
         <div className="relative h-40 w-16 shrink-0 text-xs text-muted">
           {rows.map((v) => (
-            <span key={v} style={{ top: `${100 - (v / top) * 100}%` }} className="absolute right-0 -translate-y-1/2 whitespace-nowrap">
+            <span key={v} style={{ top: `${yOf(v)}%` }} className="absolute right-0 -translate-y-1/2 whitespace-nowrap">
               {format(v)}
             </span>
           ))}
@@ -106,14 +109,14 @@ export function LineChart({ values, label, format = String, emptyText, xAt, refe
           >
             <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="size-full overflow-visible">
               {rows.slice(1).map((v) => (
-                <line key={v} x1="0" x2="100" y1={100 - (v / top) * 100} y2={100 - (v / top) * 100} strokeWidth={1} vectorEffect="non-scaling-stroke" className="stroke-line" />
+                <line key={v} x1="0" x2="100" y1={yOf(v)} y2={yOf(v)} strokeWidth={1} vectorEffect="non-scaling-stroke" className="stroke-line" />
               ))}
               {reference && (
                 <line
                   x1="0"
                   x2="100"
-                  y1={100 - (reference.value / top) * 100}
-                  y2={100 - (reference.value / top) * 100}
+                  y1={yOf(reference.value)}
+                  y2={yOf(reference.value)}
                   strokeWidth={1.5}
                   strokeDasharray="4 3"
                   vectorEffect="non-scaling-stroke"
@@ -138,7 +141,7 @@ export function LineChart({ values, label, format = String, emptyText, xAt, refe
               })}
             </svg>
             {reference && (
-              <span style={{ top: `${100 - (reference.value / top) * 100}%` }} className="absolute right-1 -translate-y-full text-xs text-warn">
+              <span style={{ top: `${yOf(reference.value)}%` }} className="absolute right-1 -translate-y-full text-xs text-warn">
                 {reference.label} {format(reference.value)}
               </span>
             )}
@@ -146,7 +149,7 @@ export function LineChart({ values, label, format = String, emptyText, xAt, refe
               <>
                 <div style={{ left: `${shownAt * 100}%` }} className="absolute inset-y-0 w-px bg-line-strong" />
                 <div
-                  style={{ left: `${shownAt * 100}%`, top: `${100 - (shown / top) * 100}%` }}
+                  style={{ left: `${shownAt * 100}%`, top: `${yOf(shown)}%` }}
                   className="absolute size-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-accent-ui"
                 />
                 <div

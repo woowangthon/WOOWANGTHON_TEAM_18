@@ -117,3 +117,9 @@ it('moves to the nearest point that has a value when the pointer is over a gap',
   fireEvent.pointerMove(plot, { clientX: 150 })
   expect(screen.getByRole('tooltip', { hidden: true }).textContent).toBe('10%')
 })
+
+it('writes each time label once when there are only two points', () => {
+  render(<LineChart emptyText={NOT_COLLECTED} values={[1, 2]} label="CPU 사용량" xAt={(i) => `t${i}`} />)
+  expect(screen.getAllByText('t0')).toHaveLength(1)
+  expect(screen.getAllByText('t1')).toHaveLength(1)
+})
