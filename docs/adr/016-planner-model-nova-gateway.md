@@ -1,6 +1,6 @@
 # ADR-016: AI 에이전트의 planning 외부 모델은 충북대 NOVA API Gateway의 gpt-6.1-sol이다
 
-- **상태**: 유효
+- **상태**: 유효 (일부 대체: 로컬 모델과 나누는 방식 → 017)
 - **날짜**: 2026-11-13
 - **결정자**: 사용자 결정(2026-11-13)
 - **관련**: SRS `FR-075` · `FR-098` · `FR-102`, [ADR-001](001-stack-and-deployment.md)(LLM 업체 · 모델은 정하지 않았던 항목), [ADR-012](012-agent-acts-through-platform-gateway.md), [AI 에이전트 설계](../design/AIagent.md) §9, [`ai-scope.md`](../ai-scope.md)
