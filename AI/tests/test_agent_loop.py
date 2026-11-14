@@ -1056,3 +1056,56 @@ def test_a_needs_user_from_the_model_keeps_its_own_request() -> None:
     )
     solve(make_run(**SIGNALS["B3"]), gw, local)
     assert only_result(gw)["userRequest"]["message"] == request["message"]
+
+
+# ---- 게이트웨이 결과 검사에 맞추기 (2026-11-14 실측: pr_opened 6/6이 INVALID_RESULT로 거절) ----
+
+
+def _finish_with(status: str, steps: tuple[Step, ...] = (), **fields: Any) -> dict[str, Any]:
+    gw = FakeGateway()
+    local = Script(*steps, final(status=status, summary="끝", **fields))
+    solve(make_run(**SIGNALS["A1"]), gw, local, planner_of(final(status="gave_up", summary="x")))
+    return gw.submitted[0]
+
+
+@pytest.mark.parametrize(
+    ("status", "fields"),
+    [
+        ("needs_user", {"userRequest": {"message": "키를 넣어 주세요"}}),
+        ("gave_up", {}),
+        ("pr_opened", {"pr": {"url": PR_URL}}),
+    ],
+)
+def test_spec_patch_and_build_overrides_are_dropped_from_a_result_that_is_not_verified(
+    status: str, fields: dict[str, Any]
+) -> None:
+    # 게이트웨이는 verified가 아닌 결과의 specPatch · buildOverrides를 비어 있어도 거절한다.
+    sent = _finish_with(status, specPatch=[], buildOverrides={"computeType": "SMALL"}, **fields)
+    assert sent["status"] == status
+    assert "specPatch" not in sent and "buildOverrides" not in sent
+
+
+def test_pr_opened_carries_the_url_open_pr_returned() -> None:
+    sent = _finish_with(
+        "pr_opened",
+        (call("open_pr", source=SOURCE, title="t", body="b"),),
+        pr={"url": "https://github.com/student/app/pull/99", "files": ["a"], "changedLines": 1},
+    )
+    assert sent["pr"]["url"] == PR_URL  # 대역 게이트웨이의 open_pr가 돌려준 주소
+
+
+def test_verified_keeps_its_spec_patch() -> None:
+    sent = _finish_with(
+        "verified",
+        (call("run_deploy", specPatch=PORT_PATCH), call("run_verify")),
+        specPatch=PORT_PATCH,
+    )
+    assert sent["specPatch"] == PORT_PATCH
+
+
+def test_an_invalid_result_logs_the_gateway_reason(caplog: pytest.LogCaptureFixture) -> None:
+    gw = FakeGateway()
+    gw.script["submit_result"] = [reject("INVALID_RESULT", "pr_opened needs pr.url to be the url")]
+    local = Script(final(status="gave_up", summary="모름"))
+    solve(make_run(**SIGNALS["A1"]), gw, local, planner_of(final(status="gave_up", summary="x")))
+    assert "pr_opened needs pr.url to be the url" in caplog.text
