@@ -17,11 +17,13 @@
 
 ```
 플랫폼 서버                                AI 서버 (PydanticAI 에이전트)
-문제 티켓 발행 ─────────────────────────▶ ① 분류: 코드 대조 (장기 메모리 case의 match, 힌트로만 쓴다)
-                                          ② planning (추론 모델 API): 관찰 도구로 증거를 읽고
-                                             단계 계획(도구 · 인자 · 끝내는 조건)을 낸다. ①의 playbook은 참고
-                                          ③ 실행 (로컬 모델): 계획에 있는 도구만 차례로 부르고 결과를 낸다
-                                             거절 · 같은 호출 반복 · gave_up → ④ 재계획 (②로, 계획 3개까지)
+문제 티켓 발행 ─────────────────────────▶ ① 정규식 대조 (장기 메모리 case의 match): 힌트로만 쓴다
+                                          ② 분류 (추론 모델 API): ①의 힌트를 참고해 case를 고르거나 null
+                                          ├─ 알려진 case → ③ 추론 모델이 playbook을 참고해 계획(도구 호출 없음)
+                                          │     → 로컬 모델이 계획에 있는 도구만으로 실행
+                                          │     실패 · 거절 → ④ 재계획 (추론 모델 API가 직접 도구를 부름)
+                                          └─ unknown → ⑤ planning (추론 모델 API가 직접 도구를 부름)
+                                          도구 실행 → 결과(원본) 관찰 → 다시 계획 … (횟수 제한 안에서)
 해결 결과 수신 ◀──────────────────────── submit_result
   verified → 고친 입력으로 배포 파이프라인을 처음부터 다시 실행(Verify가 재확인) → Switch → W7
   pr_opened · needs_user → 대기
@@ -320,7 +322,7 @@ AI 서버 (에이전트) → 플랫폼 서버 MCP 게이트웨이 → GoCD 서�
   - 조건은 `{ "all": [...] }` · `{ "any": [...] }`로 묶는다. `all` 안의 조건은 서로 다른 원소에서 맞아도 된다(같은 이벤트인지 보지 않는다).
   - 코드 분류는 티켓의 `stage`와 같은 case만 파일 순서대로 대조해 처음 맞는 것을 고른다. 그래서 좁은 case를 넓은 case 앞에 둔다(`A3` OOMKilled는 `A2` CrashLoopBackOff 앞).
   - 초기 case 데이터는 [`AI/ai_server/agent/cases.json`](../../AI/ai_server/agent/cases.json)이다. `playbook`의 `when`과 `{i}` 같은 자리 표시는 에이전트에게 주는 설명이고 코드가 판정하지 않는다. playbook의 `tool`은 게이트웨이가 여는 도구만 쓴다(테스트가 확인한다). `submit_result` 단계는 모델에게 도구가 아니라 끝내는 조건(`finish`)으로 보인다(결과는 코드가 낸다).
-  - `verify` stage의 case는 `V1` · `V2`다. `verify` 티켓에는 검사 결과 원본이 없으므로 `errorMessage`(통과하지 못한 검사 하나의 경로와 응답 상태)를 정규식으로 대조한다. 그 밖의 `verify` 실패(Ready 아닌 Pod, 빈 엔드포인트, 404가 아닌 상태)는 참고할 case 없이 ② planning으로 간다.
+  - `verify` stage의 case는 `V1` · `V2`다. `verify` 티켓에는 검사 결과 원본이 없으므로 `errorMessage`(통과하지 못한 검사 하나의 경로와 응답 상태)를 정규식으로 대조한다. 그 밖의 `verify` 실패(Ready 아닌 Pod, 빈 엔드포인트, 404가 아닌 상태)는 정규식 힌트 없이 ② 분류로 간다.
   - `stats`(`hits` · `solved`)는 AI 서버 메모리에만 있어 재시작하면 0부터다.
 - planning으로 해결한 새 case는 바로 넣지 않는다. 사람이 확인한 뒤 넣는다.
 
@@ -352,8 +354,8 @@ AI 서버 (에이전트) → 플랫폼 서버 MCP 게이트웨이 → GoCD 서�
 
 | 쓰는 곳 | 모델 |
 |---|---|
-| ③ 계획 실행(도구 부르기 · 결과 읽기 · 학생에게 보일 글) | 로컬 Qwen3-8B (리더 vLLM, OpenAI 호환 API) |
-| ② · ④ planning (모든 티켓) | 추론 모델 `gpt-6.1-sol` (충북대 NOVA API Gateway, OpenAI 호환. [ADR-016](../adr/016-planner-model-nova-gateway.md), [배포 워크플로우](deploy-workflow.md) §7) |
+| ③ 계획 실행(도구 부르기 · 인자 채우기 · 학생에게 보일 글) | 로컬 Qwen3-8B (리더 vLLM, OpenAI 호환 API) |
+| ② 분류, ③ 계획, ④ · ⑤ planning | 추론 모델 `gpt-6.1-sol` (충북대 NOVA API Gateway, OpenAI 호환. [ADR-016](../adr/016-planner-model-nova-gateway.md), [배포 워크플로우](deploy-workflow.md) §7) |
 
 PydanticAI에서 두 모델을 OpenAI 호환 provider로 붙이고, 추론 모델 API를 못 쓰면 로컬 모델로 넘긴다.
 
@@ -361,19 +363,20 @@ PydanticAI에서 두 모델을 OpenAI 호환 provider로 붙이고, 추론 모�
 
 | 단계 | 모델 | 하는 일 |
 |---|---|---|
-| ① 코드 분류 | 없음 | §8 `match`로 같은 stage의 case를 고른다. 맞으면 그 playbook을 ②에 참고로 준다(따를 규칙이 아니다) |
-| ② planning | 추론 API | 관찰 도구(`get_target_status` · `read_pod_logs` · `read_repo`)와 `read_memory`로 증거를 읽고 계획(`cause` 한 줄 + `steps`: 도구 · `when` · 인자, 마지막은 끝내는 조건)을 낸다. 인자는 실제 값으로 적는다(`specPatch` 값, `edit_repo_file`의 파일 전체 내용) |
-| ③ 실행 | 로컬 | 계획에 있는 도구만 받는다. 계획대로 부르고 해결 결과(§6의 status · `specPatch` · `pr` · `userRequest` · `evidence` · `summary`)를 낸다 |
-| ④ 재계획 | 추론 API | ③에서 게이트웨이 거절(같은 호출 반복 `REPEATED_CALL` 포함)이 나면 그 자리에서 멈춘다. ③이 `gave_up`이어도 같다. 지금까지의 도구 호출 · 남은 호출 수 · 멈춘 이유를 받아 ②를 다시 한다. 계획은 티켓당 3개까지 |
+| ① 정규식 대조 | 없음 | §8 `match`로 같은 stage에서 맞는 case를 **전부** 고른다(`CaseMemory.candidates`). 최종 판단에 쓰지 않고 ②에 `Regex hint (may be wrong)`로만 준다 |
+| ② 분류 | 추론 API | 같은 stage의 case 목록(id · 제목)과 ①의 힌트로 하나를 고르거나 null. 힌트가 로그 발췌와 다르면 발췌를 따른다. 목록에 없는 id는 모르는 것으로 본다. 고른 case에 hits를 올린다. 결과의 `method`는 `llm` |
+| ③ 계획 → 실행 | 추론 API → 로컬 | 추론 모델은 도구를 부르지 않고 계획(`cause` + `steps`: 도구 · 실제 인자 · `when`, 마지막은 끝내는 조건)만 낸다(게이트웨이 호출 한도를 쓰지 않는다). 게이트웨이에 없는 도구 · 8,000자를 넘는 계획은 다시 만들게 한다. 로컬 모델은 계획에 있는 도구만 받아 그대로 부르고 해결 결과(§6의 status · `specPatch` · `pr` · `userRequest` · `evidence` · `summary`)를 낸다 |
+| ④ 재계획 | 추론 API | ③이 `gave_up`이거나, 실행 중 게이트웨이 거절(같은 호출 반복 `REPEATED_CALL` 포함)을 받았거나, 출력이 계속 깨지면 playbook · 지금까지의 도구 호출 · 멈춘 이유를 받아 다시 계획하고 직접 실행한다 |
+| ⑤ planning | 추론 API | ②가 null이면 처음부터 계획하고 직접 실행한다 |
 
 - **결과는 코드가 낸다.** 모델에게 `submit_result`를 주지 않는다. 모델의 출력(위 ③의 칸들)이 모양에 맞지 않으면 PydanticAI가 다시 만들게 하고(2번까지), 코드가 봉투(`ticketId` · `commitSha` · `classification` · `actions`)를 붙여 게이트웨이 `submit_result`를 한 번 부른다. `actions`는 모델이 말한 것이 아니라 게이트웨이에 실제로 한 호출의 기록이다(`ok`는 결과의 `ok`, 거절은 `ok: false`와 `rejected <code>`).
-- **거절 코드.** `TOOL_LIMIT` · `TIME_LIMIT` · `LIVE_SLOT_PROTECTED`는 실행을 멈추고 이유와 할 일을 담은 `gave_up`을 낸다(재계획하지 않는다). `TICKET_CLOSED`는 토큰이 무효라 아무것도 내지 않는다. ②에서 받은 그 밖의 거절은 코드와 메시지를 모델에게 돌려줘 인자를 고치게 한다. ③에서 받은 거절은 로컬 모델이 혼자 다시 시도하지 않고 ④로 간다(2026-11-14 실측: 로컬 모델이 거절된 호출을 되풀이하다 `TOOL_LIMIT`).
-- **왜 이렇게 나눴나**(2026-11-14 실서비스 실측. ADR은 이 변경이 확정된 뒤 따로 쓴다). 예전에는 ①이 못 맞추면 로컬 모델이 case를 골랐고(LLM 분류), case가 정해지면 로컬 모델이 playbook을 돌려 추론 모델은 불리지 않았다. playbook에 없는 실패 5건을 로컬 모델이 모두 B1 · B2 · B4로 잘못 골라 추론 모델이 한 번도 불리지 않았고, 9건 중 8건이 계획 단계(잘못 고른 case, 이 레포에 맞지 않는 playbook)에서 틀렸다.
+- **거절 코드.** `TOOL_LIMIT` · `TIME_LIMIT` · `LIVE_SLOT_PROTECTED`는 실행을 멈추고 이유와 할 일을 담은 `gave_up`을 낸다(재계획하지 않는다). `TICKET_CLOSED`는 토큰이 무효라 아무것도 내지 않는다. ③에서 로컬 모델이 받은 그 밖의 거절은 모델에 돌려주지 않고 그 자리에서 ④로 간다(2026-11-14 실측: 로컬 모델이 거절된 호출을 되풀이하다 `TOOL_LIMIT`). ④ · ⑤에서 추론 모델이 받은 거절은 코드와 메시지를 돌려줘 인자를 고치게 한다.
+- **왜 이렇게 나눴나**(2026-11-14 실서비스 실측. ADR은 결정이 확정된 뒤 따로 쓴다). 예전에는 ①이 맞으면 그 case로 분류가 끝났고, 못 맞추면 로컬 모델이 case를 골랐으며, case가 정해지면 로컬 모델이 playbook의 계획과 도구 호출을 모두 했다. 실측 9건에서 로컬 모델은 playbook에 없는 실패 5건을 모두 엉뚱한 case(B1 · B2 · B4)로 골랐고, 9건 중 7건이 도구를 부르기 전에 계획이 틀렸다(정답 0/9).
 - **모델 호출 실패**(연결 실패, 출력이 계속 틀림)는 `gave_up`과 그 사실을 적은 `summary`로 낸다. 그럴듯한 결과로 대신하지 않는다. 게이트웨이 거절이 반복되어 도구 재시도 한도(3번)를 넘긴 것은 모델 실패가 아니라 "배포 설정 수정이 플랫폼 검사에서 계속 거절되어 멈췄습니다(마지막 거절: <code>)"로 알린다.
 - **게이트웨이 장애**: 연결 실패 · 도구 호출 중 전송 오류 · 시간 초과는 "플랫폼 게이트웨이에 닿지 못해 멈췄습니다"라는 `gave_up`으로 바꾼다. 결과 제출이 전송 오류면 2 · 5 · 10초 뒤 다시 낸다(모두 4번). `INVALID_RESULT`로 거절되면 모델이 정한 칸을 빼고 봉투와 사실 요약만 담은 `gave_up`으로 한 번 더 낸다. 그래도 안 되면 로그만 남는다.
 - **모델 설정이 없으면**(`LOCAL_MODEL_*` 비움) 서버는 뜨고, 티켓마다 코드 분류만 한 뒤 "AI 모델 설정이 없어 문제 해결을 하지 않았습니다"라는 `gave_up`을 낸다.
 - **가림 필터**(FR-102): 추론 모델 API로 가는 요청의 지시문 · 프롬프트 · 도구 결과 · 이전 도구 인자에서 비밀값 같은 키의 값, Authorization 헤더 값, 주소 안의 비밀번호, 모양으로 아는 토큰(GitHub · OpenAI · AWS · Slack · Supabase · 게이트웨이 · JWT · 개인 키)을 `[REDACTED]`로 바꾼다. 로컬 모델은 클러스터 안이라 걸지 않는다. 게이트웨이로 내는 결과의 기록은 원본이다.
-- **모델 연결**: 두 모델 모두 OpenAI 호환 API이고 env로 받는다(`LOCAL_MODEL_*` · `PLANNER_MODEL_*` 모두 선택, 주소와 이름은 함께). 추론 API가 없으면 ② · ④도 로컬 모델이 하고, 있는데 호출이 실패하면 그 요청은 로컬 모델로 넘어간다.
+- **모델 연결**: 두 모델 모두 OpenAI 호환 API이고 env로 받는다(`LOCAL_MODEL_*` · `PLANNER_MODEL_*` 모두 선택, 주소와 이름은 함께). 추론 API가 없으면 ② ~ ⑤ 모두 로컬 모델이 하고, 있는데 호출이 실패하면 그 요청은 로컬 모델로 넘어간다.
 - **모델로 보내는 글**은 `prompts.py` 한 곳에서 만든다.
 
 **로컬 모델 16K 컨텍스트 예산** (`AI/ai_server/agent/budget.py`). vLLM `--max-model-len 16384`는 입력 + 출력의 합이라 입력은 약 10K 토큰을 목표로 한다. 플랫폼이 보내는 크기에 기대지 않고 AI 서버가 받는 쪽에서 줄인다.

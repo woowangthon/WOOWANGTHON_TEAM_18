@@ -26,7 +26,8 @@ from ai_server.config import Settings
 from tests.fake_gateway import FakeGateway
 from tests.samples import ticket
 from tests.scripted import Script, call, final, text_of
-from tests.test_agent_loop import FINISH, make_run, plan
+from tests.test_agent_loop import FINISH, classify, make_run, plan
+from tests.test_memory import SIGNALS
 
 LOG_TIME = {"from": "2026-11-10T13:02:00Z", "to": "2026-11-10T13:12:00Z"}
 
@@ -286,17 +287,15 @@ def huge_gateway() -> FakeGateway:
 
 def test_local_model_input_stays_in_budget_with_a_big_ticket_and_big_results() -> None:
     gw = huge_gateway()
-    planner = Script(
+    local = Script(
         call("read_pod_logs", service="be", lines=200),
         call("get_target_status"),
-        plan(),
-        plan(FINISH),
-    )
-    local = Script(
         call("run_deploy"),
         call("read_pod_logs", service="be"),
         final(status="gave_up", summary="모름"),
-        final(status="gave_up", summary="모름"),
+    )
+    planner = Script(
+        classify("A3"), plan(), call("get_target_status"), final(status="gave_up", summary="모름")
     )
     run = make_run()
     run.ticket = big_ticket(
@@ -311,22 +310,24 @@ def test_local_model_input_stays_in_budget_with_a_big_ticket_and_big_results() -
     asyncio.run(
         make_agent_runner(Models(local.model, planner.model), lambda t: gw.toolset())(run, memory)
     )
-    # 코드 분류는 자르기 전 원본으로 한다. 큰 Pod가 OOMKilled라 A3가 A1보다 먼저 맞는다.
-    assert run.case_id == "A3"
-    # 추론 API가 실패하면 계획 요청도 로컬 모델로 넘어가므로 둘 다 예산 안이어야 한다.
-    for model in (local, planner):
-        sizes = [request_chars(model, i) for i in range(len(model.requests))]
-        assert max(sizes) <= budget.LOCAL_INPUT_CHARS, sizes
+    # 정규식 힌트는 자르기 전 원본으로 만든다. 큰 Pod가 OOMKilled라 A3가 A1보다 먼저 맞는다.
+    assert "Regex hint (may be wrong): A3" in planner.sent(0) and run.case_id == "A3"
+    sizes = [request_chars(local, i) for i in range(len(local.requests))]
+    assert len(sizes) == 5
+    assert max(sizes) <= budget.LOCAL_INPUT_CHARS, sizes
+    # 추론 API가 실패하면 추론 모델 요청도 로컬 모델로 넘어가므로 같은 예산 안이어야 한다.
+    assert all(
+        request_chars(planner, i) <= budget.LOCAL_INPUT_CHARS for i in range(len(planner.requests))
+    )
     # 자른 사실이 모델에 보인다.
-    assert "Cut on receipt:" in planner.sent(0) and "_truncated" in planner.sent(1)
-    assert "Cut on receipt:" in local.sent(0)
+    assert "Cut on receipt:" in local.sent(0) and "_truncated" in local.sent(1)
 
 
 def test_a_plan_at_its_size_limit_still_fits_the_local_budget() -> None:
     gw = huge_gateway()
     content = "x" * (loop.PLAN_CHARS - 400)
     edit = {"tool": "edit_repo_file", "args": {"files": [{"path": "a.ts", "content": content}]}}
-    planner = Script(plan(edit, FINISH))
+    planner = Script(classify("A3"), plan(edit, FINISH))
     local = Script(final(status="needs_user", userRequest={"message": "x"}, summary="모름"))
     run = make_run()
     run.ticket = big_ticket(
@@ -338,19 +339,41 @@ def test_a_plan_at_its_size_limit_still_fits_the_local_budget() -> None:
         )
     )
     assert request_chars(local, 0) <= budget.LOCAL_INPUT_CHARS
+    assert request_chars(planner, 1) <= budget.LOCAL_INPUT_CHARS
 
 
 def test_a_plan_longer_than_the_limit_is_made_again() -> None:
     gw = FakeGateway()
     edit = {"tool": "edit_repo_file", "args": {"files": [{"path": "a", "content": "x" * 9000}]}}
-    planner = Script(plan(edit, FINISH), plan(FINISH))
+    planner = Script(
+        classify("A1"), plan(edit, FINISH), plan(FINISH), final(status="gave_up", summary="x")
+    )
     local = Script(final(status="gave_up", summary="모름"))
     asyncio.run(
         make_agent_runner(Models(local.model, planner.model), lambda t: gw.toolset())(
-            make_run(), CaseMemory(load_cases())
+            make_run(**SIGNALS["A1"]), CaseMemory(load_cases())
         )
     )
-    assert "longer than 8000 characters" in planner.sent(1)
+    assert "longer than 8000 characters" in planner.sent(2)
+
+
+def test_classification_input_stays_in_budget() -> None:
+    gw = FakeGateway()
+    local = Script(final(case_id=None), final(status="gave_up", summary="모름"))
+    run = make_run()
+    pod = big_pod()
+    pod["status"]["containerStatuses"][0]["lastState"] = {}
+    pod["status"]["containerStatuses"][0]["state"] = {"running": {}}
+    run.ticket = big_ticket(
+        raw={"codebuild": None, "k8s": {"pod": pod, "events": noisy_events()[:-1], "status": None}}
+    )
+    asyncio.run(
+        make_agent_runner(Models(local.model, local.model), lambda t: gw.toolset())(
+            run, CaseMemory(load_cases())
+        )
+    )
+    assert run.case_id is None
+    assert all(request_chars(local, i) <= budget.LOCAL_INPUT_CHARS for i in range(2))
 
 
 def test_digest_has_the_parts_the_local_model_needs() -> None:

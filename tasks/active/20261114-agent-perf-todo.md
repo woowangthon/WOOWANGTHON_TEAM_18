@@ -17,7 +17,8 @@ Not applied: planner timeout/max_tokens (no measurement to pick values; a reason
 - [x] code changes + tests — files: `AI/ai_server/agent/{cases.json,prompts.py,loop.py}`, `AI/tests/*`
 - [x] 5 off-playbook cases in TEST_2 (`bench/n1-build-arg` … `bench/n5-eacces`) and a fresh 9-run baseline on prod `wcp-ai:5c7e72a`
 - [x] guard: a `verified` env/buildEnv value found in no evidence becomes `needs_user`
-- [x] planner plans every ticket, local model executes the plan's tools, rejection while executing → replan (user decision; ADR in a follow-up PR)
+- [x] planner classifies every ticket (regex = hint), plans a known case without tools, local model executes the plan's tools, rejection while executing → replan (user spec; ADR in a follow-up PR)
+- [ ] later PR: regex noise filter (`drop_noise`) and one-line signal summary (`summarize_signals`) in the model digest (spec 2-3)
 - [ ] PR, merge, `deploy-ai.sh`
 - [ ] after runs on prod, same repos
 - [ ] test log (Claude Docs) + `docs/ai-scope.md`
