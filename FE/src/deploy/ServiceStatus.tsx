@@ -1,18 +1,14 @@
-import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
 import { Alert } from '../components/ui/Alert.tsx'
 import { Badge } from '../components/ui/Badge.tsx'
 import { Card } from '../components/ui/Card.tsx'
 import { Skeleton } from '../components/ui/Skeleton.tsx'
 import { LineChart } from '../components/ui/LineChart.tsx'
-import { ApiError, apiFetch } from '../lib/api.ts'
+import { ApiError } from '../lib/api.ts'
 import { cpuText, memoryText } from '../lib/format.ts'
-import { METRICS_POLL_MS, NOT_COLLECTED, slotsOf, slotTimeText, stateText, waitingText } from './metrics.ts'
+import { NOT_COLLECTED, slotsOf, slotTimeText, stateText, stateVariant, waitingText } from './metrics.ts'
 import type { Metrics, MetricsService, Series } from './metrics.ts'
-
-type Load = { status: 'loading' } | { status: 'ready'; metrics: Metrics } | { status: 'not-found' }
-
-const stateVariant = (state: string) => (state === 'running' ? 'ok' : state === 'starting' ? 'warn' : 'neutral')
+import { useMetrics } from './useMetrics.ts'
 
 function Usage({ service }: { service: MetricsService }) {
   const { usage } = service
@@ -85,57 +81,26 @@ function Body({ metrics }: { metrics: Metrics }) {
 
 // 성공한 배포의 서비스 상태(UC-15). 보는 동안 15초마다 다시 읽는다. 읽기 실패는 마지막으로 읽은 값을 지우지 않고 안내만 더한다.
 function ServiceStatus({ deployId }: { deployId: string }) {
-  const [load, setLoad] = useState<Load>({ status: 'loading' })
-  const [failed, setFailed] = useState(false)
-
-  useEffect(() => {
-    let ignore = false
-    let timer: ReturnType<typeof setTimeout> | undefined
-    async function read() {
-      let again = true
-      try {
-        const metrics = await apiFetch<Metrics>(`/api/deploys/${deployId}/metrics`)
-        if (ignore) return
-        setLoad({ status: 'ready', metrics })
-        setFailed(false)
-        // 이 배포가 공개 중이 아니라는 답은 저절로 바뀌지 않는다.
-        again = metrics.state === 'live'
-      } catch (error) {
-        if (ignore) return
-        if (error instanceof ApiError && error.status === 404) {
-          setLoad({ status: 'not-found' })
-          again = false
-        } else {
-          setFailed(true)
-        }
-      }
-      if (again) timer = setTimeout(() => void read(), METRICS_POLL_MS)
-    }
-    void read()
-    return () => {
-      ignore = true
-      clearTimeout(timer)
-    }
-  }, [deployId])
+  const query = useMetrics(deployId)
 
   // 배포가 없다는 답은 위의 진행 화면이 이미 알린다. 여기서는 카드를 그리지 않는다.
-  if (load.status === 'not-found') return null
+  if (query.error instanceof ApiError && query.error.status === 404) return null
 
   return (
     <Card role="region" aria-label="서비스 상태" className="flex flex-col gap-4 p-6">
       <h2 className="text-lg">서비스 상태</h2>
-      {failed && (
+      {query.isError && (
         <Alert variant="warn" title="지금 상태를 읽지 못했어요">
           잠시 뒤에 다시 읽어요.
         </Alert>
       )}
-      {load.status === 'loading' && !failed && (
+      {query.data === undefined && !query.isError && (
         <div className="flex flex-col gap-3" role="status" aria-label="서비스 상태를 불러오는 중">
           <Skeleton className="w-1/3" />
           <Skeleton block />
         </div>
       )}
-      {load.status === 'ready' && <Body metrics={load.metrics} />}
+      {query.data !== undefined && <Body metrics={query.data} />}
     </Card>
   )
 }

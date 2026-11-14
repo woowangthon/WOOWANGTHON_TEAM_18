@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { Link, MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { WithQuery } from '../test-utils.tsx'
 import DeployProgressPage from './DeployProgressPage.tsx'
 
 // 실제 BE를 부르지 않는다. 테스트 전용 대역이라 MOCK 표식은 필요 없다(conventions §6).
@@ -32,6 +33,7 @@ it('does not show the previous deploy while the next one is loading', async () =
       : new Promise(() => undefined),
   )
   render(
+    <WithQuery>
     <MemoryRouter initialEntries={['/deploys/a']}>
       <Routes>
         <Route
@@ -44,7 +46,8 @@ it('does not show the previous deploy while the next one is loading', async () =
           }
         />
       </Routes>
-    </MemoryRouter>,
+    </MemoryRouter>
+    </WithQuery>,
   )
   await act(async () => {
     await vi.advanceTimersByTimeAsync(0)

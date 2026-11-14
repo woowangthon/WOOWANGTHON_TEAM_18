@@ -30,9 +30,9 @@ it('drops a point outside the window instead of stretching the grid', () => {
 })
 
 it('says each state in plain words and unknown ones as getting ready', () => {
-  expect(stateText('running')).toBe('실행 중')
-  expect(stateText('starting')).toBe('시작하는 중')
-  expect(stateText('stopped')).toBe('꺼져 있어요')
+  expect(stateText('running')).toBe('실행 중(정상)')
+  expect(stateText('starting')).toBe('헬스 체크 대기 중')
+  expect(stateText('stopped')).toBe('중지됨')
   expect(stateText('whatever')).toBe('준비 중이에요')
 })
 

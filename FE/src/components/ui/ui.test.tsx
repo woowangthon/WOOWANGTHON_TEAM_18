@@ -367,3 +367,9 @@ it('Meter exposes its value and clamps the bar to 0–100%', () => {
   expect((screen.getByRole('progressbar').firstElementChild as HTMLElement).style.width).toBe('0%')
   expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('0')
 })
+
+it('pulses only the step in progress, so the page shows it is working without a percent', () => {
+  render(<Steps aria-label="단계" steps={[{ label: 'a', state: 'done' }, { label: 'b', state: 'run' }, { label: 'c', state: 'pend' }]} />)
+  const dots = document.querySelectorAll('ol li > span[aria-hidden="true"].box-border')
+  expect([...dots].map((d) => d.classList.contains('step-pulse'))).toEqual([false, true, false])
+})

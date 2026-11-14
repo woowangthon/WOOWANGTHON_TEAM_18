@@ -14,6 +14,8 @@ export const queryKeys = {
   githubLink: ['github-link'] as const,
   incidents: ['incidents'] as const,
   discordWebhook: ['discord-webhook'] as const,
+  deploy: (id: string) => ['deploy', id] as const,
+  metrics: (id: string) => ['metrics', id] as const,
   admin: (path: string) => ['admin', path] as const,
 }
 

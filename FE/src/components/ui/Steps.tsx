@@ -7,7 +7,7 @@ const states = {
     label: 'text-fg',
     text: '완료',
   },
-  run: { dot: 'border-2 border-accent-ui bg-bg text-fg', label: 'font-bold text-fg', text: '진행 중', visible: true },
+  run: { dot: 'step-pulse border-2 border-accent-ui bg-bg text-fg', label: 'font-bold text-fg', text: '진행 중', visible: true },
   // 대기는 점선 테두리라 진행 중(실선)과 모양으로도 구분된다. 색(accent-ui · warn)은 서로 가까워 구분 수단으로 못 쓴다.
   wait: { dot: 'border-2 border-dashed border-warn bg-bg text-warn', label: 'font-bold text-fg', text: '입력 대기', visible: true },
   fail: { dot: 'border-2 border-err bg-bg text-err', label: 'font-bold text-fg', text: '실패', visible: true },

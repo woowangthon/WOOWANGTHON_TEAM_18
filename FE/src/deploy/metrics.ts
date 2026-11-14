@@ -44,15 +44,18 @@ export const NOT_COLLECTED = '아직 수집하지 못했어요'
 export const stateText = (state: string) => {
   switch (state) {
     case 'running':
-      return '실행 중'
+      return '실행 중(정상)'
     case 'starting':
-      return '시작하는 중'
+      return '헬스 체크 대기 중'
     case 'stopped':
-      return '꺼져 있어요'
+      return '중지됨'
     default:
       return '준비 중이에요'
   }
 }
+
+// 상태 배지의 색. 문구(stateText)와 같이 서비스 카드 · 구성도가 함께 쓴다.
+export const stateVariant = (state: string) => (state === 'running' ? 'ok' : state === 'starting' ? 'warn' : 'neutral')
 
 // 기다리는 이유를 학생이 알아볼 말로. 모르는 이유와 이유가 없는 경우는 준비 중이다.
 export const waitingText = (waiting: string | null) => {
