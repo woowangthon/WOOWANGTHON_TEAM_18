@@ -53,6 +53,14 @@ function DecisionProblem({ error }: { error: unknown }) {
   if (error instanceof ApiError && error.code === 'INCIDENT_NOT_FOUND') {
     return <NoticeBanner title="알림을 찾을 수 없어요">목록에서 사라졌을 수 있어요. 새로 읽으면 보여요.</NoticeBanner>
   }
+  if (error instanceof ApiError && error.code === 'STOP_INCOMPLETE') {
+    // 결정은 이미 중지로 기록됐다. 다시 읽으면 처리됨으로 보이므로 이 안내는 그 뒤에도 남아야 한다.
+    return (
+      <NoticeBanner variant="warn" title="일부 서비스만 멈췄어요">
+        아래 프로젝트 목록에서 강제 중지로 나머지를 멈춰 주세요.
+      </NoticeBanner>
+    )
+  }
   // 처리는 POST라서 자동으로 다시 시도하지 않는다.
   return <ClusterProblem error={error} retries={false} fallback="알림을 처리하지 못했어요" />
 }
@@ -83,7 +91,7 @@ function DecisionPanel({ incident, onChanged, onForbidden }: { incident: AdminIn
 
   return (
     <div className="flex flex-col gap-2">
-      {(state.step === 'idle' || state.step === 'failed') && (
+      {incident.action === 'pending' && (state.step === 'idle' || state.step === 'failed') && (
         <div className="flex flex-wrap gap-2">
           <Button
             variant="outline"
@@ -156,7 +164,8 @@ function IncidentCard({ incident, onChanged, onForbidden }: { incident: AdminInc
       </dl>
       <AiRows ai={incident.ai} />
       {action === 'auto_stopped' && <p className="text-sm text-muted">자동으로 멈췄어요</p>}
-      {action === 'pending' && <DecisionPanel incident={incident} onChanged={onChanged} onForbidden={onForbidden} />}
+      {/* 처리된 뒤에도 그 처리의 결과 안내가 남도록 늘 그린다. 버튼은 판단 대기일 때만 나온다. */}
+      <DecisionPanel incident={incident} onChanged={onChanged} onForbidden={onForbidden} />
     </li>
   )
 }

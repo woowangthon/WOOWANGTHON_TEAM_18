@@ -579,6 +579,25 @@ describe('운영 알림', () => {
     expect(screen.getByText('중지했어요')).toBeTruthy()
   })
 
+  it('keeps saying only some services stopped after the reload shows the alert as handled', async () => {
+    let reads503 = false
+    api.apiFetch.mockImplementation((path: string) => {
+      if (path === incidentPath('i-1', 'stop')) {
+        reads503 = true
+        return Promise.reject(new ApiError(503, 'STOP_INCOMPLETE', 'x'))
+      }
+      if (path === INCIDENTS) return Promise.resolve(incidentsOf([incident({ action: reads503 ? 'stopped' : 'pending' })]))
+      return Promise.resolve(replies[path])
+    })
+    await show()
+    await press(`my-app ${title} 중지`)
+    await press(`my-app ${title} 중지하기`)
+    expect(within(incidentCard()).getByText('처리됨')).toBeTruthy()
+    expect(screen.getByText('일부 서비스만 멈췄어요')).toBeTruthy()
+    expect(screen.getByText('아래 프로젝트 목록에서 강제 중지로 나머지를 멈춰 주세요.')).toBeTruthy()
+    expect(within(incidentCard()).queryByRole('button')).toBeNull()
+  })
+
   it('dismisses without a confirmation step', async () => {
     serve({ [INCIDENTS]: incidentsOf([incident()]), [incidentPath('i-1', 'dismiss')]: { incident: incident({ action: 'dismissed' }) } })
     await show()
