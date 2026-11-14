@@ -37,6 +37,8 @@ export class AlertWatcher implements OnApplicationBootstrap, OnModuleDestroy {
   private chain: Promise<void> = Promise.resolve()
   private timer: NodeJS.Timeout | undefined
   private readonly judging = new Set<Promise<void>>()
+  // 지금 처리(자동 중지 · AI 판단 · 알림) 중인 알림 id. 같은 알림을 두 번 처리하지 않는다.
+  private readonly inFlight = new Set<string>()
   // 지금 울리는 노드 경고. 새로 울릴 때만 보내고, 꺼졌다가 다시 울리면 다시 보낸다(서버가 다시 뜨면 한 번 더 간다).
   private nodeAlerts = new Set<string>()
 
@@ -94,17 +96,24 @@ export class AlertWatcher implements OnApplicationBootstrap, OnModuleDestroy {
       }
     }
 
+    // 노드 경고는 DB를 쓰지 않으므로 DB가 안 보여도 보낸다.
+    await Promise.all(
+      [...nodes]
+        .filter(([key]) => !this.nodeAlerts.has(key))
+        .map(([, alert]) => this.discord.toOperator(`[노드] ${alert.labels.alertname} ${alert.labels.instance ?? ''}\n${clip(alert.summary)}`)),
+    )
+    this.nodeAlerts = new Set(nodes.keys())
+
     const open = await this.store.open()
     const openKeys = new Set(open.map((i) => keyOf(i.slug, i.alertname)))
+    // 처리하다 멈춘 알림(저장 뒤 실패 · 서버 재시작): 아직 울리고, 정할 차례이고, AI 판단도 없으면 다시 처리한다.
+    const unfinished = open.filter((i) => projects.has(keyOf(i.slug, i.alertname)) && i.action === 'pending' && i.ai.status === 'pending')
     // 프로젝트마다 따로라 함께 돈다(한 확인이 20초를 넘지 않게).
     await Promise.all([
       ...open.filter((i) => !projects.has(keyOf(i.slug, i.alertname))).map((i) => this.store.resolve(i.id)),
       ...[...projects].filter(([key]) => !openKeys.has(key)).map(([, { slug, alert }]) => this.opened(slug, alert)),
-      ...[...nodes]
-        .filter(([key]) => !this.nodeAlerts.has(key))
-        .map(([, alert]) => this.discord.toOperator(`[노드] ${alert.labels.alertname} ${alert.labels.instance ?? ''}\n${clip(alert.summary)}`)),
     ])
-    this.nodeAlerts = new Set(nodes.keys())
+    for (const incident of unfinished) this.process(incident)
   }
 
   private async opened(slug: string, alert: AlertInfo): Promise<void> {
@@ -120,9 +129,23 @@ export class AlertWatcher implements OnApplicationBootstrap, OnModuleDestroy {
     })
     if (!incident) return
     this.logger.log(`incident opened: ${slug} ${incident.alertname}`)
-    if (incident.alertname === AUTO_STOP && (await this.autoStop(incident))) return
-    const judging = this.judgeAndNotify(incident).finally(() => this.judging.delete(judging))
-    this.judging.add(judging)
+    this.process(incident)
+  }
+
+  /** 자동 중지나 AI 판단, 그리고 알림. 확인을 막지 않게 따로 돈다. 실패하면 다음 확인이 다시 처리한다. */
+  private process(incident: IncidentRow): void {
+    if (this.inFlight.has(incident.id)) return
+    this.inFlight.add(incident.id)
+    const run = (async () => {
+      if (incident.alertname === AUTO_STOP && (await this.autoStop(incident))) return
+      await this.judgeAndNotify(incident)
+    })()
+      .catch((err: unknown) => this.logger.error(`incident not processed: ${err instanceof Error ? err.name : 'error'}`))
+      .finally(() => {
+        this.inFlight.delete(incident.id)
+        this.judging.delete(run)
+      })
+    this.judging.add(run)
   }
 
   /**
@@ -140,13 +163,10 @@ export class AlertWatcher implements OnApplicationBootstrap, OnModuleDestroy {
   }
 
   private async judgeAndNotify(incident: IncidentRow): Promise<void> {
-    try {
-      const ai = await this.judge.judge(incident)
-      const judged = await this.store.update(incident.id, { ai })
-      await this.notify(judged ?? { ...incident, ai })
-    } catch (err) {
-      this.logger.error(`incident judgment not saved: ${err instanceof Error ? err.name : 'error'}`)
-    }
+    const ai = await this.judge.judge(incident)
+    // 아직 판단 전인 것만 채운다(다른 처리가 먼저 끝냈으면 알림을 다시 보내지 않는다).
+    const judged = await this.store.update(incident.id, { ai }, undefined, 'pending')
+    if (judged) await this.notify(judged)
   }
 
   private async notify(incident: IncidentRow): Promise<void> {
@@ -158,11 +178,11 @@ export class AlertWatcher implements OnApplicationBootstrap, OnModuleDestroy {
   }
 }
 
-/** 프로젝트의 Deployment를 모두 replicas 0으로. 하나라도 내렸거나 내릴 것이 없으면 true. */
+/** 프로젝트의 Deployment를 모두 replicas 0으로. 모두 내렸거나 내릴 것이 없으면 true(일부만 내렸으면 false라 다시 시도한다). */
 export async function stopProject(reader: ClusterReader, scaler: DeploymentScaler, slug: string): Promise<boolean> {
   const names = (await reader.deployments(slug).catch(() => null))?.map((d) => d.name)
   if (!names) return false
   if (names.length === 0) return true
   const results = await Promise.allSettled(names.map((name) => scaler.scaleToZero(slug, name)))
-  return results.some((r) => r.status === 'fulfilled')
+  return results.every((r) => r.status === 'fulfilled')
 }

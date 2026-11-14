@@ -83,8 +83,13 @@ export class IncidentsStore {
   }
 
   /** `action`이 `from`일 때만 바꾼다(겹친 결정은 하나만 통과). 바꿨으면 바뀐 줄, 아니면 null. */
-  async update(id: string, patch: Partial<Pick<IncidentRow, 'action' | 'ai' | 'decided_by' | 'decided_at'>>, from?: IncidentAction): Promise<IncidentRow | null> {
-    const where: Record<string, string> = { id: `eq.${id}`, ...(from ? { action: `eq.${from}` } : {}) }
+  async update(
+    id: string,
+    patch: Partial<Pick<IncidentRow, 'action' | 'ai' | 'decided_by' | 'decided_at'>>,
+    from?: IncidentAction,
+    aiFrom?: IncidentAi['status'],
+  ): Promise<IncidentRow | null> {
+    const where: Record<string, string> = { id: `eq.${id}`, ...(from ? { action: `eq.${from}` } : {}), ...(aiFrom ? { 'ai->>status': `eq.${aiFrom}` } : {}) }
     return (await this.rows('PATCH', where, { ...patch, updated_at: new Date().toISOString() }))[0] ?? null
   }
 
@@ -100,6 +105,12 @@ export class IncidentsStore {
   async forSlugs(slugs: string[], since: string): Promise<IncidentRow[]> {
     if (slugs.length === 0) return []
     return this.rows('GET', { select: '*', slug: `in.(${slugs.join(',')})`, or: `(resolved_at.is.null,created_at.gte.${since})`, order: 'created_at.desc', limit: '50' })
+  }
+
+  /** 사용자가 배포를 저장한 프로젝트(slug, 중복 없이). */
+  async ownedSlugs(userId: string): Promise<string[]> {
+    const rows = await this.call('deploys', 'GET', { select: 'slug', user_id: `eq.${userId}`, limit: '1000' })
+    return [...new Set(rows.flatMap((r) => (isRecord(r) && typeof r.slug === 'string' ? [r.slug] : [])))]
   }
 
   async webhook(userId: string): Promise<string | null> {
@@ -122,7 +133,7 @@ export class IncidentsStore {
     return rows
   }
 
-  private async call(table: 'incidents' | 'user_webhooks', method: 'GET' | 'POST' | 'PATCH' | 'DELETE', query: Record<string, string>, body?: object, prefer = 'return=representation'): Promise<unknown[]> {
+  private async call(table: 'incidents' | 'user_webhooks' | 'deploys', method: 'GET' | 'POST' | 'PATCH' | 'DELETE', query: Record<string, string>, body?: object, prefer = 'return=representation'): Promise<unknown[]> {
     const qs = new URLSearchParams(query).toString()
     try {
       const res = await fetch(`${this.restUrl}/${table}${qs ? `?${qs}` : ''}`, {

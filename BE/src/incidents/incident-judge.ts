@@ -9,7 +9,7 @@ import { emptyAi, type IncidentAi, type IncidentRow, MODELS, RECOMMENDATIONS, RI
 const TIMEOUT_MS = 90_000
 const LOG_TIMEOUT_MS = 3000
 const LOG_LINES = 200
-const MAX_PODS = 20
+const MAX_PODS = 10
 const TEXT_CHARS = 300
 
 const oneOf = <T extends string>(list: readonly T[], v: unknown): v is T => typeof v === 'string' && (list as readonly string[]).includes(v)

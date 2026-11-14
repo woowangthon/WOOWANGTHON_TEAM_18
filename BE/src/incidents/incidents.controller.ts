@@ -5,7 +5,6 @@ import type { AuthUser } from '../auth/auth.decorators.js'
 import { isRecord } from '../common/is-record.js'
 import { parseUuid } from '../common/uuid.js'
 import { DISCORD_WEBHOOK } from '../config/env.js'
-import { DeploysStore } from '../deploys/deploys.store.js'
 import { ClusterReader } from '../k8s/cluster-reader.js'
 import { DeploymentScaler } from '../k8s/deployment-scaler.js'
 import { stopProject } from './alert-watcher.js'
@@ -14,7 +13,6 @@ import { type IncidentRow, IncidentsStore } from './incidents.store.js'
 
 const ADMIN_LIMIT = 50
 const STUDENT_WINDOW_MS = 24 * 3600_000
-const STUDENT_PROJECTS = 50
 
 const iso = (v: string | null) => (v === null ? null : new Date(v).toISOString())
 const isOpen = (i: IncidentRow) => i.resolved_at === null && i.action === 'pending'
@@ -50,19 +48,23 @@ export class AdminIncidentsController {
 
   @Get()
   async list() {
-    const rows = await this.store.recent(ADMIN_LIMIT)
-    // 정할 차례인 것을 먼저, 그 안에서는 최근 것부터(정렬은 안정적이다).
-    return { incidents: [...rows].sort((a, b) => Number(isOpen(b)) - Number(isOpen(a))).map(adminView) }
+    // 정할 차례인 것은 최근 50개 밖으로 밀려도 빠지지 않게 따로 읽는다.
+    const [open, recent] = await Promise.all([this.store.open(), this.store.recent(ADMIN_LIMIT)])
+    const waiting = open.filter(isOpen).sort((a, b) => b.created_at.localeCompare(a.created_at))
+    const seen = new Set(waiting.map((i) => i.id))
+    return { incidents: [...waiting, ...recent.filter((i) => !seen.has(i.id))].map(adminView) }
   }
 
   @Post(':id/stop')
   @HttpCode(200)
   async stop(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    const incident = await this.pending(id)
-    if (!(await stopProject(this.reader, this.scaler, incident.slug))) {
+    // 결정을 먼저 잡고(겹친 무시 · 중지는 하나만 통과) 클러스터를 바꾼다. 다 못 내렸으면 결정을 되돌려 다시 시도할 수 있게 한다.
+    const decided = await this.decide(await this.pending(id), 'stopped', user)
+    if (!(await stopProject(this.reader, this.scaler, decided.incident.slug))) {
+      await this.store.update(decided.incident.id, { action: 'pending', decided_by: null, decided_at: null }, 'stopped')
       throw new ServiceUnavailableException({ code: 'CLUSTER_UNREACHABLE', message: 'Could not stop the project in the cluster' })
     }
-    return this.decide(incident, 'stopped', user)
+    return decided
   }
 
   @Post(':id/dismiss')
@@ -88,15 +90,12 @@ export class AdminIncidentsController {
 
 @Controller()
 export class IncidentsController {
-  constructor(
-    private readonly store: IncidentsStore,
-    private readonly deploys: DeploysStore,
-  ) {}
+  constructor(private readonly store: IncidentsStore) {}
 
   /** 내 프로젝트의 열린 알림과 최근 24시간에 멈춘 것. */
   @Get('incidents')
   async mine(@CurrentUser() user: AuthUser) {
-    const slugs = [...new Set((await this.deploys.listOwned(user.id, STUDENT_PROJECTS)).map((d) => d.slug))]
+    const slugs = await this.store.ownedSlugs(user.id)
     const since = new Date(Date.now() - STUDENT_WINDOW_MS).toISOString()
     const rows = await this.store.forSlugs(slugs, since)
     return { incidents: rows.filter((i) => isOpen(i) || i.action === 'auto_stopped' || i.action === 'stopped').map(view) }

@@ -130,6 +130,8 @@ def test_needs_the_bearer_token() -> None:
         ({"alertname": ""}, "alertname"),
         ({"logs": ["x"] * 201}, "logs"),
         ({"surprise": 1}, "surprise"),
+        ({"pods": [{**body()["pods"][0], "phase": "x" * 21}]}, "pods[0].phase"),
+        ({"labels": {"k" * 101: "v"}}, "labels.%s.[key]" % ("k" * 101)),
     ],
 )
 def test_rejects_a_bad_request(over: dict[str, Any], path: str) -> None:
@@ -151,3 +153,35 @@ def test_settings_order_is_local_then_redacted_planner(settings: Settings) -> No
     order = judges_from_settings(with_api)
     assert [n for n, _ in order] == ["local", "planner"]
     assert isinstance(order[1][1], RedactingModel)
+
+
+def test_the_whole_prompt_stays_bounded_at_the_largest_valid_request() -> None:
+    local = Script(final(**JUDGMENT))
+    big = body(
+        alertname="A" * 200,
+        summary="s" * 200,
+        labels={f"{i:0>100}": "v" * 200 for i in range(20)},
+        pods=[
+            {
+                "name": "p" * 253,
+                "phase": "x" * 20,
+                "ready": False,
+                "restarts": 9,
+                "waiting": "w" * 200,
+            }
+        ]
+        * 10,
+        logs=["Error " + "e" * 5000] * 200,
+    )
+    with client_with(("local", local.model)) as c:
+        assert post(c, big).status_code == 200
+    # 로컬 모델 입력 예산(budget.LOCAL_INPUT_CHARS) 안이다.
+    assert len(local.sent()) < 30_000
+
+
+def test_a_model_failure_is_logged_without_its_message(caplog: pytest.LogCaptureFixture) -> None:
+    local = Script(fail(RuntimeError("token=sk-SECRETSECRETSECRET1234")))
+    with client_with(("local", local.model)) as c:
+        post(c, body())
+    assert "SECRETSECRET" not in caplog.text
+    assert "RuntimeError" in caplog.text

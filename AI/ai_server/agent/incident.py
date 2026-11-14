@@ -15,7 +15,7 @@ from pydantic_ai.models import Model
 
 from ai_server.agent import budget
 from ai_server.agent.loop import LOCAL_ACT_SETTINGS, OUTPUT_RETRIES, api_model, local_model
-from ai_server.agent.models import NonEmpty, Wire
+from ai_server.agent.models import Wire
 from ai_server.agent.redact import RedactingModel
 from ai_server.agent.trace import exc_shape, trace
 from ai_server.config import Settings
@@ -26,24 +26,27 @@ log = logging.getLogger(__name__)
 MODEL_TIMEOUT_S = 40
 
 ModelName = Literal["local", "planner"]
+# 모델에 들어가는 칸은 모두 길이 상한이 있다. 로그는 budget.clip_log · excerpt가 줄인다.
 Label = Annotated[str, Field(max_length=200)]
+Key = Annotated[str, Field(min_length=1, max_length=100)]
+PodName = Annotated[str, Field(min_length=1, max_length=253)]
 
 
 class IncidentPod(Wire):
-    name: NonEmpty
-    phase: str
+    name: PodName
+    phase: Annotated[str, Field(max_length=20)]
     ready: bool
     restarts: int = Field(ge=0)
-    waiting: str | None
+    waiting: Label | None
 
 
 class IncidentRequest(Wire):
-    incident_id: NonEmpty
-    slug: NonEmpty
-    alertname: NonEmpty
+    incident_id: Key
+    slug: Key
+    alertname: Annotated[str, Field(min_length=1, max_length=200)]
     summary: Label
-    labels: dict[str, Label] = Field(max_length=20)
-    pods: list[IncidentPod] = Field(max_length=20)
+    labels: dict[Key, Label] = Field(max_length=20)
+    pods: list[IncidentPod] = Field(max_length=10)
     logs: list[str] = Field(max_length=200)
 
 
@@ -111,7 +114,8 @@ async def judge(req: IncidentRequest, judges: Judges) -> tuple[IncidentJudgment,
                 out = (await agent.run(prompt)).output
         except Exception as e:  # 어느 실패든 다음 모델로 넘긴다(연결 · 시간 · 출력 모양).
             trace(req.incident_id, f"incident model={name} failed exc={exc_shape(e)}")
-            log.warning("incident %s: %s model failed: %r", req.incident_id, name, e)
+            # 예외 메시지는 값을 되풀이할 수 있어 클래스 이름만 남긴다.
+            log.warning("incident %s: %s model failed: %s", req.incident_id, name, exc_shape(e))
             continue
         trace(
             req.incident_id,

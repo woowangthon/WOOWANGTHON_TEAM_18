@@ -29,6 +29,8 @@ let aiAnswer: () => Response
 let discord: { url: string; content: string; mentions: unknown }[]
 let aiBodies: Row[]
 let discordDown: boolean
+let scaleFails: Set<string>
+let incidentsDown: boolean
 let app: INestApplication<App>
 
 const reader = {
@@ -39,6 +41,7 @@ const reader = {
 }
 const scaler: Pick<DeploymentScaler, 'scaleToZero'> = {
   scaleToZero(slug, name) {
+    if (scaleFails.has(name)) return Promise.reject(new ClusterError('forbidden', 403))
     scaled.push({ slug, name })
     return Promise.resolve()
   },
@@ -51,6 +54,8 @@ function matches(row: Row, params: URLSearchParams): boolean {
     if (k === 'or') {
       const since = /created_at\.gte\.(.+)\)$/.exec(v)![1]
       if (!(row.resolved_at == null || String(row.created_at) >= since)) return false
+    } else if (k === 'ai->>status') {
+      if ((row.ai as Row).status !== v.slice(3)) return false
     } else if (v === 'is.null') {
       if (row[k] != null) return false
     } else if (v.startsWith('in.(')) {
@@ -64,6 +69,7 @@ function matches(row: Row, params: URLSearchParams): boolean {
 function rest(url: URL, init: RequestInit | undefined): Response {
   const table = url.pathname.split('/').pop()!
   const method = init?.method ?? 'GET'
+  if (incidentsDown && table === 'incidents') return Response.json({}, { status: 500 })
   const rows = (db[table] ??= [])
   const body = init?.body ? (JSON.parse(init.body as string) as Row) : {}
   if (method === 'POST') {
@@ -143,6 +149,8 @@ beforeEach(async () => {
   discord = []
   aiBodies = []
   discordDown = false
+  scaleFails = new Set()
+  incidentsDown = false
   aiAnswer = () => Response.json(judgment)
   fetchMock.mockClear()
   vi.stubGlobal('fetch', fetchMock)
@@ -273,6 +281,38 @@ describe('alert watcher', () => {
   })
 })
 
+describe('alert watcher: partial failures', () => {
+  it('sends node alerts even when the incidents table cannot be read', async () => {
+    incidentsDown = true
+    alerts = [alert('NodeFilesystemAlmostOutOfSpace', undefined)]
+    await check()
+    expect(discord.map((d) => d.url)).toEqual([OPERATOR_HOOK])
+  })
+
+  it('does not record a stop when only some Deployments went to 0, and asks the AI instead', async () => {
+    seedProject('my-app')
+    deployments['my-app'] = [deployment('be-a'), deployment('fe-a')]
+    scaleFails.add('fe-a')
+    alerts = [alert('KubePodCrashLooping', 'proj-my-app')]
+    await check()
+    expect(db.incidents[0]).toMatchObject({ action: 'pending', ai: { status: 'done' } })
+  })
+
+  it('finishes an incident that was saved but never processed (failure or restart)', async () => {
+    seedProject('my-app')
+    db.incidents = [
+      { id: randomUUID(), slug: 'my-app', alertname: 'KubePodNotReady', labels: {}, summary: '', fired_at: new Date().toISOString(), resolved_at: null, action: 'pending', ai: { status: 'pending', risk: null, recommendation: null, cause: null, reason: null, model: null }, decided_by: null, decided_at: null, created_at: new Date().toISOString() },
+    ]
+    alerts = [alert('KubePodNotReady', 'proj-my-app')]
+    await check()
+    expect(db.incidents[0]).toMatchObject({ ai: { status: 'done' } })
+    expect(discord).toHaveLength(1)
+    // 끝난 알림은 다시 처리하지 않는다.
+    await check()
+    expect(aiBodies).toHaveLength(1)
+  })
+})
+
 describe('operator incidents API', () => {
   async function seedIncident(action = 'pending') {
     seedProject('my-app')
@@ -304,6 +344,23 @@ describe('operator incidents API', () => {
     expect((await call('post', `/api/admin/incidents/${id}/dismiss`, await adminAuth())).body).toEqual(errorBody('INCIDENT_CLOSED'))
   })
 
+  it('keeps an open incident in the list even when 50 newer ones exist', async () => {
+    const id = await seedIncident()
+    db.incidents[0].created_at = '2026-01-01T00:00:00.000Z'
+    for (let i = 0; i < 55; i++) db.incidents.push({ ...db.incidents[0], id: randomUUID(), alertname: `Old${i}`, action: 'dismissed', resolved_at: new Date().toISOString(), created_at: new Date().toISOString() })
+    const res = await call('get', '/api/admin/incidents', await adminAuth())
+    const list = res.body as { incidents: { id: string }[] }
+    expect(list.incidents[0].id).toBe(id)
+  })
+
+  it('puts the decision back when the cluster could not stop everything', async () => {
+    const id = await seedIncident()
+    scaleFails.add('be-a')
+    const res = await call('post', `/api/admin/incidents/${id}/stop`, await adminAuth())
+    expect(res.status).toBe(503)
+    expect(db.incidents[0]).toMatchObject({ action: 'pending', decided_by: null })
+  })
+
   it('dismisses without touching the cluster', async () => {
     const id = await seedIncident()
     const res = await call('post', `/api/admin/incidents/${id}/dismiss`, await adminAuth())
@@ -333,6 +390,16 @@ describe('student incidents API', () => {
     const got = (res.body as { incidents: { slug: string; alertname: string; action: string; decidedBy?: unknown }[] }).incidents
     expect(got.map((i) => `${i.slug} ${i.alertname} ${i.action}`).sort()).toEqual(['my-app KubePodCrashLooping auto_stopped', 'my-app KubePodNotReady pending'])
     expect(got[0]).not.toHaveProperty('decidedBy')
+  })
+
+  it('still finds a project when another project has many newer deploys', async () => {
+    seedProject('my-app')
+    db.deploys[0].created_at = '2026-01-01T00:00:00.000Z'
+    for (let i = 0; i < 60; i++) seedProject('busy-app')
+    alerts = [alert('KubePodNotReady', 'proj-my-app')]
+    await check()
+    const got = (await call('get', '/api/incidents', await userAuth())).body as { incidents: { slug: string }[] }
+    expect(got.incidents.map((i) => i.slug)).toEqual(['my-app'])
   })
 
   it('is empty for a student with no project', async () => {

@@ -747,11 +747,11 @@ type Incident = {
 
 ### `GET /api/admin/incidents` — 운영 알림 목록 (운영자)
 
-응답 `200`: `{ "incidents": (Incident & { "decidedBy": string | null })[] }`. 최근 50개, 열린 것 먼저. `decidedBy`는 운영자 이메일, 규칙이 멈췄으면 `"rule"`.
+응답 `200`: `{ "incidents": (Incident & { "decidedBy": string | null })[] }`. 열린 것 전부를 먼저, 그다음 최근 50개. `decidedBy`는 운영자 이메일, 규칙이 멈췄으면 `"rule"`.
 
 ### `POST /api/admin/incidents/:id/stop` — 알림의 프로젝트 멈추기 (운영자)
 
-공간의 Deployment를 모두 `replicas: 0`으로 내리고 `action = stopped`. 본문 없음. 응답 `200`: `{ "incident" }`.
+먼저 `action = stopped`로 결정을 잡고(겹친 무시 · 중지는 하나만 통과), 공간의 Deployment를 모두 `replicas: 0`으로 내린다. 하나라도 못 내렸으면 결정을 `pending`으로 되돌리고 `503`이다(다시 요청할 수 있다). 본문 없음. 응답 `200`: `{ "incident" }`.
 오류: `404 INCIDENT_NOT_FOUND`(UUID 모양이 아닌 값 포함), `409 INCIDENT_CLOSED`(이미 정했다), `503 CLUSTER_UNREACHABLE`(하나도 못 내렸다), `403 ADMIN_REQUIRED`.
 
 ### `POST /api/admin/incidents/:id/dismiss` — 알림 무시 (운영자)
@@ -772,7 +772,7 @@ type Incident = {
 
 아래 "AI 에이전트"와 같은 `AGENT_API_TOKEN`으로 부른다. 동기로 답한다(판단만 하고 실행하지 않는다).
 
-- 요청: `{ "incidentId", "slug", "alertname", "summary"(≤200자), "labels": {…}(≤20개, 값 ≤200자), "pods": [{ "name", "phase", "ready", "restarts", "waiting" }](≤20), "logs": string[](≤200줄) }`. 모르는 칸은 거부한다.
+- 요청: `{ "incidentId", "slug", "alertname", "summary"(≤200자), "labels": {…}(≤20개, 값 ≤200자), "pods": [{ "name", "phase"(≤20자), "ready", "restarts", "waiting" }](≤10), "logs": string[](≤200줄) }`. 모르는 칸은 거부한다.
 - 응답 `200`: `{ "risk", "recommendation", "cause", "reason", "model": "local" | "planner" }`. `cause` · `reason`은 한국어 한 문장(≤300자).
 - 오류: `400 INVALID_INCIDENT`, `401 AUTH_REQUIRED`, `503 MODEL_UNAVAILABLE`(로컬 모델과 추론 API 모두 실패, 또는 설정 없음). 플랫폼 서버는 90초를 기다린다.
 
