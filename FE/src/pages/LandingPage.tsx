@@ -55,7 +55,7 @@ function LandingPage() {
       <SectionNav />
 
       <main className="flex-1">
-        <section className="mx-auto grid max-w-300 items-center gap-10 px-4 py-16 sm:px-8 sm:py-24 lg:grid-cols-2 lg:gap-16">
+        <section className="mx-auto grid max-w-300 items-center gap-10 px-3 py-16 sm:px-4 sm:py-24 lg:grid-cols-2 lg:gap-16">
           <div className="flex flex-col gap-6">
             <h1 className="max-w-2xl text-2xl sm:text-3xl">GitHub 레포 하나로, 학교 PC에 배포까지</h1>
             <p className="max-w-2xl text-lg text-muted">
@@ -82,7 +82,7 @@ function LandingPage() {
         <ProjectTypes />
 
         <section id="how" className="border-t border-line">
-          <div className="mx-auto flex max-w-300 flex-col gap-6 px-4 py-16 sm:px-8">
+          <div className="mx-auto flex max-w-300 flex-col gap-6 px-3 py-16 sm:px-4">
             <h2 className="text-xl">이렇게 배포돼요</h2>
             <ol className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               {steps.map((step, index) => (
@@ -105,7 +105,7 @@ function LandingPage() {
 
 
         <section className="border-t border-line bg-surface">
-          <div className="mx-auto flex max-w-300 flex-col items-start gap-6 px-4 py-20 sm:px-8">
+          <div className="mx-auto flex max-w-300 flex-col items-start gap-6 px-3 py-20 sm:px-4">
             <h2 className="max-w-2xl text-2xl sm:text-3xl">첫 배포, 지금 해 보세요</h2>
             <p className="max-w-2xl text-lg text-muted">GitHub 레포 주소만 있으면 돼요. 막히면 AI 동료가 도와줘요.</p>
             <div className="flex flex-wrap items-center gap-3">
@@ -129,8 +129,9 @@ function LandingPage() {
       </main>
 
       <footer className="border-t border-line">
-        <div className="mx-auto max-w-300 px-4 py-6 text-sm text-muted sm:px-8">
-          2026 AI 우왕톤 · 왕가네식구들
+        <div className="mx-auto flex max-w-300 items-center gap-3 px-3 py-6 text-sm text-muted sm:px-4">
+          <Logo className="size-6" />
+          <span>2026 AI 우왕톤 · 왕가네식구들</span>
         </div>
       </footer>
     </div>

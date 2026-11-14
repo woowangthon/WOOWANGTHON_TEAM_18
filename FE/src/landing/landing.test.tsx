@@ -186,3 +186,10 @@ it('keeps the section links out of the top bar and in a floating menu, the same 
     unmount()
   }
 })
+
+it('shows the logo in the footer and keeps every section on the same side margins as the top bar', () => {
+  const { container } = renderLanding({ status: 'signedOut', expired: false })
+  expect(within(screen.getByRole('contentinfo')).getByAltText('WCP')).toBeTruthy()
+  // 상단 바와 본문 구역이 같은 좌우 여백(px-3 sm:px-4)이어야 로고와 본문 가장자리가 맞는다.
+  expect(container.innerHTML).not.toContain('sm:px-8')
+})
