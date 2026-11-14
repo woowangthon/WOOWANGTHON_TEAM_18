@@ -1,5 +1,6 @@
 import { Link } from 'react-router'
 import NoticeBanner from '../components/NoticeBanner.tsx'
+import Logo from '../components/Logo.tsx'
 import { primaryLinkClass } from '../components/primaryLinkClass.ts'
 import { Button } from '../components/ui/Button.tsx'
 import { Card } from '../components/ui/Card.tsx'
@@ -102,6 +103,7 @@ function DashboardPage() {
 
       {state.status === 'ready' && projects.length === 0 && (
         <Card className="flex flex-col items-start gap-3 p-6">
+          <Logo className="size-12" />
           <p className="font-bold">아직 배포가 없어요.</p>
           <p className="text-sm text-muted">GitHub 레포 하나로 첫 배포를 요청해 보세요.</p>
           <Link to="/deploy/new" className={primaryLinkClass}>

@@ -8,7 +8,7 @@ function Survey() {
   const summary = positive === total ? `${total}명 모두 긍정이에요` : `${total}명 중 ${positive}명이 긍정이에요`
   return (
     <section id="survey" className="border-t border-line">
-      <div className="mx-auto grid max-w-300 gap-10 px-4 py-16 sm:px-8 lg:grid-cols-5 lg:gap-16">
+      <div className="mx-auto grid max-w-300 gap-10 px-3 py-16 sm:px-4 lg:grid-cols-5 lg:gap-16">
         <div className="flex flex-col gap-3 lg:col-span-2">
           <h2 className="text-2xl">학생들에게 물어봤어요</h2>
           <p className="text-lg text-muted">배포가 어려운 이유는 기술만이 아니었어요. 비용, 그 뒤의 관리, 보안이 걱정이었어요.</p>

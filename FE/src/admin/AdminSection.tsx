@@ -19,7 +19,7 @@ function AdminSection<T>({ id, title, read, failed, loading, empty, isEmpty, chi
   const { data, error } = read
   return (
     <section aria-labelledby={id} className="flex flex-col gap-3">
-      <h2 id={id} className="text-lg">
+      <h2 id={id} className="scroll-mt-4 text-lg">
         {title}
       </h2>
       {error !== null && <ClusterProblem error={error} stale={data !== null} fallback={failed} />}
