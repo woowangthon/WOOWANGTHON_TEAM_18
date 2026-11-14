@@ -5,9 +5,9 @@ import { redact, redactString } from '../common/redact.js'
 import { AgentClient } from '../deploys/agent.client.js'
 import type { ServiceConditions } from '../deploys/deploy-condition.js'
 import { DeployConditionService } from '../deploys/deploy-condition.service.js'
+import { DeployQueue } from '../deploys/deploy-queue.js'
 import { ticketCount } from '../deploys/deploy-run.js'
 import { type DeployRunRow, DeploysStore } from '../deploys/deploys.store.js'
-import { PipelineClient } from '../deploys/pipeline.client.js'
 import { SlotScaleDown } from '../deploys/slot-scale-down.js'
 import { ClusterReader, newestPod } from '../k8s/cluster-reader.js'
 import type { Issue, Spec } from '../deploys/deploy-input.js'
@@ -191,7 +191,7 @@ export class GatewayTools {
     private readonly cluster: ClusterReader,
     private readonly repo: RepoReader,
     private readonly trials: GatewayTrials,
-    private readonly pipeline: PipelineClient,
+    private readonly queue: DeployQueue,
     private readonly agent: AgentClient,
     private readonly conditions: DeployConditionService,
     private readonly slots: SlotScaleDown,
@@ -490,7 +490,8 @@ export class GatewayTools {
 
   /**
    * `verified`(api.md "파이프라인 ↔ 플랫폼 서버" 5번): 이 티켓에서 같은 specPatch로 run_deploy → run_verify를 통과했으면
-   * 그 입력을 실행 기록에 저장하고 student-deploy를 처음부터 다시 실행한다(공개 주소는 그 Switch에서만 바뀐다).
+   * 그 입력을 실행 기록에 저장하고 대기열에 다시 세운다. 차례가 오면 대기열이 student-deploy를 처음부터 다시 실행한다(공개 주소는 그 Switch에서만 바뀐다).
+   * running은 대기열만 만든다: 다른 프로젝트가 도는 동안 둘이 함께 돌지 않게 한다(docs/design/deploy-workflow.md §5-1).
    */
   private async submitVerified(ticket: GatewayTicket, run: DeployRunRow, result: AgentResult, agentResult: Record<string, unknown>): Promise<ToolAnswer> {
     const patched = await this.trialInput(ticket, run, result.specPatch)
@@ -503,7 +504,7 @@ export class GatewayTools {
     const unbuilt = patched.changed.find((c) => this.trials.trialImage(ticket.ticketId, c.service, c.hash) === undefined)
     if (unbuilt) return reject('INVALID_RESULT', `verified changes the build of ${unbuilt.service}; it needs a passing run_build of ${unbuilt.service} with the same specPatch in this ticket`)
 
-    // 여기부터 티켓은 끝난다. 기다리는 시험을 취소하고, 같은 프로젝트의 이전 시험이 끝났음을 확인한 뒤에만 다시 실행한다.
+    // 여기부터 티켓은 끝난다. 기다리는 시험을 취소하고, 같은 프로젝트의 이전 시험이 끝났음을 확인한 뒤에만 줄에 세운다.
     this.budget.forget(ticket.ticketId)
     this.edits.forget(ticket.ticketId)
     await this.trials.endTicket(ticket.ticketId)
@@ -518,22 +519,16 @@ export class GatewayTools {
     }
 
     // 고친 입력(모든 서비스 reuse + 이미지 digest)을 실행 기록에 저장한다. 학생이 저장한 deploys.spec은 그대로다.
-    // ticket_id는 종료 알림(success · superseded · stopped)을 보낼 때까지 남긴다.
+    // ticket_id는 종료 알림(success · superseded · stopped)을 보낼 때까지 남긴다. 대기열은 ticket_id로 다시 실행을 알아본다.
+    // created_at은 그대로라 처음 시작한 시각의 순서로 줄에 선다.
     const applied = await this.store.updateRun(
       ticket.deployId,
       { status: 'fixing' },
-      { status: 'running', stage: 'build', failure: null, input: patched.input, agent_result: agentResult, gateway_token_hash: null },
+      { status: 'queued', stage: 'build', failure: null, input: patched.input, agent_result: agentResult, gateway_token_hash: null },
     )
     if (!applied) return reject('TICKET_CLOSED', 'the ticket is no longer open')
-    try {
-      await this.pipeline.run(ticket.deployId)
-    } catch {
-      const failure = { code: 'PIPELINE_UNAVAILABLE', stage: 'build' as const, service: null }
-      if (await this.store.updateRun(ticket.deployId, { status: 'running', stage: 'build' }, { status: 'failed', failure })) {
-        await this.agent.close(ticket.ticketId, ticket.commitSha, 'stopped')
-      }
-    }
-    this.logger.log(`ticket ${ticket.ticketId} result verified: deploy pipeline started again`)
+    this.queue.kick()
+    this.logger.log(`ticket ${ticket.ticketId} result verified: deploy queued again`)
     return { ok: true, content: { accepted: true } }
   }
 }
