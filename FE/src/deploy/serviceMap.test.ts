@@ -61,7 +61,7 @@ it('uses the real service state once the deploy is live, in cloud wording', () =
 it('colours the nodes from the overall status while no real service state exists', () => {
   const text = (status: Parameters<typeof nodeStateOf>[1]['status']) => nodeStateOf('fe', { ...base, status }).text
   expect(text('not_started')).toBe('시작 전')
-  expect(text('queued')).toBe('대기 중')
+  expect(text('queued')).toBe('배포 대기')
   expect(text('running')).toBe('배포 중')
   expect(text('fixing')).toBe('배포 중')
   expect(text('succeeded')).toBe('상태 확인 중')

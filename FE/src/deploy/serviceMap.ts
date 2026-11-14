@@ -1,5 +1,5 @@
-import type { DeployStatus } from './progress.ts'
-import { waitingText } from './metrics.ts'
+import { statusLabel, type DeployStatus } from './progress.ts'
+import { stateText, stateVariant, waitingText } from './metrics.ts'
 import type { Metrics } from './metrics.ts'
 import type { ServiceSpec } from './types.ts'
 
@@ -49,15 +49,17 @@ export function nodeStateOf(
 ): NodeState {
   if (metrics?.state === 'live') {
     const service = metrics.services.find((s) => s.name === name)
-    if (service?.state === 'running') return { text: '실행 중(정상)', variant: 'ok' }
-    if (service?.state === 'starting') return { text: '헬스 체크 대기 중', variant: 'warn', detail: service.waiting ? waitingText(service.waiting) : undefined }
-    if (service?.state === 'stopped') return { text: '중지됨', variant: 'neutral' }
+    // 문구 · 색은 서비스 카드와 같은 stateText · stateVariant를 쓴다.
+    if (service && ['running', 'starting', 'stopped'].includes(service.state)) {
+      const detail = service.state === 'starting' && service.waiting ? waitingText(service.waiting) : undefined
+      return { text: stateText(service.state), variant: stateVariant(service.state), detail }
+    }
   }
   switch (status) {
     case 'not_started':
-      return { text: '시작 전', variant: 'neutral' }
     case 'queued':
-      return { text: '대기 중', variant: 'neutral' }
+      // 배포 전체의 상태와 같은 이름(목록 · 배지와 같게).
+      return { text: statusLabel(status), variant: 'neutral' }
     case 'running':
     case 'fixing':
       return { text: '배포 중', variant: 'info' }
@@ -75,7 +77,7 @@ export function nodeStateOf(
 // 성공한 배포의 한 줄 상태. 서비스가 아직 시작하는 중이면 "끝났어요"만 말해 헷갈리지 않게 클라우드 말로 이어서 알린다.
 export function readinessText(metrics: Metrics | undefined): string {
   if (metrics?.state !== 'live' || metrics.services.length === 0) return '배포가 끝났어요'
-  if (metrics.services.some((s) => s.state === 'starting')) return '배포 완료 · 헬스 체크 대기 중'
-  if (metrics.services.every((s) => s.state === 'running')) return '실행 중(정상)'
+  if (metrics.services.some((s) => s.state === 'starting')) return `배포 완료 · ${stateText('starting')}`
+  if (metrics.services.every((s) => s.state === 'running')) return stateText('running')
   return '배포가 끝났어요'
 }

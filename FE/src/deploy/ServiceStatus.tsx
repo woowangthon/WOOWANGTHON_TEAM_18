@@ -6,11 +6,9 @@ import { Skeleton } from '../components/ui/Skeleton.tsx'
 import { Sparkline } from '../components/ui/Sparkline.tsx'
 import { ApiError } from '../lib/api.ts'
 import { cpuText, memoryText } from '../lib/format.ts'
-import { NOT_COLLECTED, slotsOf, stateText, waitingText } from './metrics.ts'
+import { NOT_COLLECTED, slotsOf, stateText, stateVariant, waitingText } from './metrics.ts'
 import type { Metrics, MetricsService, Series } from './metrics.ts'
 import { useMetrics } from './useMetrics.ts'
-
-const stateVariant = (state: string) => (state === 'running' ? 'ok' : state === 'starting' ? 'warn' : 'neutral')
 
 function Usage({ service }: { service: MetricsService }) {
   const { usage } = service

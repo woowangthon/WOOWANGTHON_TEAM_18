@@ -54,6 +54,9 @@ export const stateText = (state: string) => {
   }
 }
 
+// 상태 배지의 색. 문구(stateText)와 같이 서비스 카드 · 구성도가 함께 쓴다.
+export const stateVariant = (state: string) => (state === 'running' ? 'ok' : state === 'starting' ? 'warn' : 'neutral')
+
 // 기다리는 이유를 학생이 알아볼 말로. 모르는 이유와 이유가 없는 경우는 준비 중이다.
 export const waitingText = (waiting: string | null) => {
   switch (waiting) {

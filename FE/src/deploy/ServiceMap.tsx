@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { Badge } from '../components/ui/Badge.tsx'
 import { layoutServices, nodeStateOf } from './serviceMap.ts'
 import type { MapLayout } from './serviceMap.ts'
@@ -58,7 +59,8 @@ function ServiceMap({
   failureService: string | null
   metrics: Metrics | undefined
 }) {
-  const layout = layoutServices(services)
+  // 서비스 구성은 이 화면에서 바뀌지 않는다: 진행 상태를 읽을 때마다 다시 배치하지 않는다.
+  const layout = useMemo(() => layoutServices(services), [services])
   return (
     <section aria-label="서비스 구성" className="flex flex-col gap-2">
       <h2 className="text-lg">서비스 구성</h2>
