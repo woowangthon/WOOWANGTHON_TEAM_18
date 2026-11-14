@@ -587,7 +587,7 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
 - 응답 `200 { "ok": true }`. 이미 끝난 배포(`succeeded` · `failed`)나 지금 스테이지가 아닌 `stage`의 알림은 상태를 바꾸지 않고 `200 { "ok": true, "applied": false }`이다(재전송해도 안전하다).
 - 오류: `401 AUTH_REQUIRED`, `400 BAD_REQUEST`(본문 모양이 다름, `fields` 포함), `404 DEPLOY_NOT_FOUND`(실행 기록 없음), `503 DATABASE_UNAVAILABLE`(파이프라인이 다시 보낸다).
 
-**4. 시험 실행 (AI 에이전트의 `run_build` · `run_render` · `run_deploy` · `run_verify`)**: 문제를 고치는 동안 게이트웨이가 대상 슬롯에서 스테이지 일부만 돌린다([AI 에이전트 설계](AIagent.md) §2 · §3). 위 1~3의 모양은 바꾸지 않는다. 시험 실행은 실행 기록의 상태(`status` · `stage`, 3번 알림의 상태 기계)를 바꾸지 않고, `live_slot` · W7도 건드리지 않는다. BE는 `run_build`(B3) · `run_render` · `run_deploy` · `run_verify`와 아래 두 경로를 구현했다(F11b, `BE/src/gateway/trials.ts` · `tools.ts`). 파이프라인 쪽의 결과 보내기(`trial-report`)와 입력 task의 시험 분기(`?counter`, `build-overrides.json`)는 구현했다(#158). 파이프라인 정의는 [`Infra/gocd/student-trial.gocd.yaml`](../../Infra/gocd/student-trial.gocd.yaml)이다(실제 GoCD로는 아직 돌려 보지 않았다). 결정은 [ADR-014](../adr/014-agent-trial-pipeline-and-rerun.md)(ADR-012 일부 대체)다. 시험은 대상 슬롯에서 고쳐 보는 반복이고(공개 주소 불변), 5번 다시 실행은 확인된 입력으로 한 번 전환하는 것이다.
+**4. 시험 실행 (AI 에이전트의 `run_build` · `run_render` · `run_deploy` · `run_verify`)**: 문제를 고치는 동안 게이트웨이가 대상 슬롯에서 스테이지 일부만 돌린다([AI 에이전트 설계](AIagent.md) §2 · §3). 위 1~3의 모양은 바꾸지 않는다. 시험 실행은 실행 기록의 상태(`status` · `stage`, 3번 알림의 상태 기계)를 바꾸지 않고, `live_slot` · W7도 건드리지 않는다. BE는 `run_build`(B3) · `run_render` · `run_deploy` · `run_verify`와 아래 두 경로를 구현했다(F11b, `BE/src/gateway/trials.ts` · `tools.ts`). 파이프라인 쪽의 결과 보내기(`trial-report`)와 입력 task의 시험 분기(`?counter`, `build-overrides.json`)는 구현했다(#158). 파이프라인 정의는 [`Infra/gocd/student-trial.gocd.yaml`](../../Infra/gocd/student-trial.gocd.yaml)이다(운영 GoCD로 `run_render` · `run_deploy` · `run_verify`가 한 번씩 통과했다: 2026-11-14 3차 리허설, [`ai-scope.md`](../ai-scope.md). `run_build`는 가짜 GoCD 응답으로만 시험했다). 결정은 [ADR-014](../adr/014-agent-trial-pipeline-and-rerun.md)(ADR-012 일부 대체)다. 시험은 대상 슬롯에서 고쳐 보는 반복이고(공개 주소 불변), 5번 다시 실행은 확인된 입력으로 한 번 전환하는 것이다.
 
 ```
 문제 티켓
@@ -861,8 +861,8 @@ type Incident = {
 ### MCP 게이트웨이 — 도구 (플랫폼 서버)
 
 - 전송: MCP Streamable HTTP, 플랫폼 서버의 내부 포트(`GATEWAY_PORT`, 공개 포트와 다르다) `POST /mcp`. 상태 없는 서버라 세션 스트림(`GET`) · 세션 끝내기(`DELETE`)는 `405`다. AI 서버의 `GATEWAY_URL`은 `http://<플랫폼 서버>:<GATEWAY_PORT>/mcp`이고, `GATEWAY_PORT`가 비어 있으면 게이트웨이를 열지 않는다.
-- **지금 여는 도구(F11 · F11b · F13)**: `get_target_status` · `read_pod_logs` · `read_repo` · `run_build` · `run_render` · `run_deploy` · `run_verify` · `edit_repo_file` · `open_pr` · `submit_result`다. 대상 슬롯 운영 · `read_build_logs`는 그 뒤에 연다. 목록에 없는 도구를 부르면 `INVALID_ARGUMENT`다.
-- **시험 도구(F11b)**: `run_build` · `run_render` · `run_deploy` · `run_verify`는 위 "파이프라인 ↔ 플랫폼 서버" 4번 시험 실행으로 돈다. `specPatch`는 `build` · `runtime` 경로를 받고, `name` · `slug` 경로는 `PATCH_FORBIDDEN`이다(슬롯 · Secret 이름이 서비스 이름을 따라 바뀌어 대상 슬롯에서 시험할 수 없다). 빌드 값을 고친 서비스의 이미지가 없으면(아직 `run_build`를 통과하지 않음) `run_render` · `run_deploy`는 `INVALID_ARGUMENT`("먼저 `run_build`")다. `build` 스테이지 티켓도 `run_build`로 고쳐 본다. `source`(봇 fork의 commit)로 시험하는 방법은 아래 "레포 수정(F13)"이다. 티켓마다 시험은 한 번에 하나다(겹치면 `INVALID_ARGUMENT`). 도구별 횟수는 `run_build` 2 · `run_render` 5 · `run_deploy` 2 · `run_verify` 3이다. `buildOverrides` 상한은 `computeType` `BUILD_GENERAL1_SMALL`(프로젝트 기본과 같은 크기만. 그 위는 무료 티어 밖이라 받지 않는다), `timeoutMinutes` 1~20, `image` `aws/codebuild/amazonlinux-x86_64-standard:5.0`(프로젝트와 같은 이미지. privileged 모드에서 docker가 돈다)이고, 밖이면 `OVERRIDE_LIMIT`, 모르는 칸이나 틀린 타입이면 `INVALID_ARGUMENT`다. 대상 슬롯 운영 · `read_build_logs`는 그 뒤에 연다.
+- **지금 여는 도구(F11 · F11b · F13)**: `get_target_status` · `read_pod_logs` · `read_repo` · `run_build` · `run_render` · `run_deploy` · `run_verify` · `edit_repo_file` · `open_pr` · `submit_result`다. 목록에 없는 도구를 부르면 `INVALID_ARGUMENT`다.
+- **시험 도구(F11b)**: `run_build` · `run_render` · `run_deploy` · `run_verify`는 위 "파이프라인 ↔ 플랫폼 서버" 4번 시험 실행으로 돈다. `specPatch`는 `build` · `runtime` 경로를 받고, `name` · `slug` 경로는 `PATCH_FORBIDDEN`이다(슬롯 · Secret 이름이 서비스 이름을 따라 바뀌어 대상 슬롯에서 시험할 수 없다). 빌드 값을 고친 서비스의 이미지가 없으면(아직 `run_build`를 통과하지 않음) `run_render` · `run_deploy`는 `INVALID_ARGUMENT`("먼저 `run_build`")다. `build` 스테이지 티켓도 `run_build`로 고쳐 본다. `source`(봇 fork의 commit)로 시험하는 방법은 아래 "레포 수정(F13)"이다. 티켓마다 시험은 한 번에 하나다(겹치면 `INVALID_ARGUMENT`). 도구별 횟수는 `run_build` 2 · `run_render` 5 · `run_deploy` 2 · `run_verify` 3이다. `buildOverrides` 상한은 `computeType` `BUILD_GENERAL1_SMALL`(프로젝트 기본과 같은 크기만. 그 위는 무료 티어 밖이라 받지 않는다), `timeoutMinutes` 1~20, `image` `aws/codebuild/amazonlinux-x86_64-standard:5.0`(프로젝트와 같은 이미지. privileged 모드에서 docker가 돈다)이고, 밖이면 `OVERRIDE_LIMIT`, 모르는 칸이나 틀린 타입이면 `INVALID_ARGUMENT`다.
 - **`verified`(B2)**: 받는 조건과 그 뒤 처리는 위 "파이프라인 ↔ 플랫폼 서버" 5번이다. 받으면 실행 기록이 `queued`(다시 실행 대기)가 되고, 대기열이 차례에 `running`으로 출발시킨다. `specPatch` · `buildOverrides`는 `verified`에만 쓰고, 다른 status에 있으면 `INVALID_RESULT`다. 받은 결과로 실행 기록은 `gave_up`이면 `failed`(`AGENT_GAVE_UP`), `pr_opened` · `needs_user`면 `needs_user`가 된다. 결과의 `status` · `summary` · `userRequest` · `pr` · `evidence` · `classification`만 `deploy_runs.agent_result`에 저장하고(`actions`는 버린다), 진행 상태 응답의 `agent`로 보여 준다.
 - **레포 수정(F13, FR-077, [ADR-002](../adr/002-bot-account-for-fix-prs.md))**: 학생 레포에는 쓰지 않는다. 봇 계정 `wanggane-bot`의 토큰(BE env `BOT_GITHUB_TOKEN`, 선택. AI 서버에는 주지 않는다)으로 학생 레포의 봇 fork(`wanggane-bot/<owner>_<name>`. 이름이 같은 다른 학생의 레포와 겹치지 않게 owner를 붙인다. 새 fork의 git 객체가 늦게 보이면 잠깐 기다렸다 다시 읽는다)를 만들고 거기에 commit을 올린 뒤, 확인을 통과하면 학생 레포로 PR을 연다.
   - `edit_repo_file`: 티켓의 `commitSha` 위에 `files`의 내용을 얹은 commit 하나를 봇 fork의 작업 브랜치 `wcp-edit-<ticketId>`에 만들고 그 SHA를 `source`로 돌려준다. 같은 티켓에서 다시 부르면 앞서 고친 파일에 이어 쌓고(같은 경로는 덮어쓰고, 처음 내용으로 되돌린 파일은 뺀다), 돌려준 `files` · `changedLines`도 그 누적이다. 파일의 실행 권한은 그대로 둔다.
@@ -876,7 +876,7 @@ type Incident = {
   - 횟수: `edit_repo_file` 5 · `open_pr` 2(전체 20회에 센다). 같은 티켓의 `edit_repo_file` · `open_pr`은 겹쳐 부를 수 없다(`INVALID_ARGUMENT`). 수정 기록은 BE 메모리에 있다.
 - 도구 목록 · 하는 일 · 티켓당 횟수는 [AI 에이전트 설계](AIagent.md) §3이다. 여기는 인자와 결과의 모양만 고정한다. `read_memory`는 AI 서버 안의 도구라 게이트웨이에 없다(case와 통계를 AI 서버가 갖는다).
 - 결과는 MCP 도구 결과의 `structuredContent`에 아래 JSON으로 담는다. 실행이 실패해도(빌드 실패, Ready 안 됨) 도구 호출은 성공이고 `ok: false`다. 게이트웨이가 거절한 호출만 `isError: true`이고 `structuredContent`는 `{ "code", "message" }`다.
-- `run_*` · `wait_target_ready`는 파이프라인이 끝날 때까지 기다렸다가 답한다(최대 30분). AI 서버의 MCP 클라이언트는 호출 제한 시간을 35분으로 둔다. 30분과 티켓 전체 상한(60분)까지 남은 시간 중 짧은 쪽 안에 결과가 오지 않으면(위 4번 "시간") `ok: false`와 `failure: { "stage": null, "code": "TRIAL_TIMEOUT", "message" }`로 답한다. 기다린 시간은 에이전트 작업 15분과 게이트웨이 토큰 유효 시간에서 뺀다.
+- `run_*`는 파이프라인이 끝날 때까지 기다렸다가 답한다(최대 30분). AI 서버의 MCP 클라이언트는 호출 제한 시간을 35분으로 둔다. 30분과 티켓 전체 상한(60분)까지 남은 시간 중 짧은 쪽 안에 결과가 오지 않으면(위 4번 "시간") `ok: false`와 `failure: { "stage": null, "code": "TRIAL_TIMEOUT", "message" }`로 답한다. 기다린 시간은 에이전트 작업 15분과 게이트웨이 토큰 유효 시간에서 뺀다.
 - `run_render` · `run_deploy` · `run_verify`의 결과에는 아래 표의 칸 말고 `failure`(`null` 또는 `{ stage, code, message }`, 위 4번)가 늘 있다.
 - `specPatch`는 JSON Patch(RFC 6902) 배열이고 경로 규칙은 §6과 같다. 그 실행에만 적용한다.
 - `source`는 `{ "commitSha": "<봇 fork의 40자 SHA>" }`이고 `edit_repo_file`이 돌려준 값만 받는다.
@@ -897,16 +897,7 @@ type Incident = {
 | --- | --- | --- |
 | `get_target_status` | `service?` (없으면 대상 슬롯 전체) | `{ pods: [<Pod 원본>], events: [<Event 원본>], rollouts: [{ service, ready, updated, available }] }` |
 | `read_pod_logs` | `service`, `lines?` (1~200, 기본 100), `previous?` (기본 `false`) | `{ lines: string[] }` |
-| `read_build_logs` | `service`, `fromLine?` (기본 마지막 200줄), `lines?` (1~200) | `{ fromLine, lines: string[] }` |
 | `read_repo` | `path` (레포 안 상대 경로, `.`은 루트), `source?` (없으면 티켓의 `commitSha`) | 폴더: `{ type: "dir", entries: [{ name, type: "file" \| "dir", size }] }`, 파일: `{ type: "file", content, truncated }` (200KB 넘으면 자름) |
-
-**대상 슬롯 운영**
-
-| 도구 | 인자 | 결과 |
-| --- | --- | --- |
-| `restart_target` | `service` | `{ ok }` |
-| `scale_target` | `service`, `replicas` (`0` \| `1`) | `{ ok }` |
-| `wait_target_ready` | `service`, `timeoutSeconds?` (1~420, 기본 300) | `{ ok, pods: [<Pod 원본>], events: [<Event 원본>] }` |
 
 **레포 수정 · 끝내기**
 

@@ -25,3 +25,10 @@ Prometheus와 Grafana를 리더에 두고 지표를 2주 보관한다. 플랫폼
 - 어려워지는 것: 리더가 꺼지면 지표 조회와 Grafana 알림도 멈춘다(리더 무응답은 플랫폼 서버가 알린다). 리더 디스크가 죽으면 지표가 사라진다. 2주보다 긴 추세는 볼 수 없다.
 - 다시 볼 조건: 장기 추세나 리더 장애 중 지표가 필요해질 때.
 - 로그 저장은 이 ADR에 들어 있지 않다. 따로 정한다.
+
+## 정정 (2026-11-15)
+
+코드·설정과 대조해 사실이 달라진 곳만 적는다. 결정 자체는 바꾸지 않는다.
+
+- "Grafana 알림"(결과)은 없다. Alertmanager와 Grafana 알림 규칙을 두지 않았고, 플랫폼 서버가 Prometheus의 경고(`/api/v1/alerts`)를 20초마다 읽어 알림을 보낸다([`incidents.md`](../design/incidents.md), `Infra/monitoring/monitoring.yaml`). 리더가 꺼지면 이 경고 읽기도 멈춘다.
+- "Grafana는 사설망으로만 연다"(결정)는 2026-11-12에 바뀌었다. 운영자 화면이 대시보드를 iframe으로 끼워 넣도록 공개 주소 `grafana.stairnoworks.com`을 두었다. 익명 접근은 없고(로그인 필요), 끼워 넣는 쪽은 `frame-ancestors`로 플랫폼 화면만 허용한다([`cluster.md`](../design/cluster.md) §10, [ADR-013](013-visitor-entry-cloudflare-tunnel.md)).
