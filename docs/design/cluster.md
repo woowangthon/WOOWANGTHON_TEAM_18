@@ -100,7 +100,7 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 | 노드가 꺼졌을 때 | 약 50초 뒤 NotReady가 되고(2026-11-08 잼), 포기 대기 30초(기본 5분)가 지나 약 80초에 남은 워커에 다시 띄운다. 포기 대기 값은 API 서버에서 한 번에 준다(§4). 서버 양식에 따로 넣지 않는다 |
 | DB | 학생 것(MVP). 학생이 넣은 접속 정보를 Secret으로 환경 변수에 주입한다. 클러스터에 DB와 볼륨을 두지 않는다 |
 
-- 상한에서 먼저 닿는 것은 CPU 상한 합계다. 기본값만 쓰는 컨테이너는 상한 8 ÷ 2 = 4개까지 뜬다(CPU 요청으로는 16개, 메모리로는 8개, 임시 저장소로는 5개, Pod 10개). FE · BE · AI 셋이면 상한 합계 6이고, Deployment는 새 Pod를 먼저 띄우고 옛 Pod를 지우므로(복제본 1이면 하나 더) 배포 하나가 도는 동안 8로 꽉 찬다. 두 서비스를 동시에 배포하면 두 번째 새 Pod는 첫 배포가 끝날 때까지 만들어지지 않는다(실패가 아니라 기다린다). 그래서 배포 실행기는 한 프로젝트의 서비스를 하나씩 차례로 배포한다. 차트가 서비스마다 상한을 적으면 기본값은 쓰이지 않는다.
+- 상한에서 먼저 닿는 것은 CPU 상한 합계다. 슬롯 A · B 방식([ADR-011](../adr/011-deploy-slots-a-b.md))에서는 확인하는 동안 live 슬롯과 대상 슬롯의 Pod가 같은 쿼터를 나눠 쓰므로, 서비스 합계의 두 배가 상한 안이어야 한다. 그래서 `resources`가 null인 컨테이너에는 위 LimitRange 기본값(상한 CPU 2 · 임시 저장소 8Gi)을 쓰지 않고 Render가 요청 CPU 250m · 메모리 256Mi · 임시 저장소 1Gi, 상한 CPU 1 · 메모리 2Gi · 임시 저장소 4Gi를 채운다(`Infra/pipeline/src/render.ts`의 `DEFAULT_RESOURCES`). LimitRange 기본값에 맡기면 서비스 3 × 슬롯 2가 쿼터를 넘는다(CPU 3 × 2 × 2 = 12 > 8, 임시 저장소 3 × 2 × 8Gi = 48Gi > 40Gi). 합계의 두 배가 상한을 넘거나 Pod가 10개를 넘으면 Prepare가 대상 슬롯을 비우기 전에 거절한다(`checkQuota`, 티켓 stage `prepare`). 차트가 서비스마다 상한을 적으면 LimitRange 기본값은 쓰이지 않는다.
 - 공간을 만든 직후 잠깐은 `default` ServiceAccount가 아직 없어 Pod를 만들 수 없다. 서버는 기다리지 않는다(ServiceAccount를 읽을 권한도 없다, §8). Pod는 배포 실행기의 Deployment에서 나오고, Deployment 컨트롤러가 ServiceAccount가 생길 때까지 다시 시도한다.
 - 시험(2026-11-10, [`Infra/student/check.sh`](../../Infra/student/check.sh), 운영자 기기에서 실행): 같은 양식으로 공간을 하나 더(`proj--check`. 하이픈이 둘이라 어떤 `slug`도 이 이름이 되지 않는다), 정책 없는 대조 공간을 하나 만들고 각 공간의 시험 Pod에서 재 본 뒤 지운다.
   - 된다: 같은 공간 Service, 클러스터 DNS, 인터넷 HTTPS, 바깥 DB 포트 3306 · 5432(학교망에서도 열려 있다), Traefik → 학생 Service(Ingress 시험 호스트로 200. 다른 워커 쪽은 스크립트를 만들기 전에 손으로 쟀다).
@@ -114,11 +114,13 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 - 저장 클래스는 k3s 기본 `local-path` 하나다. 리더에 두는 것(이미지 캐시, Prometheus, Grafana)은 리더 로컬 디스크를 쓴다.
 - 워커가 꺼지면 학생 앱만 남은 워커에 다시 뜬다(§6 "노드가 꺼졌을 때"). 데이터는 학생 DB에 있어 따라갈 것이 없다.
 
-### 8. 플랫폼 서버와 배포 실행기의 권한 (서버 계정 1차 2026-11-10 · 실행기 계정 · 서버 조치 권한 2026-11-11 구현됨, 나머지 예정)
+### 8. 플랫폼 서버와 배포 실행기의 권한
+
+구현됨: 서버 계정 2026-11-10, 실행기 계정 · 서버 조치 권한 2026-11-11, 실행기 Pod 2026-11-12.
 
 배포는 리더의 배포 실행기(GoCD Agent)가 하고, 플랫폼 서버는 비밀값 · 조치 · 조회만 한다([ADR-009](../adr/009-deploy-runs-on-leader-gocd-agent.md)). 계정을 둘로 나누고 두 겹으로 막는다.
 
-**만든 것 (구축 09, [`Infra/platform/`](../../Infra/platform/))**: 플랫폼 서버가 공간을 만들고, 비밀값을 넣고, 자기가 만든 공간을 읽고, 그 공간의 서비스를 끄고(Deployment를 0개로) 다시 켜고(1개로) 재시작하는 데 쓰는 것까지다. 끄기는 2026-11-11에 더했고(#124, 운영자 강제 중지 API #121이 쓴다), 재개 · 재시작은 같은 날 더했다(#129, 학생 운영 제어와 AI 도구 `scale_target` · `restart_target`이 쓴다).
+**만든 것 (구축 09, [`Infra/platform/`](../../Infra/platform/))**: 플랫폼 서버가 공간을 만들고, 비밀값을 넣고, 자기가 만든 공간을 읽고, 그 공간의 서비스를 끄고(Deployment를 0개로) 다시 켜고(1개로) 재시작하는 데 쓰는 것까지다. 끄기는 2026-11-11에 더했고(#124, 운영자 강제 중지 API #121이 쓴다), 재개 · 재시작 권한은 같은 날 더했다(#129). 서버 코드가 부르는 것은 끄기(`BE/src/k8s/deployment-scaler.ts`의 `scaleToZero`)뿐이고, 재개 · 재시작을 부르는 코드는 아직 없다.
 
 - 계정: 운영 공간 `platform`의 ServiceAccount `platform-server`. 토큰은 만료 없는 것 하나(Secret `platform-server-token`)이고, 그 Secret을 지우면 폐기된다.
 - 권한: 네임스페이스 만들기 · 삭제, ResourceQuota · LimitRange · NetworkPolicy 만들기, Secret 만들기 · 통째로 바꾸기(`create` · `update`), 권한 연결(RoleBinding) 만들기(자기 읽기용과 실행기 배포용 둘), 노드 읽기. Secret 읽기와 `patch`는 없다. patch의 응답은 Secret 전체라, 빈 patch 하나로 값을 읽을 수 있기 때문이다. 통째로 바꾸기(PUT)의 응답은 보낸 값뿐이다.
@@ -135,7 +137,7 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
 - 조치 시험(2026-11-11, 같은 스크립트): 운영자가 시험 공간에 예시 Deployment를 놓고 서버 계정으로 0개로 내리면 실제로 0이 되고, 한 번 더 내려도 되고, 1개로 다시 켜진다. `kubectl rollout restart`도 되고 Pod 템플릿에 `restartedAt`이 붙는다. 거절되는 것(검사 규칙): 2로 올리기, 이미지 바꾸기, Deployment 본체의 replicas 바꾸기, Pod 라벨 · 다른 주석 더하기, 롤아웃 멈추기. 거절되는 것(권한): Deployment 통째로 바꾸기(PUT) · 삭제, `vllm` · `kube-system` · 읽기 연결이 없는 공간의 scale · 재시작, `kube-system` 이벤트 · `vllm` Ingress 읽기. 실제 토큰으로는 `proj-demo`를 dry run으로 불러 scale 0 · 1은 `200`, 2는 `422`, 재시작은 `200`, `vllm`은 `403`이었다. `Infra/executor/check.sh` · `Infra/student/check.sh`도 같이 다시 돌려 모두 통과했다.
 - 사용량 읽기 시험(2026-11-11, 같은 스크립트, #130): 서버 계정으로 노드 세 대와 `proj-demo`의 Pod 사용량이 값까지 읽힌다(스크립트가 값이 든 항목 수를 센다. 빈 목록은 실패다). 자기가 만든 시험 공간은 도는 Pod가 없을 수 있어 요청이 받아들여지는 것만 본다. 거절되는 것(권한): `kube-system` · `vllm` · 읽기 연결이 없는 공간의 Pod 사용량, 모든 공간 한꺼번에 읽기. 실제 토큰으로는 노드 · `proj-demo`가 `200`, `vllm`이 `403`이었다. `Infra/executor/check.sh` · `Infra/student/check.sh`도 다시 돌려 모두 통과했다.
 
-**만든 것 (구축 09′, [`Infra/executor/`](../../Infra/executor/), 2026-11-11)**: 배포 실행기가 학생 공간에 배포하고 결과를 읽는 데 쓰는 계정이다. 실행기 Pod(GoCD Agent)는 아직 없다.
+**만든 것 (구축 09′, [`Infra/executor/`](../../Infra/executor/), 2026-11-11)**: 배포 실행기가 학생 공간에 배포하고 결과를 읽는 데 쓰는 계정이다. 실행기 Pod(GoCD Agent)는 2026-11-12에 리더에 적용했다(아래 매니페스트 항목).
 
 - 계정: 운영 공간 `deploy`의 ServiceAccount `deploy-executor`. 오래 가는 토큰을 만들지 않는다. 실행기 Pod가 이 공간에서 뜨면 쿠버네티스가 기한 있는 토큰을 넣어 주므로 토큰이 리더 밖으로 나가지 않는다.
 - 권한: 클러스터 전체 권한은 하나도 없다. 할 수 있는 일은 역할 `proj-deployer`에 모두 있고, 권한 연결 `deploy-executor`가 있는 공간에서만 그 역할을 가진다. 연결은 플랫폼 서버가 공간을 만들 때 같이 만든다(양식의 여섯째 객체).
@@ -153,12 +155,12 @@ ufw로 들어오는 연결과 나가는 연결을 모두 기본 거부하고 아
   - 거절된다(권한): `kube-system` · `vllm`의 Deployment · Middleware 쓰기와 Pod · ConfigMap 읽기, 모든 공간 한꺼번에 읽기, 노드 읽기, Secret 읽기 · 만들기, 자기가 배포한 Pod의 로그 · Pod 안 명령 실행, Pod 직접 만들기, 네임스페이스 만들기 · 삭제, ResourceQuota 고치기, LimitRange · NetworkPolicy 지우기, NetworkPolicy · RoleBinding 만들기, 자기 권한 연결 지우기, IngressRoute 만들기.
   - 거절된다(검사 규칙): 기준 공간에 Deployment · Middleware 쓰기, `redirectScheme` · `forwardAuth` · 플러그인 · `stripPrefixRegex` Middleware, `stripPrefix`에 다른 것을 같이 넣은 Middleware, 빈 Middleware(운영자가 만들어도 거절), `externalIPs`를 적은 Service(운영자가 만들어도 거절) · `ExternalName` Service, 리더 taint나 모든 taint를 견디는 toleration을 단 Deployment · Pod, `nodeName`을 적은 Deployment · Pod, API 토큰을 켠 Deployment.
   - 같은 날 `Infra/platform/check.sh` · `Infra/student/check.sh`도 다시 돌려 모두 통과했고, `demo.stairnoworks.com`의 시험 앱에도 Middleware를 걸어 두었다(`/` 200, `/svc/readyz` 200).
-- 실행기 Pod 매니페스트([`Infra/executor/agent.yaml`](../../Infra/executor/agent.yaml), 2026-11-11, #131. **2026-11-12 리더에 적용**, #164): 공간 `deploy`의 Deployment 하나, 리더 고정. 이미지는 GoCD 서버와 같은 버전의 공식 실행기 이미지(`gocd/gocd-agent-debian-12:v26.1.0`)를 그대로 쓴다. 파이프라인이 부르는 `node`(24.15.0) · `helm`(3.22.1)은 init 컨테이너가 각 공식 이미지에서 꺼내 공유 볼륨에 둔다. 우리 이미지를 빌드하거나 보관하지 않으므로 리더에 레지스트리 쓰기 토큰이 없다. Build 스테이지는 AWS 실행기 몫이라([배포 워크플로우](deploy-workflow.md) §2) `aws`와 AWS 자격 증명은 넣지 않는다. 클러스터 접속은 쿠버네티스가 넣어 주는 기한 있는 토큰 파일을 `KUBE_API_URL` · `KUBE_TOKEN_FILE` · `KUBE_CA_FILE`로 넘긴다(`Infra/pipeline/src/kube.ts`). GoCD 서버 주소 · 자동 등록 키 · 배포 알림 토큰(`PIPELINE_NOTIFY_TOKEN`) 셋은 리더의 Secret `gocd-agent`에서 읽고(§12), 그 Secret이 없으면 Pod가 뜨지 않는다. 실행기 이름표(resource)는 `leader`다. 나가는 길은 NetworkPolicy `executor-only`가 클러스터 DNS, 리더 API, Traefik Pod(Verify), 사설망 대역의 GoCD 포트 8153, 사설 대역을 뺀 인터넷 443(파이프라인의 git 받기)으로 묶는다. 시험(2026-11-11, [`Infra/executor/agent-check.sh`](../../Infra/executor/agent-check.sh), 운영자 기기에서 실행): 매니페스트의 Pod 틀 그대로(같은 노드 · 계정 · 보안 설정 · 도구 · env, 실행기 대신 시험 명령) 임시 Pod를 같은 NetworkPolicy 아래 띄웠다 지운다. 리더에 뜨고 root가 아니며, `node` v24.15.0 · `helm` v3.22.1 · `git`이 돌고, 실행기 계정 토큰으로 `proj-demo`의 Deployment가 읽히고(`200`), Traefik을 거친 요청과 바깥 HTTPS가 `200`이다. Secret · `kube-system` 읽기는 `403`이고, 이미지 캐시 · 로컬 모델 · 워커 kubelet · 바깥 평문 HTTP에는 닿지 않는다. 적용(2026-11-12, #164): EC2의 GoCD 서버(26.1.0)가 뜬 날 Secret을 Parameter Store `/wcp/gocd/`의 값으로 화면에 찍지 않고 만들고 매니페스트를 적용했다. Pod가 리더에 뜨고, 실행기가 사설망의 GoCD 포트로 붙어 agent 파일과 플러그인을 받은 뒤 `k3s-leader-executor`(이름표 `leader`, Enabled, Idle)로 등록됐다(GoCD Agents API. EC2의 AWS 실행기 `aws`와 둘). 첫 부팅은 약 6분 반 걸렸다: 그때 리더 ↔ EC2 사설망 연결이 중계(DERP)라 초당 약 90KB였고, 등록 직후 직접 연결로 바뀌었다. 작업 공간이 Pod와 같이 사라지므로 Pod가 다시 뜰 때마다 같은 파일을 다시 받는다. 확인하지 못한 것: 실제 파이프라인 job(Prepare ~ Switch)이 이 Pod에서 도는지(끝까지 배포 시험, #135). 파이프라인 판단 코드의 빌드 결과(`Infra/pipeline`의 `dist`)를 실행기에 두는 방법은 파이프라인 정의 쪽에서 정한다.
+- 실행기 Pod 매니페스트([`Infra/executor/agent.yaml`](../../Infra/executor/agent.yaml), 2026-11-11, #131. **2026-11-12 리더에 적용**, #164): 공간 `deploy`의 Deployment 하나, 리더 고정. 이미지는 GoCD 서버와 같은 버전의 공식 실행기 이미지(`gocd/gocd-agent-debian-12:v26.1.0`)를 그대로 쓴다. 파이프라인이 부르는 `node`(24.15.0) · `helm`(3.22.1)은 init 컨테이너가 각 공식 이미지에서 꺼내 공유 볼륨에 둔다. 우리 이미지를 빌드하거나 보관하지 않으므로 리더에 레지스트리 쓰기 토큰이 없다. Build 스테이지는 AWS 실행기 몫이라([배포 워크플로우](deploy-workflow.md) §2) `aws`와 AWS 자격 증명은 넣지 않는다. 클러스터 접속은 쿠버네티스가 넣어 주는 기한 있는 토큰 파일을 `KUBE_API_URL` · `KUBE_TOKEN_FILE` · `KUBE_CA_FILE`로 넘긴다(`Infra/pipeline/src/kube.ts`). GoCD 서버 주소 · 자동 등록 키 · 배포 알림 토큰(`PIPELINE_NOTIFY_TOKEN`) 셋은 리더의 Secret `gocd-agent`에서 읽고(§12), 그 Secret이 없으면 Pod가 뜨지 않는다. 실행기 이름표(resource)는 `leader`다. 나가는 길은 NetworkPolicy `executor-only`가 클러스터 DNS, 리더 API, Traefik Pod(Verify), 사설망 대역의 GoCD 포트 8153, 사설 대역을 뺀 인터넷 443(파이프라인의 git 받기)으로 묶는다. 시험(2026-11-11, [`Infra/executor/agent-check.sh`](../../Infra/executor/agent-check.sh), 운영자 기기에서 실행): 매니페스트의 Pod 틀 그대로(같은 노드 · 계정 · 보안 설정 · 도구 · env, 실행기 대신 시험 명령) 임시 Pod를 같은 NetworkPolicy 아래 띄웠다 지운다. 리더에 뜨고 root가 아니며, `node` v24.15.0 · `helm` v3.22.1 · `git`이 돌고, 실행기 계정 토큰으로 `proj-demo`의 Deployment가 읽히고(`200`), Traefik을 거친 요청과 바깥 HTTPS가 `200`이다. Secret · `kube-system` 읽기는 `403`이고, 이미지 캐시 · 로컬 모델 · 워커 kubelet · 바깥 평문 HTTP에는 닿지 않는다. 적용(2026-11-12, #164): EC2의 GoCD 서버(26.1.0)가 뜬 날 Secret을 Parameter Store `/wcp/gocd/`의 값으로 화면에 찍지 않고 만들고 매니페스트를 적용했다. Pod가 리더에 뜨고, 실행기가 사설망의 GoCD 포트로 붙어 agent 파일과 플러그인을 받은 뒤 `k3s-leader-executor`(이름표 `leader`, Enabled, Idle)로 등록됐다(GoCD Agents API. EC2의 AWS 실행기 `aws`와 둘). 첫 부팅은 약 6분 반 걸렸다: 그때 리더 ↔ EC2 사설망 연결이 중계(DERP)라 초당 약 90KB였고, 등록 직후 직접 연결로 바뀌었다. 작업 공간이 Pod와 같이 사라지므로 Pod가 다시 뜰 때마다 같은 파일을 다시 받는다. 이 항목을 쓸 때 확인하지 못했던 실제 파이프라인 job은 이후 #135에서 연결했고, 시험 파이프라인(`student-trial`)이 운영 GoCD의 리더 실행기에서 통과했다(2026-11-14, [`ai-scope.md`](../ai-scope.md)). 파이프라인 판단 코드의 빌드 결과(`Infra/pipeline`의 `dist`)를 실행기에 두는 방법은 파이프라인 정의 쪽에서 정한다.
 
 **남은 것**
 
 - Grafana의 JWT 로그인(운영자 화면에서 다시 로그인하지 않게, §10. 후순위).
-- 끝까지 배포 시험: 시험 파이프라인이 리더 실행기로 `proj-demo`에 배포하고 Verify까지 통과하는지(구축 09′의 나머지, #135), 네임스페이스 라벨 지우기 막기(지금은 서버에 고치기 권한이 없어 필요 없다).
+- 네임스페이스 라벨 지우기 막기(지금은 서버에 고치기 권한이 없어 필요 없다). 끝까지 배포 시험(#135)은 닫혔다: 시험 파이프라인이 운영 GoCD의 리더 실행기에서 통과했다(2026-11-14, [`ai-scope.md`](../ai-scope.md)).
 
 **전체 설계**
 
@@ -297,4 +299,4 @@ AI 서버(UC-14)의 로컬 모델이다(2026-11-09에는 후순위였고, 2026-1
 - 기준 공간 `student-template`의 객체가 하나라도 없어지면 그 종류(상한 · 기본값 · 차단 규칙 · 권한 연결)는 클러스터 어디서도 만들 수 없다. 닫히는 쪽으로 실패하지만 다른 설치(구축 11의 모니터링 등)도 같이 막힌다. 기준 공간을 다시 적용하면 풀린다.
 - 서버가 읽는 Pod 스펙에는 환경 변수 이름과 Secret 참조가 보인다(값은 아니다). 로그에 학생 앱이 찍은 값은 그대로 읽힌다.
 - 서버 계정의 토큰은 만료가 없다. 새면 리더에서 Secret을 지워 폐기하고 다시 만든다.
-- 프로젝트 자원 상한은 기본값 컨테이너 4개분이라, 한 프로젝트에서 두 서비스를 동시에 배포하면 하나가 기다린다(§6).
+- 프로젝트 자원 상한은 두 슬롯이 같이 뜨는 동안의 합계(서비스 합 × 2)로 센다. 서비스를 많이 두거나 자원을 크게 적으면 배포가 시작되기 전에 Prepare가 거절한다(§6).

@@ -30,3 +30,10 @@ ADR-004는 플랫폼 서버가 사설망으로 리더의 쿠버네티스 API를 
 - 쉬워지는 것: 배포 단계의 로그 · 재실행 · 되돌리기를 파이프라인이 준다. 플랫폼 서버 계정의 클러스터 권한이 비밀값 쓰기 · 조치 · 읽기로 줄어든다.
 - 어려워지는 것: GoCD 서버(JVM)가 플랫폼 서버와 같은 EC2에 올라가 메모리가 더 든다(8GB급). 실행기 계정의 권한과 검사 규칙을 따로 둔다([클러스터 설계](../design/cluster.md) §8). 리더가 꺼지면 배포가 멈춘다(원래도 그랬다).
 - 다시 볼 조건: AI 담당의 ArgoCD 검토 결과, GoCD 서버를 플랫폼 서버와 같은 EC2에 둘 때의 문제 검토 결과(AI 담당), EC2 메모리가 모자랄 때.
+
+## 정정 (2026-11-15)
+
+코드·설정과 대조해 사실이 달라진 곳만 적는다. 결정 자체는 바꾸지 않는다.
+
+- 결정의 "실행기는 있는지만 확인한다"는 지금 하지 않는다. 실행기 계정에는 Secret 읽기 권한이 없어 필요한 key가 들어갔는지 보지 못한다(`Infra/pipeline/src/prepare.ts`, [`cluster.md`](../design/cluster.md) §8). 그 확인은 플랫폼 서버가 배포를 시작할 때 DB의 key 기록으로 하고, 빠졌으면 `409 NOT_READY`로 막는다(`BE/src/deploys/deploy-readiness.service.ts`).
+- 결정의 "실행기(GoCD Agent)는 리더에서 돌고"는 Build 스테이지를 뺀 나머지(Prepare · Render · Apply · Verify · Switch)에 맞다. Build는 EC2의 AWS 실행기(이름표 `aws`)가 CodeBuild를 불러 한다(`Infra/gocd/compose.yaml`, [배포 워크플로우](../design/deploy-workflow.md) §2). CodeBuild 권한이 이 실행기 컨테이너에만 있는 것은 같은 EC2에 둘 때의 조건이다.
