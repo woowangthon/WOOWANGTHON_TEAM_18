@@ -11,10 +11,14 @@ import AgentSection from './AgentSection.tsx'
 import DeployStages from './DeployStages.tsx'
 import { isActive, isPlatformProblem, POLL_MS, stageStatesOf } from './progress.ts'
 import type { Progress } from './progress.ts'
+import ServiceMap from './ServiceMap.tsx'
+import { readinessText } from './serviceMap.ts'
 import ServiceStatus from './ServiceStatus.tsx'
 import StatusBadge from './StatusBadge.tsx'
 import { STAGES } from './stages.ts'
 import { useCopy } from './useCopy.ts'
+import { useMetrics } from './useMetrics.ts'
+import { useSavedDeploy } from './useSavedDeploy.ts'
 
 type Load = { status: 'loading' } | { status: 'ready'; progress: Progress } | { status: 'not-found' }
 type StartFailureKind = 'not-ready' | 'in-progress' | 'cluster-full' | 'unavailable' | 'not-found' | 'failed'
@@ -122,6 +126,10 @@ function DeployProgress({ deployId }: { deployId: string }) {
   const [reads, setReads] = useState(0)
   const [starting, setStarting] = useState(false)
   const [startFailure, setStartFailure] = useState<StartFailure | null>(null)
+  // 저장한 설정(프로젝트 이름 · 서비스 구성)과 서비스 지표. 둘 다 보태는 정보라서 읽지 못하면 그 부분만 그리지 않는다.
+  const saved = useSavedDeploy(deployId).data
+  const succeeded = load.status === 'ready' && load.progress.status === 'succeeded'
+  const metrics = useMetrics(deployId, succeeded).data
 
   useEffect(() => {
     let ignore = false
@@ -216,21 +224,31 @@ function DeployProgress({ deployId }: { deployId: string }) {
   const failure = progress.failure
   return (
     <section aria-label="배포 진행 상태" className="flex flex-col gap-6 md:flex-row md:items-start md:gap-8">
-      <div className="md:w-52 md:flex-none">
+      <div className="md:sticky md:top-4 md:w-52 md:flex-none md:self-start">
         <DeployStages states={stageStatesOf(progress)} />
       </div>
       <div className="flex min-w-0 flex-1 flex-col gap-4">
+        {saved && (
+          <p className="break-all font-mono text-sm text-muted">
+            <span className="font-bold text-fg">{saved.spec.project.slug}</span> · {saved.repo} · {saved.commit.slice(0, 7)}
+          </p>
+        )}
         <div className="flex items-center gap-2">
           <StatusBadge status={progress.status} />
-          {isActive(progress.status) && offline !== 'stopped' && (
-            <span className="flex items-center gap-2 text-sm text-muted">
-              <Spinner size="sm" aria-hidden="true" />
-              3초마다 새로 읽고 있어요
-            </span>
-          )}
+          {/* 진행 중이라는 것은 왼쪽 단계의 움직임이 보인다. 여기서는 읽는 간격만 말하고 스피너는 두지 않는다. */}
+          {isActive(progress.status) && offline !== 'stopped' && <span className="text-sm text-muted">3초마다 새로 읽고 있어요</span>}
         </div>
         {offlineNotice}
         <IncidentNotice deployId={deployId} />
+
+        {saved && (
+          <ServiceMap
+            services={saved.spec.services}
+            status={progress.status}
+            failureService={failure?.service ?? null}
+            metrics={metrics}
+          />
+        )}
 
         {progress.status === 'not_started' && (
           <div className="flex flex-col gap-2">
@@ -306,7 +324,7 @@ function DeployProgress({ deployId }: { deployId: string }) {
               <span className="text-ok">
                 <CheckIcon />
               </span>
-              배포가 끝났어요
+              {readinessText(metrics)}
             </h2>
             <div className="flex flex-wrap items-center gap-2">
               <a href={progress.url} target="_blank" rel="noopener noreferrer" className="font-mono text-accent-text underline">

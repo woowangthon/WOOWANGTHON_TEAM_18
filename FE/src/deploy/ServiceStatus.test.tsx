@@ -2,6 +2,7 @@ import { act, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { ApiError } from '../lib/api.ts'
+import { WithQuery } from '../test-utils.tsx'
 import ServiceStatus from './ServiceStatus.tsx'
 import type { Metrics, MetricsService } from './metrics.ts'
 
@@ -73,9 +74,11 @@ const advance = (ms: number) =>
   })
 const show = async () => {
   const view = render(
-    <MemoryRouter>
-      <ServiceStatus deployId={ID} />
-    </MemoryRouter>,
+    <WithQuery>
+      <MemoryRouter>
+        <ServiceStatus deployId={ID} />
+      </MemoryRouter>
+    </WithQuery>,
   )
   await advance(0)
   return view
@@ -88,7 +91,7 @@ it('shows a running service with its restarts since now, current use and two gra
   await show()
   expect(api.apiFetch).toHaveBeenCalledWith(PATH)
   expect(card().getByText('fe')).toBeTruthy()
-  expect(card().getByText('실행 중')).toBeTruthy()
+  expect(card().getByText('실행 중(정상)')).toBeTruthy()
   // "최근 1시간 동안"이 아니다. 새 배포나 교체 뒤에는 0으로 돌아가는 값이다.
   expect(card().getByText(/다시 시작된 횟수/).textContent).toBe('다시 시작된 횟수 0번 (지금 실행 이후)')
   expect(card().getByText('0.04코어')).toBeTruthy()
@@ -116,7 +119,7 @@ it('explains why a service keeps restarting in plain words', async () => {
     liveWith([{ ...fe, state: 'starting', waiting: 'CrashLoopBackOff', readyReplicas: 0, restarts: 4, usage: null }]),
   )
   await show()
-  expect(card().getByText('시작하는 중')).toBeTruthy()
+  expect(card().getByText('헬스 체크 대기 중')).toBeTruthy()
   expect(card().getByText('시작하자마자 계속 꺼지고 있어요')).toBeTruthy()
   expect(card().getByText(/다시 시작된 횟수/).textContent).toBe('다시 시작된 횟수 4번 (지금 실행 이후)')
   expect(screen.queryByText(/CrashLoopBackOff/)).toBeNull()
@@ -131,7 +134,7 @@ it('says getting ready for a waiting reason it does not know, and stopped as off
   )
   await show()
   expect(card().getByText('준비 중이에요')).toBeTruthy()
-  expect(card().getByText('꺼져 있어요')).toBeTruthy()
+  expect(card().getByText('중지됨')).toBeTruthy()
 })
 
 it('shows not collected, with no zero and no fake line, when usage and series were not collected', async () => {
@@ -182,7 +185,7 @@ it('says it could not read, keeps the last values and keeps trying, on 503 CLUST
   // 오류가 아니라 기다렸다 읽는 안내(status)다.
   const notice = card().getByText('지금 상태를 읽지 못했어요').closest('[role=status]')
   expect(notice?.textContent).toContain('잠시 뒤에 다시 읽어요')
-  expect(card().getByText('실행 중')).toBeTruthy()
+  expect(card().getByText('실행 중(정상)')).toBeTruthy()
   await advance(15000)
   expect(card().queryByText('지금 상태를 읽지 못했어요')).toBeNull()
   expect(reads()).toBe(3)

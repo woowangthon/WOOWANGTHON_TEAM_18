@@ -19,6 +19,12 @@ vi.mock('./ServiceStatus.tsx', () => ({ default: ({ deployId }: { deployId: stri
 // 운영 알림 배너는 자기 시험(incidents/IncidentNotice.test.tsx)이 있다. 여기서는 어느 배포의 것으로 부르는지만 본다.
 vi.mock('../incidents/IncidentNotice.tsx', () => ({ default: ({ deployId }: { deployId: string }) => <p>운영 알림 {deployId}</p> }))
 
+// 저장한 설정 · 지표 읽기는 자기 시험(ServiceMap.test.tsx · ServiceStatus.test.tsx)이 있다. 여기서는 화면이 그 값으로 무엇을 그리는지만 본다.
+const reads = vi.hoisted((): { saved: unknown; metrics: unknown } => ({ saved: undefined, metrics: undefined }))
+vi.mock('./useSavedDeploy.ts', () => ({ useSavedDeploy: () => ({ data: reads.saved }) }))
+vi.mock('./useMetrics.ts', () => ({ useMetrics: () => ({ data: reads.metrics }) }))
+vi.mock('./ServiceMap.tsx', () => ({ default: ({ status }: { status: string }) => <p>서비스 구성도 {status}</p> }))
+
 const ID = '0b6f0c1e-4a52-4d8e-9a1b-3f7d2c5e8a90'
 const STATUS = `/api/deploys/${ID}/status`
 const START = `/api/deploys/${ID}/start`
@@ -46,6 +52,8 @@ const failureWith = (code: string, message = '빌드에 실패했어요'): Deplo
 beforeEach(() => {
   vi.useFakeTimers()
   api.apiFetch.mockReset()
+  reads.saved = undefined
+  reads.metrics = undefined
 })
 afterEach(() => {
   vi.useRealTimers()
@@ -55,7 +63,7 @@ const advance = (ms: number) =>
   act(async () => {
     await vi.advanceTimersByTimeAsync(ms)
   })
-const reads = () => api.apiFetch.mock.calls.filter((c) => c[0] === STATUS).length
+const statusReads = () => api.apiFetch.mock.calls.filter((c) => c[0] === STATUS).length
 const show = async () => {
   const view = render(
     <MemoryRouter>
@@ -98,9 +106,9 @@ it('reads again every 3 seconds while running and shows the change', async () =>
   await show()
   expect(stage('빌드')).toBe('빌드진행 중')
   await advance(2999)
-  expect(reads()).toBe(1)
+  expect(statusReads()).toBe(1)
   await advance(1)
-  expect(reads()).toBe(2)
+  expect(statusReads()).toBe(2)
   expect(stage('빌드')).toBe('빌드 (완료)')
 })
 
@@ -108,7 +116,7 @@ it('keeps reading while a problem is being fixed', async () => {
   api.apiFetch.mockResolvedValue(progressOf('fixing', 'deploy', { failure: failureWith('DEPLOY_FAILED', '문제를 살펴보는 중이에요') }))
   await show()
   await advance(3000)
-  expect(reads()).toBe(2)
+  expect(statusReads()).toBe(2)
   expect(stage('배포')).toBe('배포진행 중문제 해결 중')
   expect(screen.getByText('문제를 해결하는 중이에요')).toBeTruthy()
   expect(screen.getByText('문제를 살펴보는 중이에요')).toBeTruthy()
@@ -123,7 +131,7 @@ it.each([
   api.apiFetch.mockResolvedValue(progressOf(status, at, { url: 'https://x.stairnoworks.com', failure: failureWith('BUILD_FAILED') }))
   await show()
   await advance(30_000)
-  expect(reads()).toBe(1)
+  expect(statusReads()).toBe(1)
 })
 
 it.each([
@@ -139,7 +147,7 @@ it.each([
   expect(screen.getAllByText('배포 대기').length).toBeGreaterThan(0)
   expect(stage('빌드')).toBe('빌드 (예정)배포 대기')
   await advance(3000)
-  expect(reads()).toBe(2)
+  expect(statusReads()).toBe(2)
 })
 
 it('stops reading when the user leaves the screen', async () => {
@@ -147,7 +155,7 @@ it('stops reading when the user leaves the screen', async () => {
   const { unmount } = await show()
   unmount()
   await advance(30_000)
-  expect(reads()).toBe(1)
+  expect(statusReads()).toBe(1)
 })
 
 it('keeps the last state, says it is not the user fault and keeps trying when a read fails', async () => {
@@ -174,10 +182,10 @@ it.each([
   expect(screen.getByText('진행 상태를 읽지 못했어요')).toBeTruthy()
   expect(screen.queryByText(/사용자 잘못이 아니에요/)).toBeNull()
   await advance(30_000)
-  expect(reads()).toBe(1)
+  expect(statusReads()).toBe(1)
   fireEvent.click(screen.getByRole('button', { name: '다시 읽기' }))
   await advance(0)
-  expect(reads()).toBe(2)
+  expect(statusReads()).toBe(2)
   expect(screen.queryByText('진행 상태를 읽지 못했어요')).toBeNull()
   expect(stage('빌드')).toBe('빌드진행 중')
 })
@@ -197,7 +205,7 @@ it('keeps reading on a status it does not know, and shows the value it got', asy
   await show()
   expect(screen.getByText('paused')).toBeTruthy()
   await advance(3000)
-  expect(reads()).toBe(2)
+  expect(statusReads()).toBe(2)
   expect(screen.queryByText('paused')).toBeNull()
 })
 
@@ -207,23 +215,23 @@ it('says the deploy was not found on 404 and does not keep reading', async () =>
   expect(screen.getByText('배포를 찾을 수 없어요')).toBeTruthy()
   expect(screen.getByRole('link', { name: '내 배포 목록으로 가기' }).getAttribute('href')).toBe('/deploys')
   await advance(30_000)
-  expect(reads()).toBe(1)
+  expect(statusReads()).toBe(1)
 })
 
 it('starts the deploy from the button, then reads the status again and follows it', async () => {
   api.apiFetch.mockImplementation((path: string) => {
     if (path === START) return Promise.resolve({ deployId: ID, status: 'running', stage: 'build', targetSlot: 'a' })
-    return Promise.resolve(reads() <= 1 ? progressOf('not_started', 'secrets') : progressOf('running', 'build'))
+    return Promise.resolve(statusReads() <= 1 ? progressOf('not_started', 'secrets') : progressOf('running', 'build'))
   })
   await show()
   expect(stage('비밀값')).toBe('비밀값입력 대기사용자 조치 필요')
   await clickStart()
   expect(api.apiFetch).toHaveBeenCalledWith(START, {})
-  expect(reads()).toBe(2)
+  expect(statusReads()).toBe(2)
   expect(screen.queryByRole('button', { name: '배포 시작' })).toBeNull()
   expect(stage('빌드')).toBe('빌드진행 중')
   await advance(3000)
-  expect(reads()).toBe(3)
+  expect(statusReads()).toBe(3)
 })
 
 it('locks the start button while the request is out', async () => {
@@ -250,13 +258,13 @@ it.each([
   await clickStart()
   expect(screen.getByText(title)).toBeTruthy()
   expect(screen.getByRole<HTMLButtonElement>('button', { name: '배포 시작' }).disabled).toBe(false)
-  expect(reads()).toBe(2)
+  expect(statusReads()).toBe(2)
 })
 
 it('does not call an already started deploy an error, it just shows what the server now says', async () => {
   api.apiFetch.mockImplementation((path: string) => {
     if (path === START) return Promise.reject(new ApiError(409, 'ALREADY_STARTED', 'x'))
-    return Promise.resolve(reads() <= 1 ? progressOf('not_started', 'secrets') : progressOf('running', 'build'))
+    return Promise.resolve(statusReads() <= 1 ? progressOf('not_started', 'secrets') : progressOf('running', 'build'))
   })
   await show()
   await clickStart()
@@ -352,7 +360,7 @@ it('shows no error for an already started deploy even when the next read still s
   await show()
   await clickStart()
   expect(screen.queryByRole('alert')).toBeNull()
-  expect(reads()).toBe(2)
+  expect(statusReads()).toBe(2)
 })
 
 it('drops the old start failure as soon as the user tries again', async () => {
@@ -583,4 +591,38 @@ it('does not say the scan found nothing when there are warnings, or when the dep
   api.apiFetch.mockResolvedValue(progressOf('failed', 'deploy', { failure: failureWith('BUILD_FAILED') }))
   await show()
   expect(screen.queryByText(/찾은 문제가 없어요/)).toBeNull()
+})
+
+it('shows the project name, repo and short commit from the saved deploy, and the service map with the overall status', async () => {
+  reads.saved = { id: ID, repo: 'me/shop', commit: '0123456789abcdef', createdAt: '', spec: { project: { slug: 'shop', repo: 'me/shop' }, services: [] } }
+  api.apiFetch.mockResolvedValue(progressOf('running', 'build'))
+  await show()
+  expect(screen.getByText('shop')).toBeTruthy()
+  expect(screen.getByText(/me\/shop · 0123456/)).toBeTruthy()
+  expect(screen.getByText('서비스 구성도 running')).toBeTruthy()
+})
+
+it('draws neither the header nor the map when the saved deploy could not be read', async () => {
+  api.apiFetch.mockResolvedValue(progressOf('running', 'build'))
+  await show()
+  expect(screen.queryByText(/서비스 구성도/)).toBeNull()
+})
+
+it('says the deploy is done but waiting for the health check while a service is still starting, and healthy once all run', async () => {
+  const live = (state: string) => ({ state: 'live', services: [{ name: 'fe', state }] })
+  api.apiFetch.mockResolvedValue(progressOf('succeeded', null, { url: 'https://my-app.example.com' }))
+  reads.metrics = live('starting')
+  const { unmount } = await show()
+  expect(screen.getByText('배포 완료 · 헬스 체크 대기 중')).toBeTruthy()
+  unmount()
+  reads.metrics = live('running')
+  await show()
+  expect(screen.getByText('실행 중(정상)')).toBeTruthy()
+})
+
+it('shows only the reading interval, with no spinner, next to the status while running', async () => {
+  api.apiFetch.mockResolvedValue(progressOf('running', 'build'))
+  const { container } = await show()
+  expect(screen.getByText('3초마다 새로 읽고 있어요')).toBeTruthy()
+  expect(container.querySelector('.spinner')).toBeNull()
 })
