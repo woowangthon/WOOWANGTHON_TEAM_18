@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } fr
 import { AgentClient } from '../src/deploys/agent.client.js'
 import { DeployConditionService } from '../src/deploys/deploy-condition.service.js'
 import { DeployPreparer } from '../src/deploys/deploy-preparer.js'
-import { DeployQueue, QUEUE_STALE_MS } from '../src/deploys/deploy-queue.js'
+import { DeployQueue, FIXING_GRACE_MS, QUEUE_STALE_MS } from '../src/deploys/deploy-queue.js'
 import { ClusterCapacity } from '../src/k8s/cluster-capacity.js'
 import { ClusterError } from '../src/k8s/cluster-error.js'
 import { ClusterReader } from '../src/k8s/cluster-reader.js'
@@ -22,6 +22,7 @@ const REST = 'https://test.supabase.co/rest/v1/'
 const GOCD_URL = 'https://gocd.test/go/api/pipelines/student-deploy/schedule'
 const AI_URL = 'https://ai.test/agent/tickets'
 const CLOSE_URL = `${AI_URL}/t_stale/close`
+const STUDENT_HOOK = 'https://discord.com/api/webhooks/222/student-token'
 const NOTIFY_TOKEN = 'pipeline_notify_test_0123456789abcdef'
 const SHA = '0123456789abcdef0123456789abcdef01234567'
 const USER = '11111111-1111-4111-8111-111111111111'
@@ -56,6 +57,8 @@ let spaceCalls: { slug: string; gocdCallsBefore: number }[]
 let spaceFails: Error | undefined
 let app: INestApplication<App>
 let logError: MockInstance<Logger['error']>
+// 학생 Discord 웹후크로 보낸 글.
+let discord: { url: string; content: string }[]
 
 const urlOf = (i: string | URL | Request) => (i instanceof Request ? i.url : i.toString())
 const conflict = (constraint: string) =>
@@ -68,12 +71,15 @@ const matches = (row: Row, params: URLSearchParams) => {
       if (String(row[k]) !== v.slice(3)) return false
     } else if (v.startsWith('in.(')) {
       if (!v.slice(4, -1).split(',').includes(String(row[k]))) return false
+    } else if (v.startsWith('lt.')) {
+      // 시각 비교. PostgREST처럼 null은 어느 쪽에도 맞지 않는다.
+      if (typeof row[k] !== 'string' || !(Date.parse(row[k]) < Date.parse(v.slice(3)))) return false
     } else throw new Error(`unexpected filter ${k}=${v}`)
   }
   return true
 }
 
-// PostgREST의 가짜: 필터(eq · in), order=created_at.desc, limit, upsert(on_conflict), deploy_runs의 유일성 제약.
+// PostgREST의 가짜: 필터(eq · in · lt), order=created_at.desc · created_at.asc · updated_at.asc, limit, upsert(on_conflict), deploy_runs의 유일성 제약.
 function rest(url: URL, init: RequestInit | undefined): Response {
   const table = url.pathname.split('/').pop()!
   const rows = (db[table] ??= [])
@@ -85,6 +91,7 @@ function rest(url: URL, init: RequestInit | undefined): Response {
     let out = rows.filter((r) => matches(r, url.searchParams))
     if (url.searchParams.get('order') === 'created_at.desc') out = [...out].sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))
     if (url.searchParams.get('order') === 'created_at.asc') out = [...out].sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)))
+    if (url.searchParams.get('order') === 'updated_at.asc') out = [...out].sort((a, b) => String(a.updated_at).localeCompare(String(b.updated_at)))
     return Response.json(out.slice(0, Number(url.searchParams.get('limit') ?? out.length)))
   }
   if (method === 'PATCH') {
@@ -128,6 +135,10 @@ const fetchMock = vi.fn<typeof fetch>((input, init) => {
   if (url === GOCD_URL) return Promise.resolve().then(() => gocdAnswer())
   if (url === AI_URL) return Promise.resolve().then(() => aiAnswer())
   if (url === CLOSE_URL) return Promise.resolve(new Response(null, { status: 204 }))
+  if (url === STUDENT_HOOK) {
+    discord.push({ url, content: (JSON.parse(init?.body as string) as { content: string }).content })
+    return Promise.resolve(new Response(null, { status: 204 }))
+  }
   return Promise.reject(new Error(`unexpected fetch ${url}`))
 })
 const callsTo = (url: string) => fetchMock.mock.calls.filter(([u]) => urlOf(u) === url)
@@ -203,6 +214,7 @@ beforeEach(async () => {
   clusterCalls = []
   scaled = []
   scaleFails = {}
+  discord = []
   fetchMock.mockClear()
   vi.stubGlobal('fetch', fetchMock)
   logError = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
@@ -578,6 +590,81 @@ describe('deploy queue', () => {
     const id = seedQueued('app-two')
     await settle()
     expect(run(id).status).toBe('running')
+  })
+
+  describe('a fixing run whose gateway token expired (the agent can no longer submit a result)', () => {
+    const ago = (ms: number) => new Date(Date.now() - ms).toISOString()
+    // 시험 대기가 없던 티켓: 15분 토큰이 끝난 지 여유보다 오래됐다. updated_at은 그보다 앞이다.
+    const seedFixing = (expiresAgo: number, over: Row = {}) =>
+      seedQueued('app-one', {
+        status: 'fixing', stage: 'apply', ticket_id: 't_stale', gateway_token_hash: 'h',
+        failure: { code: 'DEPLOY_FAILED', stage: 'apply', service: 'be' },
+        gateway_expires_at: ago(expiresAgo), updated_at: ago(expiresAgo + 15 * 60_000), ...over,
+      })
+
+    it('closes a fixing run whose gateway token expired as TIMED_OUT on the queue tick and tells the agent stopped', async () => {
+      const stuck = seedFixing(FIXING_GRACE_MS + 1000)
+      await settle()
+      // 실패했던 스테이지(apply)에서 끝난다.
+      expect(run(stuck)).toMatchObject({ status: 'failed', failure: { code: 'TIMED_OUT', stage: 'apply', service: null } })
+      const closes = callsTo(CLOSE_URL)
+      expect(closes).toHaveLength(1)
+      expect(bodyOf(closes[0])).toEqual({ ticketId: 't_stale', commitSha: SHA, reason: 'stopped' })
+      expect(((await status(stuck)).body as StatusBody).failure).toMatchObject({ code: 'TIMED_OUT', stage: 'apply' })
+      // 다음 확인에서 다시 닫지 않는다.
+      await settle()
+      expect(callsTo(CLOSE_URL)).toHaveLength(1)
+    })
+
+    it('keeps a fixing run whose gateway token is still valid (the agent may be waiting on a trial)', async () => {
+      // 시험 대기 중: 마지막 변경은 1시간 가까이 전이어도 토큰은 대기 상한까지 늘어 있다.
+      const working = seedFixing(-10 * 60_000, { updated_at: ago(59 * 60_000) })
+      await settle()
+      expect(run(working).status).toBe('fixing')
+      expect(callsTo(CLOSE_URL)).toHaveLength(0)
+    })
+
+    it('keeps a fixing run whose token expired within the grace period', async () => {
+      // 1분 전에 만료됐다(여유 2분 안).
+      expect(FIXING_GRACE_MS).toBe(2 * 60_000)
+      const late = seedFixing(60_000)
+      await settle()
+      expect(run(late).status).toBe('fixing')
+      expect(callsTo(CLOSE_URL)).toHaveLength(0)
+    })
+
+    it('does not close a fixing run that changed right after it was read', async () => {
+      const stuck = seedFixing(FIXING_GRACE_MS + 1000)
+      let moved = false
+      // 대기열이 읽은 직후, 만료 직전에 받은 submit_result가 그 실행을 needs_user로 바꾼다.
+      restOverride = (table, method) => {
+        if (moved || table !== 'deploy_runs' || method !== 'GET') return undefined
+        moved = true
+        const row = db.deploy_runs.find((r) => r.deploy_id === stuck)!
+        const stale = { ...row }
+        Object.assign(row, { status: 'needs_user', gateway_token_hash: null, updated_at: new Date().toISOString() })
+        return Response.json([stale])
+      }
+      await settle()
+      expect(run(stuck)).toMatchObject({ status: 'needs_user', failure: { code: 'DEPLOY_FAILED' } })
+      expect(callsTo(CLOSE_URL)).toHaveLength(0)
+    })
+
+    it('sends the deploy result to the student webhook when a stuck fixing run times out', async () => {
+      db.user_webhooks = [{ user_id: USER, url: STUDENT_HOOK }]
+      seedFixing(FIXING_GRACE_MS + 1000)
+      await settle()
+      await vi.waitFor(() => expect(discord).toHaveLength(1))
+      expect(discord[0].content.split('\n')[0]).toBe('[app-one] 배포하지 못했어요 (apply · TIMED_OUT).')
+    })
+
+    it('still starts the next queued deploy on the same tick', async () => {
+      const stuck = seedFixing(FIXING_GRACE_MS + 1000)
+      const id = seedQueued('app-two')
+      await settle()
+      expect(run(stuck).status).toBe('failed')
+      expect(run(id).status).toBe('running')
+    })
   })
 
   it('closes a running deploy that has not changed for over 30 minutes as TIMED_OUT and goes on', async () => {

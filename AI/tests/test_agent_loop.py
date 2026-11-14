@@ -640,7 +640,38 @@ def test_invalid_result_is_replaced_by_a_minimal_gave_up_once() -> None:
     assert second["actions"] == first["actions"] and second["ticketId"] == "t_0013"
 
 
-@pytest.mark.parametrize("code", ["INVALID_RESULT", "TICKET_CLOSED"])
+@pytest.mark.parametrize("code", ["PATCH_FORBIDDEN", "INVALID_SPEC"])
+def test_a_non_invalid_rejection_is_replaced_by_a_minimal_gave_up_once(
+    code: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    gw = FakeGateway()
+    gw.script["submit_result"] = [reject(code, "path /spec/services/0/name ghp_" + "a" * 36)]
+    local = Script(
+        call("run_verify"),
+        final(status="verified", specPatch=PORT_PATCH, summary="고쳤습니다."),
+    )
+    solve(make_run(**SIGNALS["A1"]), gw, local)
+    first, second = gw.submitted
+    assert first["status"] == "verified"
+    assert second["status"] == "gave_up" and "플랫폼 검사에서 거절" in second["summary"]
+    assert "specPatch" not in second and second["actions"] == first["actions"]
+    assert f"result rejected ({code}): path /spec/services/0/name" in caplog.text
+    assert "ghp_" + "a" * 36 not in caplog.text
+
+
+def test_closed_ticket_rejection_of_the_result_is_not_resubmitted(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    gw = FakeGateway()
+    gw.script["submit_result"] = [reject("TICKET_CLOSED")]
+    local = Script(final(status="verified", specPatch=PORT_PATCH, summary="고쳤습니다."))
+    solve(make_run(**SIGNALS["A1"]), gw, local)
+    assert [r["status"] for r in gw.submitted] == ["verified"]
+    assert "sending a minimal gave_up" not in caplog.text
+    assert "result not delivered: submit_result rejected TICKET_CLOSED" in caplog.text
+
+
+@pytest.mark.parametrize("code", ["INVALID_RESULT", "PATCH_FORBIDDEN", "TICKET_CLOSED"])
 def test_second_rejection_of_the_result_is_only_logged(
     code: str, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -648,7 +679,7 @@ def test_second_rejection_of_the_result_is_only_logged(
     gw.script["submit_result"] = [reject(code)] * 3
     local = Script(final(status="gave_up", summary="모름"))
     solve(make_run(**SIGNALS["A1"]), gw, local, planner_of(final(status="gave_up", summary="모름")))
-    assert len(gw.submitted) == (2 if code == "INVALID_RESULT" else 1)
+    assert len(gw.submitted) == (1 if code == "TICKET_CLOSED" else 2)
     assert f"result not delivered: submit_result rejected {code}" in caplog.text
 
 

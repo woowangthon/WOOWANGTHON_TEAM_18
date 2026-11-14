@@ -32,8 +32,8 @@ Runner = Callable[[TicketRun, CaseMemory], Coroutine[Any, Any, None]]
 class RunRegistry:
     """티켓별 실행 기록.
 
-    simple: 메모리에만 두어 재시작하면 잊는다. 플랫폼은 그 뒤 같은 티켓을 다시 보내거나
-    시간 초과로 멈춘다.
+    simple: 메모리에만 두어 재시작하면 잊는다. 플랫폼은 같은 티켓을 다시 보내지 않고, 토큰이
+    만료된 뒤 대기열 타이머가 TIMED_OUT으로 마감한다.
     """
 
     def __init__(self, memory: CaseMemory, runner: Runner, max_running: int) -> None:
@@ -58,7 +58,7 @@ class RunRegistry:
         try:
             await self._runner(run, self.memory)
         except Exception:  # 취소(CancelledError)는 Exception이 아니라 그대로 올라간다
-            # 실패를 결과로 꾸미지 않는다(F-1). 플랫폼은 시간 초과로 멈춘다.
+            # 실패를 결과로 꾸미지 않는다(F-1). 플랫폼은 토큰 만료 뒤 TIMED_OUT으로 마감한다.
             log.exception("ticket %s run failed", run.ticket.ticket_id)
 
     def close(self, run: TicketRun, success: bool) -> None:
