@@ -13,6 +13,8 @@ const TICK_MS = 15_000
 /**
  * 배포 대기열(docs/design/deploy-workflow.md "배포 대기열"). 시작한 배포는 `queued`로 저장되고, 여기서 한 번에 하나씩 `running`으로 바꾸며 파이프라인을 부른다.
  * 출발 조건: 도는 `running`이 없고, 클러스터에 자리가 있다. `fixing`(AI가 고치는 중)은 줄을 막지 않는다. BE는 컨테이너 하나라 프로세스 안의 줄이면 충분하다.
+ * `verified` 뒤 다시 실행(`ticket_id`가 있는 `queued`. 새 배포의 `queued`에는 없다)은 자리를 보지 않는다: 그 프로젝트의 시험 Pod가 대상 슬롯에 남아
+ * 사용량에 들어가 자기 때문에 출발하지 못하고, 다시 실행의 Prepare가 그 슬롯을 비운다.
  */
 @Injectable()
 export class DeployQueue implements OnApplicationBootstrap, OnModuleDestroy {
@@ -56,7 +58,7 @@ export class DeployQueue implements OnApplicationBootstrap, OnModuleDestroy {
         continue
       }
       const next = await this.store.findOldestQueued()
-      if (!next || (await this.capacity.isFull())) return
+      if (!next || (!next.ticket_id && (await this.capacity.isFull()))) return
       // 파이프라인을 부르지 못한 배포는 실패로 두고 다음 배포를 본다. 그 밖에는(출발했거나 다른 곳이 먼저 바꿨다) 이번 확인을 끝낸다.
       if (!(await this.depart(next))) return
     }
@@ -71,7 +73,9 @@ export class DeployQueue implements OnApplicationBootstrap, OnModuleDestroy {
       return false
     } catch (err) {
       this.logger.error(`could not start the pipeline for ${run.slug}: ${err instanceof Error ? err.name : 'error'}`)
-      await this.store.updateRun(run.deploy_id, { status: 'running' }, { status: 'failed', failure: { code: 'PIPELINE_UNAVAILABLE', stage: 'build', service: null } })
+      const failed = await this.store.updateRun(run.deploy_id, { status: 'running' }, { status: 'failed', failure: { code: 'PIPELINE_UNAVAILABLE', stage: 'build', service: null } })
+      // verified 뒤 다시 실행이면 에이전트에 그 티켓이 끝났다고 알린다.
+      if (failed && run.ticket_id) await this.agent.close(run.ticket_id, commitOf(run), 'stopped')
       return true
     }
   }
