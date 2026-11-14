@@ -338,6 +338,24 @@ describe('DeployExplainer', () => {
     expect(second.evidence).toBeNull()
   })
 
+  it('keeps the first firstDeploy when the switch notice comes again', async () => {
+    const ex = make()
+    ex.rememberSuccess('d1', true)
+    ex.rememberSuccess('d1', false)
+    await ex.explain('d1')
+    expect(JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string)).toMatchObject({ firstDeploy: true })
+  })
+
+  it('sends no evidence after forgetTicket (AGENT_GAVE_UP without a new ticket)', async () => {
+    findRun.mockResolvedValue(failedRun({ failure: { code: 'AGENT_GAVE_UP', stage: 'verify', service: 'be' } }))
+    const ex = make()
+    ex.rememberTicket('d1', { errorMessage: 'old error', logs: { lines: ['old-log-line'] }, raw: { k8s: null } })
+    ex.forgetTicket('d1')
+    await ex.explain('d1')
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string) as { evidence: unknown }
+    expect(body.evidence).toBeNull()
+  })
+
   it('passes firstDeploy from rememberSuccess', async () => {
     const ex = make()
     ex.rememberSuccess('d1', true)

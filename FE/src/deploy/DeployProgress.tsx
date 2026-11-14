@@ -158,8 +158,11 @@ function DeployProgress({ deployId }: { deployId: string }) {
           again = false
         } else {
           const retryable = error instanceof ApiError && (error.status === 503 || error.code === 'NETWORK_ERROR')
-          setOffline(retryable ? 'retrying' : 'stopped')
-          again = retryable
+          // 끝난 배포의 설명만 기다리던 중이면 읽기 오류가 이어져도 같은 마감에서 멈춘다(진행 중인 배포는 계속 다시 시도한다).
+          const waitOver = explainUntil !== null && Date.now() >= explainUntil
+          if (waitOver) setExplainWaitOver(true)
+          setOffline(retryable && !waitOver ? 'retrying' : 'stopped')
+          again = retryable && !waitOver
         }
       }
       if (again) timer = setTimeout(() => void read(), POLL_MS)

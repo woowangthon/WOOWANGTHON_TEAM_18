@@ -106,6 +106,10 @@ def client_with(explainer: Model | None, effort: str = "medium") -> Iterator[Tes
         _env_file=None,
         agent_api_token="t" * 32,
         gateway_url="http://platform:4000/mcp",
+        # 셸 env의 PLANNER_MODEL_*로 실제 모델이 만들어지지 않게 비운다(인자가 env보다 앞선다).
+        planner_model_url=None,
+        planner_model_name=None,
+        planner_model_api_key=None,
         explain_reasoning_effort=effort,
     )
     with TestClient(create_app(settings, runner=classify_only, explainer=explainer)) as c:
@@ -205,6 +209,14 @@ def test_over_long_output_is_clipped() -> None:
     assert len(body["terms"]) == 5
     assert all(len(t["term"]) == 40 and len(t["meaning"]) == 200 for t in body["terms"])
     assert body["summary"].endswith("…")
+
+
+def test_a_secret_on_the_length_limit_is_masked_whole() -> None:
+    token = "ghp_" + "a1B2" * 9
+    out = DeployExplanation.model_validate({**EXPLANATION, "summary": "s" * 290 + token})
+    summary = _clip(out).summary
+    assert "ghp_" not in summary
+    assert summary == "s" * 290 + "[REDACTED]"
 
 
 def test_clip_keeps_short_text_and_a_null_cause() -> None:

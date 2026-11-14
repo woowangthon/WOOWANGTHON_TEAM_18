@@ -148,8 +148,12 @@ def _cut(text: str, limit: int) -> str:
 
 
 def _clip(out: DeployExplanation) -> DeployExplanation:
-    """길이 상한을 코드에서 맞추고, 모델이 만든 글에도 비밀값 필터를 다시 건다."""
-    clipped = DeployExplanation(
+    """모델이 만든 글에 비밀값 필터를 다시 걸고, 길이 상한을 코드에서 맞춘다.
+
+    가린 뒤에 자른다: 먼저 자르면 상한 경계에 걸린 토큰의 앞조각이 패턴에 맞지 않아 남는다.
+    """
+    out = DeployExplanation.model_validate(redact_value(out.model_dump()))
+    return DeployExplanation(
         summary=_cut(out.summary, SUMMARY_CHARS),
         steps=[
             StepNote(
@@ -164,7 +168,6 @@ def _clip(out: DeployExplanation) -> DeployExplanation:
             for t in out.terms[:TERMS_MAX]
         ],
     )
-    return DeployExplanation.model_validate(redact_value(clipped.model_dump()))
 
 
 INSTRUCTIONS = """\

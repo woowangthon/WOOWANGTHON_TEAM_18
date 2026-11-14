@@ -709,6 +709,20 @@ it('stops reading after 180 seconds of pending and keeps the static guide withou
   expect(statusReads()).toBe(61)
 })
 
+it('stops at the same 180-second deadline when only read errors follow a pending explanation', async () => {
+  api.apiFetch.mockResolvedValueOnce(progressOf('succeeded', null, { explanation: PENDING })).mockRejectedValue(new ApiError(503, 'UNAVAILABLE', 'down'))
+  await show()
+  expect(screen.getByText('AI가 이번 배포를 설명하는 중이에요…')).toBeTruthy()
+  await advance(177000)
+  expect(statusReads()).toBe(60)
+  await advance(3000)
+  expect(statusReads()).toBe(61)
+  expect(screen.queryByText(/설명하는 중/)).toBeNull()
+  expect(screen.getByRole('region', { name: '배포 단계 안내' })).toBeTruthy()
+  await advance(30000)
+  expect(statusReads()).toBe(61)
+})
+
 it('shows no explanation while the deploy is still running', async () => {
   api.apiFetch.mockResolvedValue(progressOf('running', 'deploy', { explanation: PENDING }))
   await show()

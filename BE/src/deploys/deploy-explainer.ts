@@ -222,10 +222,15 @@ export class DeployExplainer implements OnModuleInit {
     }
   }
 
-  /** 성공 처리 시점에 첫 배포였는지 담는다. */
+  /** 성공 처리 시점에 첫 배포였는지 담는다. 같은 알림이 다시 와도 처음 값을 둔다(그때는 live 슬롯이 이미 바뀌어 있다). */
   rememberSuccess(deployId: string, firstDeploy: boolean): void {
-    if (!this.enabled) return
+    if (!this.enabled || this.firstDeploys.has(deployId)) return
     this.put(this.firstDeploys, deployId, firstDeploy)
+  }
+
+  /** 새 티켓 없이 끝나는 실패(AGENT_GAVE_UP)에서 앞 티켓의 재료를 버린다: 이번 실패의 근거가 아니다. */
+  forgetTicket(deployId: string): void {
+    this.materials.delete(deployId)
   }
 
   read(deployId: string): ExplanationView | null {

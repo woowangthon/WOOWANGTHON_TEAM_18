@@ -269,6 +269,8 @@ export class DeployRunsService {
     }
     // 다시 실행이 또 실패했는데 티켓을 이미 실행 기록당 상한만큼 냈다: 새 티켓 없이 마감한다.
     if (ticketCount(run) > MAX_TICKETS) {
+      // 학생용 설명이 앞 티켓의 오류 · 로그를 이번 실패의 근거로 쓰지 않게 한다.
+      this.explainer.forgetTicket(run.deploy_id)
       const done = await this.store.updateRun(run.deploy_id, where, { status: 'failed', failure: { ...stored, code: 'AGENT_GAVE_UP' } })
       if (done) await this.slots.afterFailure(run, notice.stage)
       if (done && run.ticket_id) await this.agent.close(run.ticket_id, commitOf(run), 'stopped')
