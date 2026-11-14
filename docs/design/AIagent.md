@@ -365,7 +365,7 @@ PydanticAI에서 두 모델을 OpenAI 호환 provider로 붙이고, 추론 모�
 |---|---|---|
 | ① 정규식 대조 | 없음 | §8 `match`로 같은 stage에서 맞는 case를 **전부** 고른다(`CaseMemory.candidates`). 최종 판단에 쓰지 않고 ②에 `Regex hint (may be wrong)`로만 준다 |
 | ② 분류 | 추론 API | 같은 stage의 case 목록(id · 제목)과 ①의 힌트로 하나를 고르거나 null. 힌트가 로그 발췌와 다르면 발췌를 따른다. 목록에 없는 id는 모르는 것으로 본다. 고른 case에 hits를 올린다. 결과의 `method`는 `llm` |
-| ③ 계획 → 실행 | 추론 API → 로컬 | 추론 모델은 도구를 부르지 않고 계획(`cause` + `steps`: 도구 · 실제 인자 · `when`, 마지막은 끝내는 조건)만 낸다(게이트웨이 호출 한도를 쓰지 않는다). 게이트웨이에 없는 도구 · 8,000자를 넘는 계획은 다시 만들게 한다. 로컬 모델은 계획에 있는 도구만 받아 그대로 부르고 해결 결과(§6의 status · `specPatch` · `pr` · `userRequest` · `evidence` · `summary`)를 낸다 |
+| ③ 계획 → 실행 | 추론 API → 로컬 | 추론 모델은 읽기 도구(`read_repo` · `get_target_status` · `read_pod_logs`)만 불러 증거를 본 뒤 계획(`cause` + `steps`: 도구 · 실제 인자 · `when`, 마지막은 끝내는 조건)을 낸다. `edit_repo_file`은 파일 전체 내용을 받으므로 읽은 파일로 새 내용을 계획에 적는다(2026-11-14 운영 B4: 읽지 못해 "읽고 `needs_user`"로 계획했다). 읽기는 게이트웨이 호출 한도에 세고, 기록(`actions`)에 남고, 가림 필터를 거쳐 추론 API로 간다. 읽기 거절은 재계획이 아니라 추론 모델에 돌려준다. 계획 중에는 지난 읽기 결과를 한 줄로 줄이지 않는다(추론 API가 실패해 로컬로 넘어가면 16K를 넘을 수 있다). 추적 로그는 `plan done reads=<도구 이름들>`만 남긴다. 게이트웨이에 없는 도구 · 8,000자를 넘는 계획은 다시 만들게 한다. 로컬 모델은 계획에 있는 도구만 받아 그대로 부르고 해결 결과(§6의 status · `specPatch` · `pr` · `userRequest` · `evidence` · `summary`)를 낸다 |
 | ④ 재계획 | 추론 API | ③이 `gave_up`이거나, 실행 중 게이트웨이 거절(같은 호출 반복 `REPEATED_CALL` 포함)을 받았거나, 출력이 계속 깨지면 playbook · 지금까지의 도구 호출 · 멈춘 이유를 받아 다시 계획하고 직접 실행한다 |
 | ⑤ planning | 추론 API | ②가 null이면 처음부터 계획하고 직접 실행한다 |
 
