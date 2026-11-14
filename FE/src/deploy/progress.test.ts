@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest'
-import { hasPr, isActive, isPlatformProblem, stageStatesOf, statusLabel, statusVariant } from './progress.ts'
-import type { DeployStatus } from './progress.ts'
+import { EXPLAIN_WAIT_MS, hasPr, isActive, isExplaining, isPlatformProblem, stageStatesOf, statusLabel, statusVariant } from './progress.ts'
+import type { DeployStatus, Progress } from './progress.ts'
 import type { StageKey } from './stages.ts'
 
 const steps = (states: Record<StageKey, string>) => Object.entries(states).map(([key, state]) => ({ key, state }))
@@ -95,4 +95,24 @@ it('names a needs_user run with a fix PR apart from other needs_user runs', () =
   expect(hasPr({ prUrl: 'https://github.com/o/r/pull/3' })).toBe(true)
   expect(hasPr({ prUrl: null })).toBe(false)
   expect(hasPr(null)).toBe(false)
+})
+
+const explaining = (status: DeployStatus, explanation: Progress['explanation']) => isExplaining({ status, explanation })
+
+it('waits for the explanation only when the deploy is settled and the explanation is pending', () => {
+  expect(explaining('succeeded', { state: 'pending', content: null })).toBe(true)
+  expect(explaining('failed', { state: 'pending', content: null })).toBe(true)
+  expect(explaining('needs_user', { state: 'pending', content: null })).toBe(true)
+  expect(explaining('running', { state: 'pending', content: null })).toBe(false)
+  expect(explaining('fixing', { state: 'pending', content: null })).toBe(false)
+  expect(explaining('succeeded', { state: 'failed', content: null })).toBe(false)
+  expect(explaining('succeeded', { state: 'skipped', content: null })).toBe(false)
+  expect(explaining('succeeded', null)).toBe(false)
+  expect(explaining('succeeded', undefined)).toBe(false)
+  const content = { summary: 's', steps: [], cause: null, actions: [], terms: [] }
+  expect(explaining('succeeded', { state: 'ready', content })).toBe(false)
+})
+
+it('waits 180 seconds for an explanation', () => {
+  expect(EXPLAIN_WAIT_MS).toBe(180000)
 })

@@ -32,3 +32,21 @@ export const stepOf: Record<StageState, { state: StepState; note?: string }> = {
   action: { state: 'wait', note: '사용자 조치 필요' },
   failed: { state: 'fail' },
 }
+
+// 파이프라인 스테이지의 이름과 고정 설명. AI가 만든 글이 아니다: 설명이 없을 때(기능 꺼짐 · 만들지 못함 · 서버 재시작) 보인다.
+export const PIPELINE_STAGES = [
+  { stage: 'build', label: '빌드', meaning: '레포 코드로 컨테이너 이미지를 만들어요. 입력이 같으면 전에 만든 이미지를 다시 써요.' },
+  { stage: 'prepare', label: '준비', meaning: '지금 서비스 중이 아닌 쪽 슬롯(A 또는 B)을 골라 새 버전을 올릴 준비를 해요.' },
+  { stage: 'render', label: '설정 확인', meaning: '배포 설정을 클러스터가 읽는 설정 파일로 바꾸고, 클러스터에 미리 맞는지 물어봐요.' },
+  { stage: 'apply', label: '올리기', meaning: '고른 슬롯에 서비스를 띄워요. 공개 주소는 아직 이전 버전을 가리켜요.' },
+  { stage: 'verify', label: '동작 확인', meaning: '새 슬롯의 헬스 체크가 통과하는지 확인해요. 실패해도 공개 주소는 바뀌지 않아요.' },
+  { stage: 'switch', label: '전환', meaning: '공개 주소를 새 슬롯으로 바꾸고 이전 슬롯을 내려요. 첫 배포면 내릴 슬롯이 없어요.' },
+] as const
+
+export const labelOfPipelineStage = (stage: string) => PIPELINE_STAGES.find((s) => s.stage === stage)?.label ?? stage
+
+// 끝난 배포에서 돈 스테이지: 성공이면 모두, 실패면 실패한 스테이지까지. 모르는 스테이지면 모두 보인다.
+export function ranStages({ status, failure }: { status: string; failure: { stage: string } | null }) {
+  const at = PIPELINE_STAGES.findIndex((s) => s.stage === failure?.stage)
+  return status === 'succeeded' || at < 0 ? PIPELINE_STAGES : PIPELINE_STAGES.slice(0, at + 1)
+}

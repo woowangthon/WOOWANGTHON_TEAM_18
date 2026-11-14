@@ -19,6 +19,18 @@ export type AgentResult = {
 // 문제 해결 중(fixing)에 AI가 가장 최근에 부른 도구와 지금까지 쓴 횟수(티켓당 limit). 도구 이름과 횟수만 온다.
 export type AgentProgress = { tool: string; calls: number; limit: number; at: string }
 
+// 끝난 배포의 학생용 설명(FR-105, docs/design/deploy-explain.md). 추론 모델이 만든 글이고 서버가 가림 필터를 거쳤다.
+// stage는 파이프라인 스테이지(build · prepare · render · apply · verify · switch)다.
+export type Explanation = {
+  summary: string
+  steps: { stage: string; did: string; meaning: string }[]
+  cause: string | null
+  actions: string[]
+  terms: { term: string; meaning: string }[]
+}
+// pending: 만드는 중 · ready: 있음 · failed: 만들지 못함 · skipped: 플랫폼 문제라 만들지 않음
+export type ExplanationView = { state: 'pending' | 'failed' | 'skipped'; content: null } | { state: 'ready'; content: Explanation }
+
 export type DeployWarning = { code: string; message: string; service: string | null }
 
 export type Progress = {
@@ -36,6 +48,8 @@ export type Progress = {
   warnings: DeployWarning[]
   // 배포 대기(queued)일 때만 온다. position은 앞에 있는 배포 수, waitingForRoom은 클러스터에 자리가 없어 기다리는 중. 이 칸이 없던 응답도 같은 뜻(없음)으로 읽는다.
   queue?: { position: number; waitingForRoom: boolean } | null
+  // 끝난 배포(succeeded · failed · needs_user)의 설명. 기능이 꺼져 있거나 서버가 다시 떠 없으면 null이다. 이 칸이 없던 응답도 같은 뜻으로 읽는다.
+  explanation?: ExplanationView | null
   updatedAt: string
 }
 
@@ -57,6 +71,12 @@ export const POLL_MS = 3000
 // 서버가 나중에 새 status를 추가해도(예: 배포 대기) 끝난 것으로 오해해 멈추지 않도록, 알려진 끝 · 대기 상태가 아니면 계속 읽는다.
 const SETTLED: string[] = ['not_started', 'needs_user', 'succeeded', 'failed']
 export const isActive = (status: string) => !SETTLED.includes(status)
+
+// 배포가 끝났어도 설명을 만드는 중(pending)이면 처음 본 때부터 이 시간까지 더 읽는다(서버는 AI를 2분 30초까지 기다린다).
+// 넘으면 멈추고 정적 단계 설명을 보인다. 숨은 탭은 타이머가 느려지므로 횟수가 아니라 마감 시각으로 센다.
+export const EXPLAIN_WAIT_MS = 180_000
+export const isExplaining = (progress: Pick<Progress, 'status' | 'explanation'>) =>
+  !isActive(progress.status) && progress.explanation?.state === 'pending'
 
 // needs_user인데 AI가 수정 PR을 열었으면(prOpened) 학생이 할 일이 정해져 있어 따로 부른다.
 export const hasPr = (agent: Pick<AgentResult, 'prUrl'> | null | undefined) => agent?.prUrl != null

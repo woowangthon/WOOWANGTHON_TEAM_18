@@ -1,7 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common'
 import type { AuthUser } from '../auth/auth.decorators.js'
-import { isRecord } from '../common/is-record.js'
 import { parseUuid } from '../common/uuid.js'
 import { redact, redactString } from '../common/redact.js'
 import { ClusterCapacity } from '../k8s/cluster-capacity.js'
@@ -19,6 +18,7 @@ import {
   classifyFailure,
   commitOf,
   type DeployStatus,
+  ENDED_STATUSES,
   type Failure,
   MAX_TICKETS,
   nextStage,
@@ -28,10 +28,13 @@ import {
   type StepKey,
   type StepState,
   ticketCount,
+  toAgent,
+  type AgentView,
   toFailure,
   validateNotice,
 } from './deploy-run.js'
 import { DeployQueue } from './deploy-queue.js'
+import { DeployExplainer, type ExplanationView } from './deploy-explainer.js'
 import { type DeployRow, type DeployRunRow, DeploysStore, StoreConflict } from './deploys.store.js'
 import { SlotScaleDown } from './slot-scale-down.js'
 
@@ -61,37 +64,15 @@ export interface DeployStatusView {
   warnings: DeployWarning[]
   /** 배포 대기(`queued`)일 때만. position은 앞에 있는 배포 수(먼저 기다리는 배포 + 지금 도는 배포), waitingForRoom은 클러스터에 자리가 없어 기다리는 중. */
   queue: { position: number; waitingForRoom: boolean } | null
+  /** 끝난 배포의 학생용 설명(메모리, DEPLOY_EXPLAIN_ENABLED일 때만). 없으면 null이고 FE는 정적 설명을 보인다. */
+  explanation: ExplanationView | null
   updatedAt: string
-}
-
-/** AI 에이전트의 해결 결과 중 학생에게 보일 칸(api.md "진행 상태 읽기"의 `agent`). */
-export interface AgentView {
-  status: string
-  summary: string
-  userRequest: { message: string; secretKeys: string[] } | null
-  prUrl: string | null
-  evidence: { ref: string | null; text: string | null }[]
-}
-
-const str = (v: unknown): string | null => (typeof v === 'string' ? v : null)
-
-/** 게이트웨이가 검사하고 저장한 값이다. 빠진 칸만 빈 값으로 읽는다. */
-export function toAgent(stored: Record<string, unknown>): AgentView {
-  const u = isRecord(stored.userRequest) ? stored.userRequest : null
-  const pr = isRecord(stored.pr) ? stored.pr : null
-  return {
-    status: str(stored.status) ?? 'gave_up',
-    summary: str(stored.summary) ?? '',
-    userRequest: u ? { message: str(u.message) ?? '', secretKeys: Array.isArray(u.secretKeys) ? (u.secretKeys as unknown[]).filter((k): k is string => typeof k === 'string') : [] } : null,
-    prUrl: pr ? str(pr.url) : null,
-    evidence: Array.isArray(stored.evidence) ? (stored.evidence as unknown[]).filter(isRecord).map((e) => ({ ref: str(e.ref), text: str(e.text) })) : [],
-  }
 }
 
 const iso = (t: string) => new Date(t).toISOString()
 
 /** 실행 기록(없을 수 있다)에서 읽기 응답을 만든다. 원본 · 로그 · 비밀값은 저장하지 않으므로 여기 올 수 없다. */
-function view(deploy: DeployRow, run: DeployRunRow | undefined, warnings: DeployWarning[] = [], queue: DeployStatusView['queue'] = null, agentProgress: AgentProgressView | null = null): DeployStatusView {
+function view(deploy: DeployRow, run: DeployRunRow | undefined, warnings: DeployWarning[] = [], queue: DeployStatusView['queue'] = null, agentProgress: AgentProgressView | null = null, explanation: ExplanationView | null = null): DeployStatusView {
   const status: DeployStatus = run?.status ?? 'not_started'
   const stage = run?.stage ?? null
   return {
@@ -106,6 +87,7 @@ function view(deploy: DeployRow, run: DeployRunRow | undefined, warnings: Deploy
     // 보안 검사 경고(#45). 목록은 이 칸을 쓰지 않아 비워 둔다.
     warnings,
     queue,
+    explanation,
     updatedAt: iso(run?.updated_at ?? deploy.created_at),
   }
 }
@@ -125,6 +107,7 @@ export class DeployRunsService {
     private readonly capacity: ClusterCapacity,
     private readonly space: SpaceService,
     private readonly progress: AgentProgress,
+    private readonly explainer: DeployExplainer,
   ) {}
 
   /** 내 배포 하나. 없는 id · 남의 id · UUID가 아닌 id는 모두 404다. */
@@ -196,7 +179,8 @@ export class DeployRunsService {
     const [deploy, run] = await Promise.all([this.owned(user, id), uuid ? this.store.findRun(uuid) : undefined])
     const queue = run?.status === 'queued' ? await this.queueView(run) : null
     const progress = run?.status === 'fixing' && run.ticket_id ? this.progress.read(run.ticket_id) : null
-    return view(deploy, run, await this.scans.warningsFor(deploy), queue, progress)
+    const explanation = run && ENDED_STATUSES.includes(run.status) ? this.explainer.read(run.deploy_id) : null
+    return view(deploy, run, await this.scans.warningsFor(deploy), queue, progress, explanation)
   }
 
   private async queueView(run: DeployRunRow): Promise<NonNullable<DeployStatusView['queue']>> {
@@ -260,6 +244,8 @@ export class DeployRunsService {
     // switch까지 성공했다(W7): live 슬롯 → 이전 슬롯 내리기 → 완료 순서. 중간에 끊겨도 같은 알림을 다시 받으면 같은 결과다.
     // 이전 live 슬롯은 live 슬롯을 바꾸기 전에 읽는다(첫 배포는 없다).
     const hadLive = (await this.store.liveSlot(run.slug)) !== null
+    // 학생용 설명의 재료(첫 배포였는지). 던지지 않는다.
+    this.explainer.rememberSuccess(run.deploy_id, !hadLive)
     await this.store.setLiveSlot(run.slug, run.target_slot)
     // 주소는 이미 바뀌었다. 이전 슬롯을 못 내려도 배포는 성공이다.
     if (hadLive) await this.slots.scaleDown(run.slug, targetSlot(run.target_slot))
@@ -283,6 +269,8 @@ export class DeployRunsService {
     }
     // 다시 실행이 또 실패했는데 티켓을 이미 실행 기록당 상한만큼 냈다: 새 티켓 없이 마감한다.
     if (ticketCount(run) > MAX_TICKETS) {
+      // 학생용 설명이 앞 티켓의 오류 · 로그를 이번 실패의 근거로 쓰지 않게 한다.
+      this.explainer.forgetTicket(run.deploy_id)
       const done = await this.store.updateRun(run.deploy_id, where, { status: 'failed', failure: { ...stored, code: 'AGENT_GAVE_UP' } })
       if (done) await this.slots.afterFailure(run, notice.stage)
       if (done && run.ticket_id) await this.agent.close(run.ticket_id, commitOf(run), 'stopped')
@@ -375,6 +363,8 @@ export class DeployRunsService {
       logs,
       previous: previousTicket(run),
     }) as Record<string, unknown>
+    // 학생용 설명의 재료를 가린 티켓에서 고른다. 던지지 않는다.
+    this.explainer.rememberTicket(run.deploy_id, ticket)
 
     return this.agent.sendTicket({ ticket, gateway: { token: gatewayToken, expiresAt: expiresAt.toISOString() } })
   }

@@ -4,7 +4,13 @@ import json
 from collections.abc import Callable
 from typing import Any
 
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolCallPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 Step = Callable[[list[ModelMessage], AgentInfo], ModelResponse]
@@ -62,3 +68,8 @@ class Script:
     @property
     def done(self) -> bool:
         return not self.steps
+
+
+def text(**output: Any) -> Step:
+    """native output(`NativeOutput`)의 최종 답: 도구 호출이 아니라 JSON 글 하나."""
+    return lambda messages, info: ModelResponse(parts=[TextPart(json.dumps(output))])

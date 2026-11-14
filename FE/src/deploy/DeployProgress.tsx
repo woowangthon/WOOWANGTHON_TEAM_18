@@ -9,7 +9,8 @@ import IncidentNotice from '../incidents/IncidentNotice.tsx'
 import { ApiError, apiFetch } from '../lib/api.ts'
 import AgentSection from './AgentSection.tsx'
 import DeployStages from './DeployStages.tsx'
-import { agentProgressText, hasPr, isActive, isPlatformProblem, POLL_MS, stageStatesOf } from './progress.ts'
+import ExplainSection from './ExplainSection.tsx'
+import { agentProgressText, EXPLAIN_WAIT_MS, hasPr, isActive, isExplaining, isPlatformProblem, POLL_MS, stageStatesOf } from './progress.ts'
 import type { Progress } from './progress.ts'
 import ServiceMap from './ServiceMap.tsx'
 import { readinessText } from './serviceMap.ts'
@@ -124,6 +125,8 @@ function DeployProgress({ deployId }: { deployId: string }) {
   // retrying: 서버 장애나 네트워크 문제라 계속 다시 시도한다. stopped: 다시 시도해도 나아지지 않을 오류라 멈추고 사용자가 다시 읽게 한다.
   const [offline, setOffline] = useState<'retrying' | 'stopped' | null>(null)
   const [reads, setReads] = useState(0)
+  // 설명을 기다리다 상한에 닿았다: 더 읽지 않고 정적 단계 설명을 보인다.
+  const [explainWaitOver, setExplainWaitOver] = useState(false)
   const [starting, setStarting] = useState(false)
   const [startFailure, setStartFailure] = useState<StartFailure | null>(null)
   // 저장한 설정(프로젝트 이름 · 서비스 구성)과 서비스 지표. 둘 다 보태는 정보라서 읽지 못하면 그 부분만 그리지 않는다.
@@ -134,6 +137,8 @@ function DeployProgress({ deployId }: { deployId: string }) {
   useEffect(() => {
     let ignore = false
     let timer: ReturnType<typeof setTimeout> | undefined
+    // 끝난 뒤 설명을 기다리는 마감 시각(처음 pending을 본 때 + EXPLAIN_WAIT_MS).
+    let explainUntil: number | null = null
     async function read() {
       let again = true
       try {
@@ -141,7 +146,11 @@ function DeployProgress({ deployId }: { deployId: string }) {
         if (ignore) return
         setLoad({ status: 'ready', progress })
         setOffline(null)
-        again = isActive(progress.status)
+        const explaining = isExplaining(progress)
+        if (explaining) explainUntil ??= Date.now() + EXPLAIN_WAIT_MS
+        const waitOver = explainUntil !== null && explaining && Date.now() >= explainUntil
+        setExplainWaitOver(waitOver)
+        again = isActive(progress.status) || (explaining && !waitOver)
       } catch (error) {
         if (ignore) return
         if (error instanceof ApiError && error.status === 404) {
@@ -149,8 +158,11 @@ function DeployProgress({ deployId }: { deployId: string }) {
           again = false
         } else {
           const retryable = error instanceof ApiError && (error.status === 503 || error.code === 'NETWORK_ERROR')
-          setOffline(retryable ? 'retrying' : 'stopped')
-          again = retryable
+          // 끝난 배포의 설명만 기다리던 중이면 읽기 오류가 이어져도 같은 마감에서 멈춘다(진행 중인 배포는 계속 다시 시도한다).
+          const waitOver = explainUntil !== null && Date.now() >= explainUntil
+          if (waitOver) setExplainWaitOver(true)
+          setOffline(retryable && !waitOver ? 'retrying' : 'stopped')
+          again = retryable && !waitOver
         }
       }
       if (again) timer = setTimeout(() => void read(), POLL_MS)
@@ -304,6 +316,8 @@ function DeployProgress({ deployId }: { deployId: string }) {
         )}
 
         {progress.agent && <AgentSection agent={progress.agent} deployId={progress.deployId} />}
+
+        {!isActive(progress.status) && progress.status !== 'not_started' && <ExplainSection progress={progress} waitOver={explainWaitOver} />}
 
         {progress.warnings.length > 0 && (
           <Alert variant="warn" title="보안 검사 경고가 있어요">

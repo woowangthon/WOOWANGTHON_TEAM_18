@@ -261,3 +261,27 @@ export function ticketCount(run: { agent_result?: Record<string, unknown> | null
   const before = run?.agent_result?.tickets
   return (typeof before === 'number' && Number.isInteger(before) && before > 0 ? before : 0) + 1
 }
+
+/** AI 에이전트의 해결 결과 중 학생에게 보일 칸(api.md "진행 상태 읽기"의 `agent`). */
+export interface AgentView {
+  status: string
+  summary: string
+  userRequest: { message: string; secretKeys: string[] } | null
+  prUrl: string | null
+  evidence: { ref: string | null; text: string | null }[]
+}
+
+export const strOrNull = (v: unknown): string | null => (typeof v === 'string' ? v : null)
+
+/** 게이트웨이가 검사하고 저장한 값이다. 빠진 칸만 빈 값으로 읽는다. */
+export function toAgent(stored: Record<string, unknown>): AgentView {
+  const u = isRecord(stored.userRequest) ? stored.userRequest : null
+  const pr = isRecord(stored.pr) ? stored.pr : null
+  return {
+    status: strOrNull(stored.status) ?? 'gave_up',
+    summary: strOrNull(stored.summary) ?? '',
+    userRequest: u ? { message: strOrNull(u.message) ?? '', secretKeys: Array.isArray(u.secretKeys) ? (u.secretKeys as unknown[]).filter((k): k is string => typeof k === 'string') : [] } : null,
+    prUrl: pr ? strOrNull(pr.url) : null,
+    evidence: Array.isArray(stored.evidence) ? (stored.evidence as unknown[]).filter(isRecord).map((e) => ({ ref: strOrNull(e.ref), text: strOrNull(e.text) })) : [],
+  }
+}

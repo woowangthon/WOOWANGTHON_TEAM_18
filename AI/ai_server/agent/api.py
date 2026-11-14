@@ -6,7 +6,9 @@ from typing import Any
 
 from fastapi import APIRouter, Request, Response
 from pydantic import ValidationError
+from pydantic_ai.models import Model
 
+from ai_server.agent.explain import ExplainRequest, explain
 from ai_server.agent.incident import IncidentRequest, Judges, judge
 from ai_server.agent.models import CloseNotice, TicketRequest
 from ai_server.agent.runs import RunRegistry
@@ -41,7 +43,9 @@ _AUTH_REQUIRED = (401, "AUTH_REQUIRED", "missing or wrong Authorization bearer t
 _BAD_JSON = (400, "BAD_REQUEST", "body must be a JSON object")
 
 
-def build_router(settings: Settings, runs: RunRegistry, judges: Judges) -> APIRouter:
+def build_router(
+    settings: Settings, runs: RunRegistry, judges: Judges, explainer: Model | None = None
+) -> APIRouter:
     router = APIRouter(prefix="/agent")
 
     @router.post("/tickets", status_code=202)
@@ -100,5 +104,22 @@ def build_router(settings: Settings, runs: RunRegistry, judges: Judges) -> APIRo
             return error(503, "MODEL_UNAVAILABLE", "no model could judge this incident")
         out, model = judged
         return {**out.model_dump(), "model": model}
+
+    @router.post("/explanations")
+    async def explain_deploy(request: Request) -> Any:
+        """학생용 배포 설명(docs/design/deploy-explain.md). 동기로 답한다."""
+        if not _authorized(request, settings):
+            return error(*_AUTH_REQUIRED)
+        body = await _json_object(request)
+        if body is None:
+            return error(*_BAD_JSON)
+        try:
+            req = ExplainRequest.model_validate(body)
+        except ValidationError as e:
+            return _invalid("INVALID_EXPLANATION", "explanation request", e)
+        out = await explain(req, explainer, settings.explain_reasoning_effort)
+        if out is None:
+            return error(503, "MODEL_UNAVAILABLE", "no model could explain this deploy")
+        return out.model_dump()
 
     return router

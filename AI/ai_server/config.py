@@ -1,4 +1,4 @@
-from typing import Self
+from typing import Literal, Self
 
 from pydantic import AnyHttpUrl, Field, SecretStr, ValidationError, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     planner_model_url: AnyHttpUrl | None = None
     planner_model_name: str | None = None
     planner_model_api_key: SecretStr | None = None
+    # 학생용 배포 설명(POST /agent/explanations)에 보내는 추론 강도. 느리면 low로 낮춘다.
+    explain_reasoning_effort: Literal["low", "medium", "high"] = "medium"
 
     @model_validator(mode="after")
     def _url_and_name_together(self) -> Self:

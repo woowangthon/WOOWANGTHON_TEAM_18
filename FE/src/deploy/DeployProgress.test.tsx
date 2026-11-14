@@ -3,6 +3,7 @@ import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { ApiError } from '../lib/api.ts'
 import DeployProgress from './DeployProgress.tsx'
+import { explanationOf } from './fixtures.ts'
 import { STAGES } from './stages.ts'
 import type { DeployFailure, DeployStatus, Progress } from './progress.ts'
 
@@ -454,7 +455,7 @@ it('shows the public address as a link and copies it', async () => {
   const link = screen.getByRole('link', { name: 'https://my-app.stairnoworks.com' })
   expect(link.getAttribute('href')).toBe('https://my-app.stairnoworks.com')
   expect(link.getAttribute('rel')).toContain('noopener')
-  expect(screen.getAllByRole('listitem').every((li) => li.lastElementChild?.textContent?.endsWith('(완료)'))).toBe(true)
+  expect(KEYS.every((key) => stage(STAGES.find((s) => s.key === key)!.label)?.endsWith('(완료)'))).toBe(true)
   fireEvent.click(screen.getByRole('button', { name: '주소 복사' }))
   await advance(0)
   expect(writeText).toHaveBeenCalledWith('https://my-app.stairnoworks.com')
@@ -666,4 +667,73 @@ it('shows only the reading interval, with no spinner, next to the status while r
   const { container } = await show()
   expect(screen.getByText('3초마다 새로 읽고 있어요')).toBeTruthy()
   expect(container.querySelector('.spinner')).toBeNull()
+})
+
+const PENDING = { state: 'pending', content: null } as const
+const READY = { state: 'ready', content: explanationOf() } as const
+
+it('shows the static guide and stops reading when a settled deploy has no explanation', async () => {
+  api.apiFetch.mockResolvedValue(progressOf('succeeded', null, { explanation: null }))
+  await show()
+  expect(screen.getByRole('region', { name: '배포 단계 안내' })).toBeTruthy()
+  expect(screen.queryByText('AI 배포 설명')).toBeNull()
+  await advance(30000)
+  expect(statusReads()).toBe(1)
+})
+
+it('keeps reading while the explanation is pending, shows it once ready, then stops', async () => {
+  api.apiFetch.mockResolvedValueOnce(progressOf('succeeded', null, { explanation: PENDING })).mockResolvedValue(progressOf('succeeded', null, { explanation: READY }))
+  await show()
+  expect(screen.getByText('AI가 이번 배포를 설명하는 중이에요…')).toBeTruthy()
+  expect(screen.queryByRole('region', { name: 'AI 배포 설명' })).toBeNull()
+  await advance(3000)
+  expect(statusReads()).toBe(2)
+  expect(screen.getByRole('region', { name: 'AI 배포 설명' })).toBeTruthy()
+  expect(screen.queryByText(/설명하는 중/)).toBeNull()
+  await advance(30000)
+  expect(statusReads()).toBe(2)
+})
+
+it('stops reading after 180 seconds of pending and keeps the static guide without the waiting text', async () => {
+  api.apiFetch.mockResolvedValue(progressOf('succeeded', null, { explanation: PENDING }))
+  await show()
+  expect(screen.getByText('AI가 이번 배포를 설명하는 중이에요…')).toBeTruthy()
+  await advance(177000)
+  expect(statusReads()).toBe(60)
+  expect(screen.getByText('AI가 이번 배포를 설명하는 중이에요…')).toBeTruthy()
+  await advance(3000)
+  expect(statusReads()).toBe(61)
+  expect(screen.queryByText(/설명하는 중/)).toBeNull()
+  expect(screen.getByRole('region', { name: '배포 단계 안내' })).toBeTruthy()
+  await advance(30000)
+  expect(statusReads()).toBe(61)
+})
+
+it('stops at the same 180-second deadline when only read errors follow a pending explanation', async () => {
+  api.apiFetch.mockResolvedValueOnce(progressOf('succeeded', null, { explanation: PENDING })).mockRejectedValue(new ApiError(503, 'UNAVAILABLE', 'down'))
+  await show()
+  expect(screen.getByText('AI가 이번 배포를 설명하는 중이에요…')).toBeTruthy()
+  await advance(177000)
+  expect(statusReads()).toBe(60)
+  await advance(3000)
+  expect(statusReads()).toBe(61)
+  expect(screen.queryByText(/설명하는 중/)).toBeNull()
+  expect(screen.getByRole('region', { name: '배포 단계 안내' })).toBeTruthy()
+  await advance(30000)
+  expect(statusReads()).toBe(61)
+})
+
+it('shows no explanation while the deploy is still running', async () => {
+  api.apiFetch.mockResolvedValue(progressOf('running', 'deploy', { explanation: PENDING }))
+  await show()
+  expect(screen.queryByRole('region', { name: '배포 단계 안내' })).toBeNull()
+  expect(screen.queryByRole('region', { name: 'AI 배포 설명' })).toBeNull()
+  expect(screen.queryByText(/설명하는 중/)).toBeNull()
+})
+
+it('shows both the failure alert and the AI explanation for a failed student deploy', async () => {
+  api.apiFetch.mockResolvedValue(progressOf('failed', 'build', { failure: failureWith('BUILD_FAILED', '빌드에 실패했어요'), explanation: READY }))
+  await show()
+  expect(within(screen.getByRole('alert')).getByText('빌드에 실패했어요')).toBeTruthy()
+  expect(screen.getByRole('region', { name: 'AI 배포 설명' })).toBeTruthy()
 })
