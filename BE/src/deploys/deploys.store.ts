@@ -265,12 +265,13 @@ export class DeploysStore {
 
   /**
    * 조건이 맞는 실행 기록만 바꾼다(읽고 쓰는 사이에 다른 알림이 먼저 바꿨다면 아무것도 바꾸지 않는다). 바꿨으면 true.
-   * `where`의 값은 우리 코드의 상수다.
+   * `where`의 값은 우리 코드의 상수이거나, `updatedAt`처럼 방금 읽은 기록의 값이다.
    */
-  async updateRun(deployId: string, where: { status?: RunStatus; stage?: Stage }, patch: RunPatch): Promise<boolean> {
+  async updateRun(deployId: string, where: { status?: RunStatus; stage?: Stage; updatedAt?: string }, patch: RunPatch): Promise<boolean> {
     const query: Record<string, string> = { deploy_id: `eq.${deployId}`, select: 'deploy_id' }
     if (where.status) query.status = `eq.${where.status}`
     if (where.stage) query.stage = `eq.${where.stage}`
+    if (where.updatedAt) query.updated_at = `eq.${where.updatedAt}`
     const rows = await this.call('deploy_runs', 'PATCH', query, { ...patch, updated_at: new Date().toISOString() })
     return rows.length > 0
   }

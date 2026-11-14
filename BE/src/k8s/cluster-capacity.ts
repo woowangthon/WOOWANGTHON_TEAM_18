@@ -17,6 +17,8 @@ export class ClusterCapacity {
   private readonly logger = new Logger(ClusterCapacity.name)
   private readonly fullPercent: number
   private cached: { full: boolean; at: number } | undefined
+  // 읽는 중인 조회. 캐시가 빈 사이에 겹친 호출(여러 학생의 상태 polling)은 이 조회 하나를 같이 기다린다.
+  private inflight: Promise<boolean> | undefined
 
   constructor(
     private readonly reader: ClusterReader,
@@ -27,9 +29,12 @@ export class ClusterCapacity {
 
   async isFull(): Promise<boolean> {
     if (this.cached && Date.now() - this.cached.at < CACHE_MS) return this.cached.full
-    const full = await this.read()
-    this.cached = { full, at: Date.now() }
-    return full
+    this.inflight ??= this.read().then((full) => {
+      this.cached = { full, at: Date.now() }
+      this.inflight = undefined
+      return full
+    })
+    return this.inflight
   }
 
   private async read(): Promise<boolean> {

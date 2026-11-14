@@ -84,4 +84,10 @@ describe('ClusterCapacity.isFull', () => {
     await c.isFull()
     expect(reads).toBe(2)
   })
+
+  it('shares one read between calls that overlap before the first answer', async () => {
+    const c = capacity()
+    expect(await Promise.all([c.isFull(), c.isFull(), c.isFull()])).toEqual([false, false, false])
+    expect(reads).toBe(1)
+  })
 })

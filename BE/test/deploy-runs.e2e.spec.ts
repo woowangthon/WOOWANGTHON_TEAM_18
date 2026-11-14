@@ -548,6 +548,24 @@ describe('deploy queue', () => {
     expect(run(id).status).toBe('running')
   })
 
+  it('does not close a stale-looking running deploy that a notice moved on right after it was read', async () => {
+    const stuck = seedQueued('app-one', { status: 'running', updated_at: new Date(Date.now() - QUEUE_STALE_MS - 1000).toISOString() })
+    const id = seedQueued('app-two')
+    let moved = false
+    // 대기열이 오래된 running을 읽은 직후, 빌드 알림이 그 실행을 prepare로 넘긴다.
+    restOverride = (table, method) => {
+      if (moved || table !== 'deploy_runs' || method !== 'GET') return undefined
+      moved = true
+      const row = db.deploy_runs.find((r) => r.deploy_id === stuck)!
+      const stale = { ...row }
+      Object.assign(row, { stage: 'prepare', updated_at: new Date().toISOString() })
+      return Response.json([stale])
+    }
+    await settle()
+    expect(run(stuck)).toMatchObject({ status: 'running', stage: 'prepare', failure: null })
+    expect(run(id).status).toBe('queued')
+  })
+
   it('waits behind a running deploy that changed within 30 minutes', async () => {
     seedQueued('app-one', { status: 'running', updated_at: new Date(Date.now() - QUEUE_STALE_MS + 60_000).toISOString() })
     const id = seedQueued('app-two')

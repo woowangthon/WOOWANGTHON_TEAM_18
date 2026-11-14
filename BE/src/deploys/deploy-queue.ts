@@ -77,13 +77,14 @@ export class DeployQueue implements OnApplicationBootstrap, OnModuleDestroy {
   }
 
   /**
-   * 오래 바뀌지 않은 진행 중 실행을 TIMED_OUT으로 마감한다(`active.status` 그대로일 때만). 마감했으면 true.
+   * 오래 바뀌지 않은 진행 중 실행을 TIMED_OUT으로 마감한다(읽은 뒤 바뀌지 않았을 때만: 상태와 `updated_at`이 그대로). 마감했으면 true.
+   * 읽은 직후 알림이 스테이지를 넘겼다면 정상 실행이므로 건드리지 않는다.
    * 에이전트가 아직 그 티켓을 붙잡고 있을 수 있다(fixing, 또는 verified 뒤 다시 실행 중인 running). 멈추라고 알린다(받지 못해도 실행 기록은 이미 끝났다).
    */
   async expire(active: DeployRunRow): Promise<boolean> {
     const expired = await this.store.updateRun(
       active.deploy_id,
-      { status: active.status },
+      { status: active.status, updatedAt: active.updated_at },
       { status: 'failed', failure: { code: 'TIMED_OUT', stage: active.stage ?? 'build', service: null } },
     )
     if (expired && active.ticket_id) await this.agent.close(active.ticket_id, commitOf(active), 'stopped')
