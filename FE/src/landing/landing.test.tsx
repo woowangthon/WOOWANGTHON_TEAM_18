@@ -26,13 +26,18 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-it('moves to the next of four steps every 5 seconds and wraps around', () => {
+it('moves to the next of four steps every CAROUSEL_MS (6 to 7 seconds) and wraps around', () => {
   render(<HeroCarousel />)
   expect(caption()).toBe('1 / 4')
   advance(CAROUSEL_MS)
   expect(caption()).toBe('2 / 4')
   advance(CAROUSEL_MS * 3)
   expect(caption()).toBe('1 / 4')
+})
+
+it('advances slower than 5 seconds and faster than 10', () => {
+  expect(CAROUSEL_MS).toBeGreaterThanOrEqual(6000)
+  expect(CAROUSEL_MS).toBeLessThanOrEqual(7000)
 })
 
 it('announces the caption politely and names the carousel', () => {
@@ -169,4 +174,60 @@ it('closes with a call to action: start and login when signed out, dashboard whe
   unmount()
   renderLanding({ status: 'signedIn', session: sessionWith('admin') })
   expect(screen.getAllByRole('link', { name: '대시보드로' })).toHaveLength(3)
+})
+
+it('shows the auto-advance toggle as an icon button that keeps its name', () => {
+  render(<HeroCarousel />)
+  const pause = screen.getByRole('button', { name: '자동 넘김 멈추기' })
+  expect(pause.textContent).toBe('')
+  expect(pause.querySelector('svg')).toBeTruthy()
+})
+
+it('steps with the arrow buttons on both sides and wraps around', () => {
+  render(<HeroCarousel />)
+  fireEvent.click(screen.getByRole('button', { name: '이전 단계' }))
+  expect(caption()).toBe('4 / 4')
+  fireEvent.click(screen.getByRole('button', { name: '다음 단계' }))
+  expect(caption()).toBe('1 / 4')
+  fireEvent.click(screen.getByRole('button', { name: '다음 단계' }))
+  expect(caption()).toBe('2 / 4')
+})
+
+const swipe = (from: number, to: number) => {
+  const area = screen.getByRole('button', { name: '다음 단계' }).parentElement as HTMLElement
+  fireEvent.pointerDown(area, { clientX: from, pointerId: 1 })
+  fireEvent.pointerUp(area, { clientX: to, pointerId: 1 })
+}
+
+it('goes to the next step on a drag to the left and to the previous on a drag to the right', () => {
+  render(<HeroCarousel />)
+  swipe(200, 100)
+  expect(caption()).toBe('2 / 4')
+  swipe(100, 200)
+  expect(caption()).toBe('1 / 4')
+})
+
+it('ignores a drag shorter than the threshold', () => {
+  render(<HeroCarousel />)
+  swipe(200, 180)
+  expect(caption()).toBe('1 / 4')
+})
+
+it('gives a manually opened step its full time before the automatic advance', () => {
+  render(<HeroCarousel />)
+  advance(CAROUSEL_MS - 1000)
+  fireEvent.click(screen.getByRole('button', { name: '다음 단계' }))
+  expect(caption()).toBe('2 / 4')
+  advance(CAROUSEL_MS - 1)
+  expect(caption()).toBe('2 / 4')
+  advance(1)
+  expect(caption()).toBe('3 / 4')
+})
+
+it('does not treat a press that starts on an arrow button as a drag', () => {
+  render(<HeroCarousel />)
+  const next = screen.getByRole('button', { name: '다음 단계' })
+  fireEvent.pointerDown(next, { clientX: 200, pointerId: 1 })
+  fireEvent.pointerUp(next.parentElement as HTMLElement, { clientX: 100, pointerId: 1 })
+  expect(caption()).toBe('1 / 4')
 })
