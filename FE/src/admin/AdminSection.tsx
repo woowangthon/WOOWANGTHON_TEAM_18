@@ -11,17 +11,20 @@ type AdminSectionProps<T> = {
   loading: string
   empty: string
   isEmpty: (data: T) => boolean
+  // 제목 바로 아래에 늘 보이는 것(읽는 중 · 비어 있을 때도). 검색 · 거르기처럼 읽기 결과에 기대지 않는 조작을 둔다.
+  toolbar?: ReactNode
   children: (data: T) => ReactNode
 }
 
 // 운영자 화면의 구역 하나. 읽기가 실패해도 마지막으로 읽은 값은 그대로 보이고, 실패는 그 위에 따로 알린다.
-function AdminSection<T>({ id, title, read, failed, loading, empty, isEmpty, children }: AdminSectionProps<T>) {
+function AdminSection<T>({ id, title, read, failed, loading, empty, isEmpty, toolbar, children }: AdminSectionProps<T>) {
   const { data, error } = read
   return (
     <section aria-labelledby={id} className="flex flex-col gap-3">
       <h2 id={id} className="scroll-mt-4 text-lg">
         {title}
       </h2>
+      {toolbar}
       {error !== null && <ClusterProblem error={error} stale={data !== null} fallback={failed} />}
       {data === null && error === null && (
         <p role="status" className="text-sm text-muted">

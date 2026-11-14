@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common'
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common'
 import type { AuthUser } from '../auth/auth.decorators.js'
 import { SLUG } from '../deploys/deploy-input.js'
 import { publicUrl } from '../deploys/deploy-run.js'
@@ -6,7 +6,7 @@ import { ClusterError } from '../k8s/cluster-error.js'
 import { ClusterReader, type NodeInfo, type NodeUsageInfo, type PodInfo } from '../k8s/cluster-reader.js'
 import { DeploymentScaler } from '../k8s/deployment-scaler.js'
 import { ownsPod, readUsageByPod, serviceUsage } from '../k8s/service-metrics.js'
-import { AdminStore, type ProjectRecord } from './admin.store.js'
+import { AdminStore, type ProjectRecord, type StopRecord } from './admin.store.js'
 import { bytes, millicores } from './quantity.js'
 
 // 클러스터가 알려 준 Deployment 이름도 경로에 넣기 전에 DNS 이름 모양인지 본다.
@@ -53,6 +53,41 @@ function toNode({ name, ready, roles, capacity, allocatable }: NodeInfo, usage: 
   }
 }
 
+export const STATUS_FILTERS = ['all', 'running', 'stopped'] as const
+const MAX_PAGE_SIZE = 50
+const MAX_SEARCH = 100
+const invalidQuery = (message: string) => new BadRequestException({ code: 'INVALID_QUERY', message })
+
+/** `?page=&pageSize=&q=&status=`. 없으면 1 · 10 · 검색 없음 · all. 그 밖의 값은 400 INVALID_QUERY다. */
+function parseProjectsQuery(raw: Record<string, unknown>) {
+  const int = (name: string, fallback: number, max: number) => {
+    const v = raw[name]
+    if (v === undefined) return fallback
+    if (typeof v !== 'string' || !/^[0-9]{1,6}$/.test(v) || Number(v) < 1 || Number(v) > max) throw invalidQuery(`${name} must be an integer from 1 to ${max}`)
+    return Number(v)
+  }
+  const q = raw.q === undefined ? '' : raw.q
+  if (typeof q !== 'string' || [...q.trim()].length > MAX_SEARCH) throw invalidQuery(`q must be at most ${MAX_SEARCH} characters`)
+  const status = raw.status === undefined ? 'all' : raw.status
+  if (!STATUS_FILTERS.some((f) => f === status)) throw invalidQuery('status must be all, running or stopped')
+  return { page: int('page', 1, 1_000_000), pageSize: int('pageSize', 10, MAX_PAGE_SIZE), q: q.trim(), status: status as (typeof STATUS_FILTERS)[number] }
+}
+
+/** 화면(ProjectCard)과 같은 뜻. 읽지 못했으면 둘 다 아니고, 서비스가 없거나 모두 0개면 stopped(끌 것이 없다)다. */
+const runState = ({ services, clusterError }: ProjectView): 'running' | 'stopped' | 'unknown' =>
+  clusterError ? 'unknown' : services.length === 0 || services.every((s) => s.replicas === 0) ? 'stopped' : 'running'
+
+type ServicesRead = Awaited<ReturnType<AdminService['services']>>
+interface ProjectView extends ServicesRead {
+  slug: string
+  repo: string
+  ownerId: string
+  liveSlot: 'a' | 'b' | null
+  url: string | null
+  lastStop: StopRecord | null
+  clusterError: string | null
+}
+
 const toPod = ({ name, phase, ready, node, restarts }: PodInfo) => ({ name, phase, ready, node, restarts })
 
 /**
@@ -95,12 +130,33 @@ export class AdminService {
     }
   }
 
-  /** DB에 배포가 있는 프로젝트마다 공간 `proj-<slug>`를 읽는다(서버 계정은 공간 전체를 한 번에 읽을 수 없다). */
-  async projects() {
+  /**
+   * DB에 배포가 있는 프로젝트(정리한 것은 빼고)를 검색 · 상태로 거르고 쪽으로 나눠, 그 쪽의 프로젝트마다 공간 `proj-<slug>`를 읽는다
+   * (서버 계정은 공간 전체를 한 번에 읽을 수 없다). 상태는 클러스터에서만 알 수 있어서, 상태로 거를 때는 검색에 맞는 프로젝트를 모두 읽는다.
+   */
+  async projects(rawQuery: Record<string, unknown> = {}) {
+    const { page, pageSize, q, status } = parseProjectsQuery(rawQuery)
     const [records, stops] = await Promise.all([this.store.projects(), this.store.lastStops()])
+    const needle = q.toLowerCase()
+    const matched = records.filter((p) => !p.hidden && (needle === '' || p.slug.includes(needle) || p.repo.toLowerCase().includes(needle)))
+    const from = (page - 1) * pageSize
+    let shown: ProjectView[]
+    let total: number
+    if (status === 'all') {
+      total = matched.length
+      shown = await this.readProjects(matched.slice(from, from + pageSize), stops)
+    } else {
+      const filtered = (await this.readProjects(matched, stops)).filter((p) => runState(p) === status)
+      total = filtered.length
+      shown = filtered.slice(from, from + pageSize)
+    }
+    return { projects: shown, page, pageSize, total }
+  }
+
+  private async readProjects(records: ProjectRecord[], stops: Map<string, StopRecord>): Promise<ProjectView[]> {
     const read = await Promise.all(
       records.map(async (p: ProjectRecord) => {
-        let read: Awaited<ReturnType<AdminService['services']>> = { services: [], usageStatus: 'not_collected' }
+        let read: ServicesRead = { services: [], usageStatus: 'not_collected' }
         let error: unknown
         try {
           read = await this.services(p.slug)
@@ -112,7 +168,7 @@ export class AdminService {
     )
     // 모든 프로젝트를 못 읽었으면 리더 문제다(화면이 "리더 무응답"을 보여 줄 수 있게 오류로 알린다). 일부만이면 읽은 것은 보여 주고 못 읽은 것에 표시한다.
     if (read.length > 0 && read.every((r) => r.error !== undefined)) throw read[0].error
-    const projects = read.map(({ p, services, usageStatus, error }) => ({
+    return read.map(({ p, services, usageStatus, error }) => ({
       slug: p.slug,
       repo: p.repo,
       ownerId: p.ownerId,
@@ -123,7 +179,6 @@ export class AdminService {
       services,
       clusterError: error === undefined ? null : error instanceof ServiceUnavailableException ? (error.getResponse() as { code: string }).code : 'CLUSTER_UNREACHABLE',
     }))
-    return { projects }
   }
 
   /** 프로젝트 공간의 서비스. Pod 사용량을 읽지 못하면 서비스는 그대로 주고 `usage`만 null, `usageStatus`가 not_collected다. */
@@ -169,5 +224,17 @@ export class AdminService {
     // 기록하지 못하면 503이다. 이미 내린 것은 그대로지만 같은 요청을 다시 보내도 안전하다(replicas 0을 다시 쓰고 기록을 남긴다).
     await this.store.recordStop(slug, actor)
     return { slug, scaled, failed }
+  }
+
+  /**
+   * 중지된 프로젝트를 운영자 목록에서 숨긴다(정리 = 소프트 삭제). 실행 중이면 409 NOT_STOPPED다(먼저 중지해야 한다).
+   * 클러스터 객체(Deployment · Service · 네임스페이스 · 이미지)는 지우지 않는다. 정리(GC)는 아직 없다.
+   */
+  async hide(slug: string) {
+    if (!SLUG.test(slug) || !(await this.store.projectExists(slug))) throw projectNotFound()
+    const deployments = await readList(this.reader.deployments(slug), true)
+    if (deployments.some((d) => d.replicas > 0)) throw new ConflictException({ code: 'NOT_STOPPED', message: 'Stop the project before cleaning it up' })
+    await this.store.hide(slug)
+    return { slug }
   }
 }

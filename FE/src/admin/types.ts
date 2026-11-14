@@ -39,6 +39,8 @@ export type AdminProject = {
   usageStatus: 'collected' | 'not_collected'
   services: AdminService[]
 }
-export type ProjectsResponse = { projects: AdminProject[] }
+// 검색 · 상태로 거르고 쪽으로 나눈 뒤의 한 쪽. total은 거른 뒤의 전체 수다(정리한 프로젝트는 빠진다).
+export type ProjectsResponse = { projects: AdminProject[]; page: number; pageSize: number; total: number }
+export type HideResponse = { slug: string }
 
 export type StopResponse = { slug: string; scaled: string[]; failed: string[] }

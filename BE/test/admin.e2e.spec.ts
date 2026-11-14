@@ -62,7 +62,12 @@ function rest(url: URL, init: RequestInit | undefined): Response {
   const rows = (db[table] ??= [])
   if (method === 'POST') {
     const row = JSON.parse(init?.body as string) as Row
+    // on_conflict가 있으면 같은 키의 줄에 보낸 칸만 합친다(PostgREST의 merge-duplicates).
+    const key = url.searchParams.get('on_conflict')
+    const known = key === null ? undefined : rows.find((r) => r[key] === row[key])
+    if (known) return Response.json([Object.assign(known, row)], { status: 201 })
     row.created_at = new Date().toISOString()
+    if (table === 'projects') Object.assign(row, { live_slot: null, hidden_at: null, ...row })
     rows.push(row)
     return Response.json([row], { status: 201 })
   }
@@ -128,6 +133,7 @@ const ROUTES: ['get' | 'post', string][] = [
   ['get', '/api/admin/nodes'],
   ['get', '/api/admin/projects'],
   ['post', '/api/admin/projects/my-app/stop'],
+  ['post', '/api/admin/projects/my-app/hide'],
 ]
 
 describe('who may call the admin API', () => {
@@ -254,11 +260,154 @@ describe('GET /api/admin/nodes', () => {
   })
 })
 
+const slugsOf = (res: { body: unknown }) => (res.body as { projects: { slug: string }[] }).projects.map((p) => p.slug)
+const seedMany = (n: number) => {
+  for (let i = 0; i < n; i++) {
+    const slug = `app-${String(i).padStart(2, '0')}`
+    seedProject(slug, USER, i)
+    space(slug, [deployment('fe-a')])
+  }
+}
+
+describe('GET /api/admin/projects paging, search and status filter', () => {
+  it('pages the list, newest first, ten at a time by default, with the total', async () => {
+    seedMany(25)
+    const first = (await call('get', '/api/admin/projects', undefined)).body as { projects: { slug: string }[]; page: number; pageSize: number; total: number }
+    expect([first.page, first.pageSize, first.total, first.projects.length]).toEqual([1, 10, 25, 10])
+    expect(first.projects[0].slug).toBe('app-24')
+    const last = await call('get', '/api/admin/projects?page=3&pageSize=10', undefined)
+    expect(slugsOf(last)).toEqual(['app-04', 'app-03', 'app-02', 'app-01', 'app-00'])
+    // 범위를 넘은 쪽은 빈 목록이고 total은 그대로다.
+    const beyond = await call('get', '/api/admin/projects?page=9', undefined)
+    expect(beyond.body).toEqual({ projects: [], page: 9, pageSize: 10, total: 25 })
+  })
+
+  it('reads the cluster only for the projects on the shown page when no status filter is set', async () => {
+    seedMany(25)
+    const spy = vi.spyOn(reader, 'deployments')
+    await call('get', '/api/admin/projects?pageSize=5', undefined)
+    expect(spy).toHaveBeenCalledTimes(5)
+  })
+
+  it('searches by slug or repo, ignoring case and surrounding spaces', async () => {
+    seedProject('shop', USER, 3)
+    seedProject('blog', USER, 2)
+    ;(db.deploys ?? []).push({ id: randomUUID(), user_id: USER, slug: 'docs', repo: 'Team/Shop-Docs', created_at: new Date(Date.UTC(2026, 10, 11, 1, 0, 1)).toISOString() })
+    space('shop', [deployment('fe-a')])
+    space('blog', [deployment('fe-a')])
+    space('docs', [deployment('fe-a')])
+    expect(slugsOf(await call('get', '/api/admin/projects?q=%20SHOP%20', undefined))).toEqual(['shop', 'docs'])
+    expect(slugsOf(await call('get', '/api/admin/projects?q=blog', undefined))).toEqual(['blog'])
+    const none = await call('get', '/api/admin/projects?q=zzz', undefined)
+    expect(none.body).toEqual({ projects: [], page: 1, pageSize: 10, total: 0 })
+  })
+
+  it('filters by running or stopped the way the card does, and pages the filtered list', async () => {
+    seedProject('up', USER, 5)
+    seedProject('down', USER, 4)
+    seedProject('empty', USER, 3)
+    seedProject('broken', USER, 2)
+    space('up', [deployment('fe-a'), deployment('be-a', 0, 0)])
+    space('down', [deployment('fe-a', 0, 0)])
+    space('empty', [])
+    space('broken', [deployment('fe-a')])
+    slugErrors.broken = new ClusterError('unreachable')
+    expect(slugsOf(await call('get', '/api/admin/projects?status=running', undefined))).toEqual(['up'])
+    const stopped = await call('get', '/api/admin/projects?status=stopped&pageSize=1&page=2', undefined)
+    expect(stopped.body).toMatchObject({ total: 2, page: 2 })
+    expect(slugsOf(stopped)).toEqual(['empty'])
+    expect(slugsOf(await call('get', '/api/admin/projects?status=all', undefined))).toEqual(['up', 'down', 'empty', 'broken'])
+  })
+
+  it.each(['page=0', 'page=1.5', 'page=abc', 'pageSize=0', 'pageSize=51', 'status=paused', 'status=', `q=${'a'.repeat(101)}`, 'page=1&page=2'])(
+    'refuses %s with 400 INVALID_QUERY before touching the cluster',
+    async (query) => {
+      const spy = vi.spyOn(reader, 'deployments')
+      const res = await call('get', `/api/admin/projects?${query}`, undefined)
+      expect(res.status).toBe(400)
+      expect(res.body).toEqual(errorBody('INVALID_QUERY'))
+      expect(spy).not.toHaveBeenCalled()
+    },
+  )
+})
+
+describe('POST /api/admin/projects/:slug/hide', () => {
+  it('hides a stopped project from the list without touching the cluster, and keeps the others', async () => {
+    seedProject('my-app', USER, 1)
+    seedProject('other', USER, 2)
+    space('my-app', [deployment('fe-a', 0, 0)])
+    space('other', [deployment('fe-a')])
+    const res = await call('post', '/api/admin/projects/my-app/hide', undefined)
+    expect([res.status, res.body]).toEqual([200, { slug: 'my-app' }])
+    expect(scaled).toEqual([])
+    expect(slugsOf(await call('get', '/api/admin/projects', undefined))).toEqual(['other'])
+    expect(slugsOf(await call('get', '/api/admin/projects?q=my-app', undefined))).toEqual([])
+    // 숨겨도 이전의 live_slot은 그대로다(줄을 합쳐 쓴다).
+    expect((db.projects ?? []).find((r) => r.slug === 'my-app')).toMatchObject({ live_slot: null })
+  })
+
+  it('also hides a project whose namespace is gone', async () => {
+    seedProject('my-app')
+    expect((await call('post', '/api/admin/projects/my-app/hide', undefined)).status).toBe(200)
+    expect(slugsOf(await call('get', '/api/admin/projects', undefined))).toEqual([])
+  })
+
+  it('keeps the live slot of a project that already has a row', async () => {
+    seedProject('my-app')
+    db.projects = [{ slug: 'my-app', live_slot: 'b', hidden_at: null }]
+    space('my-app', [deployment('fe-a', 0, 0)])
+    await call('post', '/api/admin/projects/my-app/hide', undefined)
+    expect(db.projects[0]).toMatchObject({ live_slot: 'b' })
+    expect(db.projects[0].hidden_at).toEqual(expect.any(String))
+  })
+
+  it('refuses a running project with 409 NOT_STOPPED and changes nothing', async () => {
+    seedProject('my-app')
+    space('my-app', [deployment('fe-a', 0, 0), deployment('be-a')])
+    const res = await call('post', '/api/admin/projects/my-app/hide', undefined)
+    expect(res.status).toBe(409)
+    expect(res.body).toEqual(errorBody('NOT_STOPPED'))
+    expect(db.projects ?? []).toEqual([])
+    expect(slugsOf(await call('get', '/api/admin/projects', undefined))).toEqual(['my-app'])
+  })
+
+  it('brings a hidden project back when it is deployed again', async () => {
+    seedProject('my-app', USER, 0)
+    space('my-app', [deployment('fe-a', 0, 0)])
+    await call('post', '/api/admin/projects/my-app/hide', undefined)
+    expect(slugsOf(await call('get', '/api/admin/projects', undefined))).toEqual([])
+    ;(db.deploys ??= []).push({ id: randomUUID(), user_id: USER, slug: 'my-app', repo: 'Student/my-app', created_at: new Date(Date.now() + 60_000).toISOString() })
+    expect(slugsOf(await call('get', '/api/admin/projects', undefined))).toEqual(['my-app'])
+  })
+
+  it('answers 404 for an unknown slug or one that is not a slug, and 503 when the cluster cannot be read', async () => {
+    expect((await call('post', '/api/admin/projects/nope/hide', undefined)).status).toBe(404)
+    expect((await call('post', '/api/admin/projects/Bad_Slug/hide', undefined)).status).toBe(404)
+    seedProject('my-app')
+    clusterError = new ClusterError('unreachable')
+    const res = await call('post', '/api/admin/projects/my-app/hide', undefined)
+    expect(res.status).toBe(503)
+    expect(res.body).toEqual(errorBody('CLUSTER_UNREACHABLE'))
+    expect(db.projects ?? []).toEqual([])
+  })
+
+  it('answers 503 DATABASE_UNAVAILABLE when the record cannot be written, and the project stays listed', async () => {
+    seedProject('my-app')
+    space('my-app', [deployment('fe-a', 0, 0)])
+    restOverride = (table, method) => (table === 'projects' && method === 'POST' ? new Response('x', { status: 500 }) : undefined)
+    const res = await call('post', '/api/admin/projects/my-app/hide', undefined)
+    expect(res.status).toBe(503)
+    expect(res.body).toEqual(errorBody('DATABASE_UNAVAILABLE'))
+    restOverride = undefined
+    expect(slugsOf(await call('get', '/api/admin/projects', undefined))).toEqual(['my-app'])
+  })
+})
+
 describe('GET /api/admin/projects', () => {
   it('joins the database with each project namespace: services, pods, nodes, restarts, address, last stop', async () => {
     seedProject('my-app', USER, 5)
     seedProject('old-app', 'other', 1)
-    db.projects = [{ slug: 'my-app', live_slot: 'a' }]
+    db.projects = [{ slug: 'my-app', live_slot: 'a', hidden_at: null }]
     db.admin_actions = [
       { slug: 'my-app', action: 'stop', actor_email: 'older@example.com', created_at: '2026-11-10T02:00:00.000Z' },
       { slug: 'my-app', action: 'stop', actor_email: 'op@example.com', created_at: '2026-11-11T02:00:00.000Z' },
@@ -324,7 +473,7 @@ describe('GET /api/admin/projects', () => {
 
   it('is empty when nothing was ever deployed, without calling the cluster', async () => {
     const spies = [vi.spyOn(reader, 'deployments'), vi.spyOn(reader, 'pods')]
-    expect((await call('get', '/api/admin/projects', undefined)).body).toEqual({ projects: [] })
+    expect((await call('get', '/api/admin/projects', undefined)).body).toEqual({ projects: [], page: 1, pageSize: 10, total: 0 })
     for (const spy of spies) expect(spy).not.toHaveBeenCalled()
   })
 

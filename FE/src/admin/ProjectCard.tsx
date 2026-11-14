@@ -8,7 +8,7 @@ import { clusterAlert } from './clusterAlert.tsx'
 import { ClusterProblem } from './ClusterProblem.tsx'
 import { timeText } from './format.ts'
 import Row from './Row.tsx'
-import type { AdminProject, AdminService, StopResponse } from './types.ts'
+import type { AdminProject, AdminService, HideResponse, StopResponse } from './types.ts'
 import { isForbidden } from './useAdminRead.ts'
 
 // 공간의 서비스가 하나도 없거나(공간 없음) 모두 0개로 내려갔으면(중지됨) 끌 것이 없다. 중지 뒤에는 lastStop이 아니라 replicas를 본다.
@@ -128,6 +128,98 @@ function StopPanel({ slug, running, onStopped, onForbidden }: { slug: string; ru
   )
 }
 
+type HideState = { step: 'idle' } | { step: 'confirm' } | { step: 'hiding' } | { step: 'failed'; error: unknown }
+
+// 정리(FR-104): 중지된 프로젝트를 이 목록에서 숨긴다. 클러스터의 객체는 지우지 않는다(클러스터 정리는 아직 없다).
+function HidePanel({ slug, onStopped, onForbidden }: { slug: string } & StopHandlers) {
+  const [hide, setHide] = useState<HideState>({ step: 'idle' })
+
+  async function run() {
+    setHide({ step: 'hiding' })
+    try {
+      await apiFetch<HideResponse>(`/api/admin/projects/${slug}/hide`, {})
+    } catch (error) {
+      if (isForbidden(error)) {
+        onForbidden()
+        return
+      }
+      setHide({ step: 'failed', error })
+      return
+    }
+    // 목록을 다시 읽으면 이 카드는 사라진다.
+    onStopped()
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      {(hide.step === 'idle' || hide.step === 'failed') && (
+        <Button
+          variant="outline"
+          className="self-start"
+          aria-label={`${slug} 정리`}
+          onClick={() => {
+            setHide({ step: 'confirm' })
+          }}
+        >
+          정리
+        </Button>
+      )}
+      {(hide.step === 'confirm' || hide.step === 'hiding') && (
+        <NoticeBanner variant="warn" title={`${slug}를 목록에서 정리할까요?`}>
+          <div className="flex flex-col gap-2">
+            <p>이 목록에서만 숨겨요. 클러스터의 서비스 · 주소 · 이미지는 지우지 않아요(클러스터 정리는 아직 없어요). 학생이 다시 배포하면 목록에 돌아와요.</p>
+            <div className="flex gap-2">
+              <Button
+                aria-label={`${slug} 정리하기`}
+                disabled={hide.step === 'hiding'}
+                aria-busy={hide.step === 'hiding'}
+                onClick={() => void run()}
+              >
+                {hide.step === 'hiding' ? '정리하는 중…' : '정리하기'}
+              </Button>
+              <Button
+                variant="outline"
+                disabled={hide.step === 'hiding'}
+                onClick={() => {
+                  setHide({ step: 'idle' })
+                }}
+              >
+                취소
+              </Button>
+            </div>
+          </div>
+        </NoticeBanner>
+      )}
+      {hide.step === 'failed' && <HideProblem error={hide.error} />}
+    </div>
+  )
+}
+
+function ProjectNotFound() {
+  return <NoticeBanner title="프로젝트를 찾을 수 없어요">목록에서 사라졌을 수 있어요. 새로 읽으면 보여요.</NoticeBanner>
+}
+
+function HideProblem({ error }: { error: unknown }) {
+  if (error instanceof ApiError && error.code === 'NOT_STOPPED') {
+    return (
+      <NoticeBanner variant="info" title="아직 실행 중이에요">
+        서비스가 다시 떠 있어서 정리하지 못했어요. 먼저 강제 중지하세요.
+      </NoticeBanner>
+    )
+  }
+  if (error instanceof ApiError && error.code === 'PROJECT_NOT_FOUND') {
+    return <ProjectNotFound />
+  }
+  if (error instanceof ApiError && error.code === 'DATABASE_UNAVAILABLE') {
+    return (
+      <NoticeBanner variant="warn" title="저장소에 닿지 못했어요">
+        정리하지 못했어요. 같은 정리를 다시 해도 안전해요.
+      </NoticeBanner>
+    )
+  }
+  return <ClusterProblem error={error} retries={false} fallback="정리하지 못했어요" />
+}
+
 function StopProblem({ error }: { error: unknown }) {
   if (error instanceof ApiError && error.code === 'NOT_RUNNING') {
     return (
@@ -137,7 +229,7 @@ function StopProblem({ error }: { error: unknown }) {
     )
   }
   if (error instanceof ApiError && error.code === 'PROJECT_NOT_FOUND') {
-    return <NoticeBanner title="프로젝트를 찾을 수 없어요">목록에서 사라졌을 수 있어요. 새로 읽으면 보여요.</NoticeBanner>
+    return <ProjectNotFound />
   }
   // 중지는 POST라서 읽기와 달리 자동으로 다시 시도하지 않는다. 공용 안내에는 retries={false}를 넘겨 "자동으로 다시 시도해요"를 빼고, 이 호출에만 있는 뜻만 따로 둔다.
   if (error instanceof ApiError && error.code === 'CLUSTER_FORBIDDEN') {
@@ -219,6 +311,7 @@ function ProjectCard({ project, onStopped, onForbidden }: { project: AdminProjec
         </ul>
       )}
       <StopPanel slug={project.slug} running={state === 'running'} onStopped={onStopped} onForbidden={onForbidden} />
+      {(state === 'stopped' || state === 'none') && <HidePanel slug={project.slug} onStopped={onStopped} onForbidden={onForbidden} />}
     </li>
   )
 }

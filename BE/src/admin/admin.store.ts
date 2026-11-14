@@ -15,6 +15,8 @@ export interface ProjectRecord {
   repo: string
   ownerId: string
   liveSlot: 'a' | 'b' | null
+  /** 운영자가 정리했고 그 뒤로 다시 배포하지 않았다. */
+  hidden: boolean
 }
 
 export interface StopRecord {
@@ -42,21 +44,25 @@ export class AdminStore {
   /** 배포가 하나라도 있는 프로젝트. 가장 최근에 저장한 배포 순, 프로젝트마다 한 줄(최근 배포의 소유자와 레포). */
   async projects(): Promise<ProjectRecord[]> {
     const [deploys, projects] = await Promise.all([
-      this.call('deploys', 'GET', { select: 'slug,repo,user_id', order: 'created_at.desc', limit: String(MAX_ROWS) }),
-      this.call('projects', 'GET', { select: 'slug,live_slot' }),
+      this.call('deploys', 'GET', { select: 'slug,repo,user_id,created_at', order: 'created_at.desc', limit: String(MAX_ROWS) }),
+      this.call('projects', 'GET', { select: 'slug,live_slot,hidden_at' }),
     ])
-    const lives = new Map<string, 'a' | 'b' | null>()
+    const lives = new Map<string, { liveSlot: 'a' | 'b' | null; hiddenAt: number | null }>()
     for (const row of projects) {
       if (!isRecord(row) || !str(row.slug) || (row.live_slot !== null && row.live_slot !== 'a' && row.live_slot !== 'b')) throw this.unreadable('projects')
-      lives.set(row.slug, row.live_slot)
+      if (row.hidden_at !== null && !str(row.hidden_at)) throw this.unreadable('projects')
+      lives.set(row.slug, { liveSlot: row.live_slot, hiddenAt: row.hidden_at === null ? null : Date.parse(row.hidden_at) })
     }
     const seen = new Set<string>()
     const out: ProjectRecord[] = []
     for (const row of deploys) {
-      if (!isRecord(row) || !str(row.slug) || !str(row.repo) || !str(row.user_id)) throw this.unreadable('deploys')
+      if (!isRecord(row) || !str(row.slug) || !str(row.repo) || !str(row.user_id) || !str(row.created_at)) throw this.unreadable('deploys')
       if (seen.has(row.slug)) continue
       seen.add(row.slug)
-      out.push({ slug: row.slug, repo: row.repo, ownerId: row.user_id, liveSlot: lives.get(row.slug) ?? null })
+      // 첫 줄이 이 프로젝트의 가장 최근 배포다. 정리한 뒤에 다시 배포했다면 숨기지 않는다.
+      const own = lives.get(row.slug)
+      const hidden = own?.hiddenAt != null && own.hiddenAt > Date.parse(row.created_at)
+      out.push({ slug: row.slug, repo: row.repo, ownerId: row.user_id, liveSlot: own?.liveSlot ?? null, hidden })
     }
     return out
   }
@@ -76,16 +82,21 @@ export class AdminStore {
     return out
   }
 
+  /** 프로젝트를 운영자 목록에서 숨긴다(`projects`에 줄이 없으면 만든다). 이미 숨겼으면 시각만 새로 쓴다. */
+  async hide(slug: string): Promise<void> {
+    await this.call('projects', 'POST', { on_conflict: 'slug' }, { slug, hidden_at: new Date().toISOString() }, 'resolution=merge-duplicates,return=representation')
+  }
+
   async recordStop(slug: string, actor: { id: string; email: string }): Promise<void> {
     await this.call('admin_actions', 'POST', {}, { slug, action: 'stop', actor_id: actor.id, actor_email: actor.email })
   }
 
-  private async call(table: string, method: 'GET' | 'POST', query: Record<string, string>, body?: object): Promise<unknown[]> {
+  private async call(table: string, method: 'GET' | 'POST', query: Record<string, string>, body?: object, prefer = 'return=representation'): Promise<unknown[]> {
     const qs = new URLSearchParams(query).toString()
     try {
       const res = await fetch(`${this.restUrl}/${table}${qs ? `?${qs}` : ''}`, {
         method,
-        headers: { apikey: this.secretKey, ...(body ? { 'Content-Type': 'application/json', Prefer: 'return=representation' } : {}) },
+        headers: { apikey: this.secretKey, ...(body ? { 'Content-Type': 'application/json', Prefer: prefer } : {}) },
         body: body ? JSON.stringify(body) : undefined,
         signal: AbortSignal.timeout(TIMEOUT_MS),
       })

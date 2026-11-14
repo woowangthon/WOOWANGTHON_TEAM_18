@@ -18,6 +18,7 @@ const NODES = '/api/admin/nodes'
 const PROJECTS = '/api/admin/projects'
 const INCIDENTS = '/api/admin/incidents'
 const incidentPath = (id: string, what: 'stop' | 'dismiss') => `/api/admin/incidents/${id}/${what}`
+const hidePath = (slug: string) => `/api/admin/projects/${slug}/hide`
 const stopPath = (slug: string) => `/api/admin/projects/${slug}/stop`
 
 const leader: AdminNode = {
@@ -71,7 +72,7 @@ const stopped: AdminProject = {
   services: [{ name: 'fe-a', slot: 'a', replicas: 0, readyReplicas: 0, restarts: 0, usage: null, pods: [] }],
 }
 const noSpace: AdminProject = { ...running, slug: 'new-app', url: null, liveSlot: null, services: [] }
-const projectsOf = (projects: AdminProject[] = [running, stopped, noSpace]): ProjectsResponse => ({ projects })
+const projectsOf = (projects: AdminProject[] = [running, stopped, noSpace], page = 1, total = projects.length): ProjectsResponse => ({ projects, page, pageSize: 10, total })
 
 // 경로마다 답을 정한다. 값이 함수면 부를 때마다 새로 만든다.
 type Reply = unknown
@@ -655,4 +656,113 @@ it('refreshes with an icon-only button that keeps its name', async () => {
   const button = screen.getByRole('button', { name: '지금 새로 읽기' })
   expect(button.textContent).toBe('')
   expect(button.querySelector('svg')).toBeTruthy()
+})
+
+const view = (query: string) => `${PROJECTS}${query}`
+const search = async (value: string) => {
+  fireEvent.change(screen.getByRole('textbox', { name: 'slug · 레포 검색' }), { target: { value } })
+  fireEvent.click(screen.getByRole('button', { name: '검색' }))
+  await advance(0)
+}
+
+it('searches by slug or repo on the server, from the first page, and trims the text', async () => {
+  serve({ [view('?q=shop')]: projectsOf([{ ...running, slug: 'shop' }]) })
+  await show()
+  await search('  shop ')
+  expect(api.apiFetch).toHaveBeenCalledWith(view('?q=shop'))
+  expect(card('shop')).toBeTruthy()
+  expect(screen.queryByText('old-app')).toBeNull()
+})
+
+it('filters by status on the server and keeps the search text', async () => {
+  serve({ [view('?q=app&status=running')]: projectsOf([running]), [view('?q=app')]: projectsOf([running, stopped]) })
+  await show()
+  await search('app')
+  await press('실행 중')
+  expect(api.apiFetch).toHaveBeenCalledWith(view('?q=app&status=running'))
+  expect(screen.getByRole('button', { name: '실행 중' }).getAttribute('aria-pressed')).toBe('true')
+  expect(screen.getByRole<HTMLInputElement>('textbox', { name: 'slug · 레포 검색' }).value).toBe('app')
+})
+
+it('says nothing matched, and keeps the search and filter controls, when a search finds nothing', async () => {
+  serve({ [view('?q=zzz')]: projectsOf([], 1, 0) })
+  await show()
+  await search('zzz')
+  expect(screen.getByText('조건에 맞는 서비스가 없어요.')).toBeTruthy()
+  expect(screen.getByRole('textbox', { name: 'slug · 레포 검색' })).toBeTruthy()
+})
+
+it('shows the page and total, pages with the buttons, and disables them at the ends', async () => {
+  serve({ [PROJECTS]: projectsOf([running], 1, 25), [view('?page=2')]: projectsOf([stopped], 2, 25), [view('?page=3')]: projectsOf([noSpace], 3, 25) })
+  await show()
+  expect(screen.getByText('1 / 3쪽 · 총 25개')).toBeTruthy()
+  expect(screen.getByRole<HTMLButtonElement>('button', { name: '이전' }).disabled).toBe(true)
+  await press('다음')
+  expect(api.apiFetch).toHaveBeenCalledWith(view('?page=2'))
+  expect(screen.getByText('2 / 3쪽 · 총 25개')).toBeTruthy()
+  await press('다음')
+  expect(screen.getByRole<HTMLButtonElement>('button', { name: '다음' }).disabled).toBe(true)
+  await press('이전')
+  expect(screen.getByText('2 / 3쪽 · 총 25개')).toBeTruthy()
+})
+
+it('goes back to the last page when cleaning up emptied the page it was on', async () => {
+  serve({ [PROJECTS]: projectsOf([running], 1, 11), [view('?page=2')]: projectsOf([stopped], 2, 11) })
+  await show()
+  await press('다음')
+  expect(screen.getByText('2 / 2쪽 · 총 11개')).toBeTruthy()
+  // 다른 곳에서 정리해 총 10개가 되어 2쪽이 비었다.
+  replies[view('?page=2')] = projectsOf([], 2, 10)
+  replies[PROJECTS] = projectsOf([running], 1, 10)
+  await advance(10_000)
+  expect(screen.getByText('1 / 1쪽 · 총 10개')).toBeTruthy()
+})
+
+it('offers the clean-up only for a stopped project or one without a namespace, never for a running one or one it could not read', async () => {
+  serve({ [PROJECTS]: projectsOf([running, stopped, noSpace, { ...noSpace, slug: 'broken', clusterError: 'CLUSTER_UNREACHABLE' }]) })
+  await show()
+  expect(screen.queryByRole('button', { name: 'my-app 정리' })).toBeNull()
+  expect(screen.getByRole('button', { name: 'old-app 정리' })).toBeTruthy()
+  expect(screen.getByRole('button', { name: 'new-app 정리' })).toBeTruthy()
+  expect(screen.queryByRole('button', { name: 'broken 정리' })).toBeNull()
+})
+
+it('asks first, says the cluster objects stay, then hides the project and reads the list again', async () => {
+  serve({ [hidePath('old-app')]: { slug: 'old-app' } })
+  await show()
+  await press('old-app 정리')
+  expect(screen.getByText(/클러스터의 서비스 · 주소 · 이미지는 지우지 않아요/)).toBeTruthy()
+  expect(reads(hidePath('old-app'))).toBe(0)
+  replies[PROJECTS] = projectsOf([running, noSpace])
+  await press('old-app 정리하기')
+  expect(api.apiFetch).toHaveBeenCalledWith(hidePath('old-app'), {})
+  expect(screen.queryByText('old-app', { selector: 'span' })).toBeNull()
+})
+
+it('cancels a clean-up without calling the server', async () => {
+  await show()
+  await press('old-app 정리')
+  fireEvent.click(within(card('old-app')).getByRole('button', { name: '취소' }))
+  expect(reads(hidePath('old-app'))).toBe(0)
+  expect(screen.getByRole('button', { name: 'old-app 정리' })).toBeTruthy()
+})
+
+it.each([
+  [new ApiError(409, 'NOT_STOPPED', 'x'), '아직 실행 중이에요'],
+  [new ApiError(404, 'PROJECT_NOT_FOUND', 'x'), '프로젝트를 찾을 수 없어요'],
+  [new ApiError(503, 'DATABASE_UNAVAILABLE', 'x'), '저장소에 닿지 못했어요'],
+])('says why a clean-up failed (%s)', async (error, title) => {
+  serve({ [hidePath('old-app')]: error })
+  await show()
+  await press('old-app 정리')
+  await press('old-app 정리하기')
+  expect(within(card('old-app')).getByText(title)).toBeTruthy()
+})
+
+it('shows the forbidden notice when the clean-up is refused as not an operator', async () => {
+  serve({ [hidePath('old-app')]: new ApiError(403, 'ADMIN_REQUIRED', 'x') })
+  await show()
+  await press('old-app 정리')
+  await press('old-app 정리하기')
+  expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('권한이 없어요')
 })
