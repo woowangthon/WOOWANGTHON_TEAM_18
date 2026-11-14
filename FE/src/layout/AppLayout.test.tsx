@@ -35,7 +35,7 @@ it('puts only the dashboard and my deploys on the left, and the profile and sign
 it('gives an admin the admin menu with a jump to the alerts, no profile and no onboarding link, and a logo that goes to /admin', () => {
   show({ role: 'admin' })
   expect(mainMenu().getAllByRole('link').map((a) => a.textContent)).toEqual(['관리자', '운영 알림'])
-  expect(mainMenu().getByRole('link', { name: '운영 알림' }).getAttribute('href')).toBe('#운영알림')
+  expect(mainMenu().getByRole('link', { name: '운영 알림' }).getAttribute('href')).toBe('#incidents-heading')
   expect(within(header()).queryByRole('link', { name: '프로필' })).toBeNull()
   expect(within(header()).getByRole('link', { name: 'WCP' }).getAttribute('href')).toBe('/admin')
   expect(screen.queryByRole('link', { name: /설문|기능 소개|지원 범위|사용 방법/ })).toBeNull()

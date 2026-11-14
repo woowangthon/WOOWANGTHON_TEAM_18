@@ -8,6 +8,7 @@ import HeroCarousel from '../landing/HeroCarousel.tsx'
 import ProjectTypes from '../landing/ProjectTypes.tsx'
 import Showcase from '../landing/Showcase.tsx'
 import SectionNav from '../landing/SectionNav.tsx'
+import SiteFooter from '../components/SiteFooter.tsx'
 import Survey from '../landing/Survey.tsx'
 
 const outlineLinkClass =
@@ -30,7 +31,7 @@ function LandingPage() {
     <div className="flex min-h-screen flex-col">
       <header className="border-b border-line bg-bg">
         <div className="mx-auto flex min-h-16 max-w-300 flex-wrap items-center justify-between gap-x-4 gap-y-2 px-3 sm:px-4">
-          <Link to="/" aria-label="WCP" className="flex items-center py-2">
+          <Link to="/" className="flex items-center py-2">
             <Logo />
           </Link>
           <div className="flex items-center gap-2 py-2">
@@ -128,12 +129,7 @@ function LandingPage() {
         </section>
       </main>
 
-      <footer className="border-t border-line">
-        <div className="mx-auto flex max-w-300 items-center gap-3 px-3 py-6 text-sm text-muted sm:px-4">
-          <Logo className="size-6" />
-          <span>2026 AI 우왕톤 · 왕가네식구들</span>
-        </div>
-      </footer>
+      <SiteFooter />
     </div>
   )
 }

@@ -3,6 +3,7 @@ import { Link, NavLink, Outlet, useLocation } from 'react-router'
 import { isAdmin } from '../auth/isAdmin.ts'
 import { useAuth } from '../auth/useAuth.ts'
 import Logo from '../components/Logo.tsx'
+import SiteFooter from '../components/SiteFooter.tsx'
 import { Alert } from '../components/ui/Alert.tsx'
 import { Button } from '../components/ui/Button.tsx'
 import { tabClass } from '../components/ui/tabClass.ts'
@@ -36,7 +37,7 @@ function AppLayout() {
         <div className="mx-auto flex min-h-16 max-w-300 flex-wrap items-center justify-between gap-x-4 gap-y-2 px-3 sm:px-4">
           <div className="flex flex-wrap items-stretch gap-x-8 self-stretch">
             {/* 관리자는 /admin 안에서만 움직인다(편의일 뿐, 서버는 막지 않는다). 로고도 /admin으로 간다. */}
-            <Link to={admin ? '/admin' : '/'} aria-label="WCP" className="flex items-center py-2">
+            <Link to={admin ? '/admin' : '/'} className="flex items-center py-2">
               <Logo />
             </Link>
             <nav aria-label="주 메뉴" className="flex min-h-12 gap-1">
@@ -46,7 +47,7 @@ function AppLayout() {
                     관리자
                   </NavLink>
                   {/* 같은 화면 안의 구역으로 건너뛴다. */}
-                  <a href="#운영알림" className={navLinkClass({ isActive: false })}>
+                  <a href="#incidents-heading" className={navLinkClass({ isActive: false })}>
                     운영 알림
                   </a>
                 </>
@@ -88,12 +89,7 @@ function AppLayout() {
         )}
         <Outlet />
       </main>
-      <footer className="border-t border-line">
-        <div className="mx-auto flex max-w-300 items-center gap-3 px-3 py-4 text-sm text-muted sm:px-4">
-          <Logo className="size-6" />
-          <span>2026 AI 우왕톤 · 왕가네식구들</span>
-        </div>
-      </footer>
+      <SiteFooter />
     </div>
   )
 }

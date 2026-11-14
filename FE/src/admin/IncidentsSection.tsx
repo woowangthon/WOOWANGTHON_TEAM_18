@@ -175,7 +175,6 @@ function IncidentsSection({ read, onForbidden }: { read: AdminRead<AdminIncident
   return (
     <AdminSection
       id="incidents-heading"
-      anchor="운영알림"
       title="운영 알림"
       read={read}
       failed="운영 알림을 읽지 못했어요"
