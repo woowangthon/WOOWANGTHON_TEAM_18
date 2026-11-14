@@ -49,7 +49,7 @@ def client_with(*order: tuple[ModelName, Model]) -> Iterator[TestClient]:
         agent_api_token="t" * 32,
         gateway_url="http://platform:4000/mcp",
     )
-    judges = Judges(list(order))
+    judges: Judges = list(order)
     with TestClient(create_app(settings, runner=classify_only, judges=judges)) as c:
         yield c
 
@@ -141,13 +141,13 @@ def test_rejects_a_bad_request(over: dict[str, Any], path: str) -> None:
 
 
 def test_settings_order_is_local_then_redacted_planner(settings: Settings) -> None:
-    assert [n for n, _ in judges_from_settings(settings).order] == ["local"]
+    assert [n for n, _ in judges_from_settings(settings)] == ["local"]
     with_api = settings.model_copy(
         update={
             "planner_model_url": settings.local_model_url,
             "planner_model_name": "gpt",
         }
     )
-    order = judges_from_settings(with_api).order
+    order = judges_from_settings(with_api)
     assert [n for n, _ in order] == ["local", "planner"]
     assert isinstance(order[1][1], RedactingModel)

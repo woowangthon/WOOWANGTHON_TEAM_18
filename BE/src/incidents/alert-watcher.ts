@@ -10,7 +10,7 @@ import { DeploymentScaler } from '../k8s/deployment-scaler.js'
 import { DiscordNotifier } from './discord.notifier.js'
 import { IncidentJudge } from './incident-judge.js'
 import { operatorMessage, studentMessage } from './incident-text.js'
-import { type IncidentAi, type IncidentRow, IncidentsStore } from './incidents.store.js'
+import { emptyAi, type IncidentRow, IncidentsStore } from './incidents.store.js'
 
 const TICK_MS = 20_000
 // 규칙 코드가 바로 멈추는 경고. 나머지는 AI가 판단하고 사람이 정한다.
@@ -21,8 +21,6 @@ const IGNORED = (name: string) => name === 'Watchdog' || name === 'InfoInhibitor
 const KEPT_LABELS = ['namespace', 'pod', 'container', 'deployment', 'job_name', 'resource', 'reason', 'severity']
 const LABEL_CHARS = 200
 
-export const PENDING_AI: IncidentAi = { status: 'pending', risk: null, recommendation: null, cause: null, reason: null, model: null }
-const SKIPPED_AI: IncidentAi = { ...PENDING_AI, status: 'skipped' }
 
 const keyOf = (slug: string, alertname: string) => `${slug}\u0000${alertname}`
 const clip = (s: string) => redactString(s).slice(0, LABEL_CHARS)
@@ -98,12 +96,14 @@ export class AlertWatcher implements OnApplicationBootstrap, OnModuleDestroy {
 
     const open = await this.store.open()
     const openKeys = new Set(open.map((i) => keyOf(i.slug, i.alertname)))
-    for (const incident of open) if (!projects.has(keyOf(incident.slug, incident.alertname))) await this.store.resolve(incident.id)
-    for (const [key, { slug, alert }] of projects) if (!openKeys.has(key)) await this.opened(slug, alert)
-
-    for (const [key, alert] of nodes) {
-      if (!this.nodeAlerts.has(key)) await this.discord.toOperator(`[노드] ${alert.labels.alertname} ${alert.labels.instance ?? ''}\n${clip(alert.summary)}`)
-    }
+    // 프로젝트마다 따로라 함께 돈다(한 확인이 20초를 넘지 않게).
+    await Promise.all([
+      ...open.filter((i) => !projects.has(keyOf(i.slug, i.alertname))).map((i) => this.store.resolve(i.id)),
+      ...[...projects].filter(([key]) => !openKeys.has(key)).map(([, { slug, alert }]) => this.opened(slug, alert)),
+      ...[...nodes]
+        .filter(([key]) => !this.nodeAlerts.has(key))
+        .map(([, alert]) => this.discord.toOperator(`[노드] ${alert.labels.alertname} ${alert.labels.instance ?? ''}\n${clip(alert.summary)}`)),
+    ])
     this.nodeAlerts = new Set(nodes.keys())
   }
 
@@ -116,7 +116,7 @@ export class AlertWatcher implements OnApplicationBootstrap, OnModuleDestroy {
       summary: clip(alert.summary),
       fired_at: alert.activeAt ?? new Date().toISOString(),
       action: 'pending',
-      ai: PENDING_AI,
+      ai: emptyAi('pending'),
     })
     if (!incident) return
     this.logger.log(`incident opened: ${slug} ${incident.alertname}`)
@@ -132,7 +132,7 @@ export class AlertWatcher implements OnApplicationBootstrap, OnModuleDestroy {
   private async autoStop(incident: IncidentRow): Promise<boolean> {
     if (await this.deploys.findActiveRun(incident.slug)) return false
     if (!(await stopProject(this.reader, this.scaler, incident.slug))) return false
-    const stopped = await this.store.update(incident.id, { action: 'auto_stopped', ai: SKIPPED_AI, decided_by: 'rule', decided_at: new Date().toISOString() }, 'pending')
+    const stopped = await this.store.update(incident.id, { action: 'auto_stopped', ai: emptyAi('skipped'), decided_by: 'rule', decided_at: new Date().toISOString() }, 'pending')
     if (!stopped) return true
     this.logger.log(`incident auto-stopped: ${incident.slug}`)
     await this.notify(stopped)
@@ -150,9 +150,11 @@ export class AlertWatcher implements OnApplicationBootstrap, OnModuleDestroy {
   }
 
   private async notify(incident: IncidentRow): Promise<void> {
-    const owner = await this.deploys.findSlugOwner(incident.slug).catch(() => undefined)
-    const url = owner ? await this.store.webhook(owner.user_id).catch(() => null) : null
-    await Promise.all([this.discord.toOperator(operatorMessage(incident)), this.discord.toStudent(url, studentMessage(incident))])
+    const student = async () => {
+      const owner = await this.deploys.findSlugOwner(incident.slug).catch(() => undefined)
+      await this.discord.toStudent(owner ? await this.store.webhook(owner.user_id).catch(() => null) : null, studentMessage(incident))
+    }
+    await Promise.all([this.discord.toOperator(operatorMessage(incident)), student()])
   }
 }
 

@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config'
 import { redactString } from '../common/redact.js'
 import type { Env } from '../config/env.js'
 import { ClusterReader, type PodInfo } from '../k8s/cluster-reader.js'
-import type { IncidentAi, IncidentRow } from './incidents.store.js'
+import { emptyAi, type IncidentAi, type IncidentRow, MODELS, RECOMMENDATIONS, RISKS } from './incidents.store.js'
 
 // AI 서버는 로컬 모델(40초) → 추론 API(40초)까지 본다.
 const TIMEOUT_MS = 90_000
@@ -12,12 +12,9 @@ const LOG_LINES = 200
 const MAX_PODS = 20
 const TEXT_CHARS = 300
 
-const RISKS = ['low', 'medium', 'high'] as const
-const RECOMMENDATIONS = ['stop', 'watch', 'ignore'] as const
-const MODELS = ['local', 'planner'] as const
 const oneOf = <T extends string>(list: readonly T[], v: unknown): v is T => typeof v === 'string' && (list as readonly string[]).includes(v)
 
-export const FAILED: IncidentAi = { status: 'failed', risk: null, recommendation: null, cause: null, reason: null, model: null }
+const FAILED = emptyAi('failed')
 
 /**
  * AI 서버 `POST /agent/incidents`에 경고 하나의 판단을 묻는다(docs/design/incidents.md). 던지지 않는다: 못 받으면 status failed.

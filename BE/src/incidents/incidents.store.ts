@@ -9,14 +9,21 @@ const databaseUnavailable = () => new ServiceUnavailableException({ code: 'DATAB
 
 export type IncidentAction = 'auto_stopped' | 'pending' | 'stopped' | 'dismissed'
 
+export const RISKS = ['low', 'medium', 'high'] as const
+export const RECOMMENDATIONS = ['stop', 'watch', 'ignore'] as const
+export const MODELS = ['local', 'planner'] as const
+
 export interface IncidentAi {
   status: 'pending' | 'done' | 'failed' | 'skipped'
-  risk: 'low' | 'medium' | 'high' | null
-  recommendation: 'stop' | 'watch' | 'ignore' | null
+  risk: (typeof RISKS)[number] | null
+  recommendation: (typeof RECOMMENDATIONS)[number] | null
   cause: string | null
   reason: string | null
-  model: 'local' | 'planner' | null
+  model: (typeof MODELS)[number] | null
 }
+
+/** 판단 내용이 없는 AI 칸(기다림 · 실패 · 건너뜀). */
+export const emptyAi = (status: Exclude<IncidentAi['status'], 'done'>): IncidentAi => ({ status, risk: null, recommendation: null, cause: null, reason: null, model: null })
 
 export interface IncidentRow {
   id: string

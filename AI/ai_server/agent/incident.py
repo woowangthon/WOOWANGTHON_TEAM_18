@@ -7,7 +7,6 @@
 import asyncio
 import json
 import logging
-from dataclasses import dataclass
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
@@ -15,7 +14,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models import Model
 
 from ai_server.agent import budget
-from ai_server.agent.loop import OUTPUT_RETRIES, api_model, local_act_model
+from ai_server.agent.loop import LOCAL_ACT_SETTINGS, OUTPUT_RETRIES, api_model, local_model
 from ai_server.agent.models import NonEmpty, Wire
 from ai_server.agent.redact import RedactingModel
 from ai_server.agent.trace import exc_shape, trace
@@ -86,27 +85,24 @@ def _prompt(req: IncidentRequest) -> str:
     )
 
 
-@dataclass(frozen=True)
-class Judges:
-    """먼저 물을 순서대로. 추론 API는 RedactingModel로 감싸 둔다."""
-
-    order: list[tuple[ModelName, Model]]
+# 먼저 물을 순서대로. 추론 API는 RedactingModel로 감싸 둔다.
+Judges = list[tuple[ModelName, Model]]
 
 
 def judges_from_settings(settings: Settings) -> Judges:
-    order: list[tuple[ModelName, Model]] = []
-    local = local_act_model(settings)
+    order: Judges = []
+    local = local_model(settings, LOCAL_ACT_SETTINGS)
     if local is not None:
         order.append(("local", local))
     api = api_model(settings)
     if api is not None:
         order.append(("planner", RedactingModel(api)))
-    return Judges(order)
+    return order
 
 
 async def judge(req: IncidentRequest, judges: Judges) -> tuple[IncidentJudgment, ModelName] | None:
     prompt = _prompt(req)
-    for name, model in judges.order:
+    for name, model in judges:
         agent = Agent(
             model, output_type=IncidentJudgment, instructions=INSTRUCTIONS, retries=OUTPUT_RETRIES
         )
