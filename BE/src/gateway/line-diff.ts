@@ -7,7 +7,7 @@ export interface LineDiff {
 }
 
 /** 줄 목록. 끝의 줄바꿈은 마지막 줄의 끝이지 빈 줄이 아니다. */
-const toLines = (text: string): string[] => (text === '' ? [] : (text.endsWith('\n') ? text.slice(0, -1) : text).split('\n'))
+export const toLines = (text: string): string[] => (text === '' ? [] : (text.endsWith('\n') ? text.slice(0, -1) : text).split('\n'))
 
 /**
  * `before` → `after`의 최소 편집(Myers O(ND))을 구한다. 지운 줄 + 넣은 줄이 `limit`을 넘으면 null이다.

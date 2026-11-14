@@ -147,7 +147,10 @@ def test_a_run_logs_the_classification_the_plan_model_calls_and_outcome(
         line.startswith("trace ticket=t_0013 act model=planner name=function:") for line in out
     )
     planned = next(line for line in out if " plan done " in line)
-    assert " steps=4 tools=run_render,run_deploy,run_verify,submit_result requests=1 " in planned
+    assert (
+        " reads=- steps=4 tools=run_render,run_deploy,run_verify,submit_result requests=1 "
+        in planned
+    )
     assert any(
         line.startswith("trace ticket=t_0013 act model=local name=function:") for line in out
     )
@@ -236,6 +239,26 @@ def test_replan_logs_the_path_and_the_planner_model(trace_log: pytest.LogCapture
     assert "trace ticket=t_0013 path=replan_after_playbook (plan gave up)" in out
     assert any(" act model=planner name=function:" in line for line in out)
     assert " outcome status=gave_up path=replan_after_playbook " in out[-1]
+
+
+def test_reads_while_planning_log_the_tool_names_but_not_the_path_or_the_file(
+    trace_log: pytest.LogCaptureFixture,
+) -> None:
+    gw = FakeGateway()
+    gw.script["read_repo"] = [{"type": "file", "path": "a", "content": f"KEY={SECRET_VALUE}\n"}]
+    planner = Script(
+        classify("B4"),
+        call("read_repo", path=f"src/{SECRET_VALUE}.ts"),
+        call("read_pod_logs", service="fe"),
+        plan(FINISH),
+        final(status="gave_up", summary="모름"),
+    )
+    solve(make_run(**SIGNALS["B4"]), gw, Script(final(status="gave_up", summary="모름")), planner)
+    out = lines(trace_log)
+    assert SECRET_VALUE not in trace_log.text
+    assert "trace ticket=t_0013 tool=read_repo ok=True args=path" in out
+    planned = next(line for line in out if " plan done " in line)
+    assert " reads=read_repo,read_pod_logs steps=1 tools=submit_result requests=3 " in planned
 
 
 def test_classification_logs_the_regex_hint_and_the_model_choice(

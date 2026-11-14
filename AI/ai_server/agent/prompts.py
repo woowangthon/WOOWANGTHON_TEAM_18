@@ -29,12 +29,13 @@ How to work:
 - Calls per ticket: run_build 2, run_render 5, run_deploy 2, run_verify 3, edit_repo_file 5,
   open_pr 2, 20 tool calls in all.
   When one runs out the platform stops you, so call run_deploy only with a patch you expect to work.
-- A code change goes through edit_repo_file: the whole new content of each file, at most 5 files and
-  50 changed lines (added plus removed) over the whole ticket, never .env or .github/, never a
-  secret value. It commits to the platform's bot fork, not to the student's repository, and returns
-  `source`. Test that exact `source`: run_build for each service whose files changed, then
-  run_deploy with the same `source`, then run_verify, then open_pr with the same `source`, a Korean
-  title and a body that says what was wrong and what you changed.
+- A code change goes through edit_repo_file. A file is `{ path, find, replace }` (text found
+  once in the file; for a few lines) or `{ path, content }` (a whole file). At most 5 files and 50
+  changed lines (added plus removed) per ticket, never .env or .github/, never a secret value. It
+  commits to the platform's bot fork and returns `source`. Test that exact `source`: run_build for
+  each service whose files changed, then run_deploy, run_verify and open_pr with the same `source`
+  (a Korean title and a body saying what was wrong and what you changed).
+  Skip run_render on this path: it takes no `source` and only renders the original commit.
   open_pr is refused (NOT_VERIFIED) until run_verify has passed for that `source`.
   read_repo also takes `source` to read your changed files back.
 - open_pr answers `{ url }`, or `{ url: null, patchAttached: true }` when the student's
@@ -69,10 +70,13 @@ follow the excerpt.
 PLAN_INSTRUCTIONS = (
     INSTRUCTIONS
     + """
-You are the planner now: you call no tools. Answer with a plan that a small local model carries out
-step by step; it cannot reason much, so:
-- give each step its tool and exact args: the whole `specPatch` with real values, the whole new
-  content of each file for edit_repo_file; put a condition in `when` only where one is needed;
+You are the planner now. You may call only the read tools (read_repo, get_target_status,
+read_pod_logs) to see the evidence; each read counts toward the call limits, so read only what the
+plan needs and do not repeat a read as a plan step. Then answer with a plan that a small local model
+carries out step by step; it cannot reason much, so:
+- give each step its tool and exact args: the whole `specPatch` with real values, and for
+  edit_repo_file `{ path, find, replace }` with the exact current text from the file you read; put
+  a condition in `when` only where one is needed;
 - `{...}` placeholders are only for values an earlier step returns (the `source` of edit_repo_file);
 - end with a submit_result step whose `when` says which result to finish with and when, by the
   rules above; a plan can be that one step alone (a secret only the student knows).
@@ -172,6 +176,9 @@ def digest(ticket: Ticket, notes: list[str]) -> str:
     return "\n".join(parts)
 
 
+# 계획 단계에서 추론 모델이 부를 수 있는 도구. 읽기만 하고 대상 슬롯 · 레포를 바꾸지 않는다.
+READ_TOOLS = frozenset({"get_target_status", "read_pod_logs", "read_repo"})
+
 # 플랫폼이 실제로 여는 도구(BE/src/gateway/tools.ts TOOLS)와 도구별 한도(BE/src/gateway/budget.ts).
 GATEWAY_TOOLS = frozenset(
     {
@@ -220,10 +227,10 @@ def classify_prompt(ticket: Ticket, notes: list[str], cases: list[Case], hints: 
 
 
 def plan_steps_prompt(ticket: Ticket, notes: list[str], case: Case) -> str:
-    """추론 모델이 case의 playbook을 참고해 계획을 낸다(도구는 부르지 않는다)."""
+    """추론 모델이 case의 playbook을 참고해 계획을 낸다(읽기 도구만 부른다)."""
     # 티켓에 로그가 있으면(빌드 로그, apply · verify 실패의 Pod 로그) 첫 관찰을 건너뛸 수 있다.
     logs = (
-        "The ticket below already carries the latest log lines; skip a log-reading step when "
+        "The ticket below already carries the latest log lines; skip reading the logs when "
         "they show the cause. "
         if ticket.logs.lines
         else ""

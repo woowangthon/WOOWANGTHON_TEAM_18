@@ -99,6 +99,11 @@ export class IncidentsStore {
     return (await this.rows('PATCH', where, { ...patch, updated_at: new Date().toISOString() }))[0] ?? null
   }
 
+  /** 이 프로젝트의 정할 차례인(울리고 있고 pending) 알림을 모두 같은 결정으로 닫는다. 닫은 줄을 돌려준다. */
+  async closePending(slug: string, patch: Pick<IncidentRow, 'action' | 'decided_by' | 'decided_at'> & Partial<Pick<IncidentRow, 'ai'>>): Promise<IncidentRow[]> {
+    return this.rows('PATCH', { slug: `eq.${slug}`, resolved_at: 'is.null', action: 'eq.pending' }, { ...patch, updated_at: new Date().toISOString() })
+  }
+
   async find(id: string): Promise<IncidentRow | null> {
     return (await this.rows('GET', { select: '*', id: `eq.${id}`, limit: '1' }))[0] ?? null
   }

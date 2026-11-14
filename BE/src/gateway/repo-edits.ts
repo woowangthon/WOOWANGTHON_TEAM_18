@@ -1,8 +1,8 @@
-import { Injectable } from '@nestjs/common'
+import { Injectable, Logger } from '@nestjs/common'
 import { isRecord } from '../common/is-record.js'
 import { hasSecretValue, redactString } from '../common/redact.js'
 import { type BaseEntry, BotError, BotRepo } from './bot-repo.js'
-import { lineDiff } from './line-diff.js'
+import { lineDiff, toLines } from './line-diff.js'
 import { MAX_FILE_BYTES, repoPath } from './repo-reader.js'
 import type { GatewayTicket } from './tickets.js'
 
@@ -28,6 +28,16 @@ interface Refusal {
 }
 
 const refuse = (code: EditCode, message: string): Refusal => ({ ok: false, code, message })
+
+const logger = new Logger('RepoEdits')
+/** EDIT_FORBIDDEN 거절(edit_repo_file · open_pr). 왜 거절했는지 종류만 로그에 남긴다(경로 · 값은 싣지 않는다). */
+const forbid = (kind: string, message: string): Refusal => {
+  logger.warn(`repo edit refused: ${kind}`)
+  return refuse('EDIT_FORBIDDEN', message)
+}
+
+/** edit_repo_file의 파일 하나: 전체 내용(content), 또는 파일에 한 번만 있는 글을 바꾸기(find · replace). */
+export type EditFile = { path: string; content: string } | { path: string; find: string; replace: string }
 
 interface Changed {
   /** 그 commit(티켓의 commitSha)의 내용. 새 파일이면 ''. */
@@ -127,7 +137,7 @@ export class RepoEdits {
     if (typeof args.title !== 'string' || args.title.trim() === '' || args.title.length > MAX_TITLE) return refuse('INVALID_ARGUMENT', `title must be a string of 1 to ${MAX_TITLE} characters`)
     if (typeof args.body !== 'string' || args.body.trim() === '' || args.body.length > MAX_BODY) return refuse('INVALID_ARGUMENT', `body must be a string of 1 to ${MAX_BODY} characters`)
     // PR 글은 학생의 공개 레포에 남는다. 비밀처럼 보이는 값이 있으면 열지 않는다.
-    if (hasSecretValue(args.title) || hasSecretValue(args.body)) return refuse('EDIT_FORBIDDEN', 'the title or body contains a secret-looking value')
+    if (hasSecretValue(args.title) || hasSecretValue(args.body)) return forbid('pr-secret', 'the title or body contains a secret-looking value')
     const source = this.resolve(ticket, args.source)
     if (typeof source === 'string') return refuse('INVALID_ARGUMENT', source)
     const mine = this.tickets.get(ticket.ticketId)!
@@ -152,7 +162,7 @@ export class RepoEdits {
     })
   }
 
-  private async doEdit(ticket: GatewayTicket, files: { path: string; content: string }[], message: string): Promise<EditAnswer> {
+  private async doEdit(ticket: GatewayTicket, files: EditFile[], message: string): Promise<EditAnswer> {
     this.prune()
     let mine = this.tickets.get(ticket.ticketId)
     if (!mine) {
@@ -163,44 +173,58 @@ export class RepoEdits {
     if (mine.pr) return refuse('INVALID_ARGUMENT', 'this ticket already opened a pull request')
     const merged = new Map(mine.files)
     for (const f of files) {
-      const prior = merged.get(f.path)
-      if (prior) {
-        merged.set(f.path, { ...prior, after: f.content })
-        continue
+      // 지금 내용: 이 티켓에서 이미 고친 내용, 아니면 티켓 commit의 내용.
+      let current = merged.get(f.path)
+      if (!current) {
+        const entry = mine.base.get(f.path)
+        if (entry === undefined) {
+          if (mine.truncated) return forbid('truncated', `${f.path}: the repository is too large to tell whether this file exists`)
+          if (!('content' in f)) return refuse('INVALID_ARGUMENT', `${f.path} does not exist; find needs an existing file (send { path, content } to create one)`)
+          current = { before: '', after: '', mode: '100644' }
+        } else {
+          if (entry.type !== 'blob' || (entry.mode !== '100644' && entry.mode !== '100755')) return forbid('not-regular', `${f.path} is not a regular file`)
+          if (entry.size > MAX_FILE_BYTES) return forbid('size', `${f.path} is larger than ${MAX_FILE_BYTES / 1024}KB`)
+          let before: string
+          try {
+            before = new TextDecoder('utf-8', { fatal: true }).decode(await this.bot.blob(mine.fork, entry.sha))
+          } catch (err) {
+            if (err instanceof BotError) throw err
+            return forbid('not-text', `${f.path} is not a text file`)
+          }
+          current = { before, after: before, mode: entry.mode }
+        }
       }
-      const entry = mine.base.get(f.path)
-      if (entry === undefined) {
-        if (mine.truncated) return refuse('EDIT_FORBIDDEN', `${f.path}: the repository is too large to tell whether this file exists`)
-        merged.set(f.path, { before: '', after: f.content, mode: '100644' })
-        continue
-      }
-      if (entry.type !== 'blob' || (entry.mode !== '100644' && entry.mode !== '100755')) return refuse('EDIT_FORBIDDEN', `${f.path} is not a regular file`)
-      if (entry.size > MAX_FILE_BYTES) return refuse('EDIT_FORBIDDEN', `${f.path} is larger than ${MAX_FILE_BYTES / 1024}KB`)
-      let before: string
-      try {
-        before = new TextDecoder('utf-8', { fatal: true }).decode(await this.bot.blob(mine.fork, entry.sha))
-      } catch (err) {
-        if (err instanceof BotError) throw err
-        return refuse('EDIT_FORBIDDEN', `${f.path} is not a text file`)
-      }
-      merged.set(f.path, { before, after: f.content, mode: entry.mode })
+      const after = 'content' in f ? f.content : replaceOnce(f.path, current.after, f.find, f.replace)
+      if (typeof after !== 'string') return after
+      if (Buffer.byteLength(after) > MAX_FILE_BYTES) return forbid('size', `${f.path}: the new content is larger than ${MAX_FILE_BYTES / 1024}KB`)
+      // 원래 내용에 NUL이 있었으면 find/replace 결과에도 남는다: 결과로 다시 본다.
+      if (after.includes('\0')) return forbid('not-text', `${f.path}: only text files can be written`)
+      merged.set(f.path, { ...current, after })
     }
     // 처음 내용으로 되돌린 파일은 바뀐 파일이 아니다.
     for (const [path, c] of merged) if (c.before === c.after) merged.delete(path)
     if (merged.size === 0) return refuse('INVALID_ARGUMENT', 'these files are the same as in the repository; nothing to change')
-    if (merged.size > MAX_FILES) return refuse('EDIT_FORBIDDEN', `at most ${MAX_FILES} files can be changed in one ticket (this would be ${merged.size})`)
+    if (merged.size > MAX_FILES) return forbid('files', `at most ${MAX_FILES} files can be changed in one ticket (this would be ${merged.size})`)
 
     let changedLines = 0
     for (const [path, c] of [...merged]) {
       const diff = lineDiff(c.before, c.after, MAX_CHANGED_LINES - changedLines)
-      if (diff === null) return refuse('EDIT_FORBIDDEN', `at most ${MAX_CHANGED_LINES} changed lines in one ticket (added plus removed lines, over the whole ticket)`)
+      if (diff === null) {
+        return forbid(
+          'lines',
+          `${path}: over the limit of ${MAX_CHANGED_LINES} changed lines in one ticket (added plus removed lines; ${changedLines} already used by the other files). ` +
+            `The file has ${toLines(c.before).length} lines and the new content has ${toLines(c.after).length}.` +
+            // 이번에 파일 전체(content)로 보낸 파일에만: 바뀐 줄만 보낸 경우가 많다.
+            (files.some((f) => f.path === path && 'content' in f) ? ' content is the whole new file; to change a few lines send { path, find, replace } instead' : ''),
+        )
+      }
       // 끝 줄바꿈만 다른 파일은 바뀐 줄이 없다: 고친 것으로 치지 않는다.
       if (diff.added.length + diff.removed.length === 0) merged.delete(path)
       changedLines += diff.added.length + diff.removed.length
-      if (diff.added.some(hasSecretValue)) return refuse('EDIT_FORBIDDEN', `${path} has an added line that looks like a secret value; secrets are never written to a repository`)
+      if (diff.added.some(hasSecretValue)) return forbid('secret', `${path} has an added line that looks like a secret value; secrets are never written to a repository`)
     }
     if (merged.size === 0) return refuse('INVALID_ARGUMENT', 'these files are the same as in the repository; nothing to change')
-    if (hasSecretValue(message)) return refuse('EDIT_FORBIDDEN', 'the commit message contains a secret-looking value')
+    if (hasSecretValue(message)) return forbid('message-secret', 'the commit message contains a secret-looking value')
 
     const commitSha = await this.bot.commit(
       mine.fork,
@@ -233,27 +257,38 @@ function fromBot(err: unknown): EditAnswer {
   return refuse('BOT_UNAVAILABLE', 'GitHub did not accept the bot account request; try once more, or report needs_user')
 }
 
+/** `find`를 `replace`로 바꾼 내용. `find`가 정확히 한 번 있어야 한다(`String.replace`의 `$` 패턴을 피해 잘라 붙인다). */
+function replaceOnce(path: string, text: string, find: string, replace: string): string | Refusal {
+  const at = text.indexOf(find)
+  if (at < 0) return refuse('INVALID_ARGUMENT', `${path}: find was not found; copy the exact current text (spaces and line breaks included) from read_repo`)
+  if (text.indexOf(find, at + 1) >= 0) return refuse('INVALID_ARGUMENT', `${path}: find occurs more than once; add nearby lines to find so it matches exactly one place`)
+  return text.slice(0, at) + replace + text.slice(at + find.length)
+}
+
+const FILE_SHAPE = 'each file must be { path, content } with the whole new content, or { path, find, replace } to replace text that occurs once in the file'
+
 /** edit_repo_file의 인자 검사. 틀리면 거절, 맞으면 정리한 경로 · 내용과 commit 메시지. */
-export function checkEditArgs(args: { files?: unknown; message?: unknown }): { files: { path: string; content: string }[]; message: string } | Refusal {
+export function checkEditArgs(args: { files?: unknown; message?: unknown }): { files: EditFile[]; message: string } | Refusal {
   const { files, message } = args
-  if (!Array.isArray(files) || files.length === 0) return refuse('INVALID_ARGUMENT', 'files must be a non-empty array of { path, content }')
-  if (files.length > MAX_FILES) return refuse('EDIT_FORBIDDEN', `at most ${MAX_FILES} files can be changed in one ticket`)
+  if (!Array.isArray(files) || files.length === 0) return refuse('INVALID_ARGUMENT', `files must be a non-empty array; ${FILE_SHAPE}`)
+  if (files.length > MAX_FILES) return forbid('files', `at most ${MAX_FILES} files can be changed in one ticket`)
   if (typeof message !== 'string' || message.trim() === '' || message.length > MAX_MESSAGE) {
     return refuse('INVALID_ARGUMENT', `message must be a string of 1 to ${MAX_MESSAGE} characters`)
   }
-  const out: { path: string; content: string }[] = []
+  const out: EditFile[] = []
   for (const f of files) {
-    if (!isRecord(f) || typeof f.path !== 'string' || typeof f.content !== 'string' || Object.keys(f).length !== 2) {
-      return refuse('INVALID_ARGUMENT', 'each file must be { path: string, content: string } with the whole new content')
-    }
+    if (!isRecord(f) || typeof f.path !== 'string') return refuse('INVALID_ARGUMENT', FILE_SHAPE)
+    const keys = Object.keys(f).length
+    const text = typeof f.content === 'string' && keys === 2 ? f.content : typeof f.find === 'string' && f.find !== '' && typeof f.replace === 'string' && keys === 3 ? f.replace : null
+    if (text === null) return refuse('INVALID_ARGUMENT', FILE_SHAPE)
     const path = repoPath(f.path)
     if (path === null || path === '') return refuse('INVALID_ARGUMENT', `path must be a file path relative to the repository root, got ${JSON.stringify(f.path.slice(0, 100))}`)
     const why = forbiddenPath(path)
-    if (why) return refuse('EDIT_FORBIDDEN', `${path}: ${why}`)
+    if (why) return forbid('path', `${path}: ${why}`)
     if (out.some((o) => o.path === path)) return refuse('INVALID_ARGUMENT', `${path} is listed twice`)
-    if (Buffer.byteLength(f.content) > MAX_FILE_BYTES) return refuse('EDIT_FORBIDDEN', `${path}: content is larger than ${MAX_FILE_BYTES / 1024}KB`)
-    if (f.content.includes('\0')) return refuse('EDIT_FORBIDDEN', `${path}: only text files can be written`)
-    out.push({ path, content: f.content })
+    // 크기는 바꾼 뒤의 전체 내용으로 doEdit이 본다.
+    if (text.includes('\0')) return forbid('not-text', `${path}: only text files can be written`)
+    out.push(typeof f.find === 'string' ? { path, find: f.find, replace: text } : { path, content: text })
   }
   return { files: out, message: message.trim() }
 }

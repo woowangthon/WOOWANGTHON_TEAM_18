@@ -116,7 +116,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'edit_repo_file',
     description:
-      '봇 계정의 fork에 수정 commit을 만든다(학생 레포에는 쓰지 않는다). files는 바꿀 파일의 전체 내용이다. 한 티켓에서 파일 5개 · 바뀐 줄 50줄(지운 줄 + 넣은 줄)까지이고, .env · .github/ · 비밀값처럼 보이는 줄은 거절한다. 같은 티켓에서 다시 부르면 앞서 고친 것에 이어 쌓는다. 돌려준 source를 run_build · run_deploy · read_repo에 넘겨 확인한다.',
+      '봇 계정의 fork에 수정 commit을 만든다(학생 레포에는 쓰지 않는다). files의 항목은 { path, content }(파일 전체 내용) 또는 { path, find, replace }(파일에 한 번만 있는 글을 바꾼다)다. 몇 줄만 고칠 때는 find · replace를 쓴다. 한 티켓에서 파일 5개 · 바뀐 줄 50줄(지운 줄 + 넣은 줄)까지이고, .env · .github/ · 비밀값처럼 보이는 줄은 거절한다. 같은 티켓에서 다시 부르면 앞서 고친 것에 이어 쌓는다. 돌려준 source를 run_build · run_deploy · read_repo에 넘겨 확인한다.',
     inputSchema: {
       type: 'object',
       properties: { files: { type: 'array' }, message: { type: 'string' } },
