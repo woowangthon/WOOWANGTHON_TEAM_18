@@ -2,6 +2,7 @@ import { useState } from 'react'
 import NoticeBanner from '../components/NoticeBanner.tsx'
 import { Badge } from '../components/ui/Badge.tsx'
 import { Button } from '../components/ui/Button.tsx'
+import Evidence from '../incidents/Evidence.tsx'
 import { recommendationText, riskText } from '../incidents/types.ts'
 import type { AdminIncident, AdminIncidentsResponse } from '../incidents/types.ts'
 import { ApiError, apiFetch } from '../lib/api.ts'
@@ -163,6 +164,7 @@ function IncidentCard({ incident, onChanged, onForbidden }: { incident: AdminInc
         )}
       </dl>
       <AiRows ai={incident.ai} />
+      <Evidence evidence={incident.evidence} />
       {action === 'auto_stopped' && <p className="text-sm text-muted">자동으로 멈췄어요</p>}
       {/* 처리된 뒤에도 그 처리의 결과 안내가 남도록 늘 그린다. 버튼은 판단 대기일 때만 나온다. */}
       <DecisionPanel incident={incident} onChanged={onChanged} onForbidden={onForbidden} />

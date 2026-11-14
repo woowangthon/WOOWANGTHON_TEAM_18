@@ -25,6 +25,15 @@ export interface IncidentAi {
 /** 판단 내용이 없는 AI 칸(기다림 · 실패 · 건너뜀). */
 export const emptyAi = (status: Exclude<IncidentAi['status'], 'done'>): IncidentAi => ({ status, risk: null, recommendation: null, cause: null, reason: null, model: null })
 
+/** 알림을 연 때, 멈추기 전에 모은 근거(api.md "운영 알림" Incident.evidence). */
+export interface IncidentEvidence {
+  pod: string | null
+  restarts: number
+  waiting: string | null
+  lastExit: { reason: string; exitCode: number } | null
+  logs: string[]
+}
+
 export interface IncidentRow {
   id: string
   slug: string
@@ -37,6 +46,7 @@ export interface IncidentRow {
   ai: IncidentAi
   decided_by: string | null
   decided_at: string | null
+  evidence: IncidentEvidence | null
   created_at: string
 }
 
@@ -97,6 +107,11 @@ export class IncidentsStore {
   ): Promise<IncidentRow | null> {
     const where: Record<string, string> = { id: `eq.${id}`, ...(from ? { action: `eq.${from}` } : {}), ...(aiFrom ? { 'ai->>status': `eq.${aiFrom}` } : {}) }
     return (await this.rows('PATCH', where, { ...patch, updated_at: new Date().toISOString() }))[0] ?? null
+  }
+
+  /** 근거가 아직 없을 때만 남긴다(먼저 남긴 근거를 오래된 행으로 다시 처리해도 덮어쓰지 않는다). */
+  async saveEvidence(id: string, evidence: IncidentEvidence): Promise<void> {
+    await this.rows('PATCH', { id: `eq.${id}`, evidence: 'is.null' }, { evidence, updated_at: new Date().toISOString() })
   }
 
   /** 이 프로젝트의 정할 차례인(울리고 있고 pending) 알림을 모두 같은 결정으로 닫는다. 닫은 줄을 돌려준다. */

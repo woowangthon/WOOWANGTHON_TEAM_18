@@ -19,7 +19,7 @@ flock -n 9 || { echo "another deploy-ai.sh is running" >&2; exit 1; }
 answers() { curl -fsS --max-time 5 http://127.0.0.1:8000/health >/dev/null; }
 healthy() {
   for _ in $(seq 30); do
-    answers && return 0
+    answers 2>/dev/null && return 0  # refused/reset while the server is still booting
     sleep 2
   done
   return 1

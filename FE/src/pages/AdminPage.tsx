@@ -5,6 +5,8 @@ import NodesSection from '../admin/NodesSection.tsx'
 import ProjectsSection from '../admin/ProjectsSection.tsx'
 import { Button } from '../components/ui/Button.tsx'
 import { RefreshIcon } from '../components/ui/Icons.tsx'
+import { DEFAULT_VIEW, projectsPath } from '../admin/projectsView.ts'
+import type { ProjectsView } from '../admin/projectsView.ts'
 import { isForbidden, REFRESH_MS, useAdminRead } from '../admin/useAdminRead.ts'
 import type { NodesResponse, ProjectsResponse } from '../admin/types.ts'
 import type { AdminIncidentsResponse } from '../incidents/types.ts'
@@ -14,7 +16,8 @@ function AdminPage() {
   // 화면은 편의로 막을 뿐이고 판단은 서버가 한다. 한 읽기라도 운영자가 아니라고(403) 하면 같은 화면으로 막고, 다른 읽기도 멈춘다.
   const [forbidden, setForbidden] = useState(false)
   const nodes = useAdminRead<NodesResponse>('/api/admin/nodes', forbidden)
-  const projects = useAdminRead<ProjectsResponse>('/api/admin/projects', forbidden)
+  const [view, setView] = useState<ProjectsView>(DEFAULT_VIEW)
+  const projects = useAdminRead<ProjectsResponse>(projectsPath(view), forbidden)
   const incidents = useAdminRead<AdminIncidentsResponse>('/api/admin/incidents', forbidden)
   if (!forbidden && (isForbidden(nodes.error) || isForbidden(projects.error) || isForbidden(incidents.error))) setForbidden(true)
   if (forbidden) return <ForbiddenNotice />
@@ -48,6 +51,8 @@ function AdminPage() {
       <NodesSection read={nodes} />
       <ProjectsSection
         read={projects}
+        view={view}
+        onView={setView}
         onForbidden={() => {
           setForbidden(true)
         }}

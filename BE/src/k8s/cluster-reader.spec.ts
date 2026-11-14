@@ -44,17 +44,17 @@ describe('ClusterReader', () => {
       {
         metadata: { name: 'api-b-55c8-q2' },
         spec: {},
-        status: { phase: 'Pending', containerStatuses: [{ name: 'api', ready: false, restartCount: 5, state: { waiting: { reason: 'CrashLoopBackOff', message: 'back-off' } } }] },
+        status: { phase: 'Pending', containerStatuses: [{ name: 'api', ready: false, restartCount: 5, state: { waiting: { reason: 'CrashLoopBackOff', message: 'back-off' } }, lastState: { terminated: { reason: 'Error', exitCode: 1, message: 'env-value-must-not-pass' } } }] },
       },
       { metadata: { name: 'fresh' } },
     ])
     const pods = await reader.pods('my-app')
     expect(fake.calls).toEqual([`GET ${NS}/pods`])
     expect(pods).toEqual([
-      { name: 'api-a-7d9f-x1', labels: { app: 'api', slot: 'a' }, phase: 'Running', node: 'worker-1', ready: true, restarts: 3, waiting: null },
-      { name: 'api-b-55c8-q2', labels: {}, phase: 'Pending', node: null, ready: false, restarts: 5, waiting: 'CrashLoopBackOff' },
+      { name: 'api-a-7d9f-x1', labels: { app: 'api', slot: 'a' }, phase: 'Running', node: 'worker-1', ready: true, restarts: 3, waiting: null, lastExit: null },
+      { name: 'api-b-55c8-q2', labels: {}, phase: 'Pending', node: null, ready: false, restarts: 5, waiting: 'CrashLoopBackOff', lastExit: { reason: 'Error', exitCode: 1 } },
       // 상태가 아직 없는 Pod: 준비되지 않은 것으로 본다.
-      { name: 'fresh', labels: {}, phase: 'Unknown', node: null, ready: false, restarts: 0, waiting: null },
+      { name: 'fresh', labels: {}, phase: 'Unknown', node: null, ready: false, restarts: 0, waiting: null, lastExit: null },
     ])
     expect(JSON.stringify(pods)).not.toContain('env-value-must-not-pass')
   })
