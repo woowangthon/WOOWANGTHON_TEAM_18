@@ -132,10 +132,10 @@ const result = (overrides: Record<string, unknown> = {}) => ({
 })
 
 describe('MCP gateway', () => {
-  it('lists the observation tools, the four trial tools and submit_result', async () => {
+  it('lists the observation tools, the four trial tools, the two repository tools and submit_result', async () => {
     const client = await connect()
     const { tools } = await client.listTools()
-    expect(tools.map((t) => t.name)).toEqual(['get_target_status', 'read_pod_logs', 'read_repo', 'run_build', 'run_render', 'run_deploy', 'run_verify', 'submit_result'])
+    expect(tools.map((t) => t.name)).toEqual(['get_target_status', 'read_pod_logs', 'read_repo', 'run_build', 'run_render', 'run_deploy', 'run_verify', 'edit_repo_file', 'open_pr', 'submit_result'])
     await client.close()
   })
 
@@ -250,7 +250,7 @@ describe('MCP gateway', () => {
 
   it.each([
     ['needs_user', { userRequest: { message: 'DATABASE_URL을 다시 넣어 주세요', secretKeys: ['DATABASE_URL'] } }],
-    ['pr_opened', { pr: { url: 'https://github.com/student/app/pull/1', files: ['vite.config.ts'], changedLines: 1 } }],
+    // pr_opened는 open_pr이 이 티켓에 돌려준 주소만 받는다(gateway-edit.e2e.spec.ts).
   ])('takes %s: the run waits for the student', async (status, extra) => {
     const client = await connect()
     expect((await call(client, 'submit_result', { result: result({ status, ...extra }) })).structuredContent).toEqual({ accepted: true })

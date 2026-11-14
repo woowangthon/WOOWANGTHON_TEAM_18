@@ -105,7 +105,7 @@ describe('SUPABASE_URL', () => {
 })
 
 describe('pipeline and AI server settings', () => {
-  const names = ['GOCD_URL', 'GOCD_TOKEN', 'GOCD_PIPELINE', 'GOCD_TRIAL_PIPELINE', 'PIPELINE_NOTIFY_TOKEN', 'AI_SERVER_URL', 'AGENT_API_TOKEN'] as const
+  const names = ['GOCD_URL', 'GOCD_TOKEN', 'GOCD_PIPELINE', 'GOCD_TRIAL_PIPELINE', 'PIPELINE_NOTIFY_TOKEN', 'AI_SERVER_URL', 'AGENT_API_TOKEN', 'BOT_GITHUB_TOKEN'] as const
 
   it('are optional: unset or empty means the feature is off', () => {
     for (const raw of [base, { ...base, ...Object.fromEntries(names.map((n) => [n, ''])) }]) {
@@ -133,6 +133,7 @@ describe('pipeline and AI server settings', () => {
     ['GOCD_URL', 'https://gocd.example.com/'],
     ['AI_SERVER_URL', 'https://ai.example.com/agent'],
     ['GOCD_TOKEN', 'a b'],
+    ['BOT_GITHUB_TOKEN', 'a b'],
     ['PIPELINE_NOTIFY_TOKEN', 'a\nb'],
     ['PIPELINE_NOTIFY_TOKEN', 'x'.repeat(31)],
     ['AGENT_API_TOKEN', ' x'],

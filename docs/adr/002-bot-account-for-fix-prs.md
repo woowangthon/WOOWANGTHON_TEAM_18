@@ -30,5 +30,6 @@ AI 검토 결과로 수정 제안을 하고, 수정된 파일을 PR로 올려 �
 
 - 쉬워지는 것: 학생에게 추가 권한을 요구하지 않는다. 이름이 봇이라 사람이 올린 것과 구별된다.
 - 어려워지는 것: 봇 계정의 PAT가 새면 그 계정이 가진 범위(fork 소유, PR 생성)가 노출된다. 봇 계정에 fork가 쌓인다. GitHub의 PR 생성 속도 제한에 걸릴 수 있다.
+- 구현(F13, 2026-11-14): 계정 `wanggane-bot`, 토큰은 classic PAT(`public_repo`, 2026-12-10 만료)를 SSM `/wcp/be/BOT_GITHUB_TOKEN`에 두고 BE만 읽는다(AI 서버에는 주지 않는다, [ADR-012](012-agent-acts-through-platform-gateway.md)). 에이전트의 `edit_repo_file` · `open_pr` 게이트웨이 도구가 쓴다([API 계약](../design/api.md) "레포 수정(F13)"). 토큰이 비면 두 도구는 `BOT_UNAVAILABLE`이다.
 - GitHub 약관상 머신 계정은 사람이 책임지고 자동화 전용으로 쓰는 경우에 허용되는 범주로 알고 있다. 계정을 만들 때 약관 문구를 다시 확인한다.
 - 다시 볼 조건: 사용자가 늘거나 PR 속도 제한에 걸릴 때 GitHub App으로 바꾼다.

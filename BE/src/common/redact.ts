@@ -21,17 +21,28 @@ const PATTERNS: RegExp[] = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g,
 ]
 
+const BEARER = /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi
+const URL_CREDENTIALS = /(\b[a-z][a-z0-9+.-]*:\/\/[^\s:/@]*:)[^\s@/]+@/gi
+
 /** 문자열 안의 비밀처럼 보이는 부분을 가린다. */
 export function redactString(text: string): string {
   let out = text
   // `Authorization: Bearer xxx` · `Bearer xxx`
-  out = out.replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi, `$1 ${REDACTED}`)
+  out = out.replace(BEARER, `$1 ${REDACTED}`)
   // `scheme://user:password@host`
-  out = out.replace(/(\b[a-z][a-z0-9+.-]*:\/\/[^\s:/@]*:)[^\s@/]+@/gi, `$1${REDACTED}@`)
+  out = out.replace(URL_CREDENTIALS, `$1${REDACTED}@`)
   // `NAME=value` · `NAME: value` · `"name": "value"`에서 이름이 민감한 경우
   out = out.replace(NAMED_VALUE, `$1${REDACTED}`)
   for (const p of PATTERNS) out = out.replace(p, REDACTED)
   return out
+}
+
+/**
+ * 값 자체가 비밀처럼 생긴 문자열(토큰 모양 · 인증 헤더 · 주소 속 비밀번호)이 들어 있는가.
+ * 이름만 민감한 줄(`"jsonwebtoken": "^9"`)은 세지 않는다: 코드를 고치는 도구가 정상 수정을 막지 않게 한다.
+ */
+export function hasSecretValue(text: string): boolean {
+  return [BEARER, URL_CREDENTIALS, ...PATTERNS].some((p) => text.search(p) !== -1)
 }
 
 /** 외부로 보내기 직전의 값에서 비밀처럼 보이는 문자열을 가린다(FR-102). 원본은 바꾸지 않고 사본을 돌려준다. */
