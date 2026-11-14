@@ -212,12 +212,34 @@ export class DeploysStore {
     return rows[0]
   }
 
-  /** 이 프로젝트에서 진행 중(running · fixing)인 실행. 없으면 undefined. */
+  /** 이 프로젝트에서 진행 중(queued · running · fixing)인 실행. 없으면 undefined. */
   async findActiveRun(slug: string): Promise<DeployRunRow | undefined> {
-    const rows = await this.call('deploy_runs', 'GET', { select: '*', slug: `eq.${slug}`, status: 'in.(running,fixing)', limit: '1' })
+    const rows = await this.call('deploy_runs', 'GET', { select: '*', slug: `eq.${slug}`, status: 'in.(queued,running,fixing)', limit: '1' })
     if (rows.length === 0) return undefined
     if (!isRunRow(rows[0])) throw this.unreadable('deploy_runs', 'GET')
     return rows[0]
+  }
+
+  /** 파이프라인이 돌고 있는 실행(대기열은 한 번에 하나만 출발시킨다). 없으면 undefined. */
+  async findRunning(): Promise<DeployRunRow | undefined> {
+    const rows = await this.call('deploy_runs', 'GET', { select: '*', status: 'eq.running', order: 'created_at.asc', limit: '1' })
+    if (rows.length === 0) return undefined
+    if (!isRunRow(rows[0])) throw this.unreadable('deploy_runs', 'GET')
+    return rows[0]
+  }
+
+  /** 가장 오래 기다린 queued 실행. 없으면 undefined. */
+  async findOldestQueued(): Promise<DeployRunRow | undefined> {
+    const rows = await this.call('deploy_runs', 'GET', { select: '*', status: 'eq.queued', order: 'created_at.asc', limit: '1' })
+    if (rows.length === 0) return undefined
+    if (!isRunRow(rows[0])) throw this.unreadable('deploy_runs', 'GET')
+    return rows[0]
+  }
+
+  /** 이 실행 앞에 있는 배포의 수: 먼저 시작한 queued와 지금 도는 running. */
+  async lineAhead(run: DeployRunRow): Promise<number> {
+    const rows = await this.call('deploy_runs', 'GET', { select: 'deploy_id,status,created_at', status: 'in.(queued,running)' })
+    return rows.filter((r) => isRecord(r) && (r.status === 'running' || (r.status === 'queued' && Date.parse(String(r.created_at)) < Date.parse(run.created_at)))).length
   }
 
   /** 프로젝트에서 마지막으로 성공한 실행(live 슬롯에 떠 있는 배포 입력). 없으면 undefined. */

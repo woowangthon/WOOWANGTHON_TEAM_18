@@ -16,7 +16,7 @@ import { STAGES } from './stages.ts'
 import { useCopy } from './useCopy.ts'
 
 type Load = { status: 'loading' } | { status: 'ready'; progress: Progress } | { status: 'not-found' }
-type StartFailureKind = 'not-ready' | 'in-progress' | 'unavailable' | 'not-found' | 'failed'
+type StartFailureKind = 'not-ready' | 'in-progress' | 'cluster-full' | 'unavailable' | 'not-found' | 'failed'
 // missing: NOT_READY가 알려 준 빠진 항목의 이름(fields의 path). 서버가 알려 주지 않으면 비어 있다.
 type StartFailure = { kind: StartFailureKind; missing: string[] }
 
@@ -33,6 +33,7 @@ function startFailureOf(error: unknown): StartFailure | null {
   if (error.code === 'ALREADY_STARTED') return null
   if (error.code === 'NOT_READY') return failure('not-ready', error.fields.map((field) => missingName(field.path)))
   if (error.code === 'DEPLOY_IN_PROGRESS') return failure('in-progress')
+  if (error.code === 'CLUSTER_FULL') return failure('cluster-full')
   if (error.code === 'DEPLOY_NOT_FOUND') return failure('not-found')
   return failure(error.status === 503 || error.code === 'NETWORK_ERROR' ? 'unavailable' : 'failed')
 }
@@ -61,6 +62,12 @@ function StartFailureAlert({ failure: { kind, missing } }: { failure: StartFailu
       return (
         <Alert variant="warn" title="같은 프로젝트의 배포가 진행 중이에요">
           그 배포가 끝난 뒤에 다시 시작해 주세요.
+        </Alert>
+      )
+    case 'cluster-full':
+      return (
+        <Alert variant="warn" title="지금 클러스터에 자리가 없어요">
+          사용자 잘못이 아니에요. 잠시 뒤에 다시 시작해 주세요. 아무것도 바뀌지 않았어요.
         </Alert>
       )
     case 'not-found':
@@ -234,6 +241,16 @@ function DeployProgress({ deployId }: { deployId: string }) {
               {starting ? '시작하는 중…' : '배포 시작'}
             </Button>
           </div>
+        )}
+
+        {progress.status === 'queued' && (
+          <Alert variant="info" title="배포 순서를 기다리고 있어요">
+            {progress.queue?.waitingForRoom
+              ? '클러스터에 자리가 날 때까지 기다리는 중이에요. 자리가 나면 자동으로 시작해요.'
+              : progress.queue && progress.queue.position > 0
+                ? `앞에 ${progress.queue.position}개 배포가 있어요. 차례가 되면 자동으로 시작해요.`
+                : '곧 자동으로 시작해요.'}
+          </Alert>
         )}
 
         {progress.status === 'fixing' && (

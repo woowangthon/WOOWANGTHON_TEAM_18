@@ -81,6 +81,7 @@ EC2 ── gocd-server (GoCD 26.1.0, JVM -Xmx1g, 8153은 Tailscale 주소에만 
 | `GOCD_PIPELINE` | `student-deploy` |
 | `GOCD_TRIAL_PIPELINE` | `student-trial`(AI 에이전트의 시험. 비워 두면 게이트웨이의 `run_*` 도구가 실패한다) |
 | `PIPELINE_NOTIFY_TOKEN` | 위 `/wcp/gocd/PIPELINE_NOTIFY_TOKEN`과 같은 값 |
+| `CLUSTER_FULL_PERCENT` | 선택(1–100, 없으면 80). 워커 노드의 CPU · 메모리 사용률 중 큰 값이 이 값 이상이면 새 배포를 거절하고(`409 CLUSTER_FULL`) 대기 중인 배포는 출발하지 않는다 |
 
 **콘솔에서 만들 AWS 리소스** (서울 `ap-northeast-2`, 이름은 파이프라인이 그대로 쓴다):
 

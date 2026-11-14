@@ -123,6 +123,22 @@ it.each([
   expect(reads()).toBe(1)
 })
 
+it.each([
+  [{ position: 2, waitingForRoom: false }, '앞에 2개 배포가 있어요. 차례가 되면 자동으로 시작해요.'],
+  [{ position: 0, waitingForRoom: false }, '곧 자동으로 시작해요.'],
+  [{ position: 1, waitingForRoom: true }, '클러스터에 자리가 날 때까지 기다리는 중이에요. 자리가 나면 자동으로 시작해요.'],
+  [undefined, '곧 자동으로 시작해요.'],
+])('shows a waiting deploy as waiting for its turn (%j) and keeps reading', async (queue, note) => {
+  api.apiFetch.mockResolvedValue(progressOf('queued', 'build', { queue }))
+  await show()
+  expect(screen.getByText('배포 순서를 기다리고 있어요')).toBeTruthy()
+  expect(screen.getByText(note)).toBeTruthy()
+  expect(screen.getAllByText('배포 대기').length).toBeGreaterThan(0)
+  expect(stage('빌드')).toBe('빌드 (예정)배포 대기')
+  await advance(3000)
+  expect(reads()).toBe(2)
+})
+
 it('stops reading when the user leaves the screen', async () => {
   api.apiFetch.mockResolvedValue(progressOf('running', 'build'))
   const { unmount } = await show()
@@ -173,13 +189,13 @@ it('does not say it is reading every 3 seconds once it has stopped reading', asy
 })
 
 it('keeps reading on a status it does not know, and shows the value it got', async () => {
-  const queued = 'queued' as DeployStatus
-  api.apiFetch.mockResolvedValueOnce(progressOf(queued, null)).mockResolvedValue(progressOf('succeeded', null))
+  const paused = 'paused' as DeployStatus
+  api.apiFetch.mockResolvedValueOnce(progressOf(paused, null)).mockResolvedValue(progressOf('succeeded', null))
   await show()
-  expect(screen.getByText('queued')).toBeTruthy()
+  expect(screen.getByText('paused')).toBeTruthy()
   await advance(3000)
   expect(reads()).toBe(2)
-  expect(screen.queryByText('queued')).toBeNull()
+  expect(screen.queryByText('paused')).toBeNull()
 })
 
 it('says the deploy was not found on 404 and does not keep reading', async () => {
@@ -219,6 +235,7 @@ it('locks the start button while the request is out', async () => {
 it.each([
   [new ApiError(409, 'NOT_READY', 'x'), '아직 시작할 수 없어요'],
   [new ApiError(409, 'DEPLOY_IN_PROGRESS', 'x'), '같은 프로젝트의 배포가 진행 중이에요'],
+  [new ApiError(409, 'CLUSTER_FULL', 'x'), '지금 클러스터에 자리가 없어요'],
   [new ApiError(503, 'PIPELINE_UNAVAILABLE', 'x'), '지금은 배포를 시작할 수 없어요'],
   [new ApiError(0, 'NETWORK_ERROR', 'x'), '지금은 배포를 시작할 수 없어요'],
   [new ApiError(500, 'INTERNAL', 'x'), '배포를 시작하지 못했어요'],
@@ -295,6 +312,7 @@ it('keeps the secrets link, next to the missing names, after NOT_READY', async (
 })
 
 it.each([
+  ['queued', 'build'],
   ['running', 'build'],
   ['fixing', 'build'],
   ['succeeded', null],
