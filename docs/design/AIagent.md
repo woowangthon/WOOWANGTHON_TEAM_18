@@ -128,7 +128,7 @@ AI 서버 (에이전트) → 플랫폼 서버 MCP 게이트웨이 → GoCD 서�
 | CodeBuild 빌드 설정 | 그 빌드에만, `buildOverrides` 상한 안 (§3) |
 | 대상 슬롯 운영 | 재시작, 0 · 1개 조정, Ready 다시 기다리기 |
 | 그대로 재실행 | 고칠 것이 없는 일시적 실패 (CodeBuild 준비 실패, 이미지 받기 시간 초과) |
-| dry-run 먼저 | 이름 · 포트 오류는 `run_render`로 먼저 확인한다. 자원 합계(쿼터)는 `run_render`에서 걸리지 않고 `run_deploy`의 Prepare에서 걸린다(case `P2`) |
+| dry-run 먼저 | 이름 · 포트 오류는 `run_render`로 먼저 확인한다. 자원 합계(쿼터)는 `run_render`에서 걸리지 않고 `run_deploy`의 Prepare에서 걸린다(case `P2`). `run_render`는 `source`를 받지 않아 원래 commit만 시험하므로, 레포 수정 → PR 경로는 `run_build` → `run_deploy`로 바로 간다 |
 | 레포 수정 → PR | fork 커밋으로 `run_verify`까지 통과한 변경만 |
 | 사용자 요청 | 비밀값이 틀림 · 빠짐, 학생 DB에 닿지 않음, 학생 DB 스키마 문제 |
 | 플랫폼 문제 보고 | 이미지 공개 설정, 노드 자원 부족, 차트 · 기본 Dockerfile 문제 |
@@ -399,6 +399,7 @@ PydanticAI에서 두 모델을 OpenAI 호환 provider로 붙이고, 추론 모�
 - 로컬 8B 모델의 분류 · 도구 호출 품질은 검증하지 않았다. 실제 모델(로컬 · 추론 API)은 아직 한 번도 붙여 돌리지 않았다.
 - 컨텍스트 예산은 글자 수로 어림했다(가장 큰 시험 티켓 · 도구 결과로 로컬 모델 입력이 도구 정의까지 합쳐 30,000자 이하). 실제 토큰 수는 vLLM에 붙인 뒤 응답의 `usage.prompt_tokens`로 재야 한다. 한글은 글자당 토큰이 더 많아 어림이 빗나갈 수 있다.
 - 요약본과 발췌는 정보를 버린다. 오류 표시 단어가 없는 원인 줄은 발췌에서 빠질 수 있고, 지난 도구 결과는 한 줄만 남는다. 에이전트가 필요하면 관찰 도구로 다시 읽는다.
+- 결과를 내기 직전에 코드가 게이트웨이 검사(`BE/src/gateway/result.ts` · `tools.ts`)에 맞춘다: `verified`가 아니면(`pr_opened` · `needs_user` · `gave_up`) `specPatch` · `buildOverrides`를 뺀다(있으면 비어 있어도 `INVALID_RESULT`). `pr_opened`의 `pr.url`은 이 티켓의 `open_pr`가 돌려준 주소로 채운다. 2026-11-14 실측에서 `pr_opened` 6건이 모두 `INVALID_RESULT`로 거절되어 최소 `gave_up`이 된 것을 보고 넣었다. 거절되면 그 이유를 AI 서버 경고 로그에 남긴다.
 - `verified`의 패치가 env · buildEnv에 넣는 값이 티켓 · 도구 결과 어디에도 없으면 AI 서버 코드가 `needs_user`로 바꾼다(지어낸 값. 모델은 비밀값을 모른다). 2026-11-14 실서비스 측정에서 로컬 모델이 비밀값 `VITE_API_KEY`에 지어낸 값을 넣어 시험을 통과시키고 `verified`를 낸 것을 보고 넣었다(`loop._invented_env_keys`).
 - 에이전트가 낸 `verified`가 정말 `run_verify` 통과 뒤인지 AI 서버는 따로 확인하지 않는다. 게이트웨이가 이 티켓의 시험 기록(같은 `specPatch`로 `run_deploy` → `run_verify` 통과)과 맞춰 보고(B2), 다시 실행의 Verify가 대상 슬롯을 한 번 더 확인한다(§1).
 - 가림 필터는 정해진 모양만 가린다. 이름 없이 나온 임의의 비밀 문자열은 못 가린다.

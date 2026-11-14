@@ -37,6 +37,7 @@ How to work:
   for each service whose files changed, then run_deploy with the same `source`, then run_verify,
   then open_pr with the same `source`, a Korean title and a body that says what was wrong and what
   you changed.
+  Skip run_render on this path: it takes no `source` and only renders the original commit.
   open_pr is refused (NOT_VERIFIED) until run_verify has passed for that `source`.
   read_repo also takes `source` to read your changed files back.
 - open_pr answers `{ url }`, or `{ url: null, patchAttached: true }` when the student's

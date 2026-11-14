@@ -40,6 +40,7 @@ class GatewayRejected(Exception):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(f"submit_result rejected {code}: {message}")
         self.code = code
+        self.message = message
 
 
 class PlanBroken(Exception):
@@ -75,6 +76,8 @@ class GatewayToolset(MCPToolset[Any]):
         self.seen: list[str] = []
         # 계획 실행 중이면 거절을 모델에 돌려주지 않고 PlanBroken으로 멈춘다.
         self.strict = False
+        # 이 티켓에서 open_pr가 돌려준 PR 주소. pr_opened 결과의 pr.url은 코드가 이 값으로 채운다.
+        self.opened_pr_url: str | None = None
         # 추적 로그(`trace ticket=…`)에 붙일 티켓 id. 실행기가 티켓을 받은 뒤 채운다.
         self.trace_id = "-"
 
@@ -139,6 +142,8 @@ class GatewayToolset(MCPToolset[Any]):
             raise ModelRetry(f"gateway rejected {name}: {code}: {detail}")
         ok = content.get("ok", True) if isinstance(content, dict) else True
         self.seen.append(json.dumps(content, ensure_ascii=False, default=str))
+        if name == "open_pr" and isinstance(content, dict) and isinstance(content.get("url"), str):
+            self.opened_pr_url = content["url"]
         self.actions.append(Action(tool=name, args=args, ok=bool(ok), result=_short(content)))
         trace(self.trace_id, f"tool={clean(name)} ok={bool(ok)} args={args_shape(args)}")
         # 모델에는 예산 안으로 줄인 결과를 준다(로그 발췌, 큰 원본은 필요한 칸만).
