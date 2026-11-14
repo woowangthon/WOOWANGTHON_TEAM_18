@@ -99,6 +99,13 @@ def test_fields_show_path_and_code_only() -> None:
     assert trace.fields_shape(None) == "-" and trace.fields_shape([]) == "-"
 
 
+def test_fields_past_the_limit_are_counted_not_dropped_silently() -> None:
+    fields = [{"path": f"env[{i}]", "code": "REQUIRED"} for i in range(25)]
+    out = trace.fields_shape(fields)
+    assert out.startswith("env[0]:REQUIRED,") and "env[19]:REQUIRED" in out
+    assert "env[20]" not in out and out.endswith(",+5 more")
+
+
 def test_exception_shape_is_class_names_only() -> None:
     try:
         try:
@@ -188,13 +195,19 @@ def test_repeated_rejections_end_the_run_and_the_log_says_how(
 ) -> None:
     # 개발 리허설과 같은 모양: 거절이 도구 재시도 한도를 넘어 UnexpectedModelBehavior로 끝난다.
     gw = FakeGateway()
-    gw.script["run_render"] = [reject("INVALID_SPEC") for _ in range(6)]
+    gw.script["run_render"] = [reject("INVALID_SPEC") for _ in range(12)]
     local = Script(*[call("run_render", specPatch=SECRET_ENV_PATCH) for _ in range(6)])
-    solve(make_run(**SIGNALS["A1"]), gw, local)
+    planner = Script(*[call("run_render", specPatch=SECRET_ENV_PATCH) for _ in range(6)])
+    solve(make_run(**SIGNALS["A1"]), gw, local, planner)
     out = lines(trace_log)
-    assert sum(" tool=run_render rejected=INVALID_SPEC " in line for line in out) >= 4
+    assert sum(" tool=run_render rejected=INVALID_SPEC " in line for line in out) >= 8
+    # 로컬이 한도를 넘으면 그 사실을 남기고 추론 모델로 다시 계획한다.
+    assert any(
+        " act failed model=local exc=UnexpectedModelBehavior cause=ModelRetry" in line
+        for line in out
+    )
     assert out[-1].endswith(" exc=UnexpectedModelBehavior cause=ModelRetry")
-    assert " outcome status=gave_up path=playbook " in out[-1]
+    assert " outcome status=gave_up path=replan_after_playbook " in out[-1]
     assert SECRET_VALUE not in trace_log.text
 
 

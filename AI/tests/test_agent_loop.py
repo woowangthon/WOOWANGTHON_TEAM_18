@@ -326,10 +326,13 @@ def test_result_of_the_wrong_shape_is_made_again() -> None:
 def test_model_that_never_answers_right_is_reported_as_gave_up() -> None:
     gw = FakeGateway()
     local = Script(*[final(status="verified", summary="x") for _ in range(3)])
-    solve(make_run(**SIGNALS["A1"]), gw, local)
+    planner = Script(*[final(status="verified", summary="x") for _ in range(3)])
+    solve(make_run(**SIGNALS["A1"]), gw, local, planner)
     result = only_result(gw)
     assert result["status"] == "gave_up" and "AI 모델 호출이 실패" in result["summary"]
-    assert result["classification"]["path"] == "playbook"
+    # 로컬이 끝내 틀린 결과만 내도 추론 모델이 한 번 더 해 본다.
+    assert result["classification"]["path"] == "replan_after_playbook"
+    assert planner.requests != []
 
 
 # ---- 추론 모델 API: 가림 필터 (FR-102)와 로컬로 넘기기 ----
@@ -499,17 +502,91 @@ def test_second_rejection_of_the_result_is_only_logged(
 
 def test_repeated_rejections_are_not_called_a_model_failure() -> None:
     gw = FakeGateway()
-    gw.script["run_render"] = [reject("PATCH_FORBIDDEN", "role is not allowed")] * 4
+    gw.script["run_render"] = [reject("PATCH_FORBIDDEN", "role is not allowed")] * 8
     bad = [{"op": "replace", "path": "/spec/services/0/role", "value": "fe"}]
     local = Script(*[call("run_render", specPatch=bad) for _ in range(4)])
-    solve(make_run(**SIGNALS["A1"]), gw, local)
+    planner = Script(*[call("run_render", specPatch=bad) for _ in range(4)])
+    solve(make_run(**SIGNALS["A1"]), gw, local, planner)
     result = only_result(gw)
     assert result["status"] == "gave_up"
     assert result["summary"].startswith(
         "배포 설정 수정이 플랫폼 검사에서 계속 거절되어 멈췄습니다(마지막 거절: PATCH_FORBIDDEN)"
     )
     assert "AI 모델 호출이 실패" not in result["summary"]
-    assert len(result["actions"]) == 4
+    # 플레이북(로컬)이 거절 한도를 넘어도 끝내지 않고 추론 모델이 다시 계획했다.
+    assert result["classification"]["path"] == "replan_after_playbook"
+    assert len(result["actions"]) == 8
+
+
+def test_a_spec_rejection_tells_the_model_which_field_and_the_planner_replans() -> None:
+    # 2026-11-14 운영 리허설: 로컬 모델이 포트를 문자열로 네 번 보냈고,
+    # 거절의 칸(fields)을 받지 못했고, 한도를 넘자 재계획 없이 gave_up으로 끝났다.
+    gw = FakeGateway()
+    port = [{"path": "services[0].runtime.port", "code": "INVALID_TYPE"}]
+    gw.script["run_render"] = [
+        reject("INVALID_SPEC", "the patched spec breaks the deploy input rules (see fields)", port)
+    ] * 4
+    as_text = [{"op": "replace", "path": "/spec/services/0/runtime/port", "value": "3000"}]
+    local = Script(*[call("run_render", specPatch=as_text) for _ in range(4)])
+    planner = Script(
+        call("run_render", specPatch=PORT_PATCH),
+        call("run_deploy", specPatch=PORT_PATCH),
+        call("run_verify"),
+        final(status="verified", specPatch=PORT_PATCH, summary="포트를 숫자 3000으로 고쳤습니다."),
+    )
+    solve(make_run(**SIGNALS["A1"]), gw, local, planner)
+    assert "services[0].runtime.port:INVALID_TYPE" in local.sent(1)
+    result = only_result(gw)
+    assert result["status"] == "verified" and result["specPatch"] == PORT_PATCH
+    assert result["classification"]["path"] == "replan_after_playbook"
+    replan = planner.sent(0)
+    assert "INVALID_TYPE" in replan and "계속 거절" in replan
+
+
+def test_field_errors_survive_the_replan_prompt_clip_before_a_long_message() -> None:
+    gw = FakeGateway()
+    fields = [
+        {"path": "services[0].runtime.port", "code": "INVALID_TYPE"},
+        {"path": "services[0].runtime.health.port", "code": "UNKNOWN_KEY"},
+    ]
+    gw.script["run_render"] = [reject("INVALID_SPEC", "x" * 400, fields)]
+    local = Script(
+        call("run_render", specPatch=PORT_PATCH),
+        final(status="gave_up", summary="모름"),
+    )
+    planner = Script(final(status="gave_up", summary="모름"))
+    solve(make_run(**SIGNALS["A1"]), gw, local, planner)
+    replan = planner.sent(0)
+    assert "services[0].runtime.port:INVALID_TYPE" in replan
+    assert "services[0].runtime.health.port:UNKNOWN_KEY" in replan
+
+
+def test_field_errors_longer_than_the_replan_clip_are_marked_as_cut() -> None:
+    gw = FakeGateway()
+    fields = [
+        {"path": f"services[0].runtime.env[{i}].value", "code": "INVALID_TYPE"} for i in range(12)
+    ]
+    gw.script["run_render"] = [reject("INVALID_SPEC", "see fields", fields)]
+    local = Script(
+        call("run_render", specPatch=PORT_PATCH),
+        final(status="gave_up", summary="모름"),
+    )
+    planner = Script(final(status="gave_up", summary="모름"))
+    solve(make_run(**SIGNALS["A1"]), gw, local, planner)
+    replan = planner.sent(0)
+    # 앞쪽 칸은 남고, 잘린 뒤쪽은 잘렸다고 적힌다(조용히 사라지지 않는다).
+    assert "services[0].runtime.env[0].value:INVALID_TYPE" in replan
+    assert "services[0].runtime.env[11].value" not in replan
+    assert "…[truncated " in replan
+
+
+def test_the_playbook_prompt_says_a_port_is_a_number() -> None:
+    gw = FakeGateway()
+    local = Script(final(status="gave_up", summary="모름"))
+    planner = Script(final(status="gave_up", summary="모름"))
+    solve(make_run(**SIGNALS["A1"]), gw, local, planner)
+    first = local.sent(0)
+    assert "JSON type that field takes" in first and 'numbers (3000, not "3000")' in first
 
 
 def test_without_model_settings_each_ticket_gets_a_gave_up_that_says_so(

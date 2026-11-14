@@ -289,7 +289,15 @@ def make_agent_runner(
                         outcome = await _act(models.planner, "planner", prompt, gateway, memory)
                     else:
                         prompt = prompts.playbook_prompt(ticket, notes, case)
-                        outcome = await _act(models.local, "local", prompt, gateway, memory)
+                        try:
+                            outcome = await _act(models.local, "local", prompt, gateway, memory)
+                        except UnexpectedModelBehavior as e:
+                            # 거절이 되풀이되어 재시도 한도를 넘었거나 출력이 계속 깨졌다.
+                            # 끝내지 않고 아래에서 추론 모델로 다시 계획한다.
+                            trace(ticket.ticket_id, f"act failed model=local exc={exc_shape(e)}")
+                            outcome = Outcome(
+                                status="gave_up", summary=_model_failure(e, gateway.actions)
+                            )
                         if outcome.status == "gave_up":
                             path = "replan_after_playbook"
                             trace(ticket.ticket_id, f"path={path} (playbook gave up)")
