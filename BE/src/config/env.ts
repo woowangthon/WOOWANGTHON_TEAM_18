@@ -36,6 +36,8 @@ export interface Env {
   TRIVY_CACHE_DIR: string | undefined
   /** 워커 노드의 CPU · 메모리 사용률(%) 중 큰 값이 이 값 이상이면 클러스터에 자리가 없는 것으로 본다(배포 시작은 409 CLUSTER_FULL, 대기열은 출발하지 않는다). 1–100, 기본 80. */
   CLUSTER_FULL_PERCENT: number
+  /** 운영자 Discord 채널의 웹후크(운영 알림, docs/design/incidents.md). 비밀이라 로그 · 응답에 남기지 않는다. 비워 두면 운영자 Discord로 보내지 않는다. */
+  DISCORD_WEBHOOK_URL: string | undefined
 }
 
 // 값이 틀리면 부팅을 멈춘다. 틀린 설정으로 뜬 서버가 조용히 다르게 동작하지 않게 한다.
@@ -59,7 +61,18 @@ export function validateEnv(raw: Record<string, string | undefined>): Env {
     ...parseCluster(raw),
     TRIVY_CACHE_DIR: parseOptionalDir(raw.TRIVY_CACHE_DIR, 'TRIVY_CACHE_DIR'),
     CLUSTER_FULL_PERCENT: parseClusterFullPercent(raw.CLUSTER_FULL_PERCENT),
+    DISCORD_WEBHOOK_URL: parseOptionalWebhook(raw.DISCORD_WEBHOOK_URL),
   }
+}
+
+/** Discord 웹후크 주소의 모양. 받는 곳을 discord.com으로 묶어 서버가 다른 주소로 요청하지 않게 한다. 학생이 넣는 주소도 같은 검사다. */
+export const DISCORD_WEBHOOK = /^https:\/\/discord\.com\/api\/webhooks\/\d{1,25}\/[A-Za-z0-9_-]{1,100}$/
+
+// 주소 자체가 보내기 권한이라 틀린 값도 오류 메시지(로그)에 싣지 않는다.
+function parseOptionalWebhook(value: string | undefined): string | undefined {
+  if (value === undefined || value === '') return undefined
+  if (!DISCORD_WEBHOOK.test(value)) throw new Error('DISCORD_WEBHOOK_URL must be a Discord webhook URL like https://discord.com/api/webhooks/<id>/<token>')
+  return value
 }
 
 function parseClusterFullPercent(value: string | undefined): number {

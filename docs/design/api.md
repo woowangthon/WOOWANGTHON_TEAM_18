@@ -724,6 +724,58 @@ DB에 배포가 있는 프로젝트(`slug`)마다 공간 `proj-<slug>`를 읽어
 
 오류: `404 PROJECT_NOT_FOUND`(DB에 없는 slug, slug 모양이 아닌 값 포함), `409 NOT_RUNNING`(공간이 없거나 Deployment가 없다), `403 ADMIN_REQUIRED`, `503 CLUSTER_UNREACHABLE`, `503 CLUSTER_FORBIDDEN`(서버 계정이 scale을 거절당했을 때: 권한 없음 403, 검사 규칙 거절 422. scale 권한은 2026-11-11에 들어갔다([`cluster.md`](cluster.md) §8, 0 · 1과 재시작만). 일부만 내리고 나머지가 실패하면 오류가 아니라 `failed`에 담긴다), `503 DATABASE_UNAVAILABLE`.
 
+## 운영 알림 (UC-15, FR-078 · FR-079)
+
+흐름과 규칙은 [운영 알림 설계](incidents.md). 플랫폼 서버가 20초마다 Prometheus 경고를 읽어 학생 프로젝트마다 알림을 열고 닫는다.
+
+```ts
+type Incident = {
+  id: string; slug: string; alertname: string
+  title: string                 // 한국어 한 줄(경고 이름으로 고른다)
+  state: 'firing' | 'resolved'; firedAt: string; resolvedAt: string | null
+  action: 'auto_stopped' | 'pending' | 'stopped' | 'dismissed'
+  ai: { status: 'pending' | 'done' | 'failed' | 'skipped'
+        risk: 'low' | 'medium' | 'high' | null
+        recommendation: 'stop' | 'watch' | 'ignore' | null
+        cause: string | null; reason: string | null; model: 'local' | 'planner' | null }
+  decidedAt: string | null
+}
+```
+
+- `auto_stopped`: 규칙(재시작 반복)이 멈췄다. `ai.status`는 `skipped`. `pending`: 운영자가 정할 차례. `stopped` · `dismissed`: 운영자가 정했다.
+- "열린 것" = `state`가 `firing`이고 `action`이 `pending`.
+
+### `GET /api/admin/incidents` — 운영 알림 목록 (운영자)
+
+응답 `200`: `{ "incidents": (Incident & { "decidedBy": string | null })[] }`. 열린 것 전부를 먼저, 그다음 최근 50개. `decidedBy`는 운영자 이메일, 규칙이 멈췄으면 `"rule"`.
+
+### `POST /api/admin/incidents/:id/stop` — 알림의 프로젝트 멈추기 (운영자)
+
+먼저 `action = stopped`로 결정을 잡고(겹친 무시 · 중지는 하나만 통과), 공간의 Deployment를 모두 `replicas: 0`으로 내린다. 하나도 못 내렸으면 결정을 `pending`으로 되돌리고 `503 CLUSTER_UNREACHABLE`이다(다시 요청할 수 있다). 일부만 내렸으면 결정은 `stopped`로 두고 `503 STOP_INCOMPLETE`다(되돌리면 무시로 바뀔 수 있어서다. 나머지는 `POST /api/admin/projects/:slug/stop`으로 다시 내린다). 본문 없음. 응답 `200`: `{ "incident" }`.
+오류: `404 INCIDENT_NOT_FOUND`(UUID 모양이 아닌 값 포함), `409 INCIDENT_CLOSED`(이미 정했다), `503 CLUSTER_UNREACHABLE`(하나도 못 내렸다), `503 STOP_INCOMPLETE`(일부만 내렸다), `403 ADMIN_REQUIRED`.
+
+### `POST /api/admin/incidents/:id/dismiss` — 알림 무시 (운영자)
+
+`action = dismissed`. 클러스터는 건드리지 않는다. 응답과 오류는 위와 같다(`503` 없음).
+
+### `GET /api/incidents` — 내 프로젝트의 운영 알림 (학생)
+
+응답 `200`: `{ "incidents": Incident[] }`. 내 프로젝트(내가 저장한 배포의 slug)의 열린 알림과 최근 24시간의 `auto_stopped` · `stopped`. `decidedBy`는 없다.
+
+### `GET /api/profile/discord-webhook` · `PUT /api/profile/discord-webhook` — 내 Discord 알림 (학생)
+
+- `PUT` 본문 `{ "url": string | null }`. `null`이면 지운다. `url`은 `https://discord.com/api/webhooks/<숫자 id>/<토큰>` 모양만(쿼리 없이).
+- 응답 `200`(둘 다): `{ "set": boolean, "hint": string | null }`. `hint`는 주소 끝 4자. 주소 전체는 다시 내주지 않는다.
+- 오류: `400 INVALID_WEBHOOK`.
+
+### `POST /agent/incidents` — 알림 판단 (AI 서버, 플랫폼 → AI)
+
+아래 "AI 에이전트"와 같은 `AGENT_API_TOKEN`으로 부른다. 동기로 답한다(판단만 하고 실행하지 않는다).
+
+- 요청: `{ "incidentId", "slug", "alertname", "summary"(≤200자), "labels": {…}(≤20개, 값 ≤200자), "pods": [{ "name", "phase"(≤20자), "ready", "restarts", "waiting" }](≤10), "logs": string[](≤200줄) }`. 모르는 칸은 거부한다.
+- 응답 `200`: `{ "risk", "recommendation", "cause", "reason", "model": "local" | "planner" }`. `cause` · `reason`은 한국어 한 문장(≤300자).
+- 오류: `400 INVALID_INCIDENT`, `401 AUTH_REQUIRED`, `503 MODEL_UNAVAILABLE`(로컬 모델과 추론 API 모두 실패, 또는 설정 없음). 플랫폼 서버는 90초를 기다린다.
+
 ## AI 에이전트 (플랫폼 서버 ↔ AI 서버)
 
 배포 실패를 고치는 AI 에이전트와 플랫폼 서버가 주고받는 약속이다. 흐름 · 티켓 · 결과의 뜻은 [AI 에이전트 설계](AIagent.md), 언제 부르는지는 [배포 워크플로우](deploy-workflow.md) §6에 있다. 두 서버는 같은 EC2의 컨테이너이고, 이 API는 **컨테이너 사이 내부 망에서만** 열고 공개 주소(`/api`)에 붙이지 않는다. 로그인 토큰(사용자)이 아니라 아래 서버 사이 토큰을 쓴다.

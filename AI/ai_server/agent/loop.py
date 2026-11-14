@@ -97,19 +97,30 @@ def _openai_compatible(
 
 def models_from_settings(settings: Settings) -> Models | None:
     """로컬 모델 설정이 없으면 None(티켓마다 모델 설정 없음을 알리는 gave_up)."""
+    act, plan = (
+        local_model(settings, LOCAL_ACT_SETTINGS),
+        local_model(settings, LOCAL_PLAN_SETTINGS),
+    )
+    if act is None or plan is None:
+        return None
+    return make_models(act, api_model(settings), plan)
+
+
+def local_model(settings: Settings, model_settings: OpenAIChatModelSettings) -> Model | None:
+    """로컬 모델(리더 vLLM). 설정이 없으면 None."""
     url, name = settings.local_model_url, settings.local_model_name
     if url is None or name is None:
         return None
+    return _openai_compatible(url, name, settings.local_model_api_key, model_settings)
 
-    def local(model_settings: OpenAIChatModelSettings) -> Model:
-        return _openai_compatible(url, name, settings.local_model_api_key, model_settings)
 
-    api = None
-    if settings.planner_model_url is not None and settings.planner_model_name is not None:
-        api = _openai_compatible(
-            settings.planner_model_url, settings.planner_model_name, settings.planner_model_api_key
-        )
-    return make_models(local(LOCAL_ACT_SETTINGS), api, local(LOCAL_PLAN_SETTINGS))
+def api_model(settings: Settings) -> Model | None:
+    """추론 모델 API(가림 필터 없이). 설정이 없으면 None."""
+    if settings.planner_model_url is None or settings.planner_model_name is None:
+        return None
+    return _openai_compatible(
+        settings.planner_model_url, settings.planner_model_name, settings.planner_model_api_key
+    )
 
 
 class CaseChoice(BaseModel):

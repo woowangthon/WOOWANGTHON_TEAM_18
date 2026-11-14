@@ -14,6 +14,8 @@ export default defineConfig({
       PIPELINE_NOTIFY_TOKEN: 'pipeline_notify_test_0123456789abcdef',
       AI_SERVER_URL: 'https://ai.test',
       AGENT_API_TOKEN: 'agent_token_test',
+      // 운영 알림 테스트(test/incidents.e2e.spec.ts)가 가짜 fetch로 받는다. 감시기는 시험에서 스스로 돌지 않는다(K8S_* 없음).
+      DISCORD_WEBHOOK_URL: 'https://discord.com/api/webhooks/111/operator-token',
     },
   },
 })
