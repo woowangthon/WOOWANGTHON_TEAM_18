@@ -150,6 +150,17 @@ class Plan(BaseModel):
         unknown = sorted({s.tool for s in self.steps} - prompts.GATEWAY_TOOLS)
         if unknown:
             raise ValueError(f"unknown tools {unknown}; use only {sorted(prompts.GATEWAY_TOOLS)}")
+        # 파일 항목의 칸을 도구 인자 맨 위에 두면 게이트웨이가 거절한다(D10). placeholder 글은 둔다.
+        for s in self.steps:
+            files = s.args.get("files", [])
+            if s.tool == "edit_repo_file" and (
+                {"path", "find", "replace", "content"} & s.args.keys()
+                or not isinstance(files, list | str)
+            ):
+                raise ValueError(
+                    "edit_repo_file args are { files: [{ path, find, replace }], message }; "
+                    "put path, find, replace or content inside a files item"
+                )
         if len(self.model_dump_json()) > PLAN_CHARS:
             raise ValueError(f"the plan is longer than {PLAN_CHARS} characters; shorten it")
         return self

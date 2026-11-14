@@ -75,9 +75,9 @@ You are the planner now. You may call only the read tools (read_repo, get_target
 read_pod_logs) to see the evidence; each read counts toward the call limits, so read only what the
 plan needs and do not repeat a read as a plan step. Then answer with a plan that a small local model
 carries out step by step; it cannot reason much, so:
-- give each step its tool and exact args: the whole `specPatch` with real values, and for
-  edit_repo_file `{ path, find, replace }` with the exact current text from the file you read; put
-  a condition in `when` only where one is needed;
+- give each step its tool and exact args: the whole `specPatch` with real values, and
+  edit_repo_file args `{ files: [{ path, find, replace }], message }` with the exact current text
+  from the file you read; put a condition in `when` only where one is needed;
 - `{...}` placeholders are only for values an earlier step returns (the `source` of edit_repo_file);
 - end with a submit_result step whose `when` says which result to finish with and when, by the
   rules above; a plan can be that one step alone (a secret only the student knows).
