@@ -5,7 +5,7 @@ import { commitOf } from './deploy-run.js'
 import { type DeployRunRow, DeploysStore } from './deploys.store.js'
 import { PipelineClient } from './pipeline.client.js'
 
-/** 빌드 제한(15분) + 대기열(10분) + 여유. running이 이보다 오래 바뀌지 않았으면 멈춘 것으로 보고 마감한다. */
+/** 빌드 제한(15분)의 두 배. running이 이보다 오래 바뀌지 않았으면 멈춘 것으로 보고 마감한다. */
 export const QUEUE_STALE_MS = 30 * 60_000
 // 게이트웨이 쪽 종료(gave_up · needs_user), 재시작, 놓친 알림으로 줄이 멈추지 않게 이 간격으로 다시 본다.
 const TICK_MS = 15_000

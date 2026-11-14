@@ -156,13 +156,13 @@ export class DeployRunsService {
     }
     this.queue.kick()
     await this.queue.idle()
-    const run = await this.store.findRun(deploy.id)
-    if (run?.status === 'failed' && run.failure?.code === 'PIPELINE_UNAVAILABLE') {
+    const run = (await this.store.findRun(deploy.id))!
+    if (run.status === 'failed' && run.failure?.code === 'PIPELINE_UNAVAILABLE') {
       // 파이프라인을 부르지 못했으면 기록을 지워 같은 요청을 다시 보낼 수 있게 한다.
       await this.store.deleteRun(deploy.id).catch((e: unknown) => this.logger.error(e))
       throw pipelineUnavailable()
     }
-    return { deployId: deploy.id, status: run?.status ?? 'queued', stage: run?.stage ?? 'build', targetSlot: prepared.slot }
+    return { deployId: deploy.id, status: run.status, stage: run.stage, targetSlot: prepared.slot }
   }
 
   /**
@@ -185,7 +185,8 @@ export class DeployRunsService {
     // 소유 확인과 실행 기록 읽기는 서로 기다리지 않는다. 남의 배포면 읽은 기록은 버리고 404다.
     const uuid = parseUuid(id)
     const [deploy, run] = await Promise.all([this.owned(user, id), uuid ? this.store.findRun(uuid) : undefined])
-    return view(deploy, run, await this.scans.warningsFor(deploy), run?.status === 'queued' ? await this.queueView(run) : null)
+    const queue = run?.status === 'queued' ? await this.queueView(run) : null
+    return view(deploy, run, await this.scans.warningsFor(deploy), queue)
   }
 
   private async queueView(run: DeployRunRow): Promise<NonNullable<DeployStatusView['queue']>> {

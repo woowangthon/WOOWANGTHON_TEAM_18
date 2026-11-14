@@ -212,28 +212,26 @@ export class DeploysStore {
     return rows[0]
   }
 
-  /** 이 프로젝트에서 진행 중(queued · running · fixing)인 실행. 없으면 undefined. */
-  async findActiveRun(slug: string): Promise<DeployRunRow | undefined> {
-    const rows = await this.call('deploy_runs', 'GET', { select: '*', slug: `eq.${slug}`, status: 'in.(queued,running,fixing)', limit: '1' })
+  private async firstRun(query: Record<string, string>): Promise<DeployRunRow | undefined> {
+    const rows = await this.call('deploy_runs', 'GET', { select: '*', ...query, limit: '1' })
     if (rows.length === 0) return undefined
     if (!isRunRow(rows[0])) throw this.unreadable('deploy_runs', 'GET')
     return rows[0]
+  }
+
+  /** 이 프로젝트에서 진행 중(queued · running · fixing)인 실행. 없으면 undefined. */
+  findActiveRun(slug: string): Promise<DeployRunRow | undefined> {
+    return this.firstRun({ slug: `eq.${slug}`, status: 'in.(queued,running,fixing)' })
   }
 
   /** 파이프라인이 돌고 있는 실행(대기열은 한 번에 하나만 출발시킨다). 없으면 undefined. */
-  async findRunning(): Promise<DeployRunRow | undefined> {
-    const rows = await this.call('deploy_runs', 'GET', { select: '*', status: 'eq.running', order: 'created_at.asc', limit: '1' })
-    if (rows.length === 0) return undefined
-    if (!isRunRow(rows[0])) throw this.unreadable('deploy_runs', 'GET')
-    return rows[0]
+  findRunning(): Promise<DeployRunRow | undefined> {
+    return this.firstRun({ status: 'eq.running', order: 'created_at.asc' })
   }
 
   /** 가장 오래 기다린 queued 실행. 없으면 undefined. */
-  async findOldestQueued(): Promise<DeployRunRow | undefined> {
-    const rows = await this.call('deploy_runs', 'GET', { select: '*', status: 'eq.queued', order: 'created_at.asc', limit: '1' })
-    if (rows.length === 0) return undefined
-    if (!isRunRow(rows[0])) throw this.unreadable('deploy_runs', 'GET')
-    return rows[0]
+  findOldestQueued(): Promise<DeployRunRow | undefined> {
+    return this.firstRun({ status: 'eq.queued', order: 'created_at.asc' })
   }
 
   /** 이 실행 앞에 있는 배포의 수: 먼저 시작한 queued와 지금 도는 running. */
