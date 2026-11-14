@@ -1,7 +1,8 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
-import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AdminNode, AdminProject, NodesResponse, ProjectsResponse } from '../admin/types.ts'
+import type { AdminIncident, AdminIncidentsResponse } from '../incidents/types.ts'
 import { ApiError } from '../lib/api.ts'
 import { WithQuery } from '../test-utils.tsx'
 import AdminPage from './AdminPage.tsx'
@@ -15,6 +16,8 @@ vi.mock('../lib/api.ts', async (importOriginal) => ({
 
 const NODES = '/api/admin/nodes'
 const PROJECTS = '/api/admin/projects'
+const INCIDENTS = '/api/admin/incidents'
+const incidentPath = (id: string, what: 'stop' | 'dismiss') => `/api/admin/incidents/${id}/${what}`
 const stopPath = (slug: string) => `/api/admin/projects/${slug}/stop`
 
 const leader: AdminNode = {
@@ -74,7 +77,7 @@ const projectsOf = (projects: AdminProject[] = [running, stopped, noSpace]): Pro
 type Reply = unknown
 let replies: Record<string, Reply>
 const serve = (next: Record<string, Reply>) => {
-  replies = { [NODES]: nodesOf(), [PROJECTS]: projectsOf(), ...next }
+  replies = { [NODES]: nodesOf(), [PROJECTS]: projectsOf(), [INCIDENTS]: { incidents: [] }, ...next }
 }
 beforeEach(() => {
   vi.useFakeTimers()
@@ -478,4 +481,171 @@ it('lets a long stopper email wrap instead of widening the card', async () => {
   serve({ [PROJECTS]: projectsOf([{ ...stopped, lastStop: { at: '2026-11-11T01:00:00.000Z', by: 'a-very-long-operator-address@some-long-domain.example.com' } }]) })
   await show()
   expect(screen.getByText('a-very-long-operator-address@some-long-domain.example.com').className).toContain('break-all')
+})
+
+describe('운영 알림', () => {
+  const ai = (over: Partial<AdminIncident['ai']> = {}): AdminIncident['ai'] => ({
+    status: 'done',
+    risk: 'high',
+    recommendation: 'stop',
+    cause: '메모리가 계속 늘어요',
+    reason: '한도에 가까워지고 있어요',
+    model: 'local',
+    ...over,
+  })
+  const incident = (over: Partial<AdminIncident> = {}): AdminIncident => ({
+    id: 'i-1',
+    slug: 'my-app',
+    alertname: 'PodMemoryHigh',
+    title: '메모리 사용량이 너무 높아요',
+    state: 'firing',
+    firedAt: '2026-11-14T01:00:00.000Z',
+    resolvedAt: null,
+    action: 'pending',
+    ai: ai(),
+    decidedAt: null,
+    decidedBy: null,
+    ...over,
+  })
+  const incidentsOf = (incidents: AdminIncident[]): AdminIncidentsResponse => ({ incidents })
+  const title = '메모리 사용량이 너무 높아요'
+  const incidentCard = () => screen.getByText(title, { selector: 'span' }).closest('li') as HTMLElement
+
+  it('shows each alert with its project, time, state badge and what the AI said', async () => {
+    serve({ [INCIDENTS]: incidentsOf([incident()]) })
+    await show()
+    const alert = within(incidentCard())
+    expect(alert.getByText('my-app')).toBeTruthy()
+    expect(alert.getByText('판단 대기')).toBeTruthy()
+    expect(alert.getByText('높음')).toBeTruthy()
+    expect(alert.getByText('중지하기')).toBeTruthy()
+    expect(alert.getByText('메모리가 계속 늘어요')).toBeTruthy()
+    expect(alert.getByText('한도에 가까워지고 있어요')).toBeTruthy()
+    expect(api.apiFetch).toHaveBeenCalledWith(INCIDENTS)
+  })
+
+  it('says an auto-stopped alert stopped by itself and offers no button', async () => {
+    serve({ [INCIDENTS]: incidentsOf([incident({ action: 'auto_stopped', decidedAt: '2026-11-14T01:01:00.000Z' })]) })
+    await show()
+    const alert = within(incidentCard())
+    expect(alert.getByText('자동 중지')).toBeTruthy()
+    expect(alert.getByText('자동으로 멈췄어요')).toBeTruthy()
+    expect(alert.queryByRole('button')).toBeNull()
+  })
+
+  it('offers stop and dismiss only while the alert waits for a decision', async () => {
+    serve({
+      [INCIDENTS]: incidentsOf([
+        incident({ id: 'a', title: '대기', action: 'pending' }),
+        incident({ id: 'b', title: '멈춤', action: 'stopped', decidedBy: 'operator', decidedAt: '2026-11-14T02:00:00.000Z' }),
+        incident({ id: 'c', title: '무시됨', action: 'dismissed', decidedBy: 'operator', decidedAt: '2026-11-14T02:00:00.000Z' }),
+      ]),
+    })
+    await show()
+    expect(screen.getByRole('button', { name: 'my-app 대기 중지' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'my-app 대기 무시' })).toBeTruthy()
+    for (const done of ['멈춤', '무시됨']) {
+      const alert = within(screen.getByText(done, { selector: 'span' }).closest('li') as HTMLElement)
+      expect(alert.getByText('처리됨')).toBeTruthy()
+      expect(alert.queryByRole('button')).toBeNull()
+    }
+    expect(within(screen.getByText('멈춤', { selector: 'span' }).closest('li') as HTMLElement).getByText(/중지 ·/)).toBeTruthy()
+  })
+
+  it('says the AI is judging, could not judge, or hides its line when it was skipped', async () => {
+    const at = (status: AdminIncident['ai']['status'], name: string) =>
+      incident({ id: name, title: name, ai: ai({ status, risk: null, recommendation: null, cause: null, reason: null }) })
+    serve({ [INCIDENTS]: incidentsOf([at('pending', '판단중'), at('failed', '실패'), at('skipped', '건너뜀')]) })
+    await show()
+    expect(screen.getByText('AI가 판단하고 있어요')).toBeTruthy()
+    expect(screen.getByText('AI 판단을 받지 못했어요')).toBeTruthy()
+    const skipped = within(screen.getByText('건너뜀', { selector: 'span' }).closest('li') as HTMLElement)
+    expect(skipped.queryByText(/AI/)).toBeNull()
+  })
+
+  it('asks before stopping, sends nothing when cancelled, then stops after the confirmation and reads again', async () => {
+    serve({ [INCIDENTS]: incidentsOf([incident()]), [incidentPath('i-1', 'stop')]: { incident: incident({ action: 'stopped' }) } })
+    await show()
+    await press(`my-app ${title} 중지`)
+    expect(screen.getByText('my-app를 중지할까요?')).toBeTruthy()
+    await press('취소')
+    expect(reads(incidentPath('i-1', 'stop'))).toBe(0)
+    await press(`my-app ${title} 중지`)
+    const before = reads(INCIDENTS)
+    await press(`my-app ${title} 중지하기`)
+    expect(api.apiFetch).toHaveBeenCalledWith(incidentPath('i-1', 'stop'), {})
+    expect(reads(incidentPath('i-1', 'stop'))).toBe(1)
+    expect(reads(INCIDENTS)).toBe(before + 1)
+    expect(screen.getByText('중지했어요')).toBeTruthy()
+  })
+
+  it('keeps saying only some services stopped after the reload shows the alert as handled', async () => {
+    let reads503 = false
+    api.apiFetch.mockImplementation((path: string) => {
+      if (path === incidentPath('i-1', 'stop')) {
+        reads503 = true
+        return Promise.reject(new ApiError(503, 'STOP_INCOMPLETE', 'x'))
+      }
+      if (path === INCIDENTS) return Promise.resolve(incidentsOf([incident({ action: reads503 ? 'stopped' : 'pending' })]))
+      return Promise.resolve(replies[path])
+    })
+    await show()
+    await press(`my-app ${title} 중지`)
+    await press(`my-app ${title} 중지하기`)
+    expect(within(incidentCard()).getByText('처리됨')).toBeTruthy()
+    expect(screen.getByText('일부 서비스만 멈췄어요')).toBeTruthy()
+    expect(screen.getByText('아래 프로젝트 목록에서 강제 중지로 나머지를 멈춰 주세요.')).toBeTruthy()
+    expect(within(incidentCard()).queryByRole('button')).toBeNull()
+  })
+
+  it('dismisses without a confirmation step', async () => {
+    serve({ [INCIDENTS]: incidentsOf([incident()]), [incidentPath('i-1', 'dismiss')]: { incident: incident({ action: 'dismissed' }) } })
+    await show()
+    await press(`my-app ${title} 무시`)
+    expect(api.apiFetch).toHaveBeenCalledWith(incidentPath('i-1', 'dismiss'), {})
+    expect(screen.getByText('무시했어요')).toBeTruthy()
+  })
+
+  it('says an already handled alert was handled, not an error of the operator', async () => {
+    serve({ [INCIDENTS]: incidentsOf([incident()]), [incidentPath('i-1', 'dismiss')]: new ApiError(409, 'INCIDENT_CLOSED', 'x') })
+    await show()
+    await press(`my-app ${title} 무시`)
+    expect(screen.getByText('이미 처리된 알림이에요')).toBeTruthy()
+    // 다시 누를 수 있게 버튼이 돌아온다.
+    expect(screen.getByRole('button', { name: `my-app ${title} 무시` })).toBeTruthy()
+  })
+
+  it('says the alert is gone when the server does not know it', async () => {
+    serve({ [INCIDENTS]: incidentsOf([incident()]), [incidentPath('i-1', 'dismiss')]: new ApiError(404, 'INCIDENT_NOT_FOUND', 'x') })
+    await show()
+    await press(`my-app ${title} 무시`)
+    expect(screen.getByText('알림을 찾을 수 없어요')).toBeTruthy()
+  })
+
+  it('shows the forbidden notice when the decision is refused as not an operator', async () => {
+    serve({ [INCIDENTS]: incidentsOf([incident()]), [incidentPath('i-1', 'stop')]: new ApiError(403, 'ADMIN_REQUIRED', 'x') })
+    await show()
+    await press(`my-app ${title} 중지`)
+    await press(`my-app ${title} 중지하기`)
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('권한이 없어요')
+  })
+
+  it('says there are no alerts instead of an empty list, next to the other sections', async () => {
+    await show()
+    expect(screen.getByText('운영 알림이 없어요.')).toBeTruthy()
+    expect(screen.getByText('leader', { selector: 'span' })).toBeTruthy()
+  })
+
+  it('shows the forbidden notice when only the alerts read is refused', async () => {
+    serve({ [INCIDENTS]: new ApiError(403, 'ADMIN_REQUIRED', 'x') })
+    await show()
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('권한이 없어요')
+  })
+
+  it('reads the alerts again with "지금 새로 읽기"', async () => {
+    await show()
+    const before = reads(INCIDENTS)
+    await press('지금 새로 읽기')
+    expect(reads(INCIDENTS)).toBe(before + 1)
+  })
 })

@@ -240,7 +240,7 @@ it('shows the account info: email, join date and last sign-in', async () => {
   await screen.findByText('GitHub 계정 연동')
 })
 
-it('has a section menu that jumps to the four sections', async () => {
+it('has a section menu that jumps to the five sections', async () => {
   auth.getUserIdentities.mockResolvedValue(emailOnly)
   renderPage()
   const menu = screen.getByRole('navigation', { name: '프로필 구역' })
@@ -248,6 +248,7 @@ it('has a section menu that jumps to the four sections', async () => {
     '#account',
     '#password',
     '#github',
+    '#discord',
     '#deploys',
   ])
   await screen.findByText('GitHub 계정 연동')
@@ -273,7 +274,13 @@ it('summarises my deploys by project: count and running, with a link to the list
 
 it('says the summary failed to load and retries', async () => {
   auth.getUserIdentities.mockResolvedValue(emailOnly)
-  api.apiFetch.mockRejectedValueOnce(new Error('down')).mockResolvedValue({ deploys: [] })
+  // Discord 웹후크 읽기도 같은 apiFetch다. 처음 실패하는 것은 배포 목록(경로)에만 건다.
+  let deployReads = 0
+  api.apiFetch.mockImplementation((path: string) => {
+    if (path === '/api/profile/discord-webhook') return Promise.resolve({ set: false, hint: null })
+    deployReads += 1
+    return deployReads === 1 ? Promise.reject(new Error('down')) : Promise.resolve({ deploys: [] })
+  })
   renderPage()
   const section = screen.getByRole('region', { name: '내 배포 요약' })
   fireEvent.click(await within(section).findByRole('button', { name: '다시 시도' }))

@@ -12,6 +12,8 @@ export function makeQueryClient(): QueryClient {
 export const queryKeys = {
   deploys: ['deploys'] as const,
   githubLink: ['github-link'] as const,
+  incidents: ['incidents'] as const,
+  discordWebhook: ['discord-webhook'] as const,
   admin: (path: string) => ['admin', path] as const,
 }
 

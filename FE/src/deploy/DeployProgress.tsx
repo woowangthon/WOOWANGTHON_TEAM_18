@@ -5,6 +5,7 @@ import { Button } from '../components/ui/Button.tsx'
 import { Card } from '../components/ui/Card.tsx'
 import { CheckIcon } from '../components/ui/Icons.tsx'
 import { Spinner } from '../components/ui/Spinner.tsx'
+import IncidentNotice from '../incidents/IncidentNotice.tsx'
 import { ApiError, apiFetch } from '../lib/api.ts'
 import AgentSection from './AgentSection.tsx'
 import DeployStages from './DeployStages.tsx'
@@ -229,6 +230,7 @@ function DeployProgress({ deployId }: { deployId: string }) {
           )}
         </div>
         {offlineNotice}
+        <IncidentNotice deployId={deployId} />
 
         {progress.status === 'not_started' && (
           <div className="flex flex-col gap-2">
