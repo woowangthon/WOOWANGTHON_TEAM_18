@@ -822,6 +822,8 @@ def test_the_instructions_tell_the_model_the_pull_request_rules() -> None:
         "`{ url: null, patchAttached: true }`",
         "Do not copy the patch",
         "the platform checks it",
+        # D3(2026-11-14): run_render는 source를 받지 않아 수정 PR 경로에서 호출이 낭비됐다.
+        "Skip run_render on this path",
     ):
         assert text in INSTRUCTIONS
 
