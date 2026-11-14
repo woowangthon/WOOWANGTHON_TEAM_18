@@ -712,6 +712,62 @@ describe('deploy queue', () => {
     expect(run(next).status).toBe('running')
   })
 
+  // verified 뒤 다시 실행(api.md 5번): 게이트웨이가 같은 실행 기록을 ticket_id를 남긴 채 queued로 되돌린 줄이다.
+  const reRunOver = (created_at: string): Row => ({ ticket_id: 't_stale', agent_result: { status: 'verified', summary: 'x', tickets: 1 }, created_at })
+
+  it('starts a queued verified re-run before deploys queued after its first start (created_at order)', async () => {
+    const before = new Date(Date.now() - 10 * 60_000).toISOString()
+    const later = seedQueued('app-one')
+    // 나중에 줄에 돌아왔지만 처음 시작한 시각(created_at)은 더 이르다.
+    const reRun = seedQueued('app-two', reRunOver(before))
+    await settle()
+    expect(run(reRun)).toMatchObject({ status: 'running', stage: 'build', ticket_id: 't_stale' })
+    expect(run(later).status).toBe('queued')
+    expect(callsTo(GOCD_URL)).toHaveLength(1)
+    expect(((await status(later)).body as { queue: unknown }).queue).toEqual({ position: 1, waitingForRoom: false })
+  })
+
+  it('ends a queued re-run GoCD does not take as PIPELINE_UNAVAILABLE and closes its ticket as stopped', async () => {
+    const reRun = seedQueued('app-one', reRunOver(new Date().toISOString()))
+    gocdAnswer = () => new Response('{}', { status: 500 })
+    await settle()
+    expect(run(reRun)).toMatchObject({ status: 'failed', failure: { code: 'PIPELINE_UNAVAILABLE', stage: 'build', service: null } })
+    expect(callsTo(CLOSE_URL).map(bodyOf)).toEqual([{ ticketId: 't_stale', commitSha: SHA, reason: 'stopped' }])
+  })
+
+  it('closes no ticket when something else ended the re-run before it could be marked PIPELINE_UNAVAILABLE', async () => {
+    const reRun = seedQueued('app-one', reRunOver(new Date().toISOString()))
+    gocdAnswer = () => new Response('{}', { status: 500 })
+    // 첫 PATCH(queued → running)는 통과하고, 실패로 바꾸는 두 번째 PATCH는 이미 다른 곳이 바꿔 아무것도 맞지 않는다.
+    let patches = 0
+    restOverride = (table, method) => (table === 'deploy_runs' && method === 'PATCH' && ++patches === 2 ? Response.json([]) : undefined)
+    await settle()
+    expect(run(reRun).status).toBe('running')
+    expect(callsTo(CLOSE_URL)).toHaveLength(0)
+  })
+
+  it.each([
+    ['a new deploy', {}],
+    ['a verified re-run', reRunOver(new Date().toISOString())],
+  ])('leaves %s running when GoCD took it but answered with an error after a notice moved it past build', async (_label, over) => {
+    const id = seedQueued('app-one', over)
+    // GoCD가 실행은 받았고(build 통과 알림이 먼저 와 prepare로 넘겼다) 응답만 실패했다.
+    gocdAnswer = () => {
+      Object.assign(run(id), { stage: 'prepare', updated_at: new Date().toISOString() })
+      return new Response('{}', { status: 500 })
+    }
+    await settle()
+    expect(run(id)).toMatchObject({ status: 'running', stage: 'prepare', failure: null })
+    expect(callsTo(CLOSE_URL)).toHaveLength(0)
+  })
+
+  it('closes no ticket when a new deploy (no ticket) cannot be scheduled', async () => {
+    seedQueued('app-one')
+    gocdAnswer = () => new Response('{}', { status: 500 })
+    await settle()
+    expect(callsTo(CLOSE_URL)).toHaveLength(0)
+  })
+
   it('does not take a deploy another request already moved on', async () => {
     const id = seedQueued('app-one')
     restOverride = (table, method) => (table === 'deploy_runs' && method === 'PATCH' ? Response.json([]) : undefined)
@@ -1510,6 +1566,24 @@ describe('POST /api/pipeline/notify', () => {
         expect(run(id)).toMatchObject({ status: 'failed', failure: { code: 'IMAGE_PULL_FAILED' } })
         expect(closes()).toEqual([{ ticketId: 't_stale', commitSha: SHA, reason: 'stopped' }])
         expect(callsTo(AI_URL)).toHaveLength(0)
+      })
+
+      it('runs a failed deploy again through the queue after verified and closes the ticket with success', async () => {
+        const id = await reach('verify')
+        await notify({ deployId: id, stage: 'verify', result: 'failed', failure: failure() })
+        expect(run(id).status).toBe('fixing')
+        // 게이트웨이의 submitVerified가 하는 일: 같은 실행 기록을 ticket_id를 남긴 채 queued/build로 되돌리고 줄을 본다.
+        Object.assign(run(id), { status: 'queued', stage: 'build', failure: null, ticket_id: 't_stale', gateway_token_hash: null, agent_result: { status: 'verified', summary: SUMMARY, tickets: 1 } })
+        expect(callsTo(GOCD_URL)).toHaveLength(1)
+        const q = app.get(DeployQueue)
+        q.kick()
+        await q.idle()
+        expect(run(id)).toMatchObject({ status: 'running', stage: 'build' })
+        expect(callsTo(GOCD_URL)).toHaveLength(2)
+        await notify({ deployId: id, stage: 'build', result: 'passed', images: { fe: IMAGE } })
+        for (const s of ['prepare', 'render', 'apply', 'verify', 'switch']) await notify({ deployId: id, stage: s, result: 'passed' })
+        expect(run(id)).toMatchObject({ status: 'succeeded' })
+        expect(closes()).toEqual([{ ticketId: 't_stale', commitSha: SHA, reason: 'success' }])
       })
 
       it('supersedes the earlier ticket with a new one whose previous is that verified ticket', async () => {

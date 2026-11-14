@@ -50,8 +50,8 @@ import { SlotScaleDown } from './slot-scale-down.js'
     // 공간 확인 → Secret 쓰기. 클러스터 설정이 없으면 쓸 때 503 CLUSTER_UNAVAILABLE이다.
     { provide: SecretWriter, useClass: ClusterSecretWriter },
   ],
-  // 게이트웨이(src/gateway)가 실행 기록 · AI 서버 연결을 같이 쓴다.
+  // 게이트웨이(src/gateway)가 실행 기록 · AI 서버 연결을 같이 쓰고, verified 뒤 다시 실행을 대기열(DeployQueue)에 세운다.
   // DeployEvents: 운영 알림 모듈이 배포 결과를 학생 Discord로 보낸다.
-  exports: [DeployConditionService, DeploysStore, DeployEvents, AgentClient, AgentProgress, PipelineClient, PipelineTokenGuard, SlotScaleDown],
+  exports: [DeployConditionService, DeploysStore, DeployEvents, AgentClient, AgentProgress, PipelineClient, PipelineTokenGuard, SlotScaleDown, DeployQueue],
 })
 export class DeploysModule {}
