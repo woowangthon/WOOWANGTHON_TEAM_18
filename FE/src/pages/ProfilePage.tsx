@@ -1,5 +1,6 @@
 import { useAuth } from '../auth/useAuth.ts'
 import AccountSection from '../profile/AccountSection.tsx'
+import DiscordSection from '../profile/DiscordSection.tsx'
 import DeploySummarySection from '../profile/DeploySummarySection.tsx'
 import PasswordSection from '../profile/PasswordSection.tsx'
 import GithubLinkCard from './GithubLinkCard.tsx'
@@ -8,6 +9,7 @@ const sections = [
   { id: 'account', label: '계정 정보' },
   { id: 'password', label: '비밀번호 변경' },
   { id: 'github', label: 'GitHub 연동' },
+  { id: 'discord', label: 'Discord 알림' },
   { id: 'deploys', label: '내 배포 요약' },
 ]
 
@@ -35,6 +37,7 @@ function ProfilePage() {
         </h2>
         <GithubLinkCard />
       </section>
+      <DiscordSection />
       <DeploySummarySection />
     </>
   )

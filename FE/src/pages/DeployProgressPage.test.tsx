@@ -10,6 +10,10 @@ vi.mock('../lib/api.ts', async (importOriginal) => ({
   apiFetch: api.apiFetch,
 }))
 
+
+// 운영 알림 배너는 자기 시험(incidents/IncidentNotice.test.tsx)이 있다. 여기서는 어느 배포의 것으로 부르는지만 본다.
+vi.mock('../incidents/IncidentNotice.tsx', () => ({ default: ({ deployId }: { deployId: string }) => <p>운영 알림 {deployId}</p> }))
+
 beforeEach(() => {
   vi.useFakeTimers()
   api.apiFetch.mockReset()
