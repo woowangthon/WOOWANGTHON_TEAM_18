@@ -128,7 +128,7 @@ AI 서버 (에이전트) → 플랫폼 서버 MCP 게이트웨이 → GoCD 서�
 | CodeBuild 빌드 설정 | 그 빌드에만, `buildOverrides` 상한 안 (§3) |
 | 대상 슬롯 운영 | 재시작, 0 · 1개 조정, Ready 다시 기다리기 |
 | 그대로 재실행 | 고칠 것이 없는 일시적 실패 (CodeBuild 준비 실패, 이미지 받기 시간 초과) |
-| dry-run 먼저 | 이름 · 포트 오류는 `run_render`로 먼저 확인한다. 자원 합계(쿼터)는 `run_render`에서 걸리지 않고 `run_deploy`의 Prepare에서 걸린다(case `P2`) |
+| dry-run 먼저 | 이름 · 포트 오류는 `run_render`로 먼저 확인한다. 자원 합계(쿼터)는 `run_render`에서 걸리지 않고 `run_deploy`의 Prepare에서 걸린다(case `P2`). `run_render`는 `source`를 받지 않아 원래 commit만 시험하므로, 레포 수정 → PR 경로는 `run_build` → `run_deploy`로 바로 간다 |
 | 레포 수정 → PR | fork 커밋으로 `run_verify`까지 통과한 변경만 |
 | 사용자 요청 | 비밀값이 틀림 · 빠짐, 학생 DB에 닿지 않음, 학생 DB 스키마 문제 |
 | 플랫폼 문제 보고 | 이미지 공개 설정, 노드 자원 부족, 차트 · 기본 Dockerfile 문제 |
