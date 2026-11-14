@@ -1,4 +1,5 @@
 import type { Session } from '@supabase/supabase-js'
+import { PersonIcon } from '../components/ui/Icons.tsx'
 import ProfileSection from './ProfileSection.tsx'
 
 const when = (iso: string | undefined) =>
@@ -12,7 +13,7 @@ function AccountSection({ session }: { session: Session }) {
     ['마지막 로그인', when(user.last_sign_in_at)],
   ]
   return (
-    <ProfileSection id="account" title="계정 정보">
+    <ProfileSection id="account" title="계정 정보" icon={<PersonIcon width={20} height={20} />}>
       <dl className="flex flex-col gap-2 text-sm">
         {rows.map(([label, value]) => (
           <div key={label} className="flex flex-col gap-0.5 sm:flex-row sm:gap-6">

@@ -4,6 +4,7 @@ import IncidentsSection from '../admin/IncidentsSection.tsx'
 import NodesSection from '../admin/NodesSection.tsx'
 import ProjectsSection from '../admin/ProjectsSection.tsx'
 import { Button } from '../components/ui/Button.tsx'
+import { RefreshIcon } from '../components/ui/Icons.tsx'
 import { isForbidden, REFRESH_MS, useAdminRead } from '../admin/useAdminRead.ts'
 import type { NodesResponse, ProjectsResponse } from '../admin/types.ts'
 import type { AdminIncidentsResponse } from '../incidents/types.ts'
@@ -27,13 +28,15 @@ function AdminPage() {
         <span>{REFRESH_MS / 1000}초마다 새로 읽어요</span>
         <Button
           variant="outline"
+          aria-label="지금 새로 읽기"
+          title="지금 새로 읽기"
           onClick={() => {
             nodes.reload()
             projects.reload()
             incidents.reload()
           }}
         >
-          지금 새로 읽기
+          <RefreshIcon width={16} height={16} />
         </Button>
       </div>
       <IncidentsSection

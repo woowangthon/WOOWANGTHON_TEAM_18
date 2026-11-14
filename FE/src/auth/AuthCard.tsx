@@ -6,7 +6,7 @@ function AuthCard({ children }: { children: ReactNode }) {
   return (
     <div className="flex min-h-screen flex-col">
       <header className="border-b border-line bg-bg">
-        <div className="mx-auto flex h-16 max-w-300 items-center px-4 sm:px-8">
+        <div className="mx-auto flex h-16 max-w-300 items-center px-3 sm:px-4">
           <Link to="/" className="flex items-center">
             {/* 임시: 로고가 흰 배경이라 다크에서는 밝은 칩 위에 올린다. 투명 배경 로고가 생기면 칩을 뺀다. */}
             <img

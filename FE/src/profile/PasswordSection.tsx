@@ -6,6 +6,7 @@ import PasswordRules from '../auth/PasswordRules.tsx'
 import NoticeBanner from '../components/NoticeBanner.tsx'
 import PasswordField from '../components/PasswordField.tsx'
 import { Button } from '../components/ui/Button.tsx'
+import { LockIcon } from '../components/ui/Icons.tsx'
 import { supabase } from '../lib/supabase.ts'
 import ProfileSection from './ProfileSection.tsx'
 
@@ -70,7 +71,7 @@ function PasswordSection({ email }: { email: string }) {
   const disabled = locked || submitting
 
   return (
-    <ProfileSection id="password" title="비밀번호 변경">
+    <ProfileSection id="password" title="비밀번호 변경" icon={<LockIcon width={20} height={20} />}>
       {locked && (
         <NoticeBanner variant="info" title="시연 계정은 비밀번호를 바꿀 수 없어요" />
       )}

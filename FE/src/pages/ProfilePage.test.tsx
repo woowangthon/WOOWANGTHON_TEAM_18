@@ -398,3 +398,13 @@ describe('password change', () => {
     expect(field('현재 비밀번호').disabled).toBe(false)
   })
 })
+
+it('puts a picture next to each section title, hidden from screen readers', async () => {
+  auth.getUserIdentities.mockResolvedValue(emailOnly)
+  renderPage()
+  await screen.findByText('GitHub 계정 연동')
+  for (const name of ['계정 정보', '비밀번호 변경', 'GitHub 연동', 'Discord 알림', '내 배포 요약']) {
+    const heading = screen.getByRole('heading', { name })
+    expect(heading.querySelector('[aria-hidden="true"] svg')).toBeTruthy()
+  }
+})

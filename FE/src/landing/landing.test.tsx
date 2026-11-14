@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import type { Session } from '@supabase/supabase-js'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
@@ -169,4 +169,20 @@ it('closes with a call to action: start and login when signed out, dashboard whe
   unmount()
   renderLanding({ status: 'signedIn', session: sessionWith('admin') })
   expect(screen.getAllByRole('link', { name: '대시보드로' })).toHaveLength(3)
+})
+
+it('keeps the section links out of the top bar and in a floating menu, the same for every sign-in state', () => {
+  for (const state of [{ status: 'signedOut', expired: false }, { status: 'signedIn', session: sessionWith() }] as AuthState[]) {
+    const { unmount } = renderLanding(state)
+    const bar = screen.getByRole('banner')
+    expect(within(bar).queryByRole('link', { name: /설문|기능 소개|지원 범위|사용 방법/ })).toBeNull()
+    const menu = within(screen.getByRole('navigation', { name: '페이지 바로가기' }))
+    expect(menu.getAllByRole('link').map((a) => [a.textContent, a.getAttribute('href')])).toEqual([
+      ['설문', '#survey'],
+      ['기능 소개', '#showcase'],
+      ['지원 범위', '#types'],
+      ['사용 방법', '#how'],
+    ])
+    unmount()
+  }
 })
