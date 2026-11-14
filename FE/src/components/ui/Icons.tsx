@@ -36,6 +36,28 @@ export const InfoIcon = (p: SVGProps<SVGSVGElement>) => (
   </svg>
 )
 
+// 캐러셀 조작 그림. 재생 · 멈춤은 채운 모양이고, 화살표는 선 모양이다.
+export const PlayIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base} fill="currentColor" stroke="none" {...p}>
+    <path d="M5 3l8 5-8 5z" />
+  </svg>
+)
+export const PauseIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base} fill="currentColor" stroke="none" {...p}>
+    <path d="M4 3h3v10H4zM9 3h3v10H9z" />
+  </svg>
+)
+export const ChevronLeftIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base} {...p}>
+    <path d="M10 3L5 8l5 5" />
+  </svg>
+)
+export const ChevronRightIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base} {...p}>
+    <path d="M6 3l5 5-5 5" />
+  </svg>
+)
+
 // 프로필 구역 · 버튼에 쓰는 그림. 선 그림은 위와 같은 선 굵기이고, 브랜드 그림(GitHub · Discord)은 채운 그림이다.
 export const PersonIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base} {...p}>
