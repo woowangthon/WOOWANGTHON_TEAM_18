@@ -7,12 +7,18 @@ import { PipelineClient } from './pipeline.client.js'
 
 /** 빌드 제한(15분)의 두 배. running이 이보다 오래 바뀌지 않았으면 멈춘 것으로 보고 마감한다. */
 export const QUEUE_STALE_MS = 30 * 60_000
+/**
+ * 게이트웨이 토큰이 만료된 `fixing`을 마감하기 전 여유. 만료 직전에 토큰 검사를 통과한 submit_result가 아직 실행 기록을 바꾸는 중일 수 있다
+ * (verified는 이전 시험이 끝났는지 확인한다). 시험을 기다리는 티켓은 대기 상한까지 토큰을 먼저 늘리므로(gateway/tools.ts) 만료된 토큰은 시험 대기 중이 아니다.
+ */
+export const FIXING_GRACE_MS = 2 * 60_000
 // 게이트웨이 쪽 종료(gave_up · needs_user), 재시작, 놓친 알림으로 줄이 멈추지 않게 이 간격으로 다시 본다.
 const TICK_MS = 15_000
 
 /**
  * 배포 대기열(docs/design/deploy-workflow.md "배포 대기열"). 시작한 배포는 `queued`로 저장되고, 여기서 한 번에 하나씩 `running`으로 바꾸며 파이프라인을 부른다.
  * 출발 조건: 도는 `running`이 없고, 클러스터에 자리가 있다. `fixing`(AI가 고치는 중)은 줄을 막지 않는다. BE는 컨테이너 하나라 프로세스 안의 줄이면 충분하다.
+ * 게이트웨이 토큰이 만료된 `fixing`은 더 결과를 받을 수 없으므로(TICKET_CLOSED) 여기서 TIMED_OUT으로 마감한다.
  */
 @Injectable()
 export class DeployQueue implements OnApplicationBootstrap, OnModuleDestroy {
@@ -48,6 +54,7 @@ export class DeployQueue implements OnApplicationBootstrap, OnModuleDestroy {
 
   /** 한 번에 하나만 출발시킨다. */
   private async advance(): Promise<void> {
+    for (const stuck of await this.store.findExpiredFixing(new Date(Date.now() - FIXING_GRACE_MS))) await this.expire(stuck)
     for (;;) {
       const running = await this.store.findRunning()
       if (running) {

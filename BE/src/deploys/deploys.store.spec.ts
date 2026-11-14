@@ -23,6 +23,28 @@ describe('DeploysStore.updateRun', () => {
   })
 })
 
+describe('DeploysStore.findExpiredFixing', () => {
+  it('asks only for fixing runs whose gateway token expired before the given time, least recently changed first, at most 10', async () => {
+    const fetchMock = vi.fn<typeof fetch>(() => Promise.resolve(Response.json([])))
+    vi.stubGlobal('fetch', fetchMock)
+    const before = new Date('2026-11-14T10:00:00.000Z')
+    expect(await store().findExpiredFixing(before)).toEqual([])
+    expect(fetchMock.mock.calls[0][1]?.method ?? 'GET').toBe('GET')
+    expect(queryOf(fetchMock.mock.calls[0])).toEqual({
+      select: '*',
+      status: 'eq.fixing',
+      gateway_expires_at: 'lt.2026-11-14T10:00:00.000Z',
+      order: 'updated_at.asc',
+      limit: '10',
+    })
+  })
+
+  it('refuses rows that are not run records', async () => {
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>(() => Promise.resolve(Response.json([{ deploy_id: 1 }]))))
+    await expect(store().findExpiredFixing(new Date())).rejects.toThrow()
+  })
+})
+
 describe('DeploysStore.updateRun end events', () => {
   it('tells the listeners only when it really moved a run to succeeded, failed or needs_user', async () => {
     const events = new DeployEvents()

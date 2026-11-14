@@ -427,7 +427,9 @@ def _model_failure(e: Exception, actions: list[Action]) -> str:
 async def _submit(gateway: GatewayToolset, result: AgentResult) -> None:
     """전송 오류면 몇 번 다시 낸다.
 
-    INVALID_RESULT면 봉투와 사실 요약만 담은 gave_up으로 한 번 더 낸다.
+    TICKET_CLOSED가 아닌 거절(INVALID_RESULT · PATCH_FORBIDDEN · INVALID_SPEC 등)이면
+    봉투와 사실 요약만 담은 gave_up으로 한 번 더 낸다. 그러지 않으면 실행 기록은
+    토큰이 만료될 때까지 fixing에 남는다.
     """
     delays = [0.0, *SUBMIT_RETRY_DELAYS]
     minimal_sent = False
@@ -443,14 +445,15 @@ async def _submit(gateway: GatewayToolset, result: AgentResult) -> None:
             log.warning("ticket %s submit attempt %d: %s", result.ticket_id, attempt + 1, e)
             attempt += 1
         except GatewayRejected as e:
-            if e.code != "INVALID_RESULT" or minimal_sent:
+            if e.code == "TICKET_CLOSED" or minimal_sent:
                 log.error("ticket %s result not delivered: %s", result.ticket_id, e)
                 return
             # 게이트웨이의 거절 이유(칸 이름 · 규칙 문장, result.ts)를 남긴다. 메시지에 모델이 만든
             # 경로(specPatch의 op.path 등)가 섞일 수 있어 비밀값 모양은 가린다(FR-102와 같은 필터).
             log.warning(
-                "ticket %s result rejected as invalid (%s); sending a minimal gave_up",
+                "ticket %s result rejected (%s): %s; sending a minimal gave_up",
                 result.ticket_id,
+                e.code,
                 budget.clip_line(redact(e.message), 300),
             )
             result = AgentResult(
