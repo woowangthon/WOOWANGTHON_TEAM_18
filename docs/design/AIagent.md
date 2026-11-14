@@ -107,7 +107,7 @@ AI 서버 (에이전트) → 플랫폼 서버 MCP 게이트웨이 → GoCD 서�
 
 | 도구 | 하는 일 | 제한 |
 |---|---|---|
-| `edit_repo_file` | 봇 fork 작업 브랜치에 파일 수정 commit. 그 커밋을 `source`로 실행 도구에 넘긴다. 학생 레포에는 쓰지 않는다 | 티켓 전체에서 파일 5개 · 바뀐 줄 50줄(지운 줄 + 넣은 줄), `.env` · `.github/` 금지, 비밀값 모양의 줄 금지. 티켓당 5회 |
+| `edit_repo_file` | 봇 fork 작업 브랜치에 파일 수정 commit(파일 전체 내용 `content`, 또는 한 번만 있는 글을 바꾸는 `find` · `replace`). 그 커밋을 `source`로 실행 도구에 넘긴다. 학생 레포에는 쓰지 않는다 | 티켓 전체에서 파일 5개 · 바뀐 줄 50줄(지운 줄 + 넣은 줄), `.env` · `.github/` 금지, 비밀값 모양의 줄 금지. 티켓당 5회 |
 | `open_pr` | 학생 레포에 수정 PR. PR을 열 수 없으면 `{ url: null, patchAttached: true }`(patch는 플랫폼이 `needs_user` 안내에 붙인다) | 티켓당 1개(2회). 게이트웨이가 같은 `source`로 `run_deploy` → `run_verify` 통과를 확인한 뒤에만 연다(`NOT_VERIFIED`) |
 
 **끝내기**
@@ -333,7 +333,7 @@ AI 서버 (에이전트) → 플랫폼 서버 MCP 게이트웨이 → GoCD 서�
 | `B1` | build | 락 파일 불일치 | `INSTALL` 실패, `ERR_PNPM_OUTDATED_LOCKFILE`, `npm ci` sync 오류 | `needs_user`로 다시 만들 락 파일과 명령을 알림(락 파일은 패키지 매니저를 돌려야 다시 만들 수 있고 `edit_repo_file` 50줄을 넘기 쉽다) |
 | `B2` | build | Node 버전 불일치 | `engine "node" is incompatible`, `ERR_PNPM_UNSUPPORTED_ENGINE`, `npm error code EBADENGINE`. npm의 `EBADENGINE` **경고**와 일반 `SyntaxError`는 신호로 쓰지 않고, 대조는 `B5` · `B3` · `B4` 뒤에 한다(경고가 섞인 다른 실패를 B2로 잘못 고르지 않게, 2026-11-14) | `build.nodeVersion` |
 | `B3` | build | 빌드 시점 env 누락 | `BUILD` 실패, `import.meta.env.VITE_*` undefined | `build.buildEnv` 또는 사용자 요청 |
-| `B4` | build | 대소문자 · import 경로 | `Module not found`, `Cannot find module` | 수정 PR(`edit_repo_file` → 같은 `source`로 `run_build` · `run_deploy` · `run_verify` → `open_pr`). `BOT_UNAVAILABLE`이거나 PR이 막히면(`patchAttached`) `needs_user`로 import 파일 · 고칠 경로를 알림 |
+| `B4` | build | 대소문자 · import 경로 | `Module not found`, `Cannot find module` | 수정 PR(`edit_repo_file`의 `find`에 지금 import 줄, `replace`에 고친 줄 → 같은 `source`로 `run_build` · `run_deploy` · `run_verify` → `open_pr`). `BOT_UNAVAILABLE`이거나 PR이 막히면(`patchAttached`) `needs_user`로 import 파일 · 고칠 경로를 알림 |
 | `B5` | build | `COPY` 대상 없음 | `COPY failed`, `"/dist": not found` | `build.context` · `outputDir` · `dockerfile` |
 | `P1` | prepare | 필수 Secret key 없음 | W3 상태 "빠짐" | 사용자 요청 |
 | `P2` | prepare | 자원 합계 초과 | 검증 규칙 `resources` 합계 | `runtime.resources` |
@@ -342,7 +342,7 @@ AI 서버 (에이전트) → 플랫폼 서버 MCP 게이트웨이 → GoCD 서�
 | `R2` | render | 포트 · probe 값 오류 | `422 Invalid`, field `...containerPort` | `runtime.port` · `health` |
 | `R3` | render | 쿼터 초과 | `403 Forbidden`, `exceeded quota` | `runtime.resources`. render에서는 드묾: ResourceQuota는 Pod가 생길 때 걸려 Deployment dry-run은 통과한다(2026-11-11 로컬 k3s, CPU 9 Deployment가 통과). 실제로는 Prepare의 `P2`나 apply의 `A4`(FailedCreate)로 온다 |
 | `A1` | apply | 헬스체크 실패 | 이벤트 `Unhealthy` | `runtime.port` · `health.path` · `startupTimeoutSeconds` |
-| `A2` | apply | 시작 직후 종료 | `CrashLoopBackOff`, `exitCode` ≠ 0 | 로그 패턴: env 누락 → `runtime.env`, DB 연결 실패 → 사용자 요청 |
+| `A2` | apply | 시작 직후 종료 | `CrashLoopBackOff`, `exitCode` ≠ 0 | 로그 패턴: env 누락 → `runtime.env`, 코드의 파일 · 모듈 경로 오류(`ENOENT`, `Cannot find module`) → B4와 같은 수정 PR(`find` · `replace`), DB 연결 실패 → 사용자 요청 |
 | `A3` | apply | 메모리 초과 | `OOMKilled` (137) | `runtime.resources.memory` |
 | `A4` | apply | Pod 생성 실패 (쿼터) | ReplicaSet 이벤트 `FailedCreate` + `exceeded quota` | `runtime.resources` |
 | `V1` | verify | 정적 파일 404 | `errorMessage`에 파일 경로(`/assets/` 또는 `.js` · `.css` · 이미지 · 글꼴 확장자)와 `404` | 원인은 Vite `base` · `outputDir` 경로. spec(`build.outputDir`)이면 `specPatch`, 레포 파일(`vite.config`의 `base`)이면 수정 PR(수정 PR 도구 전에는 `needs_user`로 고칠 파일 · 값을 알림) |

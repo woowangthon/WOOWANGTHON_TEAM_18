@@ -31,6 +31,10 @@
   is not logged anywhere (finding F13-3).
 - 2026-11-14 no Discord for the failed deploy: by design today — only Prometheus incidents notify. The
   restart loop in the trial slot lasted ~4 min, short of the 15 min alert. Finding D.
+- 2026-11-14 planning F13-1: `cases.json` A2 (crash on start) had only an env path, which explains why the
+  agent reached for `CHAOS` first; B4 said "import 줄만", which reads as "send only the import line".
+  Both now point to find/replace (finding F13-4).
+- 2026-11-14 built A, F13-1..4 and D on #210 (automated tests only; live checks after merge and deploy).
 
 ## Lessons
 

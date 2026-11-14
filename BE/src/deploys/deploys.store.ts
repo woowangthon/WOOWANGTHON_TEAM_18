@@ -1,9 +1,10 @@
-import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common'
+import { Injectable, Logger, Optional, ServiceUnavailableException } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
 import { isRecord } from '../common/is-record.js'
 import type { Env } from '../config/env.js'
 import { isImageDigest, type Slot } from './deploy-condition.js'
 import type { Spec } from './deploy-input.js'
+import { DeployEvents } from './deploy-events.js'
 import type { RunStatus, Stage, StoredFailure } from './deploy-run.js'
 
 const TIMEOUT_MS = 5000
@@ -111,7 +112,11 @@ export class DeploysStore {
   private readonly restUrl: string
   private readonly secretKey: string
 
-  constructor(config: ConfigService<Env, true>) {
+  constructor(
+    config: ConfigService<Env, true>,
+    // 단위 시험처럼 모듈 밖에서 만들면 없다(알림만 나지 않는다).
+    @Optional() private readonly events?: DeployEvents,
+  ) {
     this.restUrl = `${config.get('SUPABASE_URL', { infer: true })}/rest/v1`
     this.secretKey = config.get('SUPABASE_SECRET_KEY', { infer: true })
   }
@@ -273,6 +278,7 @@ export class DeploysStore {
     if (where.stage) query.stage = `eq.${where.stage}`
     if (where.updatedAt) query.updated_at = `eq.${where.updatedAt}`
     const rows = await this.call('deploy_runs', 'PATCH', query, { ...patch, updated_at: new Date().toISOString() })
+    if (rows.length > 0 && (patch.status === 'succeeded' || patch.status === 'failed' || patch.status === 'needs_user')) this.events?.ended(deployId)
     return rows.length > 0
   }
 

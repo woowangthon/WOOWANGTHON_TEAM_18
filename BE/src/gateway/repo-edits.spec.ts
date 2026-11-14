@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { Logger } from '@nestjs/common'
+import { beforeEach, describe, expect, it, type MockInstance, vi } from 'vitest'
 import { type BaseEntry, BotError, type BotRepo, type PullOutcome } from './bot-repo.js'
 import { checkEditArgs, RepoEdits, type SourceRef } from './repo-edits.js'
 import type { GatewayTicket } from './tickets.js'
@@ -55,9 +56,12 @@ class FakeBot {
 
 let bot: FakeBot
 let edits: RepoEdits
+let warn: MockInstance<Logger['warn']>
 const file = (content: string, mode = '100644', type = 'blob') => ({ mode, type, content: Buffer.from(content) })
 
 beforeEach(() => {
+  vi.restoreAllMocks()
+  warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
   bot = new FakeBot()
   bot.files.set('package.json', file('{\n  "name": "app",\n  "dependencies": {}\n}\n'))
   bot.files.set('start.sh', file('#!/bin/sh\nnode server.js\n', '100755'))
@@ -71,6 +75,7 @@ beforeEach(() => {
 
 const edit = (files: unknown, message: unknown = 'fix: import case', t = ticket()) => edits.edit(t, { files, message })
 const put = (path: string, content: string) => ({ path, content })
+const swap = (path: string, find: string, replace: string) => ({ path, find, replace })
 
 describe('edit_repo_file arguments', () => {
   it.each([
@@ -79,6 +84,10 @@ describe('edit_repo_file arguments', () => {
     ['a file that is not an object', ['a'], 'INVALID_ARGUMENT'],
     ['a file with an extra key', [{ path: 'a', content: 'b', mode: 'x' }], 'INVALID_ARGUMENT'],
     ['content not a string', [{ path: 'a', content: 1 }], 'INVALID_ARGUMENT'],
+    ['an empty find', [{ path: 'a', find: '', replace: 'x' }], 'INVALID_ARGUMENT'],
+    ['find without replace', [{ path: 'a', find: 'x' }], 'INVALID_ARGUMENT'],
+    ['both content and find', [{ path: 'a', content: 'x', find: 'y', replace: 'z' }], 'INVALID_ARGUMENT'],
+    ['a NUL byte in replace', [{ path: 'a.txt', find: 'a', replace: 'a\0b' }], 'EDIT_FORBIDDEN'],
     ['an absolute path', [put('/etc/passwd', 'x')], 'INVALID_ARGUMENT'],
     ['a path that climbs out', [put('../x', 'x')], 'INVALID_ARGUMENT'],
     ['the root', [put('.', 'x')], 'INVALID_ARGUMENT'],
@@ -157,6 +166,16 @@ describe('edit_repo_file', () => {
     expect(await edit([put('src/App.tsx', changed(26))])).toMatchObject({ ok: false, code: 'EDIT_FORBIDDEN', message: expect.stringContaining('50 changed lines') as string })
   })
 
+  it('says how far a refused content is from the file and points to find/replace (a model that sent only the changed line)', async () => {
+    const answer = await edit([put('src/App.tsx', 'line 0 fixed\n')])
+    expect(answer).toMatchObject({ ok: false, code: 'EDIT_FORBIDDEN' })
+    const message = (answer as { message: string }).message
+    expect(message).toContain('src/App.tsx')
+    expect(message).toContain('The file has 100 lines and the new content has 1')
+    expect(message).toContain('0 already used')
+    expect(message).toContain('{ path, find, replace }')
+  })
+
   it('counts the lines over the whole ticket, not per call', async () => {
     await edit([put('src/App.tsx', lines(100).replace('line 1\n', 'a\n'))])
     const second = await edit([put('Dockerfile', lines(49, 'RUN'))])
@@ -233,6 +252,54 @@ describe('edit_repo_file', () => {
     const other = await edit([put('b', '1')], 'm', ticket('t_b'))
     expect(other).toMatchObject({ ok: true, content: { files: ['b'] } })
     expect(bot.commits.map((c) => c.branch)).toEqual(['wcp-edit-t_a', 'wcp-edit-t_b'])
+  })
+})
+
+describe('edit_repo_file find/replace', () => {
+  it('replaces text that occurs once and counts only the changed lines', async () => {
+    const answer = await edit([swap('src/App.tsx', 'line 42\n', 'line 42 fixed\n')])
+    expect(answer).toMatchObject({ ok: true, content: { files: ['src/App.tsx'], changedLines: 2 } })
+    expect(bot.commits[0].files[0].content).toBe(lines(100).replace('line 42\n', 'line 42 fixed\n'))
+  })
+
+  it('applies find to what this ticket already changed, and mixes with whole content in one call', async () => {
+    await edit([swap('package.json', '"name": "app"', '"name": "web"')])
+    const second = await edit([swap('package.json', '"web"', '"site"'), put('Dockerfile', 'FROM node:22\n')])
+    expect(second).toMatchObject({ ok: true, content: { files: ['package.json', 'Dockerfile'] } })
+    expect(bot.commits[1].files.find((f) => f.path === 'package.json')!.content).toBe('{\n  "name": "site",\n  "dependencies": {}\n}\n')
+  })
+
+  it('writes replace as it is, without $ patterns', async () => {
+    await edit([swap('start.sh', 'server.js', '$& $1 $$.js')])
+    expect(bot.commits[0].files[0]).toMatchObject({ mode: '100755', content: '#!/bin/sh\nnode $& $1 $$.js\n' })
+  })
+
+  it.each([
+    ['find is not in the file', swap('start.sh', 'index.js', 'x'), 'not found'],
+    ['find occurs twice', swap('src/App.tsx', 'line 1', 'x'), 'more than once'],
+    ['the file does not exist', swap('src/new.ts', 'a', 'b'), 'does not exist'],
+  ])('refuses when %s', async (_name, file, text) => {
+    expect(await edit([file])).toMatchObject({ ok: false, code: 'INVALID_ARGUMENT', message: expect.stringContaining(text) as string })
+    expect(bot.commits).toEqual([])
+  })
+
+  it('refuses a replace that makes the file larger than 200KB', async () => {
+    bot.files.set('mid.txt', file(`${'x'.repeat(199 * 1024)}\nMARK\n`))
+    expect(await edit([swap('mid.txt', 'MARK', 'y'.repeat(2 * 1024))])).toMatchObject({ ok: false, code: 'EDIT_FORBIDDEN', message: expect.stringContaining('200KB') as string })
+  })
+
+  it('keeps the other checks: a secret in the replaced line, a binary file', async () => {
+    expect(await edit([swap('start.sh', 'server.js', `server.js --token ${TOKEN}`)])).toMatchObject({ ok: false, code: 'EDIT_FORBIDDEN' })
+    expect(await edit([swap('logo.png', 'a', 'b')])).toMatchObject({ ok: false, code: 'EDIT_FORBIDDEN' })
+  })
+})
+
+describe('refusal log', () => {
+  it('logs only the kind of an EDIT_FORBIDDEN refusal, never the path or the value', async () => {
+    await edit([put('src/App.tsx', 'only one line\n')])
+    await edit([put('.env', 'A=1')])
+    await edit([put('src/config.ts', `export const token = '${TOKEN}'\n`)])
+    expect(warn.mock.calls.map((c) => c[0] as string)).toEqual(['repo edit refused: lines', 'repo edit refused: path', 'repo edit refused: secret'])
   })
 })
 

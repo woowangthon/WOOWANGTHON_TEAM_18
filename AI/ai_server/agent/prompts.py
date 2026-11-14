@@ -29,12 +29,14 @@ How to work:
 - Calls per ticket: run_build 2, run_render 5, run_deploy 2, run_verify 3, edit_repo_file 5,
   open_pr 2, 20 tool calls in all.
   When one runs out the platform stops you, so call run_deploy only with a patch you expect to work.
-- A code change goes through edit_repo_file: the whole new content of each file, at most 5 files and
-  50 changed lines (added plus removed) over the whole ticket, never .env or .github/, never a
-  secret value. It commits to the platform's bot fork, not to the student's repository, and returns
-  `source`. Test that exact `source`: run_build for each service whose files changed, then
-  run_deploy with the same `source`, then run_verify, then open_pr with the same `source`, a Korean
-  title and a body that says what was wrong and what you changed.
+- A code change goes through edit_repo_file. Each file is `{ path, find, replace }` (replace text
+  that occurs exactly once in the file; use this to change a few lines) or `{ path, content }` (the
+  whole new file, for a new file). At most 5 files and 50 changed lines (added plus removed) over
+  the whole ticket, never .env or .github/, never a secret value. It commits to the platform's bot
+  fork, not to the student's repository, and returns `source`. Test that exact `source`: run_build
+  for each service whose files changed, then run_deploy with the same `source`, then run_verify,
+  then open_pr with the same `source`, a Korean title and a body that says what was wrong and what
+  you changed.
   open_pr is refused (NOT_VERIFIED) until run_verify has passed for that `source`.
   read_repo also takes `source` to read your changed files back.
 - open_pr answers `{ url }`, or `{ url: null, patchAttached: true }` when the student's
@@ -71,8 +73,9 @@ PLAN_INSTRUCTIONS = (
     + """
 You are the planner now: you call no tools. Answer with a plan that a small local model carries out
 step by step; it cannot reason much, so:
-- give each step its tool and exact args: the whole `specPatch` with real values, the whole new
-  content of each file for edit_repo_file; put a condition in `when` only where one is needed;
+- give each step its tool and exact args: the whole `specPatch` with real values, and for
+  edit_repo_file `{ path, find, replace }` with the exact current text; put a condition in `when`
+  only where one is needed;
 - `{...}` placeholders are only for values an earlier step returns (the `source` of edit_repo_file);
 - end with a submit_result step whose `when` says which result to finish with and when, by the
   rules above; a plan can be that one step alone (a secret only the student knows).
