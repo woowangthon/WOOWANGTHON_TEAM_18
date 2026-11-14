@@ -40,6 +40,13 @@ def clean(value: Any) -> str:
     return text if len(text) <= _TEXT_LIMIT else text[:_TEXT_LIMIT] + "…"
 
 
+def shown(value: Any) -> str:
+    """경로 · 코드 칸. 문자열이 아니거나 `=`가 섞였으면(뒤에 값이 올 수 있다) 타입만 싣는다."""
+    if isinstance(value, str) and "=" not in value:
+        return clean(value)
+    return f"<{value_type(value)}>"
+
+
 def value_type(value: Any) -> str:
     """값 자체는 싣지 않고 타입만 알린다."""
     if value is None:
@@ -60,11 +67,7 @@ def patch_shape(patch: Any) -> str:
         name = op.get("op")
         kind = name if isinstance(name, str) and name in _OPS else "?"
         value = value_type(op["value"]) if "value" in op else "-"
-        path = op.get("path")
-        # 모델이 문자열이 아닌 것을 경로에 넣어도(객체 안의 값 등) 타입만 싣는다.
-        parts.append(
-            f"{kind} {clean(path) if isinstance(path, str) else f'<{value_type(path)}>'} {value}"
-        )
+        parts.append(f"{kind} {shown(op.get('path'))} {value}")
     if len(patch) > _PATCH_LIMIT:
         parts.append(f"+{len(patch) - _PATCH_LIMIT} more")
     return "[" + "; ".join(parts) + "]"
@@ -89,7 +92,7 @@ def fields_shape(fields: Any) -> str:
     if not isinstance(fields, list):
         return "-"
     parts = [
-        f"{clean(f.get('path', ''))}:{clean(f.get('code', ''))}"
+        f"{shown(f.get('path', ''))}:{shown(f.get('code', ''))}"
         for f in fields[:_FIELDS_LIMIT]
         if isinstance(f, dict)
     ]

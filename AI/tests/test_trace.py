@@ -264,9 +264,18 @@ def test_a_path_that_is_not_a_string_is_logged_as_its_type(path: Any) -> None:
     assert SECRET_VALUE not in shape and shape.startswith("[add <")
 
 
-def test_a_value_written_into_a_path_does_not_survive_the_separator() -> None:
+def test_a_value_written_into_a_path_is_not_logged() -> None:
     shape = trace.patch_shape([{"op": "add", "path": f"/spec/env/KEY={SECRET_VALUE}", "value": 1}])
-    assert "KEY?" in shape and "=" not in shape
+    assert SECRET_VALUE not in shape and shape == "[add <str> int]"
+
+
+def test_a_field_path_or_code_that_is_not_plain_text_is_not_logged() -> None:
+    fields = [
+        {"path": {"input": SECRET_VALUE}, "code": [SECRET_VALUE]},
+        {"path": f"env.KEY={SECRET_VALUE}", "code": "WRONG_TYPE"},
+    ]
+    out = trace.fields_shape(fields)
+    assert SECRET_VALUE not in out and out == "<obj>:<list>,<str>:WRONG_TYPE"
 
 
 def test_an_argument_key_that_is_not_a_plain_name_is_masked() -> None:
