@@ -638,3 +638,122 @@ def test_verify_ticket_runs_the_v2_playbook() -> None:
     # verify 티켓은 통과하지 못한 검사를 errorMessage로, 그 서비스의 Pod를 raw.k8s로 싣는다.
     assert '"caseId":"V2"' in first and "Error: be: GET /api/health -> 404" in first
     assert "stage=verify" in first
+
+
+# ---- 수정 PR (F13, FR-077) ----
+
+SOURCE = {"commitSha": "b" * 40}
+FIX_FILES = [{"path": "FE/src/App.tsx", "content": "import Header from './Components/Header'\n"}]
+PR_URL = "https://github.com/student/app/pull/1"
+
+
+def test_a_code_fix_is_edit_then_the_same_source_through_build_deploy_verify_then_open_pr() -> None:
+    gw = FakeGateway()
+    local = Script(
+        call("edit_repo_file", files=FIX_FILES, message="fix: import 대소문자"),
+        call("run_build", service="fe", source=SOURCE),
+        call("run_deploy", source=SOURCE),
+        call("run_verify"),
+        call("open_pr", source=SOURCE, title="fix: import 대소문자", body="경로를 맞췄습니다."),
+        final(
+            status="pr_opened",
+            pr={"url": PR_URL, "files": ["FE/src/App.tsx"], "changedLines": 2},
+            summary="import 경로의 대소문자가 달라 빌드가 실패했습니다. PR을 열었습니다.",
+        ),
+    )
+    solve(make_run(**SIGNALS["B4"]), gw, local)
+    assert gw.tool_calls() == [
+        "edit_repo_file",
+        "run_build",
+        "run_deploy",
+        "run_verify",
+        "open_pr",
+    ]
+    calls = dict(gw.calls)
+    assert calls["run_build"]["source"] == SOURCE and calls["run_deploy"]["source"] == SOURCE
+    assert calls["open_pr"]["source"] == SOURCE
+    result = only_result(gw)
+    assert result["status"] == "pr_opened"
+    assert result["pr"] == {"url": PR_URL, "files": ["FE/src/App.tsx"], "changedLines": 2}
+    # 실제로 한 호출이 모두 남는다(결과의 actions는 코드가 채운다).
+    assert [a["tool"] for a in result["actions"]] == gw.tool_calls()
+
+
+ENV_FILE = [{"path": ".env", "content": "A=1\n"}]
+
+
+@pytest.mark.parametrize(
+    ("tool", "args", "code"),
+    [
+        ("edit_repo_file", {"files": ENV_FILE, "message": "m"}, "EDIT_FORBIDDEN"),
+        ("open_pr", {"source": SOURCE, "title": "t", "body": "b"}, "NOT_VERIFIED"),
+    ],
+)
+def test_repository_tool_rejections_go_back_to_the_model(
+    tool: str, args: dict[str, Any], code: str
+) -> None:
+    gw = FakeGateway()
+    gw.script[tool] = [reject(code, "refused for a reason")]
+    local = Script(
+        call(tool, **args),
+        final(
+            status="needs_user",
+            userRequest={"message": "고칠 곳을 안내합니다."},
+            summary="수정 PR을 만들지 못했습니다.",
+        ),
+    )
+    solve(make_run(**SIGNALS["B4"]), gw, local)
+    # 멈추지 않고 모델이 거절 코드를 읽는다.
+    assert code in local.sent(1) and "refused for a reason" in local.sent(1)
+    result = only_result(gw)
+    assert result["actions"][0]["ok"] is False
+    assert result["actions"][0]["result"].startswith(f"rejected {code}")
+
+
+def test_without_a_bot_account_the_model_gets_the_code_and_asks_the_student() -> None:
+    gw = FakeGateway()
+    gw.script["edit_repo_file"] = [reject("BOT_UNAVAILABLE", "the bot account is not configured")]
+    local = Script(
+        call("edit_repo_file", files=FIX_FILES, message="fix: import"),
+        final(
+            status="needs_user",
+            userRequest={
+                "message": "FE/src/App.tsx의 import를 './components/Header'로 고쳐 주세요."
+            },
+            summary="수정 PR을 열 수 없어 고칠 곳만 안내합니다.",
+        ),
+    )
+    solve(make_run(**SIGNALS["B4"]), gw, local)
+    assert "BOT_UNAVAILABLE" in local.sent(1)
+    assert only_result(gw)["status"] == "needs_user"
+    assert gw.tool_calls() == ["edit_repo_file"]
+
+
+def test_a_pull_request_the_student_repo_refused_is_reported_with_its_patch() -> None:
+    gw = FakeGateway()
+    gw.script["open_pr"] = [{"url": None, "patch": "diff --git a/x b/x\n"}]
+    local = Script(
+        call("edit_repo_file", files=FIX_FILES, message="fix: import"),
+        call("run_deploy", source=SOURCE),
+        call("run_verify"),
+        call("open_pr", source=SOURCE, title="t", body="b"),
+        final(
+            status="needs_user",
+            userRequest={"message": "PR을 열 수 없어 patch를 드립니다.\ndiff --git a/x b/x"},
+            summary="수정은 확인했지만 PR을 열지 못했습니다.",
+        ),
+    )
+    solve(make_run(**SIGNALS["B4"]), gw, local)
+    # 모델은 url이 없고 patch가 있는 도구 결과를 그대로 본다.
+    assert "diff --git a/x b/x" in local.sent(-1)
+    assert only_result(gw)["status"] == "needs_user"
+
+
+def test_the_instructions_tell_the_model_the_pull_request_rules() -> None:
+    for text in (
+        "open_pr is refused (NOT_VERIFIED)",
+        "BOT_UNAVAILABLE",
+        "`{ url: null, patch }`",
+        "the platform checks it",
+    ):
+        assert text in INSTRUCTIONS

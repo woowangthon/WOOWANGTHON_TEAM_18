@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { REDACTED, redact, redactString } from './redact.js'
+import { hasSecretValue, REDACTED, redact, redactString } from './redact.js'
 
 const GH = `ghp_${'a'.repeat(36)}`
 const JWT = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghijklmnop'
@@ -71,5 +71,30 @@ describe('redact', () => {
     expect(out.lines.slice(1)).toEqual([null, 3])
     expect(out.secret).toBeNull()
     expect(input.lines[0]).toContain(GH)
+  })
+})
+
+describe('hasSecretValue', () => {
+  it.each([
+    ['a GitHub token', `const t = '${GH}'`],
+    ['a JWT', `x = ${JWT}`],
+    ['an AWS access key id', 'AKIAABCDEFGHIJKLMNOP'],
+    ['a bearer header', 'Authorization: Bearer abcdefghijklmnop'],
+    ['a password in an address', 'postgres://app:hunter2hunter2@db:5432/app'],
+    ['a private key', '-----BEGIN RSA PRIVATE KEY-----\nabc'],
+  ])('sees %s', (_name, text) => {
+    expect(hasSecretValue(text)).toBe(true)
+    // 같은 글을 두 번 물어도 같다(전역 정규식의 lastIndex에 기대지 않는다).
+    expect(hasSecretValue(text)).toBe(true)
+  })
+
+  it.each([
+    ['a dependency named like a secret', '"jsonwebtoken": "^9.0.0",'],
+    ['a variable named like a secret', 'const token = process.env.TOKEN'],
+    ['plain code', 'export const port = 3000'],
+    ['an address without a password', 'postgres://db:5432/app'],
+  ])('lets %s through (only the shape of a value counts)', (_name, text) => {
+    expect(hasSecretValue(text)).toBe(false)
+    // redactString은 이름만 보고도 가리지만 이 검사는 막지 않는다.
   })
 })

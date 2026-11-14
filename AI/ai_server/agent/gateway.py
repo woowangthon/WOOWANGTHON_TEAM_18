@@ -19,7 +19,8 @@ RESULT_TEXT_LIMIT = 500
 
 # 이 거절이 오면 더 할 수 있는 것이 없어 에이전트 실행을 멈춘다. 나머지 거절은 모델에게 돌려줘
 # 인자를 고치게 한다(INVALID_ARGUMENT · PATCH_FORBIDDEN · INVALID_SPEC · OVERRIDE_LIMIT ·
-# EDIT_FORBIDDEN · NOT_VERIFIED · REPEATED_CALL).
+# EDIT_FORBIDDEN · NOT_VERIFIED · BOT_UNAVAILABLE · REPEATED_CALL). BOT_UNAVAILABLE는 멈추지 않는다:
+# 봇 계정을 못 쓰더라도 모델이 needs_user로 고칠 파일 · 값을 안내할 수 있다.
 STOP_CODES = frozenset({"TOOL_LIMIT", "TIME_LIMIT", "LIVE_SLOT_PROTECTED", "TICKET_CLOSED"})
 SUBMIT_TOOL = "submit_result"
 

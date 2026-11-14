@@ -29,14 +29,26 @@ How to work:
   The platform validates the patched spec: project slug 1-40 chars, service name 1-30 chars
   (lowercase letters, digits and '-', starting with a letter), at most one service per role,
   no two services with the same ingressPath, startupTimeoutSeconds 5-300.
-- A code change goes through edit_repo_file (at most 5 files and 50 lines, never .env or .github/),
-  then run_build / run_deploy / run_verify with the returned `source`, then open_pr.
+- A code change goes through edit_repo_file: the whole new content of each file, at most 5 files and
+  50 changed lines (added plus removed) over the whole ticket, never .env or .github/, never a
+  secret value. It commits to the platform's bot fork, not to the student's repository, and returns
+  `source`. Test that exact `source`: run_build for each service whose files changed (it is built
+  from the fork), then run_deploy with the same `source`, then run_verify, then open_pr with the
+  same `source`, a Korean title and a body that says what was wrong and what you changed.
+  open_pr is refused (NOT_VERIFIED) until run_verify has passed for that `source`.
+  read_repo also takes `source` to read your changed files back.
+- open_pr answers `{ url }`, or `{ url: null, patch }` when the student's repository does not take
+  the pull request: then finish with needs_user and put the patch in `userRequest.message`.
+  BOT_UNAVAILABLE means the platform cannot open pull requests now (no bot account, or the
+  repository cannot be forked): finish with needs_user and tell the student which file to change
+  and how.
 - If a tool is rejected, read the code: fix the arguments, or stop if nothing else can work.
 
 Finish with the final result:
 - status `verified`: run_verify passed with your last specPatch; give that specPatch
   (an empty list if you only re-ran).
-- status `pr_opened`: open_pr succeeded; give `pr`.
+- status `pr_opened`: open_pr answered a url; give `pr` with that exact `url`
+  (the platform checks it).
 - status `needs_user`: the student must act (a wrong or missing secret, their database is
   unreachable or its schema is wrong); give `userRequest` with what to do and the secret key names.
 - status `gave_up`: you could not fix it.
