@@ -3,7 +3,7 @@ import { Badge } from '../components/ui/Badge.tsx'
 import { Card } from '../components/ui/Card.tsx'
 import { LogBlock } from '../components/ui/LogBlock.tsx'
 import { Meter } from '../components/ui/Meter.tsx'
-import { Sparkline } from '../components/ui/Sparkline.tsx'
+import { LineChart } from '../components/ui/LineChart.tsx'
 import { Steps } from '../components/ui/Steps.tsx'
 import { Table, Td, Th, THead } from '../components/ui/Table.tsx'
 import {
@@ -108,6 +108,9 @@ export function SlotsPreview() {
   )
 }
 
+// 예시 그래프의 가로축: 한 칸이 1분이라고 보고 끝(지금)에서 거슬러 센다.
+const minutesAgo = (count: number) => (i: number) => (i === count - 1 ? '지금' : `${count - 1 - i}분 전`)
+
 export function MetricsPreview() {
   return (
     <Preview title="배포 화면의 서비스 상태 카드">
@@ -122,11 +125,11 @@ export function MetricsPreview() {
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="flex flex-col gap-1">
                 <span className="text-sm text-muted">CPU {s.cpu}</span>
-                <Sparkline values={s.cpuSeries} label={`${s.name} CPU 사용량(예시)`} emptyText="아직 수집하지 못했어요" format={(v) => `${v}m`} />
+                <LineChart values={s.cpuSeries} label={`${s.name} CPU 사용량(예시)`} emptyText="아직 수집하지 못했어요" format={(v) => `${v}m`} xAt={minutesAgo(s.cpuSeries.length)} />
               </div>
               <div className="flex flex-col gap-1">
                 <span className="text-sm text-muted">메모리 {s.memory}</span>
-                <Sparkline values={s.memorySeries} label={`${s.name} 메모리 사용량(예시)`} emptyText="아직 수집하지 못했어요" format={(v) => `${v}MiB`} />
+                <LineChart values={s.memorySeries} label={`${s.name} 메모리 사용량(예시)`} emptyText="아직 수집하지 못했어요" format={(v) => `${v}MiB`} xAt={minutesAgo(s.memorySeries.length)} />
               </div>
             </div>
           </div>

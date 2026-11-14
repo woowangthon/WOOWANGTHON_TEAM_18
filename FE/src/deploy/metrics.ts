@@ -79,3 +79,8 @@ export function slotsOf(points: Point[], endT: number, windowSeconds: number, st
   }
   return slots
 }
+
+// i번째 칸의 시각을 "14:05"처럼(이 브라우저의 시간대). slotsOf의 칸 배치와 같은 식이다.
+const timeFormat = new Intl.DateTimeFormat('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false })
+export const slotTimeText = ({ endT, windowSeconds, stepSeconds }: Pick<Series, 'endT' | 'windowSeconds' | 'stepSeconds'>, i: number) =>
+  timeFormat.format(new Date((endT - windowSeconds + i * stepSeconds) * 1000))
