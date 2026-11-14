@@ -46,7 +46,7 @@ from ai_server.agent.models import (
     Ticket,
     UserRequest,
 )
-from ai_server.agent.redact import RedactingModel
+from ai_server.agent.redact import RedactingModel, redact
 from ai_server.agent.runs import Runner, TicketRun
 from ai_server.agent.trace import classification, clean, exc_shape, trace
 from ai_server.config import Settings
@@ -425,11 +425,12 @@ async def _submit(gateway: GatewayToolset, result: AgentResult) -> None:
             if e.code != "INVALID_RESULT" or minimal_sent:
                 log.error("ticket %s result not delivered: %s", result.ticket_id, e)
                 return
-            # 게이트웨이의 거절 이유(칸 이름 · 규칙 문장, result.ts)를 남긴다.
+            # 게이트웨이의 거절 이유(칸 이름 · 규칙 문장, result.ts)를 남긴다. 메시지에 모델이 만든
+            # 경로(specPatch의 op.path 등)가 섞일 수 있어 비밀값 모양은 가린다(FR-102와 같은 필터).
             log.warning(
                 "ticket %s result rejected as invalid (%s); sending a minimal gave_up",
                 result.ticket_id,
-                budget.clip_line(e.message, 300),
+                budget.clip_line(redact(e.message), 300),
             )
             result = AgentResult(
                 ticket_id=result.ticket_id,

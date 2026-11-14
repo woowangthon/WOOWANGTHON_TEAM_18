@@ -1109,3 +1109,22 @@ def test_an_invalid_result_logs_the_gateway_reason(caplog: pytest.LogCaptureFixt
     local = Script(final(status="gave_up", summary="모름"))
     solve(make_run(**SIGNALS["A1"]), gw, local, planner_of(final(status="gave_up", summary="x")))
     assert "pr_opened needs pr.url to be the url" in caplog.text
+
+
+def test_an_invalid_result_log_hides_secret_looking_strings_the_model_put_in_a_path(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # spec-patch.ts는 `${op.path}: no such key`를 돌려주고, op.path는 모델이 만든다.
+    gw = FakeGateway()
+    leaked = "ghp_" + "a" * 36
+    gw.script["submit_result"] = [
+        reject(
+            "INVALID_RESULT",
+            f"/services/0/runtime/env/{leaked}: no such key; API_KEY=hunter2secret",
+        )
+    ]
+    local = Script(final(status="gave_up", summary="모름"))
+    solve(make_run(**SIGNALS["A1"]), gw, local, planner_of(final(status="gave_up", summary="x")))
+    assert "no such key" in caplog.text
+    assert leaked not in caplog.text
+    assert "hunter2secret" not in caplog.text
