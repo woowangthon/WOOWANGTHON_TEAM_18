@@ -6,6 +6,7 @@ import { ReposService } from '../repos/repos.service.js'
 import { buildInputHash } from './deploy-condition.js'
 import { DeployConditionService } from './deploy-condition.service.js'
 import type { Spec } from './deploy-input.js'
+import { DeployEvents } from './deploy-events.js'
 import { DeploysStore } from './deploys.store.js'
 
 const REST = 'https://test.supabase.co/rest/v1'
@@ -116,7 +117,7 @@ beforeEach(() => {
     SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_test',
     SUPABASE_SECRET_KEY: SECRET_KEY,
   })
-  service = new DeployConditionService(new ReposService(config), new DeploysStore(config))
+  service = new DeployConditionService(new ReposService(config), new DeploysStore(config, new DeployEvents()))
 })
 
 afterEach(() => {

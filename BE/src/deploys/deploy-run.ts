@@ -11,6 +11,8 @@ export const isStage = (v: unknown): v is Stage => (STAGES as readonly unknown[]
 
 /** queued: 시작했지만 차례가 오지 않았다(배포 대기열). 서버가 한 번에 하나씩 running으로 바꾼다. */
 export type RunStatus = 'queued' | 'running' | 'fixing' | 'needs_user' | 'succeeded' | 'failed'
+/** 실행 기록이 끝난 상태(학생 차례이거나 끝남). 이 상태로 바뀌면 배포 결과를 알린다. */
+export const ENDED_STATUSES: readonly RunStatus[] = ['succeeded', 'failed', 'needs_user']
 export type DeployStatus = RunStatus | 'not_started'
 
 /** 스테이지가 통과하면 다음 스테이지가 돈다. 마지막(switch)은 null: 완료다. */

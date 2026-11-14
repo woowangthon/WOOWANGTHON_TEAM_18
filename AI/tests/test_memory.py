@@ -348,6 +348,32 @@ def test_import_case_fix_opens_a_pr_with_one_source_and_falls_back_to_needs_user
     assert "needs_user" in last and "BOT_UNAVAILABLE" in last and "patchAttached" in last
 
 
+def test_crash_on_start_case_has_a_code_fix_path_with_find_replace() -> None:
+    # 2026-11-14 TEST_3: 시작하자마자 없는 파일을 읽어 죽었는데 A2에는 env 추가 길만 있었다.
+    case = CaseMemory(load_cases()).get("A2")
+    assert case is not None
+    tools = [s.tool for s in case.playbook]
+    assert [t for t in tools[2:] if t != "submit_result"] == [
+        "read_repo",
+        "edit_repo_file",
+        "run_build",
+        "run_deploy",
+        "run_verify",
+        "open_pr",
+    ]
+    edit = next(s for s in case.playbook if s.tool == "edit_repo_file")
+    assert "find" in (edit.when or "") and "replace" in (edit.when or "")
+    last = case.playbook[-1].when or ""
+    assert "BOT_UNAVAILABLE" in last and "patchAttached" in last
+
+
+def test_import_case_sends_find_replace_not_only_the_changed_line() -> None:
+    case = CaseMemory(load_cases()).get("B4")
+    assert case is not None
+    edit = next(s for s in case.playbook if s.tool == "edit_repo_file")
+    assert "find" in (edit.when or "") and "replace" in (edit.when or "")
+
+
 @pytest.mark.parametrize(
     ("lines", "case_id"),
     [

@@ -4,7 +4,8 @@ import { isRecord } from '../common/is-record.js'
 import type { Env } from '../config/env.js'
 import { isImageDigest, type Slot } from './deploy-condition.js'
 import type { Spec } from './deploy-input.js'
-import type { RunStatus, Stage, StoredFailure } from './deploy-run.js'
+import { DeployEvents } from './deploy-events.js'
+import { ENDED_STATUSES, type RunStatus, type Stage, type StoredFailure } from './deploy-run.js'
 
 const TIMEOUT_MS = 5000
 
@@ -111,7 +112,10 @@ export class DeploysStore {
   private readonly restUrl: string
   private readonly secretKey: string
 
-  constructor(config: ConfigService<Env, true>) {
+  constructor(
+    config: ConfigService<Env, true>,
+    private readonly events: DeployEvents,
+  ) {
     this.restUrl = `${config.get('SUPABASE_URL', { infer: true })}/rest/v1`
     this.secretKey = config.get('SUPABASE_SECRET_KEY', { infer: true })
   }
@@ -273,6 +277,7 @@ export class DeploysStore {
     if (where.stage) query.stage = `eq.${where.stage}`
     if (where.updatedAt) query.updated_at = `eq.${where.updatedAt}`
     const rows = await this.call('deploy_runs', 'PATCH', query, { ...patch, updated_at: new Date().toISOString() })
+    if (rows.length > 0 && patch.status && ENDED_STATUSES.includes(patch.status)) this.events.ended(deployId)
     return rows.length > 0
   }
 
