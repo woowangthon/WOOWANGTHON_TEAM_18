@@ -249,6 +249,50 @@ def test_a_plan_with_a_tool_the_platform_does_not_have_is_made_again() -> None:
     assert "unknown tools ['read_build_logs']" in planner.sent(2)
 
 
+# D10(2026-11-14): 로컬 모델이 edit_repo_file을 files 없이 path · find · replace로 불러
+# INVALID_ARGUMENT로 계획이 깨졌다. 그런 모양의 계획은 실행 전에 다시 만들게 한다.
+KEYS = ("path", "find", "replace", "content")
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        {"path": "src/App.tsx", "find": "a", "replace": "b"},
+        *({"files": [{"path": "a", "content": "x"}], key: "x"} for key in KEYS),
+        {"files": {"path": "a", "find": "x", "replace": "y"}, "message": "m"},
+    ],
+)
+def test_a_plan_with_edit_repo_file_args_outside_files_is_made_again(args: dict[str, Any]) -> None:
+    gw = FakeGateway()
+    planner = Script(
+        classify("A1"),
+        plan({"tool": "edit_repo_file", "args": args}, FINISH),
+        plan(FINISH),
+        final(status="gave_up", summary="모름"),
+    )
+    local = Script(final(status="gave_up", summary="모름"))
+    solve(make_run(**SIGNALS["A1"]), gw, local, planner)
+    wrong = "edit_repo_file args are { files: [{ path, find, replace }], message }"
+    assert wrong in planner.sent(2)
+    assert '"tool":"edit_repo_file"' not in local.sent(0)
+
+
+@pytest.mark.parametrize(
+    "step",
+    [
+        {"tool": "edit_repo_file", "args": {"files": [{"path": "a", "content": "x"}]}},
+        {"tool": "edit_repo_file", "when": "find에 지금 줄, replace에 고친 줄"},
+        {"tool": "edit_repo_file", "args": {"files": "{읽은 파일의 고친 줄}", "message": "m"}},
+    ],
+)
+def test_a_plan_with_edit_repo_file_files_or_no_args_is_kept(step: dict[str, Any]) -> None:
+    gw = FakeGateway()
+    planner = Script(classify("A1"), plan(step, FINISH), final(status="gave_up", summary="x"))
+    local = Script(final(status="gave_up", summary="모름"))
+    solve(make_run(**SIGNALS["A1"]), gw, local, planner)
+    assert '"tool":"edit_repo_file"' in local.sent(0)
+
+
 # ---- ④ 재계획 ----
 
 
@@ -926,6 +970,14 @@ def test_the_instructions_tell_the_model_the_pull_request_rules() -> None:
     ):
         assert text in INSTRUCTIONS
     assert "run_verify and open_pr with the same" not in INSTRUCTIONS
+
+
+def test_the_plan_instructions_give_edit_repo_file_its_whole_args() -> None:
+    # D10(2026-11-14): "for edit_repo_file `{ path, find, replace }`"가 도구 인자 전체로 읽혀
+    # 로컬 모델이 files 없이 불렀다.
+    whole = "edit_repo_file args `{ files: [{ path, find, replace }], message }`"
+    assert whole in PLAN_INSTRUCTIONS
+    assert "edit_repo_file `{ path, find, replace }`" not in PLAN_INSTRUCTIONS
 
 
 # ---- 성능 정리(2026-11-14) ----
