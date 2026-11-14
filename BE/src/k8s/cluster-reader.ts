@@ -17,6 +17,8 @@ export interface PodInfo {
   restarts: number
   /** 기다리는 컨테이너(init 컨테이너 포함)의 이유(CrashLoopBackOff · ImagePullBackOff 등). 없으면 null */
   waiting: string | null
+  /** 직전에 끝난 컨테이너의 이유(Error · OOMKilled 등)와 종료 코드. 재시작한 적이 없으면 null */
+  lastExit: { reason: string; exitCode: number } | null
 }
 
 export interface DeploymentInfo {
@@ -104,6 +106,7 @@ export class ClusterReader {
         ready: statuses.length > 0 && statuses.every((s) => s.ready === true),
         restarts: statuses.reduce((sum, s) => sum + count(s.restartCount), 0),
         waiting: waiting ?? null,
+        lastExit: lastExitOf(statuses),
       }
     })
   }
@@ -286,6 +289,14 @@ export function space(slug: string): string {
   // 요청 경로에 들어가는 값이다. 검증을 통과하지 않은 값은 부른 쪽의 버그다.
   if (!SLUG.test(slug)) throw new Error(`Not a valid slug: ${JSON.stringify(slug)}`)
   return `proj-${slug}`
+}
+
+function lastExitOf(statuses: Record<string, unknown>[]): PodInfo['lastExit'] {
+  for (const s of statuses) {
+    const t = record(record(s.lastState).terminated)
+    if (typeof t.exitCode === 'number') return { reason: text(t.reason) ?? 'Unknown', exitCode: t.exitCode }
+  }
+  return null
 }
 
 // 응답의 빠진 칸은 빈 값으로 읽는다(쿠버네티스는 0 · 빈 목록을 생략한다).

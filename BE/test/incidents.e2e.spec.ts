@@ -124,7 +124,7 @@ const alert = (alertname: string, namespace: string | undefined, over: Partial<A
   ...over,
 })
 const deployment = (name: string): DeploymentInfo => ({ name, labels: {}, replicas: 1, ready: 0, updated: 1, available: 0 })
-const pod = (name: string, restarts: number): PodInfo => ({ name, labels: {}, phase: 'Running', node: 'w1', ready: false, restarts, waiting: 'CrashLoopBackOff' })
+const pod = (name: string, restarts: number): PodInfo => ({ name, labels: {}, phase: 'Running', node: 'w1', ready: false, restarts, waiting: 'CrashLoopBackOff', lastExit: { reason: 'Error', exitCode: 1 } })
 const seedProject = (slug: string, userId = USER) =>
   (db.deploys ??= []).push({ id: randomUUID(), user_id: userId, slug, repo: `S/${slug}`, commit_sha: 'a'.repeat(40), spec: {}, created_at: new Date().toISOString() })
 const judgment = { risk: 'high', recommendation: 'stop', cause: '포트가 겹쳐 시작하지 못합니다.', reason: '로그에 EADDRINUSE가 있습니다.', model: 'local' }
@@ -184,6 +184,45 @@ describe('alert watcher', () => {
     expect(discord.map((d) => d.url).sort()).toEqual([OPERATOR_HOOK, STUDENT_HOOK])
     expect(discord.find((d) => d.url === STUDENT_HOOK)!.content).toContain('멈췄어요')
     expect(discord.every((d) => JSON.stringify(d.mentions) === '{"parse":[]}')).toBe(true)
+  })
+
+  it('keeps the evidence it read before stopping, with redacted logs, and shows it to the student', async () => {
+    seedProject('my-app')
+    deployments['my-app'] = [deployment('be-a')]
+    pods['my-app'] = [pod('be-a-1', 4)]
+    alerts = [alert('KubePodCrashLooping', 'proj-my-app', { labels: { alertname: 'KubePodCrashLooping', namespace: 'proj-my-app', pod: 'be-a-1' } })]
+    let scaledWhenRead = -1
+    vi.spyOn(reader, 'logs').mockImplementation(() => {
+      scaledWhenRead = scaled.length
+      return Promise.resolve('booting\nError: listen EADDRINUSE :::3000\nDB_PASSWORD=hunter2\n')
+    })
+    await check()
+    // 멈추면 Pod와 로그가 사라지므로 멈추기 전에 읽는다.
+    expect(scaledWhenRead).toBe(0)
+    expect(db.incidents[0]).toMatchObject({ action: 'auto_stopped', evidence: { pod: 'be-a-1', restarts: 4, waiting: 'CrashLoopBackOff', lastExit: { reason: 'Error', exitCode: 1 } } })
+    const res = await call('get', '/api/incidents', await userAuth())
+    const evidence = (res.body as { incidents: { evidence: { logs: string[] } }[] }).incidents[0].evidence
+    expect(evidence.logs).toContain('Error: listen EADDRINUSE :::3000')
+    expect(evidence.logs.join('\n')).not.toContain('hunter2')
+  })
+
+  it('does not overwrite the evidence of an incident processed again after the stop', async () => {
+    seedProject('my-app')
+    pods['my-app'] = [pod('be-a-1', 4)]
+    alerts = [alert('KubePodNotReady', 'proj-my-app')]
+    await check()
+    const first = structuredClone(db.incidents[0].evidence)
+    ;(db.incidents[0].ai as Row).status = 'pending'
+    pods['my-app'] = [pod('be-a-2', 0)]
+    await check()
+    expect(db.incidents[0].evidence).toEqual(first)
+  })
+
+  it('leaves the evidence empty when it cannot read any pod', async () => {
+    seedProject('my-app')
+    alerts = [alert('KubePodNotReady', 'proj-my-app')]
+    await check()
+    expect(db.incidents[0].evidence ?? null).toBeNull()
   })
 
   it('does not stop a crash loop while a deploy of that project runs, and asks the AI instead', async () => {

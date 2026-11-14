@@ -25,6 +25,15 @@ export interface IncidentAi {
 /** 판단 내용이 없는 AI 칸(기다림 · 실패 · 건너뜀). */
 export const emptyAi = (status: Exclude<IncidentAi['status'], 'done'>): IncidentAi => ({ status, risk: null, recommendation: null, cause: null, reason: null, model: null })
 
+/** 알림을 연 때, 멈추기 전에 모은 근거(api.md "운영 알림" Incident.evidence). */
+export interface IncidentEvidence {
+  pod: string | null
+  restarts: number
+  waiting: string | null
+  lastExit: { reason: string; exitCode: number } | null
+  logs: string[]
+}
+
 export interface IncidentRow {
   id: string
   slug: string
@@ -37,6 +46,7 @@ export interface IncidentRow {
   ai: IncidentAi
   decided_by: string | null
   decided_at: string | null
+  evidence: IncidentEvidence | null
   created_at: string
 }
 
@@ -91,7 +101,7 @@ export class IncidentsStore {
   /** `action`이 `from`일 때만 바꾼다(겹친 결정은 하나만 통과). 바꿨으면 바뀐 줄, 아니면 null. */
   async update(
     id: string,
-    patch: Partial<Pick<IncidentRow, 'action' | 'ai' | 'decided_by' | 'decided_at'>>,
+    patch: Partial<Pick<IncidentRow, 'action' | 'ai' | 'decided_by' | 'decided_at' | 'evidence'>>,
     from?: IncidentAction,
     aiFrom?: IncidentAi['status'],
   ): Promise<IncidentRow | null> {

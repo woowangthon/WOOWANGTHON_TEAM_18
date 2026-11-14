@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { ApiError } from '../lib/api.ts'
 import { WithQuery } from '../test-utils.tsx'
@@ -24,6 +24,7 @@ const incident = (over: Partial<Incident> = {}): Incident => ({
   action: 'pending',
   ai: { status: 'done', risk: 'high', recommendation: 'stop', cause: null, reason: null, model: 'local' },
   decidedAt: null,
+  evidence: null,
   ...over,
 })
 const deploys = [
@@ -43,6 +44,7 @@ beforeEach(() => {
 })
 afterEach(() => {
   vi.useRealTimers()
+  localStorage.clear()
 })
 
 const advance = (ms: number) =>
@@ -125,4 +127,29 @@ it('shows nothing, not an error, when the alerts cannot be read', async () => {
   await show()
   expect(screen.queryByRole('alert')).toBeNull()
   expect(screen.queryByRole('status')).toBeNull()
+})
+
+it('shows why the service stopped with the kept log lines', async () => {
+  const evidence = { pod: 'shop-a-1', restarts: 3, waiting: null, lastExit: { reason: 'OOMKilled', exitCode: 137 }, logs: ['line 1'] }
+  incidents = [incident({ action: 'auto_stopped', evidence })]
+  await show()
+  expect(screen.getByText('왜 멈췄나: 재시작 3번 · 마지막 종료: OOMKilled (코드 137)')).toBeTruthy()
+  expect(screen.getByText('로그 마지막 1줄')).toBeTruthy()
+})
+
+it('closes a banner with X and keeps it closed after the page is opened again', async () => {
+  incidents = [incident({ id: 'a', action: 'auto_stopped' }), incident({ id: 'b', slug: 'blog' })]
+  const { unmount } = render(
+    <WithQuery>
+      <IncidentNotice />
+    </WithQuery>,
+  )
+  await advance(0)
+  fireEvent.click(screen.getAllByRole('button', { name: '알림 닫기' })[0])
+  expect(screen.queryByText('서비스를 멈췄어요')).toBeNull()
+  expect(screen.getByText('운영 알림')).toBeTruthy()
+  unmount()
+  await show()
+  expect(screen.queryByText('서비스를 멈췄어요')).toBeNull()
+  expect(screen.getByText('운영 알림')).toBeTruthy()
 })

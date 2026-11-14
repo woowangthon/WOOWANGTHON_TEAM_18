@@ -8,7 +8,7 @@ import { ClusterError } from '../k8s/cluster-error.js'
 import { type AlertInfo, ClusterReader } from '../k8s/cluster-reader.js'
 import { DeploymentScaler } from '../k8s/deployment-scaler.js'
 import { DiscordNotifier } from './discord.notifier.js'
-import { IncidentJudge } from './incident-judge.js'
+import { evidenceOf, type Gathered, IncidentJudge } from './incident-judge.js'
 import { operatorMessage, studentMessage } from './incident-text.js'
 import { emptyAi, type IncidentRow, IncidentsStore } from './incidents.store.js'
 
@@ -137,8 +137,13 @@ export class AlertWatcher implements OnApplicationBootstrap, OnModuleDestroy {
     if (this.inFlight.has(incident.id)) return
     this.inFlight.add(incident.id)
     const run = (async () => {
+      // 근거는 멈추기 전에 모은다(멈추면 Pod와 로그가 사라진다). 이미 모았으면 덮어쓰지 않는다.
+      const gathered = await this.judge.gather(incident)
+      const evidence = evidenceOf(gathered)
+      // 근거를 저장하지 못해도(마이그레이션 전 · DB 오류) 멈추기와 판단은 계속한다.
+      if (!incident.evidence && evidence) await this.store.update(incident.id, { evidence }).catch(() => this.logger.warn('incident evidence not saved'))
       if (incident.alertname === AUTO_STOP && (await this.autoStop(incident))) return
-      await this.judgeAndNotify(incident)
+      await this.judgeAndNotify(incident, gathered)
     })()
       .catch((err: unknown) => this.logger.error(`incident not processed: ${err instanceof Error ? err.name : 'error'}`))
       .finally(() => {
@@ -168,8 +173,8 @@ export class AlertWatcher implements OnApplicationBootstrap, OnModuleDestroy {
     return true
   }
 
-  private async judgeAndNotify(incident: IncidentRow): Promise<void> {
-    const ai = await this.judge.judge(incident)
+  private async judgeAndNotify(incident: IncidentRow, gathered: Gathered): Promise<void> {
+    const ai = await this.judge.judge(incident, gathered)
     // 아직 판단 전인 것만 채운다(다른 처리가 먼저 끝냈으면 알림을 다시 보내지 않는다).
     const judged = await this.store.update(incident.id, { ai }, undefined, 'pending')
     // 판단을 기다리는 사이 운영자가 정했거나 같은 프로젝트의 중지로 닫혔으면, 판단은 화면에 남기고 Discord는 보내지 않는다.

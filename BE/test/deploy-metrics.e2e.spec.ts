@@ -62,7 +62,7 @@ const seedRun = (deployId: string, status: string, slug = 'my-app', slot = 'a') 
 }
 const live = (slot: string | null = 'a', slug = 'my-app') => (db.projects = [{ slug, live_slot: slot }])
 const dep = (name: string, replicas = 1, ready = 1): DeploymentInfo => ({ name, labels: {}, replicas, ready, updated: ready, available: ready })
-const pod = (name: string, restarts = 0, waiting: string | null = null): PodInfo => ({ name, labels: {}, phase: 'Running', node: 'worker-1', ready: waiting === null, restarts, waiting })
+const pod = (name: string, restarts = 0, waiting: string | null = null): PodInfo => ({ name, labels: {}, phase: 'Running', node: 'worker-1', ready: waiting === null, restarts, waiting, lastExit: null })
 const points = (...vs: number[]) => vs.map((v, i) => ({ t: 1000 + i * 60, v }))
 const get = async (id: string, auth?: string | null) =>
   request(app.getHttpServer())

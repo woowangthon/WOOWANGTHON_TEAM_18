@@ -89,7 +89,7 @@ const node = (name: string, roles: string[] = [], over: Partial<NodeInfo> = {}):
   ...over,
 })
 const deployment = (name: string, replicas = 1, ready = 1): DeploymentInfo => ({ name, labels: {}, replicas, ready, updated: ready, available: ready })
-const pod = (name: string, restarts = 0, ready = true): PodInfo => ({ name, labels: {}, phase: 'Running', node: 'worker-1', ready, restarts, waiting: null })
+const pod = (name: string, restarts = 0, ready = true): PodInfo => ({ name, labels: {}, phase: 'Running', node: 'worker-1', ready, restarts, waiting: null, lastExit: null })
 const seedProject = (slug = 'my-app', userId = USER, created = 0) =>
   (db.deploys ??= []).push({ id: randomUUID(), user_id: userId, slug, repo: `Student/${slug}`, created_at: new Date(Date.UTC(2026, 10, 11, 1, 0, created)).toISOString() })
 const space = (slug: string, deployments: DeploymentInfo[], pods: PodInfo[] = []) => (spaces[slug] = { deployments, pods })

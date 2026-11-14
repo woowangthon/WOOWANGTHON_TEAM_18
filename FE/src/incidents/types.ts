@@ -9,6 +9,15 @@ export type IncidentAi = {
   model: 'local' | 'planner' | null
 }
 
+// 알림을 연 때, 멈추기 전에 읽은 근거. 로그는 서버가 비밀값을 가린 값이다.
+export type IncidentEvidence = {
+  pod: string | null
+  restarts: number
+  waiting: string | null
+  lastExit: { reason: string; exitCode: number } | null
+  logs: string[]
+}
+
 export type Incident = {
   id: string
   slug: string
@@ -21,6 +30,7 @@ export type Incident = {
   action: 'auto_stopped' | 'pending' | 'stopped' | 'dismissed'
   ai: IncidentAi
   decidedAt: string | null
+  evidence: IncidentEvidence | null
 }
 
 export type AdminIncident = Incident & { decidedBy: string | null }
