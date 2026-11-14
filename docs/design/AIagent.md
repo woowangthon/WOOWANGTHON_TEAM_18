@@ -333,7 +333,7 @@ AI 서버 (에이전트) → 플랫폼 서버 MCP 게이트웨이 → GoCD 서�
 | `B1` | build | 락 파일 불일치 | `INSTALL` 실패, `ERR_PNPM_OUTDATED_LOCKFILE`, `npm ci` sync 오류 | `needs_user`로 다시 만들 락 파일과 명령을 알림(락 파일은 패키지 매니저를 돌려야 다시 만들 수 있고 `edit_repo_file` 50줄을 넘기 쉽다) |
 | `B2` | build | Node 버전 불일치 | `engine "node" is incompatible`, `ERR_PNPM_UNSUPPORTED_ENGINE`, `npm error code EBADENGINE`. npm의 `EBADENGINE` **경고**와 일반 `SyntaxError`는 신호로 쓰지 않고, 대조는 `B5` · `B3` · `B4` 뒤에 한다(경고가 섞인 다른 실패를 B2로 잘못 고르지 않게, 2026-11-14) | `build.nodeVersion` |
 | `B3` | build | 빌드 시점 env 누락 | `BUILD` 실패, `import.meta.env.VITE_*` undefined | `build.buildEnv` 또는 사용자 요청 |
-| `B4` | build | 대소문자 · import 경로 | `Module not found`, `Cannot find module` | 수정 PR(`edit_repo_file`의 `find`에 지금 import 줄, `replace`에 고친 줄 → 같은 `source`로 `run_build` · `run_deploy` · `run_verify` → `open_pr`). `BOT_UNAVAILABLE`이거나 PR이 막히면(`patchAttached`) `needs_user`로 import 파일 · 고칠 경로를 알림 |
+| `B4` | build | 대소문자 · import 경로 | `Module not found`, `Cannot find module` | 수정 PR(`edit_repo_file`의 `find`에 지금 import 줄, `replace`에 고친 줄 → 같은 `source`로 `run_build` · `run_deploy` → 인자 없이 `run_verify` → 같은 `source`로 `open_pr`). `BOT_UNAVAILABLE`이거나 PR이 막히면(`patchAttached`) `needs_user`로 import 파일 · 고칠 경로를 알림 |
 | `B5` | build | `COPY` 대상 없음 | `COPY failed`, `"/dist": not found` | `build.context` · `outputDir` · `dockerfile` |
 | `P1` | prepare | 필수 Secret key 없음 | W3 상태 "빠짐" | 사용자 요청 |
 | `P2` | prepare | 자원 합계 초과 | 검증 규칙 `resources` 합계 | `runtime.resources` |
