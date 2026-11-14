@@ -9,7 +9,7 @@ from ai_server.agent import trace
 from tests.fake_gateway import FakeGateway, reject
 from tests.samples import SHA
 from tests.scripted import Script, call, final
-from tests.test_agent_loop import PORT_PATCH, make_run, solve
+from tests.test_agent_loop import FINISH, PORT_PATCH, make_run, plan, solve
 from tests.test_memory import SIGNALS
 
 SECRET_VALUE = "hunter2-sk-live-9f8e7d"
@@ -121,28 +121,40 @@ def test_exception_shape_is_class_names_only() -> None:
 # ---- 흐름에서 찍히는 줄 ----
 
 
-def test_a_playbook_run_logs_classification_model_calls_and_outcome(
+def test_a_run_logs_classification_the_plan_model_calls_and_outcome(
     trace_log: pytest.LogCaptureFixture,
 ) -> None:
     gw = FakeGateway()
+    steps: list[dict[str, Any]] = [
+        {"tool": "run_render", "args": {"specPatch": SECRET_ENV_PATCH}},
+        {"tool": "run_deploy", "args": {"specPatch": SECRET_ENV_PATCH}},
+        {"tool": "run_verify"},
+        {"tool": "submit_result", "when": "verified"},
+    ]
     local = Script(
         call("run_render", specPatch=SECRET_ENV_PATCH),
         call("run_deploy", specPatch=SECRET_ENV_PATCH),
         call("run_verify"),
         final(status="verified", specPatch=PORT_PATCH, summary="고쳤습니다."),
     )
-    solve(make_run(**SIGNALS["A1"]), gw, local)
+    solve(make_run(**SIGNALS["A1"]), gw, local, Script(plan(*steps)))
     out = lines(trace_log)
     assert all(line.startswith("trace ticket=t_0013 ") for line in out)
     assert "trace ticket=t_0013 classify case=A1 method=code matched=True" in out
-    assert any(
-        line.startswith("trace ticket=t_0013 act model=local name=function:") for line in out
+    for label in ("planner", "local"):
+        assert any(
+            line.startswith(f"trace ticket=t_0013 act model={label} name=function:") for line in out
+        )
+    assert (
+        "trace ticket=t_0013 plan steps=4 tools=run_render,run_deploy,run_verify,submit_result"
+        in out
     )
     done = next(
         line for line in out if line.startswith("trace ticket=t_0013 act done model=local ")
     )
     # 측정용 수: 모델 요청 4번(도구 3 + 결과 1), 토큰과 걸린 시간
     assert " requests=4 in_tokens=" in done and " out_tokens=" in done and " seconds=" in done
+    assert any(line.startswith("trace ticket=t_0013 act done model=planner ") for line in out)
     render = next(line for line in out if " tool=run_render " in line)
     assert render.endswith(
         "ok=True args=specPatch=[add /spec/services/0/env/DB_PASSWORD str; "
@@ -150,7 +162,7 @@ def test_a_playbook_run_logs_classification_model_calls_and_outcome(
         "add /spec/services/0/env obj; remove /spec/services/0/env/OLD -]"
     )
     final_line = out[-1]
-    assert " outcome status=verified path=playbook actions=3 elapsed=" in final_line
+    assert " outcome status=verified path=plan actions=3 elapsed=" in final_line
     assert final_line.endswith(" exc=-")
 
 
@@ -181,58 +193,56 @@ def test_a_rejection_logs_its_code_and_field_paths_but_not_the_message_or_values
             }
         }
     ]
+    render = {"tool": "run_render", "args": {"specPatch": SECRET_ENV_PATCH}}
     local = Script(
         call("run_render", specPatch=SECRET_ENV_PATCH),
         final(status="gave_up", summary="멈춤"),
     )
-    solve(make_run(**SIGNALS["A1"]), gw, local, Script(final(status="gave_up", summary="멈춤")))
-    rejected = next(line for line in lines(trace_log) if " tool=run_render rejected=" in line)
+    solve(make_run(**SIGNALS["A1"]), gw, local, Script(plan(render), plan(FINISH)))
+    out = lines(trace_log)
+    rejected = next(line for line in out if " tool=run_render rejected=" in line)
     assert (
         " rejected=INVALID_SPEC fields=services[0].runtime.port:WRONG_TYPE "
         "args=specPatch=[add /spec/services/0/env/DB_PASSWORD str;"
     ) in rejected
-    assert SECRET_VALUE not in trace_log.text and "is wrong" not in "\n".join(lines(trace_log))
+    assert "trace ticket=t_0013 plan broken tool=run_render rejected=INVALID_SPEC" in out
+    assert SECRET_VALUE not in trace_log.text and "is wrong" not in "\n".join(out)
 
 
-def test_repeated_rejections_end_the_run_and_the_log_says_how(
+def test_rejections_in_every_plan_end_the_run_and_the_log_says_how(
     trace_log: pytest.LogCaptureFixture,
 ) -> None:
-    # 개발 리허설과 같은 모양: 거절이 도구 재시도 한도를 넘어 UnexpectedModelBehavior로 끝난다.
     gw = FakeGateway()
-    gw.script["run_render"] = [reject("INVALID_SPEC") for _ in range(12)]
-    local = Script(*[call("run_render", specPatch=SECRET_ENV_PATCH) for _ in range(6)])
-    planner = Script(*[call("run_render", specPatch=SECRET_ENV_PATCH) for _ in range(6)])
-    solve(make_run(**SIGNALS["A1"]), gw, local, planner)
+    gw.script["run_render"] = [reject("INVALID_SPEC") for _ in range(3)]
+    render = {"tool": "run_render", "args": {"specPatch": SECRET_ENV_PATCH}}
+    local = Script(*[call("run_render", specPatch=SECRET_ENV_PATCH) for _ in range(3)])
+    solve(make_run(**SIGNALS["A1"]), gw, local, Script(*[plan(render) for _ in range(3)]))
     out = lines(trace_log)
-    assert sum(" tool=run_render rejected=INVALID_SPEC " in line for line in out) >= 8
-    # 로컬이 한도를 넘으면 그 사실을 남기고 추론 모델로 다시 계획한다.
-    assert any(
-        " act failed model=local exc=UnexpectedModelBehavior cause=ModelRetry" in line
-        for line in out
-    )
-    assert out[-1].endswith(" exc=UnexpectedModelBehavior cause=ModelRetry")
-    assert " outcome status=gave_up path=replan_after_playbook " in out[-1]
+    assert sum(" plan broken tool=run_render rejected=INVALID_SPEC" in line for line in out) == 3
+    assert "trace ticket=t_0013 path=replan_after_playbook (plan 3/3)" in out
+    assert " outcome status=gave_up path=replan_after_playbook actions=3 " in out[-1]
     assert SECRET_VALUE not in trace_log.text
 
 
 def test_replan_logs_the_path_and_the_planner_model(trace_log: pytest.LogCaptureFixture) -> None:
     gw = FakeGateway()
-    local = Script(final(status="gave_up", summary="모름"))
-    planner = Script(final(status="gave_up", summary="모름"))
-    solve(make_run(**SIGNALS["A1"]), gw, local, planner)
+    local = Script(final(status="gave_up", summary="모름"), final(status="gave_up", summary="모름"))
+    solve(make_run(**SIGNALS["A1"]), gw, local, Script(plan(), plan(FINISH)))
     out = lines(trace_log)
-    assert "trace ticket=t_0013 path=replan_after_playbook (playbook gave up)" in out
-    assert any(" act model=planner name=function:" in line for line in out)
+    assert "trace ticket=t_0013 path=replan_after_playbook (plan 2/3)" in out
+    assert sum(" act model=planner name=function:" in line for line in out) == 2
     assert " outcome status=gave_up path=replan_after_playbook " in out[-1]
 
 
-def test_llm_classification_is_logged_with_its_method(trace_log: pytest.LogCaptureFixture) -> None:
+def test_an_unmatched_ticket_logs_only_the_code_classification(
+    trace_log: pytest.LogCaptureFixture,
+) -> None:
     gw = FakeGateway()
-    local = Script(final(case_id="A1"), final(status="gave_up", summary="모름"))
-    solve(make_run(), gw, local, Script(final(status="gave_up", summary="모름")))
+    solve(make_run(), gw, Script(final(status="gave_up", summary="모름")), Script(plan(FINISH)))
     out = lines(trace_log)
-    assert "trace ticket=t_0013 classify case=none method=code matched=False" in out
-    assert "trace ticket=t_0013 classify case=A1 method=llm matched=True" in out
+    assert [line for line in out if " classify " in line] == [
+        "trace ticket=t_0013 classify case=none method=code matched=False"
+    ]
 
 
 def test_a_closed_ticket_logs_that_it_was_closed(trace_log: pytest.LogCaptureFixture) -> None:

@@ -9,23 +9,36 @@ from fastapi.testclient import TestClient
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import ToolReturnPart
 
-from ai_server.agent import loop
+from ai_server.agent import loop, prompts
 from ai_server.agent.gateway import connect_gateway
 from ai_server.agent.loop import Models, make_agent_runner, make_models, models_from_settings
 from ai_server.agent.memory import CaseMemory, load_cases
 from ai_server.agent.models import GatewayGrant, Ticket
-from ai_server.agent.prompts import GATEWAY_TOOLS, INSTRUCTIONS
+from ai_server.agent.prompts import GATEWAY_TOOLS, INSTRUCTIONS, PLAN_INSTRUCTIONS
 from ai_server.agent.runs import TicketRun
 from ai_server.config import Settings
 from ai_server.main import create_app
 from tests.conftest import AUTH
 from tests.fake_gateway import FakeGateway, reject
 from tests.samples import SHA, ticket, ticket_request
-from tests.scripted import Script, call, fail, final
+from tests.scripted import Script, Step, call, fail, final
 from tests.test_memory import SIGNALS
 from tests.test_tickets_api import wait_until
 
 PORT_PATCH = [{"op": "replace", "path": "/spec/services/0/runtime/port", "value": 3000}]
+FINISH = {"tool": "submit_result", "when": "gave_up"}
+# 추론 모델의 계획(AIagent.md §10 ②). 단계를 주지 않으면 모든 게이트웨이 도구를 쓰는 계획이다.
+ALL_STEPS = [{"tool": t} for t in sorted(GATEWAY_TOOLS - {"submit_result"})] + [
+    {"tool": "submit_result", "when": "결과로 끝낸다"}
+]
+
+
+def plan(*steps: dict[str, Any], cause: str = "원인") -> Step:
+    return final(cause=cause, steps=list(steps) or ALL_STEPS)
+
+
+def planner_of(n: int = 3) -> Script:
+    return Script(*[plan() for _ in range(n)])
 
 
 def make_run(**overrides: Any) -> TicketRun:
@@ -47,7 +60,7 @@ def solve(
 ) -> CaseMemory:
     memory = memory or CaseMemory(load_cases())
     if models is None:
-        models = Models(local=local.model, planner=(planner or Script()).model)
+        models = Models(local=local.model, planner=(planner or planner_of()).model)
     tokens: list[str] = []
 
     def gateway_for(token: str) -> Any:
@@ -64,16 +77,29 @@ def only_result(gateway: FakeGateway) -> dict[str, Any]:
     return result
 
 
-# ---- ③ playbook ----
+# ---- ② 계획(추론 모델) → ③ 실행(로컬 모델) ----
+
+A1_STEPS: list[dict[str, Any]] = [
+    {"tool": "run_render", "args": {"specPatch": PORT_PATCH}},
+    {"tool": "run_deploy", "args": {"specPatch": PORT_PATCH}},
+    {"tool": "run_verify"},
+    {"tool": "submit_result", "when": "run_verify가 통과하면 verified"},
+]
+A1_RUN = (
+    call("run_render", specPatch=PORT_PATCH),
+    call("run_deploy", specPatch=PORT_PATCH),
+    call("run_verify"),
+)
 
 
-def test_code_case_runs_its_playbook_and_submits_once() -> None:
+def test_the_planner_plans_and_the_local_model_carries_it_out() -> None:
     gw = FakeGateway()
-    local = Script(
+    planner = Script(
         call("read_pod_logs", service="be", lines=100),
-        call("run_render", specPatch=PORT_PATCH),
-        call("run_deploy", specPatch=PORT_PATCH),
-        call("run_verify"),
+        plan(*A1_STEPS, cause="앱은 3000에서 듣는데 배포 설정은 8080"),
+    )
+    local = Script(
+        *A1_RUN,
         final(
             status="verified",
             specPatch=PORT_PATCH,
@@ -81,7 +107,6 @@ def test_code_case_runs_its_playbook_and_submits_once() -> None:
             evidence=[{"ref": "read_pod_logs", "text": "Server listening on port 3000"}],
         ),
     )
-    planner = Script()
     run = make_run(**SIGNALS["A1"])
     memory = solve(run, gw, local, planner)
 
@@ -89,7 +114,7 @@ def test_code_case_runs_its_playbook_and_submits_once() -> None:
     result = only_result(gw)
     assert result["ticketId"] == "t_0013" and result["commitSha"] == SHA
     assert result["status"] == "verified" and result["specPatch"] == PORT_PATCH
-    assert result["classification"] == {"method": "code", "caseId": "A1", "path": "playbook"}
+    assert result["classification"] == {"method": "code", "caseId": "A1", "path": "plan"}
     # 기록은 모델이 말한 것이 아니라 게이트웨이에 실제로 한 호출이다.
     assert [(a["tool"], a["ok"]) for a in result["actions"]] == [
         ("read_pod_logs", True),
@@ -98,144 +123,195 @@ def test_code_case_runs_its_playbook_and_submits_once() -> None:
         ("run_verify", True),
     ]
     assert result["actions"][1]["args"] == {"specPatch": PORT_PATCH}
-    assert result["evidence"][0]["ref"] == "read_pod_logs"
     assert run.case_id == "A1"
     a1 = memory.get("A1")
     assert a1 is not None and a1.stats.hits == 1
-    # playbook은 로컬 모델이 돌고, 추론 모델은 부르지 않는다.
-    assert local.done and planner.requests == []
-    first = local.sent(0)
-    assert INSTRUCTIONS in first and '"caseId":"A1"' in first and "Ticket t_0013" in first
+    assert local.done and planner.done
+    # 추론 모델은 코드가 맞힌 case의 playbook을 참고로 받는다.
+    first_plan = planner.sent(0)
+    assert PLAN_INSTRUCTIONS in first_plan and '"caseId":"A1"' in first_plan
+    assert "starting point, not a rule" in first_plan and "Ticket t_0013" in first_plan
+    # 로컬 모델은 계획을 받는다(LLM 분류는 없다).
+    executed = local.sent(0)
+    assert INSTRUCTIONS in executed and "Plan from the planner" in executed
+    assert "앱은 3000에서 듣는데 배포 설정은 8080" in executed
 
 
-def test_model_gets_gateway_tools_and_read_memory_but_not_submit_result() -> None:
+def test_the_planner_reads_evidence_and_the_executor_gets_only_the_plans_tools() -> None:
     gw = FakeGateway()
-    local = Script(final(status="gave_up", summary="모름"))
-    planner = Script(final(status="gave_up", summary="모름"))
+    planner = Script(plan(*A1_STEPS))
+    local = Script(*A1_RUN, final(status="verified", specPatch=PORT_PATCH, summary="고쳤습니다."))
     solve(make_run(**SIGNALS["A1"]), gw, local, planner)
-    names = {t.name for t in local.infos[0].function_tools}
-    assert "submit_result" not in names
-    assert {
-        "read_memory",
-        "run_build",
-        "run_render",
-        "run_deploy",
-        "run_verify",
-    } <= names
+    planning = {t.name for t in planner.infos[0].function_tools}
+    assert planning == {"get_target_status", "read_pod_logs", "read_repo", "read_memory"}
+    executing = {t.name for t in local.infos[0].function_tools}
+    assert executing == {"run_render", "run_deploy", "run_verify"}
 
 
-def test_read_memory_is_answered_inside_the_ai_server() -> None:
+def test_a_ticket_no_case_matches_is_planned_without_a_hint() -> None:
     gw = FakeGateway()
+    planner = Script(plan({"tool": "submit_result", "when": "DB 주소를 물어 needs_user"}))
     local = Script(
-        call("read_memory", stage="apply"),
-        final(
-            status="needs_user", userRequest={"message": "DB 주소를 확인해 주세요"}, summary="DB"
-        ),
-    )
-    solve(make_run(**SIGNALS["A2"]), gw, local)
-    [answer] = [
-        p.content
-        for p in local.requests[1][-1].parts
-        if isinstance(p, ToolReturnPart) and p.tool_name == "read_memory"
-    ]
-    # 도구 결과의 타입은 PydanticAI가 여러 모양의 합으로 두므로, 우리 도구가 돌려준 모양으로 읽는다.
-    cases = cast(dict[str, Any], answer)["cases"]
-    ids = [c["caseId"] for c in cases]
-    assert ids == ["A3", "A4", "A1", "A2"]
-    assert gw.tool_calls() == []
-    assert only_result(gw)["actions"] == []
-
-
-# ---- ② LLM 분류 ----
-
-
-def test_unmatched_ticket_is_classified_by_the_local_model() -> None:
-    gw = FakeGateway()
-    local = Script(
-        final(case_id="A1"),
         final(
             status="needs_user",
             userRequest={"message": "헬스체크 경로를 알려 주세요"},
             summary="경로를 모름",
-        ),
+        )
     )
     run = make_run()  # 어느 case의 신호도 없는 apply 티켓
-    memory = solve(run, gw, local)
+    memory = solve(run, gw, local, planner)
     result = only_result(gw)
-    assert result["classification"] == {"method": "llm", "caseId": "A1", "path": "playbook"}
+    assert result["classification"] == {"method": "code", "caseId": None, "path": "plan"}
     assert result["userRequest"] == {"message": "헬스체크 경로를 알려 주세요", "secretKeys": []}
-    a1 = memory.get("A1")
-    assert a1 is not None and a1.stats.hits == 1 and run.case_id == "A1"
-    # 분류에는 그 단계의 case만 보여 주고 도구는 주지 않는다.
-    listing = local.sent(0)
-    assert '"A1"' in listing and '"A4"' in listing and '"B1"' not in listing
+    assert "Known case" not in planner.sent(0)
+    assert run.case_id is None and all(c.stats.hits == 0 for c in memory.cases)
+    # 도구 없이 끝내는 계획이면 로컬 모델에도 도구가 없다.
     assert local.infos[0].function_tools == []
 
 
-@pytest.mark.parametrize("answer", [None, "Z9", "B1"])  # B1은 다른 단계의 case
-def test_unknown_case_goes_to_planning(answer: str | None) -> None:
+def test_read_memory_is_answered_inside_the_ai_server() -> None:
     gw = FakeGateway()
-    local = Script(final(case_id=answer))
     planner = Script(
-        call("get_target_status"), final(status="gave_up", summary="원인을 찾지 못했습니다.")
+        call("read_memory", stage="apply"),
+        plan({"tool": "submit_result", "when": "needs_user"}),
     )
-    run = make_run()
-    memory = solve(run, gw, local, planner)
+    local = Script(
+        final(status="needs_user", userRequest={"message": "DB 주소를 확인해 주세요"}, summary="DB")
+    )
+    solve(make_run(**SIGNALS["A2"]), gw, local, planner)
+    [answer] = [
+        p.content
+        for p in planner.requests[1][-1].parts
+        if isinstance(p, ToolReturnPart) and p.tool_name == "read_memory"
+    ]
+    # 도구 결과의 타입은 PydanticAI가 여러 모양의 합으로 두므로, 우리 도구가 돌려준 모양으로 읽는다.
+    cases = cast(dict[str, Any], answer)["cases"]
+    assert [c["caseId"] for c in cases] == ["A3", "A4", "A1", "A2"]
+    assert gw.tool_calls() == [] and only_result(gw)["actions"] == []
+
+
+def test_a_plan_with_a_tool_the_platform_does_not_have_is_made_again() -> None:
+    gw = FakeGateway()
+    planner = Script(
+        plan({"tool": "read_build_logs"}, {"tool": "submit_result", "when": "gave_up"}),
+        plan({"tool": "submit_result", "when": "gave_up"}),
+    )
+    local = Script(final(status="gave_up", summary="모름"))
+    solve(make_run(**SIGNALS["A1"]), gw, local, planner)
+    assert "unknown tools ['read_build_logs']" in planner.sent(1)
+    assert planner.done
+
+
+def test_a_rejection_while_executing_stops_the_local_model_and_the_planner_replans() -> None:
+    # 2026-11-14 실서비스: 로컬 모델이 거절된 호출을 되풀이하다 TOOL_LIMIT에 닿았다.
+    gw = FakeGateway()
+    port = [{"path": "services[0].runtime.port", "code": "INVALID_TYPE"}]
+    gw.script["run_render"] = [reject("INVALID_SPEC", "see fields", port)]
+    as_text = [{"op": "replace", "path": "/spec/services/0/runtime/port", "value": "3000"}]
+    planner = Script(
+        plan({"tool": "run_render", "args": {"specPatch": as_text}}, *A1_STEPS[1:]),
+        plan(*A1_STEPS),
+    )
+    local = Script(
+        call("run_render", specPatch=as_text),
+        *A1_RUN,
+        final(status="verified", specPatch=PORT_PATCH, summary="포트를 숫자 3000으로 고쳤습니다."),
+    )
+    solve(make_run(**SIGNALS["A1"]), gw, local, planner)
     result = only_result(gw)
-    assert result["classification"] == {"method": "llm", "caseId": None, "path": "plan"}
-    assert gw.tool_calls() == ["get_target_status"]
-    assert planner.done and "No known case matches" in planner.sent(0)
-    assert run.case_id is None
-    assert all(c.stats.hits == 0 for c in memory.cases)
+    assert result["status"] == "verified" and result["specPatch"] == PORT_PATCH
+    assert result["classification"]["path"] == "replan_after_playbook"
+    # 로컬 모델은 거절을 받지 않았다(첫 실행은 그 자리에서 멈췄다).
+    assert all("INVALID_SPEC" not in local.sent(i) for i in range(len(local.requests)))
+    replan = planner.sent(1)
+    assert "run_render was rejected INVALID_SPEC" in replan
+    assert "services[0].runtime.port:INVALID_TYPE" in replan
+    assert "never repeat a rejected call" in replan
+    assert "run_render 4" in replan
 
 
-# ---- ④ 실패 기반 재계획 ----
-
-
-def test_failed_playbook_is_replanned_by_the_planner() -> None:
+def test_a_local_gave_up_is_replanned() -> None:
     gw = FakeGateway()
     gw.script["run_deploy"] = [{"ok": False, "services": [], "pods": [], "events": []}]
-    local = Script(
-        call("run_deploy", specPatch=PORT_PATCH),
-        final(status="gave_up", summary="포트를 바꿔도 Ready가 되지 않음"),
-    )
     patch = [{"op": "replace", "path": "/spec/services/0/runtime/health/path", "value": "/healthz"}]
     planner = Script(
+        plan(*A1_STEPS),
+        plan(
+            {"tool": "run_deploy", "args": {"specPatch": patch}},
+            {"tool": "run_verify"},
+            {"tool": "submit_result", "when": "verified"},
+        ),
+    )
+    local = Script(
+        call("run_render", specPatch=PORT_PATCH),
+        call("run_deploy", specPatch=PORT_PATCH),
+        final(status="gave_up", summary="포트를 바꿔도 Ready가 되지 않음"),
         call("run_deploy", specPatch=patch),
         call("run_verify"),
         final(status="verified", specPatch=patch, summary="헬스체크 경로를 /healthz로 고쳤습니다."),
     )
     solve(make_run(**SIGNALS["A1"]), gw, local, planner)
     result = only_result(gw)
-    assert result["classification"] == {
-        "method": "code",
-        "caseId": "A1",
-        "path": "replan_after_playbook",
-    }
     assert result["status"] == "verified" and result["specPatch"] == patch
-    assert [(a["tool"], a["ok"]) for a in result["actions"]] == [
-        ("run_deploy", False),
-        ("run_deploy", True),
-        ("run_verify", True),
-    ]
-    replan = planner.sent(0)
-    assert "포트를 바꿔도 Ready가 되지 않음" in replan and "- run_deploy ok=False" in replan
+    assert result["classification"]["path"] == "replan_after_playbook"
+    replan = planner.sent(1)
+    assert "the local model gave up: 포트를 바꿔도 Ready가 되지 않음" in replan
+    assert "- run_deploy ok=False" in replan
 
 
 @pytest.mark.parametrize("status", ["verified", "needs_user"])
-def test_playbook_that_did_not_give_up_is_not_replanned(status: str) -> None:
+def test_a_plan_that_did_not_give_up_is_not_replanned(status: str) -> None:
     gw = FakeGateway()
     extra: dict[str, Any] = (
         {"specPatch": []} if status == "verified" else {"userRequest": {"message": "x"}}
     )
-    local = Script(final(status=status, summary="끝", **extra))
-    planner = Script()
+    planner = Script(plan())
+    solve(
+        make_run(**SIGNALS["A1"]), gw, Script(final(status=status, summary="끝", **extra)), planner
+    )
+    assert only_result(gw)["classification"]["path"] == "plan"
+    assert len(planner.requests) == 1
+
+
+def test_a_plan_that_only_finishes_with_gave_up_is_not_replanned() -> None:
+    gw = FakeGateway()
+    planner = Script(plan({"tool": "submit_result", "when": "원인을 알 수 없으면 gave_up"}))
+    local = Script(final(status="gave_up", summary="원인을 찾지 못했습니다."))
+    solve(make_run(), gw, local, planner)
+    assert len(planner.requests) == 1 and only_result(gw)["status"] == "gave_up"
+
+
+def test_rejections_through_every_plan_end_in_a_gave_up_that_names_the_code() -> None:
+    gw = FakeGateway()
+    gw.script["run_render"] = [reject("PATCH_FORBIDDEN", "role is not allowed")] * 3
+    bad = [{"op": "replace", "path": "/spec/services/0/role", "value": "fe"}]
+    step = {"tool": "run_render", "args": {"specPatch": bad}}
+    planner = Script(*[plan(step) for _ in range(3)])
+    local = Script(*[call("run_render", specPatch=bad) for _ in range(3)])
     solve(make_run(**SIGNALS["A1"]), gw, local, planner)
-    assert only_result(gw)["classification"]["path"] == "playbook"
-    assert planner.requests == []
+    result = only_result(gw)
+    assert result["status"] == "gave_up"
+    assert result["summary"].startswith(
+        "배포 설정 수정이 플랫폼 검사에서 계속 거절되어 멈췄습니다(마지막 거절: PATCH_FORBIDDEN)"
+    )
+    assert len(planner.requests) == loop.MAX_PLANS and len(result["actions"]) == 3
 
 
-# ---- 게이트웨이 거절 ----
+def test_a_rejection_while_planning_goes_back_to_the_planner() -> None:
+    gw = FakeGateway()
+    gw.script["read_repo"] = [reject("INVALID_ARGUMENT", "path must be relative")]
+    planner = Script(
+        call("read_repo", path="/etc"),
+        call("read_repo", path="."),
+        plan({"tool": "submit_result", "when": "needs_user"}),
+    )
+    local = Script(final(status="needs_user", userRequest={"message": "x"}, summary="x"))
+    solve(make_run(**SIGNALS["A1"]), gw, local, planner)
+    assert "INVALID_ARGUMENT" in planner.sent(1) and "path must be relative" in planner.sent(1)
+    assert gw.tool_calls() == ["read_repo", "read_repo"]
+
+
+# ---- 게이트웨이가 멈추게 하는 거절 ----
 
 
 @pytest.mark.parametrize(
@@ -250,11 +326,11 @@ def test_stop_codes_end_the_run_with_gave_up_and_a_reason(code: str, words: str)
     gw = FakeGateway()
     gw.script["run_render"] = [reject(code, "no more")]
     local = Script(call("run_render", specPatch=PORT_PATCH))
-    planner = Script()
+    planner = Script(plan(*A1_STEPS))
     solve(make_run(**SIGNALS["A1"]), gw, local, planner)
     result = only_result(gw)
     assert result["status"] == "gave_up" and words in result["summary"]
-    assert result["classification"] == {"method": "code", "caseId": "A1", "path": "playbook"}
+    assert result["classification"] == {"method": "code", "caseId": "A1", "path": "plan"}
     assert result["actions"] == [
         {
             "tool": "run_render",
@@ -264,33 +340,14 @@ def test_stop_codes_end_the_run_with_gave_up_and_a_reason(code: str, words: str)
         }
     ]
     # 멈추면 재계획하지 않는다.
-    assert planner.requests == []
+    assert len(planner.requests) == 1
 
 
 def test_closed_ticket_submits_nothing() -> None:
     gw = FakeGateway()
     gw.script["run_verify"] = [reject("TICKET_CLOSED")]
-    local = Script(call("run_verify"))
-    solve(make_run(**SIGNALS["A1"]), gw, local)
+    solve(make_run(**SIGNALS["A1"]), gw, Script(call("run_verify")))
     assert gw.submitted == []
-
-
-def test_other_rejections_go_back_to_the_model() -> None:
-    gw = FakeGateway()
-    gw.script["run_render"] = [
-        reject("PATCH_FORBIDDEN", "path /spec/services/0/role is not allowed")
-    ]
-    bad = [{"op": "replace", "path": "/spec/services/0/role", "value": "fe"}]
-    local = Script(
-        call("run_render", specPatch=bad),
-        call("run_render", specPatch=PORT_PATCH),
-        final(status="verified", specPatch=PORT_PATCH, summary="포트를 고쳤습니다."),
-    )
-    solve(make_run(**SIGNALS["A1"]), gw, local)
-    assert "PATCH_FORBIDDEN" in local.sent(1) and "is not allowed" in local.sent(1)
-    actions = only_result(gw)["actions"]
-    assert (actions[0]["ok"], actions[0]["result"][:24]) == (False, "rejected PATCH_FORBIDDEN")
-    assert actions[1]["ok"] is True
 
 
 def test_failed_run_is_ok_false_not_a_rejection() -> None:
@@ -302,8 +359,12 @@ def test_failed_run_is_ok_false_not_a_rejection() -> None:
             "requests": [{"service": "be", "path": "/", "status": 502, "ms": 5, "error": None}],
         }
     ]
-    local = Script(call("run_verify"), final(status="gave_up", summary="502"))
-    planner = Script(final(status="gave_up", summary="502가 계속 납니다."))
+    planner = Script(plan({"tool": "run_verify"}, FINISH), plan(FINISH))
+    local = Script(
+        call("run_verify"),
+        final(status="gave_up", summary="502"),
+        final(status="gave_up", summary="502"),
+    )
     solve(make_run(**SIGNALS["A1"]), gw, local, planner)
     [action] = only_result(gw)["actions"]
     assert action["ok"] is False and '"status": 502' in action["result"]
@@ -325,14 +386,12 @@ def test_result_of_the_wrong_shape_is_made_again() -> None:
 
 def test_model_that_never_answers_right_is_reported_as_gave_up() -> None:
     gw = FakeGateway()
-    local = Script(*[final(status="verified", summary="x") for _ in range(3)])
-    planner = Script(*[final(status="verified", summary="x") for _ in range(3)])
-    solve(make_run(**SIGNALS["A1"]), gw, local, planner)
+    local = Script(*[final(status="verified", summary="x") for _ in range(3 * loop.MAX_PLANS)])
+    solve(make_run(**SIGNALS["A1"]), gw, local)
     result = only_result(gw)
     assert result["status"] == "gave_up" and "AI 모델 호출이 실패" in result["summary"]
-    # 로컬이 끝내 틀린 결과만 내도 추론 모델이 한 번 더 해 본다.
-    assert result["classification"]["path"] == "replan_after_playbook"
-    assert planner.requests != []
+    # 로컬이 끝내 틀린 결과만 내도 추론 모델이 다시 계획한다.
+    assert result["classification"]["path"] == "replan_after_playbook" and local.done
 
 
 # ---- 추론 모델 API: 가림 필터 (FR-102)와 로컬로 넘기기 ----
@@ -343,14 +402,13 @@ SECRET_LOG = "connect failed: postgres://app:hunter2pass@db:5432/app DATABASE_PA
 def test_planner_api_gets_redacted_text_and_local_model_does_not_need_it() -> None:
     gw = FakeGateway()
     gw.script["read_pod_logs"] = [{"lines": ["Authorization: Bearer abcdefghijklmnop1234"]}]
-    local = Script(final(case_id=None))
     api = Script(
         call("read_pod_logs", service="be"),
-        final(status="gave_up", summary="DB에 닿지 않습니다."),
+        plan({"tool": "submit_result", "when": "gave_up"}),
     )
+    local = Script(final(status="gave_up", summary="DB에 닿지 않습니다."))
     logs = {"from": "2026-11-10T13:02:00Z", "to": "2026-11-10T13:12:00Z", "lines": [SECRET_LOG]}
-    run = make_run(logs=logs)
-    solve(run, gw, local, models=make_models(local.model, api.model))
+    solve(make_run(logs=logs), gw, local, models=make_models(local.model, api.model))
     for i in range(2):
         sent = api.sent(i)
         for secret in ("hunter2pass", "s3cr3tvalue", "abcdefghijklmnop1234", "gw_tok"):
@@ -366,7 +424,8 @@ def test_planner_api_gets_redacted_text_and_local_model_does_not_need_it() -> No
 def test_planner_api_failure_falls_back_to_the_local_model() -> None:
     gw = FakeGateway()
     local = Script(
-        final(case_id=None), final(status="gave_up", summary="로컬 모델로 계획했습니다.")
+        plan({"tool": "submit_result", "when": "gave_up"}),
+        final(status="gave_up", summary="로컬 모델로 계획했습니다."),
     )
     api = Script(fail(ModelHTTPError(503, "reasoner")))
     solve(make_run(), gw, local, models=make_models(local.model, api.model))
@@ -376,7 +435,9 @@ def test_planner_api_failure_falls_back_to_the_local_model() -> None:
 
 def test_without_a_planner_api_the_local_model_plans() -> None:
     gw = FakeGateway()
-    local = Script(final(case_id=None), final(status="gave_up", summary="로컬"))
+    local = Script(
+        plan({"tool": "submit_result", "when": "gave_up"}), final(status="gave_up", summary="로컬")
+    )
     solve(make_run(), gw, local, models=make_models(local.model, None))
     assert local.done and only_result(gw)["classification"]["path"] == "plan"
 
@@ -393,7 +454,7 @@ def test_ticket_posted_to_the_api_ends_in_submit_result(settings: Settings) -> N
         tokens.append(token)
         return gw.toolset()
 
-    runner = make_agent_runner(Models(local=local.model, planner=Script().model), gateway_for)
+    runner = make_agent_runner(Models(local=local.model, planner=planner_of().model), gateway_for)
     with TestClient(create_app(settings, runner=runner)) as c:
         res = c.post("/agent/tickets", json=ticket_request(**SIGNALS["A1"]), headers=AUTH)
         assert res.status_code == 202
@@ -439,12 +500,12 @@ def test_transport_error_during_a_tool_call_is_a_gave_up_with_the_reason(no_wait
     gw = FakeGateway()
     gw.broken["run_render"] = 1
     local = Script(call("run_render", specPatch=PORT_PATCH))
-    planner = Script()
+    planner = planner_of()
     solve(make_run(**SIGNALS["A1"]), gw, local, planner)
     result = only_result(gw)
     assert result["status"] == "gave_up"
     assert result["summary"].startswith("플랫폼 게이트웨이에 닿지 못해 멈췄습니다")
-    assert gw.lost == ["run_render"] and planner.requests == []
+    assert gw.lost == ["run_render"] and len(planner.requests) == 1
 
 
 def test_submit_is_retried_after_transport_errors(no_wait: None) -> None:
@@ -494,53 +555,9 @@ def test_second_rejection_of_the_result_is_only_logged(
     gw = FakeGateway()
     gw.script["submit_result"] = [reject(code)] * 3
     local = Script(final(status="gave_up", summary="모름"))
-    planner = Script(final(status="gave_up", summary="모름"))
-    solve(make_run(**SIGNALS["A1"]), gw, local, planner)
+    solve(make_run(**SIGNALS["A1"]), gw, local, Script(plan(FINISH)))
     assert len(gw.submitted) == (2 if code == "INVALID_RESULT" else 1)
     assert f"result not delivered: submit_result rejected {code}" in caplog.text
-
-
-def test_repeated_rejections_are_not_called_a_model_failure() -> None:
-    gw = FakeGateway()
-    gw.script["run_render"] = [reject("PATCH_FORBIDDEN", "role is not allowed")] * 8
-    bad = [{"op": "replace", "path": "/spec/services/0/role", "value": "fe"}]
-    local = Script(*[call("run_render", specPatch=bad) for _ in range(4)])
-    planner = Script(*[call("run_render", specPatch=bad) for _ in range(4)])
-    solve(make_run(**SIGNALS["A1"]), gw, local, planner)
-    result = only_result(gw)
-    assert result["status"] == "gave_up"
-    assert result["summary"].startswith(
-        "배포 설정 수정이 플랫폼 검사에서 계속 거절되어 멈췄습니다(마지막 거절: PATCH_FORBIDDEN)"
-    )
-    assert "AI 모델 호출이 실패" not in result["summary"]
-    # 플레이북(로컬)이 거절 한도를 넘어도 끝내지 않고 추론 모델이 다시 계획했다.
-    assert result["classification"]["path"] == "replan_after_playbook"
-    assert len(result["actions"]) == 8
-
-
-def test_a_spec_rejection_tells_the_model_which_field_and_the_planner_replans() -> None:
-    # 2026-11-14 운영 리허설: 로컬 모델이 포트를 문자열로 네 번 보냈고,
-    # 거절의 칸(fields)을 받지 못했고, 한도를 넘자 재계획 없이 gave_up으로 끝났다.
-    gw = FakeGateway()
-    port = [{"path": "services[0].runtime.port", "code": "INVALID_TYPE"}]
-    gw.script["run_render"] = [
-        reject("INVALID_SPEC", "the patched spec breaks the deploy input rules (see fields)", port)
-    ] * 4
-    as_text = [{"op": "replace", "path": "/spec/services/0/runtime/port", "value": "3000"}]
-    local = Script(*[call("run_render", specPatch=as_text) for _ in range(4)])
-    planner = Script(
-        call("run_render", specPatch=PORT_PATCH),
-        call("run_deploy", specPatch=PORT_PATCH),
-        call("run_verify"),
-        final(status="verified", specPatch=PORT_PATCH, summary="포트를 숫자 3000으로 고쳤습니다."),
-    )
-    solve(make_run(**SIGNALS["A1"]), gw, local, planner)
-    assert "services[0].runtime.port:INVALID_TYPE" in local.sent(1)
-    result = only_result(gw)
-    assert result["status"] == "verified" and result["specPatch"] == PORT_PATCH
-    assert result["classification"]["path"] == "replan_after_playbook"
-    replan = planner.sent(0)
-    assert "INVALID_TYPE" in replan and "계속 거절" in replan
 
 
 def test_field_errors_survive_the_replan_prompt_clip_before_a_long_message() -> None:
@@ -550,13 +567,13 @@ def test_field_errors_survive_the_replan_prompt_clip_before_a_long_message() -> 
         {"path": "services[0].runtime.health.port", "code": "UNKNOWN_KEY"},
     ]
     gw.script["run_render"] = [reject("INVALID_SPEC", "x" * 400, fields)]
+    render = {"tool": "run_render", "args": {"specPatch": PORT_PATCH}}
+    planner = Script(plan(render), plan(FINISH))
     local = Script(
-        call("run_render", specPatch=PORT_PATCH),
-        final(status="gave_up", summary="모름"),
+        call("run_render", specPatch=PORT_PATCH), final(status="gave_up", summary="모름")
     )
-    planner = Script(final(status="gave_up", summary="모름"))
     solve(make_run(**SIGNALS["A1"]), gw, local, planner)
-    replan = planner.sent(0)
+    replan = planner.sent(1)
     assert "services[0].runtime.port:INVALID_TYPE" in replan
     assert "services[0].runtime.health.port:UNKNOWN_KEY" in replan
 
@@ -567,26 +584,22 @@ def test_field_errors_longer_than_the_replan_clip_are_marked_as_cut() -> None:
         {"path": f"services[0].runtime.env[{i}].value", "code": "INVALID_TYPE"} for i in range(12)
     ]
     gw.script["run_render"] = [reject("INVALID_SPEC", "see fields", fields)]
+    render = {"tool": "run_render", "args": {"specPatch": PORT_PATCH}}
+    planner = Script(plan(render), plan(FINISH))
     local = Script(
-        call("run_render", specPatch=PORT_PATCH),
-        final(status="gave_up", summary="모름"),
+        call("run_render", specPatch=PORT_PATCH), final(status="gave_up", summary="모름")
     )
-    planner = Script(final(status="gave_up", summary="모름"))
     solve(make_run(**SIGNALS["A1"]), gw, local, planner)
-    replan = planner.sent(0)
+    replan = planner.sent(1)
     # 앞쪽 칸은 남고, 잘린 뒤쪽은 잘렸다고 적힌다(조용히 사라지지 않는다).
     assert "services[0].runtime.env[0].value:INVALID_TYPE" in replan
     assert "services[0].runtime.env[11].value" not in replan
     assert "…[truncated " in replan
 
 
-def test_the_playbook_prompt_says_a_port_is_a_number() -> None:
-    gw = FakeGateway()
-    local = Script(final(status="gave_up", summary="모름"))
-    planner = Script(final(status="gave_up", summary="모름"))
-    solve(make_run(**SIGNALS["A1"]), gw, local, planner)
-    first = local.sent(0)
-    assert "JSON type that field takes" in first and 'numbers (3000, not "3000")' in first
+def test_the_executor_fills_placeholders_with_the_right_json_type() -> None:
+    sent = prompts.execute_prompt(Ticket.model_validate(ticket(**SIGNALS["A1"])), [], "원인", [])
+    assert "keeping its JSON type" in sent and "call no other tool" in sent
 
 
 def test_without_model_settings_each_ticket_gets_a_gave_up_that_says_so(
@@ -599,18 +612,25 @@ def test_without_model_settings_each_ticket_gets_a_gave_up_that_says_so(
     asyncio.run(make_agent_runner(None, lambda token: gw.toolset())(run, CaseMemory(load_cases())))
     result = only_result(gw)
     assert result["status"] == "gave_up" and result["summary"].startswith("AI 모델 설정이 없어")
-    assert result["classification"] == {"method": "code", "caseId": "A1", "path": "playbook"}
+    assert result["classification"] == {"method": "code", "caseId": "A1", "path": "plan"}
     assert gw.tool_calls() == [] and result["actions"] == []
 
 
 # ---- W6 동작 확인 실패 (stage verify) ----
 
 
-def test_verify_ticket_runs_the_v2_playbook() -> None:
+def test_verify_ticket_is_planned_with_the_v2_hint() -> None:
     gw = FakeGateway()
     patch = [{"op": "replace", "path": "/spec/services/0/runtime/stripPrefix", "value": True}]
-    local = Script(
+    planner = Script(
         call("read_pod_logs", service="be", lines=100),
+        plan(
+            {"tool": "run_deploy", "args": {"specPatch": patch}},
+            {"tool": "run_verify"},
+            {"tool": "submit_result", "when": "verified"},
+        ),
+    )
+    local = Script(
         call("run_deploy", specPatch=patch),
         call("run_verify"),
         final(
@@ -619,10 +639,9 @@ def test_verify_ticket_runs_the_v2_playbook() -> None:
             summary="앱이 /api 없이 받아 stripPrefix를 켰습니다.",
         ),
     )
-    run = make_run(**SIGNALS["V2"])
-    solve(run, gw, local)
+    solve(make_run(**SIGNALS["V2"]), gw, local, planner)
     result = only_result(gw)
-    assert result["classification"] == {"method": "code", "caseId": "V2", "path": "playbook"}
+    assert result["classification"] == {"method": "code", "caseId": "V2", "path": "plan"}
     assert result["specPatch"] == patch
     # 게이트웨이가 verified를 받는 조건(api.md 5번):
     # 같은 specPatch로 run_deploy → 그 뒤 run_verify 통과.
@@ -634,7 +653,7 @@ def test_verify_ticket_runs_the_v2_playbook() -> None:
         "buildOverrides", "pr", "userRequest", "evidence", "summary",
     }  # fmt: skip
     assert set(result) <= gateway_keys
-    first = local.sent(0)
+    first = planner.sent(0)
     # verify 티켓은 통과하지 못한 검사를 errorMessage로, 그 서비스의 Pod를 raw.k8s로 싣는다.
     assert '"caseId":"V2"' in first and "Error: be: GET /api/health -> 404" in first
     assert "stage=verify" in first
@@ -687,13 +706,18 @@ ENV_FILE = [{"path": ".env", "content": "A=1\n"}]
     [
         ("edit_repo_file", {"files": ENV_FILE, "message": "m"}, "EDIT_FORBIDDEN"),
         ("open_pr", {"source": SOURCE, "title": "t", "body": "b"}, "NOT_VERIFIED"),
+        ("edit_repo_file", {"files": FIX_FILES, "message": "m"}, "BOT_UNAVAILABLE"),
     ],
 )
-def test_repository_tool_rejections_go_back_to_the_model(
+def test_repository_tool_rejections_go_back_to_the_planner(
     tool: str, args: dict[str, Any], code: str
 ) -> None:
     gw = FakeGateway()
     gw.script[tool] = [reject(code, "refused for a reason")]
+    planner = Script(
+        plan({"tool": tool, "args": args}),
+        plan({"tool": "submit_result", "when": "고칠 곳을 안내하는 needs_user"}),
+    )
     local = Script(
         call(tool, **args),
         final(
@@ -702,31 +726,13 @@ def test_repository_tool_rejections_go_back_to_the_model(
             summary="수정 PR을 만들지 못했습니다.",
         ),
     )
-    solve(make_run(**SIGNALS["B4"]), gw, local)
-    # 멈추지 않고 모델이 거절 코드를 읽는다.
-    assert code in local.sent(1) and "refused for a reason" in local.sent(1)
+    solve(make_run(**SIGNALS["B4"]), gw, local, planner)
+    # 로컬 모델은 거절을 받지 않고, 추론 모델이 그 코드로 다시 계획한다.
+    assert f"{tool} was rejected {code}: refused for a reason" in planner.sent(1)
     result = only_result(gw)
+    assert result["status"] == "needs_user"
     assert result["actions"][0]["ok"] is False
     assert result["actions"][0]["result"].startswith(f"rejected {code}")
-
-
-def test_without_a_bot_account_the_model_gets_the_code_and_asks_the_student() -> None:
-    gw = FakeGateway()
-    gw.script["edit_repo_file"] = [reject("BOT_UNAVAILABLE", "the bot account is not configured")]
-    local = Script(
-        call("edit_repo_file", files=FIX_FILES, message="fix: import"),
-        final(
-            status="needs_user",
-            userRequest={
-                "message": "FE/src/App.tsx의 import를 './components/Header'로 고쳐 주세요."
-            },
-            summary="수정 PR을 열 수 없어 고칠 곳만 안내합니다.",
-        ),
-    )
-    solve(make_run(**SIGNALS["B4"]), gw, local)
-    assert "BOT_UNAVAILABLE" in local.sent(1)
-    assert only_result(gw)["status"] == "needs_user"
-    assert gw.tool_calls() == ["edit_repo_file"]
 
 
 def test_a_pull_request_the_student_repo_refused_is_reported_as_needs_user() -> None:
@@ -768,9 +774,9 @@ def test_the_instructions_tell_the_model_the_pull_request_rules() -> None:
 def test_gateway_tools_match_the_platform() -> None:
     # 대역 게이트웨이가 BE에 없는 도구를 열면 playbook의 없는 도구가 테스트에서 드러나지 않는다.
     gw = FakeGateway()
-    local = Script(final(status="gave_up", summary="모름"))
-    solve(make_run(**SIGNALS["A1"]), gw, local, Script(final(status="gave_up", summary="모름")))
-    offered = {t.name for t in local.infos[0].function_tools} - {"read_memory"}
+    local = Script(final(status="verified", specPatch=[], summary="통과"))
+    solve(make_run(**SIGNALS["A1"]), gw, local)
+    offered = {t.name for t in local.infos[0].function_tools}
     assert offered | {"submit_result"} == GATEWAY_TOOLS
 
 
@@ -823,44 +829,32 @@ def test_instructions_match_the_gateway_rules() -> None:
 
 def test_finish_steps_are_shown_as_results_not_tools() -> None:
     gw = FakeGateway()
+    planner = Script(plan({"tool": "submit_result", "when": "키가 없으면 needs_user"}))
     local = Script(
         final(status="needs_user", userRequest={"message": "키를 넣어 주세요"}, summary="키")
     )
-    solve(make_run(**SIGNALS["B3"]), gw, local)
-    first = local.sent(0)
-    assert '"finish":"값을 알 수 없거나 비밀값이면 needs_user로"' in first
-    assert '"tool":"submit_result"' not in first
+    solve(make_run(**SIGNALS["B3"]), gw, local, planner)
+    hint, executed = planner.sent(0), local.sent(0)
+    assert '"finish":"값을 알 수 없거나 비밀값이면 needs_user로"' in hint
+    assert '"finish":"키가 없으면 needs_user"' in executed
+    assert '"tool":"submit_result"' not in hint + executed
 
 
-def test_playbook_prompt_says_the_ticket_already_has_the_logs() -> None:
-    with_logs = {
-        **SIGNALS["A1"],
-        "logs": {
-            "from": "2026-11-10T13:02:00Z",
-            "to": "2026-11-10T13:12:00Z",
-            "lines": ["listening on 3000"],
-        },
-    }
-    for overrides, said in ((with_logs, True), (SIGNALS["A1"], False)):
-        gw = FakeGateway()
-        local = Script(final(status="gave_up", summary="모름"))
-        solve(make_run(**overrides), gw, local, Script(final(status="gave_up", summary="모름")))
-        assert ("already carries the latest log lines" in local.sent(0)) is said
-
-
-def test_replan_prompt_counts_the_calls_left() -> None:
+def test_plan_prompts_count_the_calls_left() -> None:
     gw = FakeGateway()
     gw.script["run_deploy"] = [{"ok": False}]
+    planner = Script(plan(), plan(FINISH))
     local = Script(
         call("run_render", specPatch=PORT_PATCH),
         call("run_deploy", specPatch=PORT_PATCH),
         final(status="gave_up", summary="안 됨"),
+        final(status="gave_up", summary="안 됨"),
     )
-    planner = Script(final(status="gave_up", summary="안 됨"))
     solve(make_run(**SIGNALS["A1"]), gw, local, planner)
+    assert "Calls left: run_build 2, run_render 5, run_deploy 2" in planner.sent(0)
     assert (
         "Calls left: run_build 2, run_render 4, run_deploy 1, run_verify 3, edit_repo_file 5, "
-        "open_pr 2, 18 calls in all" in planner.sent(0)
+        "open_pr 2, 18 calls in all" in planner.sent(1)
     )
 
 
@@ -986,3 +980,21 @@ def test_a_needs_user_from_the_model_keeps_its_own_request() -> None:
     )
     solve(make_run(**SIGNALS["B3"]), gw, local)
     assert only_result(gw)["userRequest"]["message"] == request["message"]
+
+
+def test_a_rejection_while_replanning_still_goes_back_to_the_planner() -> None:
+    # 실행이 끝나면 strict를 푼다. 재계획 중 관찰 도구의 거절은 추론 모델이 읽고 고친다.
+    gw = FakeGateway()
+    gw.script["read_repo"] = [reject("INVALID_ARGUMENT", "path must be relative")]
+    planner = Script(
+        plan({"tool": "run_verify"}, FINISH),
+        call("read_repo", path="/etc"),
+        plan(FINISH),
+    )
+    local = Script(
+        call("run_verify"),
+        final(status="gave_up", summary="안 됨"),
+        final(status="gave_up", summary="안 됨"),
+    )
+    solve(make_run(**SIGNALS["A1"]), gw, local, planner)
+    assert "path must be relative" in planner.sent(2) and planner.done
