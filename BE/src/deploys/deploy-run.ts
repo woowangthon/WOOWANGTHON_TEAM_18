@@ -19,7 +19,7 @@ export type DeployStatus = RunStatus | 'not_started'
 export const nextStage = (stage: Stage): Stage | null => STAGES[STAGES.indexOf(stage) + 1] ?? null
 
 /** 플랫폼이 스스로 정하는 실패 코드. 파이프라인이 보낼 수 없다(보내면 AI를 건너뛰게 된다). */
-const INTERNAL_CODES = ['BUILD_FAILED', 'DEPLOY_FAILED', 'VERIFY_FAILED', 'SWITCH_FAILED', 'AGENT_UNAVAILABLE', 'AGENT_GAVE_UP', 'TIMED_OUT'] as const
+const INTERNAL_CODES = ['BUILD_FAILED', 'DEPLOY_FAILED', 'VERIFY_FAILED', 'SWITCH_FAILED', 'AGENT_UNAVAILABLE', 'AGENT_GAVE_UP', 'AGENT_QUOTA_EXCEEDED', 'TIMED_OUT'] as const
 type InternalCode = (typeof INTERNAL_CODES)[number]
 
 /** AI를 부르지 않고 "실패"로 마감하는 플랫폼 문제(deploy-workflow.md §6-3). 코드 집합은 열려 있어, 파이프라인이 새 코드를 추가해도 BE를 고치지 않는다(모양만 본다). */
@@ -29,6 +29,13 @@ const isPlatformCode = (v: unknown): v is string => typeof v === 'string' && PLA
 /** AI 에이전트 설계 §5의 티켓 stage(switch는 없다). */
 export const TICKET_STAGES: readonly Stage[] = ['build', 'prepare', 'render', 'apply', 'verify']
 
+/**
+ * 사용자 한 명이 최근 24시간 동안 낼 수 있는 AI 에이전트 티켓 수(이슈 #145, api.md "파이프라인 ↔ 플랫폼 서버" 5번). 운영자에게는 두지 않는다.
+ * 실행 기록당 상한(3)의 두 번 몫이다: 학생이 AI 결과를 보고 직접 고친 뒤 다시 배포해도 한 번 더 AI가 돕고, 같은 실패를 계속 다시 배포하면 세 번째 배포부터 막힌다.
+ */
+export const MAX_USER_TICKETS = 6
+export const USER_TICKET_WINDOW_MS = 24 * 60 * 60_000
+
 /** 학생에게 그대로 보여 주는 문장. 로그 · 원본 · 비밀값은 여기 들어오지 않는다. 내부 코드는 하나도 빠지면 안 된다. */
 const INTERNAL_MESSAGES: Record<InternalCode, string> = {
   BUILD_FAILED: '이미지를 만드는 중에 문제가 생겼습니다.',
@@ -37,6 +44,7 @@ const INTERNAL_MESSAGES: Record<InternalCode, string> = {
   SWITCH_FAILED: '공개 주소를 새 서비스로 바꾸는 중에 문제가 생겼습니다.',
   AGENT_UNAVAILABLE: '문제를 자동으로 해결하는 서비스에 연결하지 못했습니다. 운영자에게 알려 주세요.',
   AGENT_GAVE_UP: 'AI 에이전트가 이 실패를 해결하지 못했습니다. 배포 설정과 로그를 확인한 뒤 다시 배포해 주세요.',
+  AGENT_QUOTA_EXCEEDED: `최근 24시간 동안 AI 에이전트 수정을 ${MAX_USER_TICKETS}번 모두 써서 이번 실패는 AI가 고치지 않았습니다. 로그를 확인해 직접 고친 뒤 다시 배포하거나, 시간이 지난 뒤 다시 시도해 주세요.`,
   TIMED_OUT: '배포가 제한 시간 안에 끝나지 않아 중단했습니다. 다시 시도해 주세요.',
 }
 
@@ -250,7 +258,7 @@ export function checkImages(conditions: ServiceConditions, images: Record<string
   return issues
 }
 
-/** AI 에이전트 티켓은 실행 기록당 이만큼까지다(api.md "파이프라인 ↔ 플랫폼 서버" 5번). */
+/** AI 에이전트 티켓은 실행 기록당 이만큼까지다(api.md "파이프라인 ↔ 플랫폼 서버" 5번). 운영자의 실행에는 두지 않는다. */
 export const MAX_TICKETS = 3
 
 /**
@@ -260,6 +268,14 @@ export const MAX_TICKETS = 3
 export function ticketCount(run: { agent_result?: Record<string, unknown> | null } | undefined): number {
   const before = run?.agent_result?.tickets
   return (typeof before === 'number' && Number.isInteger(before) && before > 0 ? before : 0) + 1
+}
+
+/**
+ * 실행 기록 하나가 지금까지 낸 티켓 수(사용자 상한을 셀 때). 티켓을 낸 적이 없으면 0, 있으면 `agent_result.tickets`(결과가 아직 없으면 1)다.
+ * `verified` 뒤 새 티켓이 결과를 내기 전에는 `agent_result`가 앞 티켓의 것이라 하나 덜 센다.
+ */
+export function ticketsIssued(run: { ticket_id: string | null; agent_result?: Record<string, unknown> | null }): number {
+  return run.ticket_id === null ? 0 : Math.max(1, ticketCount(run) - 1)
 }
 
 /** AI 에이전트의 해결 결과 중 학생에게 보일 칸(api.md "진행 상태 읽기"의 `agent`). */

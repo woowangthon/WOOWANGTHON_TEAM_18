@@ -83,6 +83,10 @@ it('counts a failure as the platform fault unless the code is one of the student
   }
 })
 
+it('does not count AGENT_QUOTA_EXCEEDED as a platform problem, since it is a student failure the AI skipped for the 24-hour cap', () => {
+  expect(isPlatformProblem('AGENT_QUOTA_EXCEEDED')).toBe(false)
+})
+
 it('does not count AGENT_GAVE_UP as a platform problem, since the AI looked at the student failure and could not fix it', () => {
   expect(isPlatformProblem('AGENT_GAVE_UP')).toBe(false)
   expect(isPlatformProblem('AGENT_UNAVAILABLE')).toBe(true)

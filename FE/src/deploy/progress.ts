@@ -122,8 +122,9 @@ export const agentProgressText = ({ tool, calls, limit }: AgentProgress) => `AI�
 // 그 밖의 코드(SWITCH_FAILED · TIMED_OUT · AGENT_UNAVAILABLE · 열려 있는 플랫폼 코드)는 학생 잘못이 아니다.
 const STUDENT_FAILURES = ['BUILD_FAILED', 'DEPLOY_FAILED', 'VERIFY_FAILED']
 // 학생 잘못이 아닌데 플랫폼 문제도 아닌 코드. AGENT_GAVE_UP은 AI 동료가 학생의 실패를 보고도 해결하지 못한 경우라
-// "학생 잘못이 아니에요"를 붙이지 않고 AI 동료 칸이 설명한다.
-const NOT_PLATFORM = [...STUDENT_FAILURES, 'AGENT_GAVE_UP']
+// "학생 잘못이 아니에요"를 붙이지 않고 AI 동료 칸이 설명한다. AGENT_QUOTA_EXCEEDED는 학생의 실패인데 AI 수정 한도(24시간)를
+// 다 써서 AI가 보지 않은 경우라, 서버 문구가 직접 고치라고 안내한다.
+const NOT_PLATFORM = [...STUDENT_FAILURES, 'AGENT_GAVE_UP', 'AGENT_QUOTA_EXCEEDED']
 
 // 학생이 고칠 수 없는 플랫폼 쪽 문제. 이때는 학생 잘못이 아니라고 알린다. 플랫폼 코드는 열려 있어
 // 목록으로 알아볼 수 없으므로, 위 코드가 아니면 모두 플랫폼 쪽으로 본다(모르는 코드도 그렇다).

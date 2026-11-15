@@ -5,9 +5,11 @@ import type { Env } from '../config/env.js'
 import { isImageDigest, type Slot } from './deploy-condition.js'
 import type { Spec } from './deploy-input.js'
 import { DeployEvents } from './deploy-events.js'
-import { ENDED_STATUSES, type RunStatus, type Stage, type StoredFailure } from './deploy-run.js'
+import { ENDED_STATUSES, type RunStatus, type Stage, type StoredFailure, ticketsIssued } from './deploy-run.js'
 
 const TIMEOUT_MS = 5000
+// 운영자 확인은 파이프라인 알림(제한 10초) 안에서 부르므로 짧게 둔다.
+const AUTH_TIMEOUT_MS = 3000
 
 const databaseUnavailable = () =>
   new ServiceUnavailableException({ code: 'DATABASE_UNAVAILABLE', message: 'Could not reach the database' })
@@ -110,6 +112,7 @@ type Table = 'deploys' | 'projects' | 'build_cache' | 'deploy_runs' | 'deploy_se
 export class DeploysStore {
   private readonly logger = new Logger(DeploysStore.name)
   private readonly restUrl: string
+  private readonly authUrl: string
   private readonly secretKey: string
 
   constructor(
@@ -117,6 +120,7 @@ export class DeploysStore {
     private readonly events: DeployEvents,
   ) {
     this.restUrl = `${config.get('SUPABASE_URL', { infer: true })}/rest/v1`
+    this.authUrl = `${config.get('SUPABASE_URL', { infer: true })}/auth/v1`
     this.secretKey = config.get('SUPABASE_SECRET_KEY', { infer: true })
   }
 
@@ -292,6 +296,41 @@ export class DeploysStore {
     const rows = await this.call('deploy_runs', 'PATCH', query, { ...patch, updated_at: new Date().toISOString() })
     if (rows.length > 0 && patch.status && ENDED_STATUSES.includes(patch.status)) this.events.ended(deployId)
     return rows.length > 0
+  }
+
+  /** 이 사용자가 `since` 뒤에 시작한 실행 기록들이 낸 티켓 수(api.md 5번 사용자 상한). */
+  async ticketsSince(userId: string, since: Date): Promise<number> {
+    const rows = await this.call('deploy_runs', 'GET', { select: 'ticket_id,agent_result', user_id: `eq.${userId}`, created_at: `gte.${since.toISOString()}` })
+    let total = 0
+    for (const r of rows) {
+      if (!isRecord(r) || !(r.ticket_id === null || typeof r.ticket_id === 'string')) throw this.unreadable('deploy_runs', 'GET')
+      total += ticketsIssued({ ticket_id: r.ticket_id, agent_result: isRecord(r.agent_result) ? r.agent_result : null })
+    }
+    return total
+  }
+
+  /**
+   * 이 사용자가 운영자(`app_metadata.role === 'admin'`, auth.md)인가. 파이프라인 알림에는 사용자 토큰이 없어 Supabase Auth 관리 API로 읽는다.
+   * 닿지 못하거나 알아볼 수 없는 답이면 운영자가 아닌 것으로 본다(상한이 풀리지 않는 쪽).
+   */
+  async isAdmin(userId: string): Promise<boolean> {
+    try {
+      const res = await fetch(`${this.authUrl}/admin/users/${encodeURIComponent(userId)}`, {
+        headers: { apikey: this.secretKey },
+        signal: AbortSignal.timeout(AUTH_TIMEOUT_MS),
+      })
+      const text = await res.text()
+      if (!res.ok) {
+        this.logger.error(`Supabase GET /auth/v1/admin/users answered ${res.status}`)
+        return false
+      }
+      const body: unknown = JSON.parse(text)
+      return isRecord(body) && isRecord(body.app_metadata) && body.app_metadata.role === 'admin'
+    } catch {
+      // 오류 문장에 답 본문(이메일 등)의 조각이 들 수 있어 싣지 않는다.
+      this.logger.error('Supabase GET /auth/v1/admin/users could not be read')
+      return false
+    }
   }
 
   async deleteRun(deployId: string): Promise<void> {

@@ -21,6 +21,7 @@ import {
   ENDED_STATUSES,
   type Failure,
   MAX_TICKETS,
+  MAX_USER_TICKETS,
   nextStage,
   type Notice,
   publicUrl,
@@ -28,6 +29,7 @@ import {
   type StepKey,
   type StepState,
   ticketCount,
+  USER_TICKET_WINDOW_MS,
   toAgent,
   type AgentView,
   toFailure,
@@ -267,11 +269,14 @@ export class DeployRunsService {
       if (done && run.ticket_id) await this.agent.close(run.ticket_id, commitOf(run), 'stopped')
       return done
     }
-    // 다시 실행이 또 실패했는데 티켓을 이미 실행 기록당 상한만큼 냈다: 새 티켓 없이 마감한다.
-    if (ticketCount(run) > MAX_TICKETS) {
+    // 티켓 상한(api.md 5번): 다시 실행이 또 실패했는데 이 실행 기록이 이미 상한만큼 냈거나(AGENT_GAVE_UP), 이 사용자가 최근 24시간에
+    // 사용자 상한만큼 냈다(AGENT_QUOTA_EXCEEDED). 새 티켓 없이 마감한다. 운영자는 두 상한 모두 없다. 운영자 확인은 상한에 걸릴 때만 부른다.
+    const overRun = ticketCount(run) > MAX_TICKETS
+    const overUser = !overRun && (await this.store.ticketsSince(run.user_id, new Date(Date.now() - USER_TICKET_WINDOW_MS))) >= MAX_USER_TICKETS
+    if ((overRun || overUser) && !(await this.store.isAdmin(run.user_id))) {
       // 학생용 설명이 앞 티켓의 오류 · 로그를 이번 실패의 근거로 쓰지 않게 한다.
       this.explainer.forgetTicket(run.deploy_id)
-      const done = await this.store.updateRun(run.deploy_id, where, { status: 'failed', failure: { ...stored, code: 'AGENT_GAVE_UP' } })
+      const done = await this.store.updateRun(run.deploy_id, where, { status: 'failed', failure: { ...stored, code: overRun ? 'AGENT_GAVE_UP' : 'AGENT_QUOTA_EXCEEDED' } })
       if (done) await this.slots.afterFailure(run, notice.stage)
       if (done && run.ticket_id) await this.agent.close(run.ticket_id, commitOf(run), 'stopped')
       return done
