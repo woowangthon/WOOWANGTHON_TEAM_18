@@ -2,14 +2,11 @@
 // 운영자 화면과 학생 화면이 같은 수량을 같은 글자로 보이도록 한 곳에 둔다.
 const UNREADABLE = '읽지 못함'
 
-// 0.1코어(100m) 미만은 소수 한 자리로 반올림하면 실제 사용량이 0으로 보이므로 1m(0.001코어) 단위로 보인다.
-// 그래프 눈금이 서로 달라 보이도록 셋째 자리까지 쓴다. 1m 미만은 0이 아니라고 말한다. 정확히 0과 0.1코어 이상은 그대로다.
+// 0.1코어(100m) 미만은 소수 한 자리로 반올림하면 실제 사용량이 0으로 보이므로 유효숫자 두 자리로 보인다.
+// 아주 작은 값(0.5m, 1.5m)도 서로 다르게 읽혀서, 그래프 눈금이 같은 글자로 겹치지 않는다. 정확히 0과 0.1코어 이상은 그대로다.
 export function cpuText(millicores: number | null) {
   if (millicores === null) return UNREADABLE
-  if (millicores > 0 && millicores < 100) {
-    const whole = Math.round(millicores)
-    return whole === 0 ? '0.001코어 미만' : `${whole / 1000}코어`
-  }
+  if (millicores > 0 && millicores < 100) return `${Number((millicores / 1000).toPrecision(2))}코어`
   return `${Math.round(millicores / 100) / 10}코어`
 }
 
