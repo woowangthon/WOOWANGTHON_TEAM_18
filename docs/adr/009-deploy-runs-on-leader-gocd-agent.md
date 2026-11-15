@@ -37,3 +37,15 @@ ADR-004는 플랫폼 서버가 사설망으로 리더의 쿠버네티스 API를 
 
 - 결정의 "실행기는 있는지만 확인한다"는 지금 하지 않는다. 실행기 계정에는 Secret 읽기 권한이 없어 필요한 key가 들어갔는지 보지 못한다(`Infra/pipeline/src/prepare.ts`, [`cluster.md`](../design/cluster.md) §8). 그 확인은 플랫폼 서버가 배포를 시작할 때 DB의 key 기록으로 하고, 빠졌으면 `409 NOT_READY`로 막는다(`BE/src/deploys/deploy-readiness.service.ts`).
 - 결정의 "실행기(GoCD Agent)는 리더에서 돌고"는 Build 스테이지를 뺀 나머지(Prepare · Render · Apply · Verify · Switch)에 맞다. Build는 EC2의 AWS 실행기(이름표 `aws`)가 CodeBuild를 불러 한다(`Infra/gocd/compose.yaml`, [배포 워크플로우](../design/deploy-workflow.md) §2). CodeBuild 권한이 이 실행기 컨테이너에만 있는 것은 같은 EC2에 둘 때의 조건이다.
+- 대안표 · 다시 볼 조건의 "AI 담당의 ArgoCD 검토"는 끝났고 결론은 GoCD 유지다([시스템 정의서](../system-definition.md) §6 열린 질문 13번 "정함: GoCD"). 지금 구조와 비교한 요지:
+
+  | 항목 | GoCD (지금) | ArgoCD로 바꾸면 |
+  | --- | --- | --- |
+  | 매니페스트 | Render 스테이지가 배포마다 spec과 이미지 digest로 만들어 바로 적용한다 | 만든 매니페스트를 배포용 git 레포에 commit해야 한다. 플랫폼 서버에 git 쓰기 경로가 하나 더 생긴다 |
+  | 동작 확인 (W6) | Verify 스테이지가 test Ingress로 화면 · API 경로를 직접 요청한다 | 기본은 리소스 상태(health)만 본다. HTTP 확인은 PostSync 훅(Job)으로 따로 만들어야 한다 |
+  | 실패 때 | 슬롯 A · B라 확인을 통과하기 전에는 공개 주소를 바꾸지 않는다([ADR-011](011-deploy-slots-a-b.md)) | 같은 동작(대상 슬롯 확인 뒤 전환)은 Argo Rollouts 같은 추가 구성이 필요하다 |
+  | AI 에이전트 시험 | Switch 없는 시험 파이프라인 `student-trial`을 옵션으로 실행한다([ADR-014](014-agent-trial-pipeline-and-rerun.md)) | 같은 것을 새로 만들어야 한다 |
+  | 단계 결과 | 스테이지마다 마지막 task가 결과 · 로그를 플랫폼 서버에 보낸다 | 동기화 이력은 있지만 단계별 결과 보고는 따로 만들어야 한다 |
+  | 자원 | GoCD 서버(JVM)가 EC2에 올라간다. 힙은 `-Xmx1g`로 제한했다(`Infra/gocd/compose.yaml`) | EC2 부담은 없고, 리더에 컨트롤러 · repo-server · redis 등이 올라간다 |
+
+  ArgoCD 쪽 내용은 공개 문서 기준이고 우리 클러스터에서 돌려 보지 않았다. EC2 메모리 사용량도 재지 않았다(**미검증**). 그래서 남은 다시 볼 조건은 "EC2 메모리가 모자랄 때" 하나다. 같은 EC2에 둘 때의 조건(JVM 힙 제한, CodeBuild 권한은 AWS 실행기 컨테이너에만)은 [배포 워크플로우](../design/deploy-workflow.md) §8에 있다.
