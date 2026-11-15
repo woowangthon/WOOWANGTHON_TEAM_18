@@ -4,7 +4,7 @@ The root [`CLAUDE.md`](../CLAUDE.md) rules apply; this file adds the commands an
 
 ## Commands
 
-FE (run in `FE/`, Node 22 (22.22+) or 24, [pnpm](https://pnpm.io) — the version is pinned in `FE/package.json` `packageManager`; `corepack enable` picks it up, but Node 25+ no longer bundles corepack, so run `npm i -g corepack` first there):
+FE (run in `FE/`, Node 22 (22.22+), 24 or 26+, [pnpm](https://pnpm.io) — the version is pinned in `FE/package.json` `packageManager`; `corepack enable` picks it up, but Node 25+ no longer bundles corepack, so run `npm i -g corepack` first there):
 
 | Task | Command |
 | --- | --- |

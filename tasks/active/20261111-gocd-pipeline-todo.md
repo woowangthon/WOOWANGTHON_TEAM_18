@@ -31,11 +31,11 @@ Decisions:
 - [x] `Infra/aws/start-gocd.sh`
 - [x] Docs: `platform-hosting.md`, `deploy-workflow.md`, `docs/ai-scope.md`
 - [x] Local check L1 (below), recorded in the PR body
-- [ ] `/code-review low`, `/simplify`; rebase onto `upstream/main` after PR-A merges
-- [ ] Draft PR (`Refs #135`)
+- [x] `/code-review low`, `/simplify`; rebase onto `upstream/main` after PR-A merges (#141, 2026-11-12)
+- [x] Draft PR (`Refs #135`) (#141, 2026-11-12)
 
 ## Done when
 
-- [ ] L1: local BE with `GOCD_URL` and the token from `setup.sh`, start a deploy; GoCD runs; the AWS agent reads the input from the BE; Build fails as a platform failure (the CodeBuild project does not exist yet); the BE run is `failed` with that platform code; the job logs show no token; test rows removed afterwards
-- [ ] `docs/ai-scope.md` says what is built and what is unverified (the leader agent, the EC2 start, a real build and Apply)
-- [ ] Not verified, said plainly in the PR body: the EC2 script on a real EC2, the leader agent registering, a real CodeBuild / Apply run
+- [x] L1: local BE with `GOCD_URL` and the token from `setup.sh`, start a deploy; GoCD runs; the AWS agent reads the input from the BE; Build fails as a platform failure (the CodeBuild project does not exist yet); the BE run is `failed` with that platform code; the job logs show no token; test rows removed afterwards (#141, 2026-11-12)
+- [x] `docs/ai-scope.md` says what is built and what is unverified (the leader agent, the EC2 start, a real build and Apply) (#141, 2026-11-12)
+- [x] Not verified, said plainly in the PR body: the EC2 script on a real EC2, the leader agent registering, a real CodeBuild / Apply run (#141, 2026-11-12)

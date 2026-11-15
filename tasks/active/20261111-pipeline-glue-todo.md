@@ -29,10 +29,10 @@ Decisions (the contract is `docs/design/api.md` "파이프라인 ↔ 플랫폼 �
 - [x] `src/notify.ts`, `src/cli/notify.ts` + spec (mapping table, body accepted by BE's `validateNotice`)
 - [x] Docs: Layout row in `Infra/pipeline/CLAUDE.md`, one line in `docs/design/api.md`
 - [x] `pnpm verify`, hand mutants on mapping and retry, `/code-review low`, `/simplify`
-- [ ] Draft PR (`Refs #135`)
+- [x] Draft PR (`Refs #135`) (#142, 2026-11-12)
 
 ## Done when
 
 - [ ] `pnpm verify` in `Infra/pipeline` exits 0
-- [ ] Every body the mapper makes passes BE's `validateNotice` (a test imports it)
-- [ ] tests added; mutation survivors resolved or explained
+- [x] Every body the mapper makes passes BE's `validateNotice` (a test imports it) (#142, 2026-11-12)
+- [x] tests added; mutation survivors resolved or explained (#142, 2026-11-12)

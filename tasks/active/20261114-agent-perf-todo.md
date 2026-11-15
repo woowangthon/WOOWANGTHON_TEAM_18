@@ -19,7 +19,7 @@ Not applied: planner timeout/max_tokens (no measurement to pick values; a reason
 - [x] guard: a `verified` env/buildEnv value found in no evidence becomes `needs_user`
 - [x] planner classifies every ticket (regex = hint), plans a known case without tools, local model executes the plan's tools, rejection while executing → replan (user spec; ADR in a follow-up PR)
 - [ ] later PR: regex noise filter (`drop_noise`) and one-line signal summary (`summarize_signals`) in the model digest (spec 2-3)
-- [ ] PR, merge, `deploy-ai.sh`
+- [x] PR, merge, `deploy-ai.sh` (#208, 2026-11-14)
 - [ ] after runs on prod, same repos
 - [ ] test log (Claude Docs) + `docs/ai-scope.md`
 

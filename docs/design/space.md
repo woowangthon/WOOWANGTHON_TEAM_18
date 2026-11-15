@@ -1,6 +1,6 @@
 # 학생 공간 만들기 — 설계
 
-- **상태**: 초안 (2026-11-11, 이슈 [#81](https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/81) 1단계. 실제 리더 확인은 아래 알려진 한계)
+- **상태**: 구현됨 (2026-11-11, 이슈 [#81](https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/81) 1단계. 실제 리더 확인은 아래 알려진 한계)
 - **관련**: [cluster.md](cluster.md) §6(양식) · §8(서버 권한) · §12(비밀값), [deploy-workflow.md](deploy-workflow.md) W3, [ADR-004](../adr/004-server-cluster-link-tailscale.md)
 
 ## 범위

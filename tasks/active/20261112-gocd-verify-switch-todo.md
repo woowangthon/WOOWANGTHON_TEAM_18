@@ -22,5 +22,5 @@ The Verify and Switch CLIs are on main (#139). Add the two stages after Apply in
 
 ## Done when
 
-- [ ] Both stages parse on a real GoCD server with the task order above
-- [ ] Not verified, said plainly in the PR body: Verify and Switch on a real cluster (needs the leader Pod and a built image)
+- [x] Both stages parse on a real GoCD server with the task order above (#152, 2026-11-12)
+- [x] Not verified, said plainly in the PR body: Verify and Switch on a real cluster (needs the leader Pod and a built image) (#152, 2026-11-12)

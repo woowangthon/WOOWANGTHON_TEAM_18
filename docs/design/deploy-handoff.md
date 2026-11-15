@@ -1,6 +1,6 @@
 # 배포 입력 (W3 → W4) — 설계
 
-- **상태**: 초안
+- **상태**: 구현됨
 - **관련**: [배포 워크플로우](deploy-workflow.md) · [`POST /api/repos/deploy-spec`](api.md)
 
 ## 범위
@@ -205,7 +205,7 @@
 | `links` | `{ env, service }` 배열 | 다른 서비스 주소를 env `env`로 넣는다. 주소는 W5가 만든다 |
 | `ingressPath` | 문자열 \| `null` | 공개 경로. `null`이면 내부 전용 |
 | `stripPrefix` | 불리언 | `true`면 `ingressPath`를 떼고 컨테이너에 넘긴다 |
-| `resources` | `{ cpu, memory }` \| `null` | 컨테이너 자원. 요청과 상한에 같은 값을 쓴다 (예: `{ "cpu": "500m", "memory": "512Mi" }`). `null`이면 요청 CPU 250m · 메모리 256Mi, 상한 CPU 1 · 메모리 2Gi. 임시 저장소는 늘 요청 1Gi · 상한 4Gi다(Render가 넣는다) |
+| `resources` | `{ cpu, memory }` \| `null` | 컨테이너 자원. 요청과 상한에 같은 값을 쓴다 (예: `{ "cpu": "500m", "memory": "512Mi" }`). `null`이면 요청 CPU 250m · 메모리 256Mi, 상한 CPU 1 · 메모리 2Gi. 임시 저장소는 늘 요청 1Gi · 상한 4Gi다(Render가 넣는다). 지금 플랫폼 서버는 `null`만 받는다(`BE/src/deploys/deploy-input.ts`, 그 밖은 `INVALID_VALUE`) |
 
 ### 검증 규칙
 

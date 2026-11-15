@@ -65,7 +65,7 @@
 
 ## GitHub 연동과 레포 소유 확인
 
-연동은 FE가, 확인은 플랫폼 서버가 한다. 확인 API는 [`api.md`](api.md)의 `POST /api/repos/check`이고, 나중에 만들 제출 API가 같은 확인을 그대로 쓴다.
+연동은 FE가, 확인은 플랫폼 서버가 한다. 확인 API는 [`api.md`](api.md)의 `POST /api/repos/check`이고, 저장 API(`POST /api/deploys`)가 같은 확인을 그대로 쓴다.
 
 - 학생이 프로필에서 `supabase.auth.linkIdentity({ provider: 'github' })`로 연동한다. Supabase의 Manual linking 설정(beta)을 켜야 하고, GitHub OAuth 앱의 callback은 `<SUPABASE_URL>/auth/v1/callback`이다. 요청하는 권한은 읽기뿐이다.
 - 연동한 GitHub 계정은 토큰에 들어 있지 않다. 플랫폼 서버는 **요청에 온 사용자 토큰 그대로** `GET <SUPABASE_URL>/auth/v1/user`(헤더 `Authorization: Bearer <토큰>` · `apikey: <공개 키>`)를 불러, 돌려받은 `identities` 중 `provider = 'github'`인 항목의 `id`(GitHub 사용자 숫자 ID)를 읽는다. 사용자명(login)은 바뀔 수 있어 숫자 ID로 비교한다. 이 방법이라 플랫폼 서버에 Supabase 비밀키(service role)가 필요 없고, 로그아웃되었거나 폐기된 세션의 토큰은 Supabase가 거부한다. 서버에 두는 값은 공개 키(`SUPABASE_PUBLISHABLE_KEY`, FE 번들에도 들어가는 값)뿐이다.
@@ -134,16 +134,16 @@ Supabase `GET /auth/v1/user`의 `401`과 `403`은 책임이 다르다(2026-11-09
 
 ## 알려진 한계
 
-- `slug` 충돌 확인(`409 SLUG_TAKEN`)은 "읽고 나서 쓰기"라 같은 `slug`를 서로 다른 사용자가 동시에 처음 저장하면 둘 다 통과할 수 있다. DB에서 막으려면 `projects` 테이블(`slug` 유일)이 필요하고, 프로젝트 단위 관리(슬롯 · 삭제)를 만들 때 함께 한다. 비밀값 API(#43) 이후에는 서로 다른 두 사용자의 배포가 같은 `proj-<slug>`의 Secret도 서로 덮어쓴다. 고치는 방법은 `projects`에 소유자(owner) 열을 두고 `slug`를 원자적으로 선점하는 것이다.
+- `slug` 충돌 확인(`409 SLUG_TAKEN`)은 "읽고 나서 쓰기"라 같은 `slug`를 서로 다른 사용자가 동시에 처음 저장하면 둘 다 통과할 수 있다. `projects` 테이블(`slug` 유일)은 슬롯 상태용으로 생겼지만 소유자가 없어 이 확인에 쓰지 않는다. 비밀값 API(#43) 이후에는 서로 다른 두 사용자의 배포가 같은 `proj-<slug>`의 Secret도 서로 덮어쓴다. 고치는 방법은 `projects`에 소유자(owner) 열을 두고 `slug`를 원자적으로 선점하는 것이다.
 - 저장하는 spec의 `build.dockerfile`이 그 commit에 실제로 있는지, `dir`이 있는 폴더인지는 확인하지 않는다(모양만 본다). 빌드(#44)가 읽을 때 드러난다.
 - `slug`는 처음 저장한 레포에 묶인다. 레포 이름을 바꾸거나 옮기면 같은 `slug`가 `409 SLUG_TAKEN`이 된다(풀어 주는 길은 `projects` 테이블과 함께 만든다).
-- 서비스 사이의 `ingressPath` 겹침(같은 경로 둘, `/` 둘)은 검증하지 않는다. 경로 배정은 인프라 담당의 규칙(W5)이다.
+- 서비스 사이의 `ingressPath`는 같은 문자열(같은 경로 둘, `/` 둘)만 겹침으로 보고 `DUPLICATE`로 막는다. 앞부분이 겹치는 경로(`/`와 `/api`)는 받는다. 경로 배정은 인프라 담당의 규칙(W5)이다.
 - 사용자당 저장 개수나 요청 횟수 제한은 없다. 본문 100KB 제한만 있다.
 - 예약 `slug` 목록과 `resources`의 모양은 인프라 담당이 정하는 값이다. 지금은 임시 목록과 `null`만 받는다.
 
 - GitHub 공개 API를 인증 없이 부르면 서버 IP당 시간당 60번까지다. 소유 확인(`repos/check`)은 두 번(레포 조회 + commit), Dockerfile 확인은 두 번, 배포 설정 초안은 `commit`을 주면 세 번이고, 저장(`POST /api/deploys`) · 배포 조건(트리 · 루트 tree) · 게이트웨이(`run_build` 해시 · `read_repo`)도 부른다. 여러 사용자가 같은 서버 IP를 쓰므로 2026-11-14 실서비스에서 한도가 바닥나 저장이 실패했다. 그래서 BE env `GITHUB_TOKEN`(운영은 봇 GitHub 계정 토큰, 권한 없는 fine-grained PAT여도 됨)이 있으면 모든 `api.github.com` 호출에 `Authorization: Bearer`로 붙여 시간당 5,000번을 쓴다. 없으면 지금처럼 인증 없이 부른다. 토큰은 `api.github.com`으로만 보내고 `raw.githubusercontent.com` · Supabase에는 보내지 않는다. 한도에 걸리면(`403` · `429`에 `x-ratelimit-remaining: 0` 또는 `retry-after`) `503 GITHUB_RATE_LIMITED`이고, 오류에 다시 시도할 시각 `retryAt`(ISO, `x-ratelimit-reset` 또는 `retry-after`에서, 둘 다 없으면 1분 뒤)을 싣는다.
 - 배포 설정 초안(`deploy-spec`)의 `package.json` 읽기는 `raw.githubusercontent.com`을 쓴다. 이 주소의 응답에는 한도 헤더가 없고 API 한도(`core`)가 줄지 않는 것을 2026-11-09에 직접 확인했다. 다만 이 주소에도 따로 정해지지 않은 한도가 있을 수 있고 응답이 5분 캐시된다(`cache-control: max-age=300`). 그래서 방금 push한 변경이 초안에 늦게 보일 수 있다. `commit`을 주지 않아 `HEAD`를 읽으면 파일 목록과 내용을 서로 다른 시점에 읽게 되어 그 사이 push가 있으면 어긋날 수 있다. `commit`을 주면 SHA 경로는 바뀌지 않으므로 어긋남도 5분 캐시 문제도 없다([#41](https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/41) · [#60](https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/60)).
-- `commit`은 클라이언트가 보낸 값이라 아직 서버가 믿을 SHA가 아니다. 지금은 읽기 전용 초안에만 쓰이고 공개 레포라 노출되는 정보가 없다. 검사한 commit과 확정 spec의 commit이 같은지는 확정 spec을 저장하는 작업에서 확인한다. GitHub는 같은 포크 네트워크의 다른 레포 commit을 이 레포 주소로 읽게 해 줄 수 있는데, 이는 직접 확인하지 못했다.
+- `commit`은 클라이언트가 보낸 값이라 아직 서버가 믿을 SHA가 아니다. 초안과 저장(`POST /api/deploys`)에 쓰이고 공개 레포라 노출되는 정보가 없다. 저장은 그 commit이 이 레포의 것인지만 확인한다(`404 COMMIT_NOT_FOUND`). 초안을 만든 commit과 저장하는 commit이 같은지는 확인하지 않는다. GitHub는 같은 포크 네트워크의 다른 레포 commit을 이 레포 주소로 읽게 해 줄 수 있는데, 이는 직접 확인하지 못했다.
 - 토큰은 수명(기본 1시간) 동안 유효하다. 로그아웃 · 계정 정지 · 관리자 해제가 플랫폼 서버에 바로 반영되지 않는다. 계정 정지 기능을 만들 때 DB 확인을 더할지 다시 본다.
 - `alg` 처리와 401 · 503 구분은 jose의 동작과 오류 종류에 기대고 있다. jose를 올리거나 바꾸면 `BE/test/auth.e2e.spec.ts`가 이를 다시 확인한다.
 - 자동 테스트는 테스트에서 만든 키로 서명한 토큰으로 검증 경로를 확인한다. 실제 Supabase 토큰은 테스트 계정으로 로그인해 직접(`curl`) 확인한다.

@@ -59,14 +59,14 @@ W0 접수 · 사전 검사 → W1 분석 → W2 배포 설정 → W3 비밀값 �
 |---|---|---|---|
 | **W0 접수 · 사전 검사** | 플랫폼 서버 | 레포가 공개인지, commit 확정, `.env`가 올라와 있으면 빌드에서 빼고 경고 | 비공개 · 없음 → 반려 (AI 안 씀) |
 | **W1 분석** | 플랫폼 서버 (코드, AI 없음) | `package.json` · 락 파일 이름 같은 설정 파일을 규칙으로 읽어 프레임워크(Vite + React · Next.js) · 패키지 매니저 · 명령 · 출력 폴더 · 포트 기본값을 찾는다. env key · 진입점 · 서비스 연결 판별은 아직 없다. 보안 검사(gitleaks · Trivy)는 기다리지 않고 따로 돈다 | 프레임워크를 못 알아보면 W2에서 "판단 필요" |
-| **W2 배포 설정** | 플랫폼 서버 | 설정 파일 > README > 기본값 순서로 spec을 조립 | 빈칸 · 후보 여러 개 · README와 충돌 → **문제 티켓** |
+| **W2 배포 설정** | 플랫폼 서버 | 설정 파일 > 기본값 순서로 spec 초안을 채우고(README는 읽지 않는다) 사용자가 확정 | 빈칸 · 후보 여러 개 → "판단 필요"로 사용자가 고른다 (AI 안 씀) |
 | **W3 비밀값 받기** | 플랫폼 서버 | 빠진 필수 env 값을 사용자에게 바로 요청. 받은 값은 **플랫폼 서버가 Tailscale로 k3s API에 접속해 Secret으로 만든다.** GoCD를 거치지 않으므로 실행 기록에 남지 않는다. DB에는 key 이름과 상태만 저장 | 응답이 없으면 "사용자 조치 필요"로 마감 |
 | **W4 빌드** | AWS 실행기 → CodeBuild | 배포 입력으로 서비스별 CodeBuild를 병렬 호출한다. 학생 Dockerfile(`build.dockerfile`) 또는 배포 입력 값(Dockerfile이 없을 때, 빌드 값 사용)으로 빌드 → 이미지 검사 → GHCR에 push. 빌드 입력 해시가 같으면 건너뜀. 이미지 검사는 규칙 검사만 한다: 이미지가 만들어졌는지, 크기 2GiB 이하인지 보고, root로 실행하는 이미지는 경고만 한다(새 도구 없음. 취약점 검사는 ADR-010대로 W1). 시험 빌드(`student-trial`의 `run_build`)는 셋째 인자 `build-overrides.json`으로 그 빌드에만 쓰는 override(`computeTypeOverride` · `timeoutInMinutesOverride`(20분까지) · `imageOverride` · 캐시 끄기)를 `StartBuild`에 얹고, 빌드 대기를 제한 시간 + 5분으로 둔다 | 빌드 실패 → **문제 티켓** |
 | **W5 배포** | 리더 실행기 | Prepare: live 슬롯 보호 검사, 자원 합계 검사(필수 Secret key는 실행기가 Secret을 읽지 못해 BE가 배포 시작 때 확인한다: `409 NOT_READY`), 대상 슬롯 비우기(4절). Render: 대상 슬롯 manifest 생성(3절). Apply: AI → BE → FE 순서로 대상 슬롯에 적용하고 Ready를 기다린다. 기다리는 동안 대상 슬롯 Pod · 이벤트를 watch하다가 다시 기다려도 나아지지 않는 신호가 보이면 제한 시간 전에 바로 실패로 끝낸다(4절 "제한 시간") | 배포 실패 → live 슬롯은 그대로 → **문제 티켓** |
 | **W6 동작 확인** | 리더 실행기 | 대상 슬롯의 Pod Ready(readinessProbe 통과)와 Service Endpoints를 확인(BE → AI 같은 내부 연결 포함)한다. 공개 서비스(`ingressPath`가 있는 서비스)가 있으면 test Ingress의 대상을 대상 슬롯으로 적용하고, Traefik에 Host `<slug>.test.internal`로 **그 서비스에 있는 경로만** 요청한다(4절 "동작 확인과 전환"). 검사한 항목이 모두 성공해야 통과다 | 실패 → open Ingress를 바꾸지 않음 (live 슬롯은 그대로) → **문제 티켓** |
 | **전환** | 리더 실행기 | open Ingress의 대상을 대상 슬롯의 Service로 바꿔 적용. 첫 배포면 open Ingress를 만든다. 이번 배포에 없는 open Ingress · Middleware를 지운다 | 실패 → 플랫폼 문제(티켓 없이 실패로 마감). 같은 `open.yaml`로 다시 돌리면 끝난다 |
 | **W7 완료 · 보고** | 플랫폼 서버 | DB의 `live_slot`을 대상 슬롯으로 바꾸고 이전 live 슬롯의 Deployment를 0개로 줄임(구현됨, #135: `<서비스>-<이전 슬롯>` 이름을 읽어 `DeploymentScaler`로 scale 0. 첫 배포는 건너뛴다. 못 내려도 주소가 이미 바뀌었으므로 배포는 `succeeded`로 끝나고 로그만 남긴다. 실제 리더 확인 전), 사용자에게 주소 · 상태 · 경고 표시, 프로젝트 메모리에 기록, 운영 감시 시작 | - |
-| (운영 중) | 플랫폼 서버 | 재시작 반복 · 메모리 초과를 감시. Tailscale로 리더 k3s API에 Pod · 이벤트 watch 연결을 유지해 바뀔 때마다 받는다(주기적으로 조회하지 않는다). 로그는 계속 받지 않고, 문제를 감지한 순간에 최근 10분만 읽는다 | 재시작 1회 → **장애 대응 job**의 문제 티켓 |
+| (운영 중) | 플랫폼 서버 | Tailscale로 리더 Prometheus의 경고를 20초마다 읽는다. 재시작 반복은 진행 중 배포가 없으면 바로 멈추고, 그 밖의 경고는 AI가 판단하고 운영자가 정한다. 로그는 계속 받지 않고, 경고가 열린 순간 그 Pod의 최근 로그만 읽는다 ([운영 알림 설계](incidents.md)) | 문제 티켓 없음 → 운영 알림(운영자 화면 · Discord) |
 
 ### 3. manifest는 언제 만드나
 
@@ -167,7 +167,7 @@ W6은 배포 입력에 있는 서비스와 설정된 경로만 검사한다. 정
 | Prepare 뒤 대상 슬롯 Pod 사라짐 대기 | 90초, 2초마다 (기본 유예 30초 + kubelet · API 몫. 다시 실행과 시험 `run_deploy`도 같은 Prepare라 이 시간이 시험 대기 30분에 들어간다) | 플랫폼 문제 `SLOT_PODS_LINGERING` → 실패로 마감 |
 | Apply 뒤 Pod Ready 대기 | 서비스마다 `startupTimeoutSeconds` + 120초(이미지 pull 몫), 최대 7분 (Apply가 Deployment 상태와 대상 슬롯 Pod · 이벤트를 3초마다 읽는다. 실행기 권한에 Pod 로그는 없다) | 배포 실패 → 문제 티켓. Pod 상태 이유(`ImagePullBackOff`, ResourceQuota 초과 `FailedCreate`, `CrashLoopBackOff`, `Pending`)와 이벤트를 티켓에 넣는다. 아래 신호는 제한 시간을 기다리지 않고 바로 실패로 끝낸다 |
 | W6 Traefik 요청 하나 | 10초, 5초 간격 3번까지 | 확인 실패 → 문제 티켓 |
-| 파이프라인 전체 | 30분 (GoCD job 제한 시간) | 파이프라인 실패 → 문제 티켓 |
+| 파이프라인 전체 | 전체 상한은 없다. GoCD job 제한 시간은 스테이지마다 build 30분 · apply 20분 · prepare · render · verify · switch 10분이다(`Infra/gocd/student-deploy.gocd.yaml`). 플랫폼 서버는 `running`이 30분 넘게 바뀌지 않으면 마감한다(`QUEUE_STALE_MS`) | 실패로 마감(`TIMED_OUT`). job 제한 시간을 넘은 job이 어떻게 보고되는지는 확인하지 못함 |
 
 **Apply의 빠른 실패.** Apply는 Ready를 기다리는 동안 대상 슬롯의 Pod · 이벤트를 watch한다. 아래 신호는 더 기다려도 나아지지 않으므로, 보이는 즉시 실패로 끝낸다. 그 밖에는 위 제한 시간까지 기다린다.
 
@@ -253,7 +253,7 @@ PR이 머지되기 전까지 live 슬롯은 그대로 돈다(첫 배포라면 �
 | 쓰는 곳 | 모델 | 이유 |
 |---|---|---|
 | AI 에이전트 실행 (도구 고르기) | 로컬 Qwen3-8B | 호출 횟수가 가장 많다. 계획이 잡혀 있어 할 일이 좁다 |
-| 결과 설명 문장 (활동 로그 · 보고) | 로컬 Qwen3-8B | 근거는 이미 구조화돼 있어 문장만 다듬는다 |
+| 결과 설명 문장 (학생용 배포 설명, FR-105) | 고급 추론 모델 API (`gpt-6.1-sol`, 배포 하나에 도구 없이 한 번. [ADR-018](../adr/018-student-deploy-explanation.md)) | 근거는 이미 구조화돼 있어 문장만 다듬는다 |
 | AI 에이전트 분류 · 계획 · 다시 계획 | 고급 추론 모델 API (`gpt-6.1-sol`, 충북대 NOVA API Gateway. [ADR-016](../adr/016-planner-model-nova-gateway.md), 모든 티켓에서 계획하는 것은 [ADR-017](../adr/017-planner-plans-local-executes.md)) | 문제 해결의 핵심 판단. 문제당 1~3번이라 비용이 작다 |
 | 수정 PR의 파일 변경 만들기 | 고급 추론 모델 API | 학생 코드를 고치는 일이라 정확해야 한다. 문제당 한 번 |
 | 상위 모델로 넘김 | 고급 추론 모델 API | 로컬 모델이 계획을 실행하다 게이트웨이 거절을 한 번 받거나 `gave_up`을 낼 때(ADR-017) |
@@ -274,7 +274,7 @@ PR이 머지되기 전까지 live 슬롯은 그대로 돈다(첫 배포라면 �
 | GHCR | 공개 이미지. 워커가 토큰 없이 받는다 |
 | 리더 PC | k3s 제어, 리더 실행기(`student-deploy`의 Prepare ~ Switch와 `student-trial`의 Prepare ~ Verify. 두 파이프라인의 Build는 AWS 실행기), Traefik, Secret(암호화), vLLM |
 | 워커 PC 2대 | 프로젝트 네임스페이스(fe · be · ai Pod). 들어오는 건 Traefik에서만, 나가는 건 인터넷만(학교망 · 클러스터 내부 차단). DB는 학생이 가져온 외부 DB |
-| Supabase | 슬롯별 배포 입력 · manifest · 이미지 digest, `live_slot`, 빌드 캐시, 활동 로그, 프로젝트 메모리, env key 이름과 상태 (값은 저장하지 않음) |
+| Supabase | 슬롯별 배포 입력 · manifest · 이미지 digest, `live_slot`, 빌드 캐시, 실행 기록(`deploy_runs`), 보안 검사 결과, 운영 알림, env key 이름과 상태 (값은 저장하지 않음) |
 
 **EC2를 한 대로 두는 조건**
 
@@ -314,7 +314,7 @@ PR이 머지되기 전까지 live 슬롯은 그대로 돈다(첫 배포라면 �
 - **EC2 한 대가 단일 장애점이다.** 플랫폼 서버 · AI 서버 · GoCD가 함께 멈춘다.
 - **AI가 고친 코드는 사용자가 PR을 머지해야 반영된다.** 머지 전까지는 live 슬롯이 그대로 돌고, 첫 배포라면 기다린다.
 - **수정 PR은 작은 변경만 한다**(파일 5개 · 50줄). 큰 앱 로직 버그는 원인을 알려 주는 데서 끝난다.
-- **로컬 8B 모델의 도구 호출 품질은 아직 검증하지 않았다.** 안 되면 실행도 API로 넘겨야 하고 비용이 는다.
+- **로컬 8B 모델의 도구 호출 품질은 실패 주입 9건을 한 번씩 돌려 본 것뿐이라 검증되지 않았다**(2026-11-14, [`ai-scope.md`](../ai-scope.md)). 안 되면 실행도 API로 넘겨야 하고 비용이 는다.
 - **CodeBuild는 빌드 분 단위로 과금되고, 시작에 수십 초가 더 걸린다.**
 - **전환 뒤에는 확인하지 않는다.** test Ingress로 같은 경로 규칙을 미리 확인하는 것으로 대신한다.
 
@@ -351,7 +351,7 @@ PR이 머지되기 전까지 live 슬롯은 그대로 돈다(첫 배포라면 �
 | 내부 연결 실제 요청 | BE → AI 연결을 Pod 상태가 아니라 실제 요청으로 확인 (`pods/exec` 권한 필요) |
 | GoCD 탄력 실행기 | 배포가 몰리면 실행기를 작업마다 Pod로 띄운다 |
 | 기다림 줄이기 | W2에서 판단이 필요한 서비스만 멈추고 나머지 서비스는 먼저 빌드 |
-| 머지 자동 감지 | MVP는 플랫폼이 수정 PR 상태를 주기적으로 확인한다. 이후 GitHub webhook으로 머지 즉시 새 job |
+| 머지 자동 감지 | MVP는 수정 PR 상태를 추적하지 않는다(학생이 머지한 뒤 다시 배포한다). 이후 GitHub webhook으로 머지 즉시 새 job |
 | AI 에이전트 범위 넓히기 | 더 큰 코드 수정(크기 상한 완화), 자원 상한 조정 제안 |
 | 로그 저장소 | 지금은 필요할 때 Pod 로그를 읽고 빌드 로그는 CodeBuild에서 가져온다. 사후 분석용 저장소는 이후 |
 
