@@ -18,7 +18,6 @@
 - [Architecture](#architecture)
 - [Tech Stack](#tech-stack)
 - [Documentation](#documentation)
-- [Getting Started](#getting-started)
 
 # Summary
 
@@ -88,16 +87,3 @@ AI가 쓰이는 곳, 모킹 · 샘플, 검증하지 못한 것은 [`docs/ai-scop
 | [`docs/pitch.md`](docs/pitch.md) | 발표 · 시연 영상 구성 |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | 작업 방식 · git · PR 규칙 |
 | [Notion](https://wangganae.notion.site/) | 회의록 · 칸반 · 개발 일지 |
-
-# Getting Started
-
-모노레포다. 폴더마다 따로 실행한다. 버전 · 환경변수 · 함정은 각 폴더의 `CLAUDE.md`에 있다.
-
-| 폴더 | 내용 | 준비 | 실행 |
-| --- | --- | --- | --- |
-| `FE/` | User Page · Admin Page | Node 22 / 24, pnpm (`corepack enable`) | `pnpm install --frozen-lockfile` → `pnpm dev` |
-| `BE/` | 플랫폼 서버 | Node 22 / 24, pnpm, `BE/.env` (`BE/.env.example` 복사) | `pnpm install --frozen-lockfile` → `pnpm dev` (포트 3000, `/api`) |
-| `AI/` | AI 서버 | Python 3.12, uv | `uv sync --locked` → `uv run python -m ai_server` (포트 8000) |
-| `Infra/` | 클러스터 · 배포 파이프라인 · AWS 배포 스크립트 | k3s, GoCD, AWS CLI | [`Infra/pipeline/CLAUDE.md`](Infra/pipeline/CLAUDE.md) |
-
-커밋 전에는 바꾼 폴더에서 `pnpm verify`(FE · BE · `Infra/pipeline`)나 `AI/CLAUDE.md`의 검사 명령을 돌린다.
