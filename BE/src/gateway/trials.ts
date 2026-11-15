@@ -3,7 +3,7 @@ import { BadRequestException, Injectable, Logger, NotFoundException, type OnAppl
 import type { Issue } from '../deploys/deploy-input.js'
 import type { Slot } from '../deploys/deploy-condition.js'
 import { DeploysStore } from '../deploys/deploys.store.js'
-import { PipelineClient, type TrialStages } from '../deploys/pipeline.client.js'
+import { PipelineBusyException, PipelineClient, type TrialStages } from '../deploys/pipeline.client.js'
 import { checkTrialResult, type TrialTool } from './trial-result.js'
 
 // AI 에이전트의 시험 실행(api.md "파이프라인 ↔ 플랫폼 서버" 4번, ADR-014). 게이트웨이의 run_render · run_deploy · run_verify가
@@ -73,6 +73,10 @@ export class GatewayTrials implements OnApplicationBootstrap {
 
   /** `verified` 뒤 다시 실행 전, 끝난 시험을 다시 확인하기 전에 기다리는 시간(ms). */
   settleRetryMs = 3000
+  /** GoCD가 시험 파이프라인을 바쁘다고(409) 거절했을 때 다시 실행하기 전 기다리는 시간(ms). */
+  busyRetryMs = 5000
+  /** 바쁘다는 거절을 견디는 최대 시간(ms). 다른 티켓의 시험 하나(빌드 포함)가 끝날 만큼. 티켓 deadline이 더 짧으면 그쪽이다. */
+  busyWaitMs = 5 * 60_000
 
   /** BE가 시작할 때 남은 시험 인스턴스를 취소한다. 서버 시작은 막지 않고, 새 시험만 그 뒤로 미룬다. */
   onApplicationBootstrap(): void {
@@ -162,12 +166,26 @@ export class GatewayTrials implements OnApplicationBootstrap {
       this.lastDeploy.delete(ticket.ticketId)
       this.verified.delete(ticket.ticketId)
     }
-    try {
-      await this.pipeline.runTrial(ticket.deployId, id, STAGES[tool])
-      if (tool === 'run_deploy') this.deployAttempted.add(ticket.ticketId)
-    } catch {
-      this.trials.delete(id)
-      return { failure: { stage: null, code: 'PIPELINE_UNAVAILABLE', message: 'could not start the trial pipeline' } }
+    // 다른 티켓의 시험이 student-trial의 첫 스테이지를 아직 돌고 있으면 GoCD가 409로 거절한다(배포 두 건이 동시에 고쳐질 때).
+    // 그 시험이 끝날 때까지 busyRetryMs마다 다시 실행한다. busyWaitMs나 deadline을 넘기면 PIPELINE_UNAVAILABLE로 끝낸다.
+    const busyUntil = Math.min(deadline, Date.now() + this.busyWaitMs)
+    for (;;) {
+      try {
+        await this.pipeline.runTrial(ticket.deployId, id, STAGES[tool])
+        if (tool === 'run_deploy') this.deployAttempted.add(ticket.ticketId)
+        break
+      } catch (err) {
+        if (!(err instanceof PipelineBusyException) || Date.now() + this.busyRetryMs >= busyUntil) {
+          this.trials.delete(id)
+          return { failure: { stage: null, code: 'PIPELINE_UNAVAILABLE', message: 'could not start the trial pipeline' } }
+        }
+        await new Promise((resolve) => setTimeout(resolve, this.busyRetryMs))
+        // 기다리는 사이 티켓이 끝났으면 실행하지 않는다.
+        if (this.closed.has(ticket.ticketId)) {
+          this.trials.delete(id)
+          return closedFailure()
+        }
+      }
     }
     // 남은 시간이 없으면 바로 끝난다(아래에서 취소한다).
     let timer: NodeJS.Timeout | undefined

@@ -2,10 +2,13 @@ import { useState } from 'react'
 import NoticeBanner from '../components/NoticeBanner.tsx'
 import { Badge } from '../components/ui/Badge.tsx'
 import { Button } from '../components/ui/Button.tsx'
+import { Collapse } from '../components/ui/Collapse.tsx'
 import Evidence from '../incidents/Evidence.tsx'
 import { recommendationText, riskText } from '../incidents/types.ts'
 import type { AdminIncident, AdminIncidentsResponse } from '../incidents/types.ts'
+import { CrossIcon } from '../components/ui/Icons.tsx'
 import { ApiError, apiFetch } from '../lib/api.ts'
+import { addClosed, readClosed, removeClosed } from '../lib/closedIds.ts'
 import AdminSection from './AdminSection.tsx'
 import { ClusterProblem } from './ClusterProblem.tsx'
 import { timeText } from './format.ts'
@@ -140,35 +143,96 @@ function DecisionPanel({ incident, onChanged, onForbidden }: { incident: AdminIn
 
 const actionText = { stopped: '중지', dismissed: '무시' } as const
 
-function IncidentCard({ incident, onChanged, onForbidden }: { incident: AdminIncident } & Handlers) {
+// 운영자가 숨긴 알림 id. 이 브라우저에만 남는다(다른 기기 · 다른 운영자에게는 그대로 보인다).
+const HIDDEN_KEY = 'wcp.hiddenAdminIncidents'
+
+type HideProps = { onHide?: () => void; onUnhide?: () => void }
+
+function IncidentCard({ incident, onChanged, onForbidden, onHide, onUnhide }: { incident: AdminIncident } & Handlers & HideProps) {
   const { action } = incident
   return (
-    <li className="flex flex-col gap-3 rounded-md border border-line p-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="font-bold">{incident.title}</span>
-        <ActionBadge action={action} />
-      </div>
-      <dl className="flex flex-col gap-1 text-sm">
-        <Row label="프로젝트">
-          <span className="font-mono break-all">{incident.slug}</span>
-        </Row>
-        <Row label="시작">{timeText(incident.firedAt)}</Row>
-        {incident.resolvedAt && <Row label="해소">{timeText(incident.resolvedAt)}</Row>}
-        {(action === 'stopped' || action === 'dismissed') && (
-          <Row label="처리">
-            {actionText[action]}
-            {incident.decidedAt ? ` · ${timeText(incident.decidedAt)}` : ''}
-            {incident.decidedBy ? ' · ' : ''}
-            {incident.decidedBy && <span className="break-all">{incident.decidedBy}</span>}
-          </Row>
+    <li className="relative rounded-md border border-line p-4">
+      {/* 판단을 기다리는 알림은 숨길 수 없다(아무도 정하지 않게 되므로). */}
+      {onHide && action !== 'pending' && (
+        <button type="button" aria-label={`${incident.slug} ${incident.title} 숨기기`} onClick={onHide} className="absolute top-2 right-2 rounded-md p-2 text-muted hover:text-fg">
+          <CrossIcon />
+        </button>
+      )}
+      {/* 접은 채로는 제목 · 상태 · 프로젝트 · 시작만 보인다. 판단 대기 알림은 처음부터 펴 둔다(판단 버튼이 보이게). */}
+      <Collapse
+        defaultOpen={action === 'pending'}
+        summary={
+          <>
+            <div className="flex flex-wrap items-center gap-2 pr-8">
+              <span className="font-bold">{incident.title}</span>
+              <ActionBadge action={action} />
+            </div>
+            <p className="text-sm text-muted">
+              <span className="font-mono break-all">{incident.slug}</span> · {timeText(incident.firedAt)}
+            </p>
+          </>
+        }
+      >
+        {(incident.resolvedAt || action === 'stopped' || action === 'dismissed') && (
+          <dl className="flex flex-col gap-1 text-sm">
+            {incident.resolvedAt && <Row label="해소">{timeText(incident.resolvedAt)}</Row>}
+            {(action === 'stopped' || action === 'dismissed') && (
+              <Row label="처리">
+                {actionText[action]}
+                {incident.decidedAt ? ` · ${timeText(incident.decidedAt)}` : ''}
+                {incident.decidedBy ? ' · ' : ''}
+                {incident.decidedBy && <span className="break-all">{incident.decidedBy}</span>}
+              </Row>
+            )}
+          </dl>
         )}
-      </dl>
-      <AiRows ai={incident.ai} />
-      <Evidence evidence={incident.evidence} />
-      {action === 'auto_stopped' && <p className="text-sm text-muted">자동으로 멈췄어요</p>}
-      {/* 처리된 뒤에도 그 처리의 결과 안내가 남도록 늘 그린다. 버튼은 판단 대기일 때만 나온다. */}
-      <DecisionPanel incident={incident} onChanged={onChanged} onForbidden={onForbidden} />
+        <AiRows ai={incident.ai} />
+        <Evidence evidence={incident.evidence} />
+        {action === 'auto_stopped' && <p className="text-sm text-muted">자동으로 멈췄어요</p>}
+        {/* 처리된 뒤에도 그 처리의 결과 안내가 남도록 늘 그린다. 버튼은 판단 대기일 때만 나온다. */}
+        <DecisionPanel incident={incident} onChanged={onChanged} onForbidden={onForbidden} />
+      </Collapse>
+      {onUnhide && (
+        <Button variant="outline" className="mt-3 self-start" aria-label={`${incident.slug} ${incident.title} 다시 보이기`} onClick={onUnhide}>
+          다시 보이기
+        </Button>
+      )}
     </li>
+  )
+}
+
+// 숨긴 알림을 걸러 보이고, 숨긴 것은 아래 토글로 다시 불러 다시 보이게 한다. 판단 대기 알림은 숨기지 못하므로 목록에 늘 남는다.
+function IncidentList({ incidents, onChanged, onForbidden }: { incidents: AdminIncident[] } & Handlers) {
+  const [hidden, setHidden] = useState(() => readClosed(HIDDEN_KEY))
+  const [showHidden, setShowHidden] = useState(false)
+  const isHidden = (i: AdminIncident) => i.action !== 'pending' && hidden.includes(i.id)
+  const hiddenOnes = incidents.filter(isHidden)
+  const visible = incidents.filter((i) => !isHidden(i))
+  return (
+    <>
+      {visible.length === 0 && <p className="text-sm text-muted">운영 알림이 없어요.</p>}
+      {visible.length > 0 && (
+        <ul className="grid items-start gap-3 sm:grid-cols-2">
+          {visible.map((incident) => (
+            <IncidentCard key={incident.id} incident={incident} onChanged={onChanged} onForbidden={onForbidden} onHide={() => setHidden(addClosed(HIDDEN_KEY, hidden, incident.id))} />
+          ))}
+        </ul>
+      )}
+      {hiddenOnes.length > 0 && (
+        <>
+          <Button variant="outline" className="self-start" aria-expanded={showHidden} onClick={() => setShowHidden(!showHidden)}>
+            {showHidden ? '숨긴 알림 접기' : `숨긴 알림 ${hiddenOnes.length}개 보기`}
+          </Button>
+          {showHidden && (
+            <ul className="grid items-start gap-3 sm:grid-cols-2" aria-label="숨긴 알림">
+              {hiddenOnes.map((incident) => (
+                <IncidentCard key={incident.id} incident={incident} onChanged={onChanged} onForbidden={onForbidden} onUnhide={() => setHidden(removeClosed(HIDDEN_KEY, hidden, incident.id))} />
+              ))}
+            </ul>
+          )}
+        </>
+      )}
+    </>
   )
 }
 
@@ -185,11 +249,7 @@ function IncidentsSection({ read, onForbidden }: { read: AdminRead<AdminIncident
       isEmpty={(data) => data.incidents.length === 0}
     >
       {(data) => (
-        <ul className="flex flex-col gap-3">
-          {data.incidents.map((incident) => (
-            <IncidentCard key={incident.id} incident={incident} onChanged={read.reload} onForbidden={onForbidden} />
-          ))}
-        </ul>
+        <IncidentList incidents={data.incidents} onChanged={read.reload} onForbidden={onForbidden} />
       )}
     </AdminSection>
   )

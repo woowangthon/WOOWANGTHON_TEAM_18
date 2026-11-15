@@ -1,7 +1,7 @@
 # 학생용 배포 설명 — 설계
 
 - **상태**: 구현됨 (2026-11-14, 플래그 기본 꺼짐 · 게이트웨이 스모크 테스트 전)
-- **관련**: SRS UC-08, FR-105 · [ADR-016](../adr/016-planner-model-nova-gateway.md) · [API 계약](api.md) `GET /api/deploys/:id/status`의 `explanation`, `POST /agent/explanations`
+- **관련**: SRS UC-08, FR-105 · [ADR-018](../adr/018-student-deploy-explanation.md) · [ADR-016](../adr/016-planner-model-nova-gateway.md) · [API 계약](api.md) `GET /api/deploys/:id/status`의 `explanation`, `POST /agent/explanations`
 
 ## 범위
 

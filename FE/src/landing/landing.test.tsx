@@ -154,17 +154,18 @@ it('says only React (Vite) and Next.js work without a Dockerfile, and does not c
   expect(screen.getByText(/시험해 본 목록은 아니에요/)).toBeTruthy()
 })
 
-it('shows the real survey numbers with their source and pairs each with an answer', () => {
+it('shows the real survey numbers with their source, without the interest block or per-row answers', () => {
   renderLanding({ status: 'signedOut', expired: false })
-  expect(screen.getByText('출처: 학과 대상 구글폼 설문 · 2026-10-28~31 · 응답 37명')).toBeTruthy()
+  expect(screen.getByText('출처: 소프트웨어학부 대상 구글폼 설문 · 2026-10-28~11-01 · 응답 37명')).toBeTruthy()
   expect(screen.getByText('37명 중 29명 (78%)')).toBeTruthy()
   expect(screen.getByText('37명 중 25명 (68%)')).toBeTruthy()
   expect(screen.getByText('22명 중 7명 (32%)')).toBeTruthy()
   expect(screen.getByText('37명 중 16명 (43%)')).toBeTruthy()
   expect(screen.getByText('37명 중 28명 (76%)')).toBeTruthy()
-  expect(screen.getByText(/37명 모두 긍정이에요 · 사용하고 싶다 26명, 기회가 되면 쓰겠다 11명/)).toBeTruthy()
-  expect(screen.getAllByText('우리의 답')).toHaveLength(5)
-  expect(screen.getAllByRole('progressbar').length).toBeGreaterThanOrEqual(6)
+  expect(screen.queryByText('이런 서비스가 있다면 쓰겠어요?')).toBeNull()
+  expect(screen.queryByText(/모두 긍정이에요/)).toBeNull()
+  expect(screen.queryByText('우리의 답')).toBeNull()
+  expect(screen.getAllByRole('progressbar', { name: /명 중 \d+명$/ })).toHaveLength(5)
 })
 
 it('closes with a call to action: start and login when signed out, dashboard when signed in', () => {

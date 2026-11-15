@@ -2,7 +2,7 @@ import { ServiceUnavailableException } from '@nestjs/common'
 import type { ConfigService } from '@nestjs/config'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Env } from '../config/env.js'
-import { PipelineClient } from './pipeline.client.js'
+import { PipelineBusyException, PipelineClient } from './pipeline.client.js'
 
 const BASE = 'https://gocd.test'
 const settings: Partial<Env> = { GOCD_URL: BASE, GOCD_TOKEN: 'gocd_token_test', GOCD_PIPELINE: 'student-deploy', GOCD_TRIAL_PIPELINE: 'student-trial' }
@@ -61,6 +61,18 @@ describe('PipelineClient', () => {
     ['GoCD unreachable', () => ((answer = () => { throw new TypeError('fetch failed') }), client().run('d1'))],
   ])('is 503 PIPELINE_UNAVAILABLE for %s', async (_label, act) => {
     await expect(act()).rejects.toBeInstanceOf(ServiceUnavailableException)
+  })
+
+  it('says the pipeline is busy (still 503 PIPELINE_UNAVAILABLE) when GoCD answers 409 for an instance still in progress', async () => {
+    answer = () => new Response('{"message":"Failed to trigger pipeline [student-trial] { Stage [build] in pipeline [student-trial] is still in progress }"}', { status: 409 })
+    const err: unknown = await client()
+      .runTrial('d1', 'tr_0123456789ab', 'verify')
+      .catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(PipelineBusyException)
+    expect(err).toBeInstanceOf(ServiceUnavailableException)
+    expect((err as ServiceUnavailableException).getResponse()).toMatchObject({ code: 'PIPELINE_UNAVAILABLE' })
+    answer = () => new Response('{}', { status: 422 })
+    await expect(client().runTrial('d1', 'tr_0123456789ab', 'verify')).rejects.not.toBeInstanceOf(PipelineBusyException)
   })
 
   it('cancels only the running stages of one trial instance', async () => {

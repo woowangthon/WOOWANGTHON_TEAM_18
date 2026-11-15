@@ -363,3 +363,64 @@ it('shows the ownership failure without a retry button', async () => {
   expect(await screen.findByText('내 GitHub 계정의 레포가 아니에요')).toBeTruthy()
   expect(screen.queryByRole('button', { name: '다시 시도하기' })).toBeNull()
 })
+
+// 서비스 한 블록의 접힘. jsdom은 닫힌 details 안을 숨기지 않으므로 열림 상태(open)를 본다.
+const block = (n: number) => screen.getByRole('region', { name: `서비스 ${n}` }).querySelector('details') as HTMLDetailsElement
+
+it('opens only the first service at the start, shows the name of each in its summary, and toggles on click', async () => {
+  respond([feProject, beProject])
+  renderConfirm()
+  await ready()
+  expect(block(1).open).toBe(true)
+  expect(block(2).open).toBe(false)
+  expect(block(2).querySelector('summary')?.textContent).toContain('서비스 2')
+  expect(block(2).querySelector('summary')?.textContent).toContain(service(2).getByRole<HTMLInputElement>('textbox', { name: '이름' }).value)
+  fireEvent.click(block(2).querySelector('summary') as HTMLElement)
+  expect(block(2).open).toBe(true)
+  fireEvent.click(block(1).querySelector('summary') as HTMLElement)
+  expect(block(1).open).toBe(false)
+})
+
+it('opens a closed service when saving finds something to fix in it, and keeps it open while it has errors', async () => {
+  respond([feProject, { ...feProject, dir: 'WEB' }])
+  renderConfirm()
+  await ready()
+  fireEvent.change(service(2).getByRole('textbox', { name: '이름' }), { target: { value: 'web' } })
+  expect(block(2).open).toBe(false)
+  fireEvent.click(confirmButton())
+  await waitFor(() => { expect(block(2).open).toBe(true) })
+  expect(block(2).querySelector('summary')?.textContent).toMatch(/고칠 곳 \d+개/)
+  // 고칠 곳이 있는 동안에는 접히지 않는다.
+  fireEvent.click(block(2).querySelector('summary') as HTMLElement)
+  expect(block(2).open).toBe(true)
+})
+
+it('opens a service the user just added so it can be filled in at once', async () => {
+  respond([feProject])
+  renderConfirm()
+  await ready()
+  fireEvent.click(screen.getByRole('button', { name: '서비스 추가' }))
+  expect(block(2).open).toBe(true)
+})
+
+it('puts the add-service button above the list of services', async () => {
+  respond([feProject, beProject])
+  renderConfirm()
+  await ready()
+  const add = screen.getByRole('button', { name: '서비스 추가' })
+  expect(add.compareDocumentPosition(screen.getByRole('region', { name: '서비스 1' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+})
+
+it('puts each add button of the env and link groups on the same row as its title, not below the rows', async () => {
+  respond([beProject])
+  renderConfirm()
+  await ready()
+  const group = service(1).getByRole('group', { name: '환경변수' })
+  const addButton = within(group).getByRole('button', { name: '환경변수 추가' })
+  const title = within(group).getByText('환경변수', { selector: 'span' })
+  expect(addButton.parentElement).toBe(title.parentElement?.parentElement)
+  fireEvent.click(addButton)
+  const rows = within(group).getAllByRole('textbox')
+  // 줄이 늘어도 버튼은 줄 위(머리줄)에 있다.
+  expect(addButton.compareDocumentPosition(rows[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+})

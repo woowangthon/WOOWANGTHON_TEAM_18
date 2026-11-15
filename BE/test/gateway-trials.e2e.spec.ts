@@ -9,7 +9,7 @@ import { DeploysStore } from '../src/deploys/deploys.store.js'
 import { AgentClient } from '../src/deploys/agent.client.js'
 import { DeployConditionService } from '../src/deploys/deploy-condition.service.js'
 import { DeployQueue } from '../src/deploys/deploy-queue.js'
-import { PipelineClient } from '../src/deploys/pipeline.client.js'
+import { PipelineBusyException, PipelineClient } from '../src/deploys/pipeline.client.js'
 import { GatewayServer } from '../src/gateway/gateway.server.js'
 import { RepoReader } from '../src/gateway/repo-reader.js'
 import { tokenHash } from '../src/gateway/tickets.js'
@@ -83,12 +83,20 @@ type Behave = (trialId: string, stages: string) => Promise<void>
 let scheduled: { deployId: string; trialId: string; stages: string }[]
 let behave: Behave
 let scheduleFails: boolean
+/** 남은 횟수만큼 GoCD가 409(다른 인스턴스가 아직 도는 중)로 거절한다. */
+let scheduleBusy: number
+let busyRefusals: number
 let cancelOk: boolean
 let reruns: string[]
 let rerunFails: boolean
 const fakePipeline = {
   runTrial(deployId: string, trialId: string, stages: string) {
     if (scheduleFails) return Promise.reject(new Error('GoCD down'))
+    if (scheduleBusy > 0) {
+      scheduleBusy--
+      busyRefusals++
+      return Promise.reject(new PipelineBusyException())
+    }
     scheduled.push({ deployId, trialId, stages })
     setImmediate(() => void behave(trialId, stages))
     return Promise.resolve()
@@ -173,6 +181,8 @@ beforeEach(async () => {
   readInputs.length = 0
   scheduled = []
   scheduleFails = false
+  scheduleBusy = 0
+  busyRefusals = 0
   cancelOk = true
   reruns = []
   rerunFails = false
@@ -199,6 +209,7 @@ beforeEach(async () => {
       .useValue({ isFull: () => Promise.resolve(clusterFull) }),
   )
   app.get(GatewayTrials).settleRetryMs = 10
+  app.get(GatewayTrials).busyRetryMs = 10
   const port = await app.get(GatewayServer).listen(0, '127.0.0.1')
   url = `http://127.0.0.1:${port}/mcp`
 })
@@ -305,6 +316,26 @@ describe('MCP gateway trial tools', () => {
     scheduleFails = true
     const client = await connect()
     expect((await call(client, 'run_render')).structuredContent).toEqual({ ok: false, status: null, failure: { stage: null, code: 'PIPELINE_UNAVAILABLE', message: expect.any(String) as string } })
+    await client.close()
+  })
+
+  it('schedules again while GoCD says another ticket still holds the trial pipeline (409)', async () => {
+    scheduleBusy = 2
+    behave = answering('render', { ok: true, status: null, failure: null })
+    const client = await connect()
+    expect((await call(client, 'run_render')).structuredContent).toEqual({ ok: true, status: null, failure: null })
+    expect(busyRefusals).toBe(2)
+    expect(scheduled).toHaveLength(1)
+    await client.close()
+  })
+
+  it('gives up with PIPELINE_UNAVAILABLE when the trial pipeline stays busy past the busy wait', async () => {
+    scheduleBusy = Infinity
+    app.get(GatewayTrials).busyWaitMs = 50
+    const client = await connect()
+    expect((await call(client, 'run_render')).structuredContent).toEqual({ ok: false, status: null, failure: { stage: null, code: 'PIPELINE_UNAVAILABLE', message: expect.any(String) as string } })
+    expect(busyRefusals).toBeGreaterThan(1)
+    expect(scheduled).toEqual([])
     await client.close()
   })
 
