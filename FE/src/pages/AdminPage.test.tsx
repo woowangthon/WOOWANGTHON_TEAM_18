@@ -532,7 +532,7 @@ describe('운영 알림', () => {
     const alert = within(incidentCard())
     expect(alert.getByText('자동 중지')).toBeTruthy()
     expect(alert.getByText('자동으로 멈췄어요')).toBeTruthy()
-    expect(alert.queryByRole('button')).toBeNull()
+    expect(alert.queryByRole('button', { name: /중지|무시/ })).toBeNull()
   })
 
   it('shows why it stopped and the last log lines it kept, as plain text', async () => {
@@ -560,7 +560,7 @@ describe('운영 알림', () => {
     for (const done of ['멈춤', '무시됨']) {
       const alert = within(screen.getByText(done, { selector: 'span' }).closest('li') as HTMLElement)
       expect(alert.getByText('처리됨')).toBeTruthy()
-      expect(alert.queryByRole('button')).toBeNull()
+      expect(alert.queryByRole('button', { name: /중지|무시/ })).toBeNull()
     }
     expect(within(screen.getByText('멈춤', { selector: 'span' }).closest('li') as HTMLElement).getByText(/중지 ·/)).toBeTruthy()
   })
@@ -574,6 +574,66 @@ describe('운영 알림', () => {
     expect(screen.getByText('AI 판단을 받지 못했어요')).toBeTruthy()
     const skipped = within(screen.getByText('건너뜀', { selector: 'span' }).closest('li') as HTMLElement)
     expect(skipped.queryByText(/AI/)).toBeNull()
+  })
+
+  describe('숨기기', () => {
+    const handled = (id: string, over: Partial<AdminIncident> = {}) =>
+      incident({ id, title: `알림 ${id}`, action: 'auto_stopped', decidedAt: '2026-11-14T01:01:00.000Z', ...over })
+    const hideButton = (id: string) => within(card(`알림 ${id}`)).getByRole('button', { name: '알림 숨기기' })
+
+    beforeEach(() => {
+      localStorage.clear()
+    })
+
+    it('hides a handled alert with its X and keeps it hidden after the page is opened again', async () => {
+      serve({ [INCIDENTS]: incidentsOf([handled('a'), handled('b')]) })
+      const first = await show()
+      fireEvent.click(hideButton('a'))
+      expect(screen.queryByText('알림 a')).toBeNull()
+      expect(screen.getByText('알림 b')).toBeTruthy()
+      expect(JSON.parse(localStorage.getItem('wcp.hiddenAdminIncidents') ?? '[]')).toEqual(['a'])
+      first.unmount()
+      await show()
+      expect(screen.queryByText('알림 a')).toBeNull()
+      expect(screen.getByText('알림 b')).toBeTruthy()
+      // 서버는 건드리지 않는다.
+      expect(api.apiFetch.mock.calls.every(([, body]) => body === undefined)).toBe(true)
+    })
+
+    it('has no hide button on an alert waiting for a decision, even if its id was hidden before', async () => {
+      localStorage.setItem('wcp.hiddenAdminIncidents', JSON.stringify(['p']))
+      serve({ [INCIDENTS]: incidentsOf([incident({ id: 'p', title: '알림 p', action: 'pending' })]) })
+      await show()
+      expect(within(card('알림 p')).queryByRole('button', { name: '알림 숨기기' })).toBeNull()
+      expect(screen.queryByRole('button', { name: /숨긴 알림/ })).toBeNull()
+    })
+
+    it('shows hidden alerts again from the toggle and can unhide them; no toggle when none are hidden', async () => {
+      serve({ [INCIDENTS]: incidentsOf([handled('a')]) })
+      await show()
+      expect(screen.queryByRole('button', { name: /숨긴 알림/ })).toBeNull()
+      fireEvent.click(hideButton('a'))
+      // 모두 숨기면 빈 글과 토글이 함께 보인다.
+      expect(screen.getByText('운영 알림이 없어요.')).toBeTruthy()
+      fireEvent.click(screen.getByRole('button', { name: '숨긴 알림 1개 보기' }))
+      expect(screen.getByText('알림 a')).toBeTruthy()
+      fireEvent.click(screen.getByRole('button', { name: /다시 보이기/ }))
+      expect(JSON.parse(localStorage.getItem('wcp.hiddenAdminIncidents') ?? '[]')).toEqual([])
+      expect(screen.queryByRole('button', { name: /숨긴 알림/ })).toBeNull()
+      expect(within(card('알림 a')).getByRole('button', { name: '알림 숨기기' })).toBeTruthy()
+    })
+
+    it('keeps what another tab hid in the meantime and only the last 100', async () => {
+      const others = Array.from({ length: 100 }, (_, i) => `x${i}`)
+      localStorage.setItem('wcp.hiddenAdminIncidents', JSON.stringify(others))
+      serve({ [INCIDENTS]: incidentsOf([handled('a')]) })
+      await show()
+      fireEvent.click(hideButton('a'))
+      const saved = JSON.parse(localStorage.getItem('wcp.hiddenAdminIncidents') ?? '[]') as string[]
+      expect(saved).toHaveLength(100)
+      expect(saved.at(-1)).toBe('a')
+      expect(saved[0]).toBe('x1')
+    })
   })
 
   it('asks before stopping, sends nothing when cancelled, then stops after the confirmation and reads again', async () => {
@@ -608,7 +668,7 @@ describe('운영 알림', () => {
     expect(within(incidentCard()).getByText('처리됨')).toBeTruthy()
     expect(screen.getByText('일부 서비스만 멈췄어요')).toBeTruthy()
     expect(screen.getByText('아래 프로젝트 목록에서 강제 중지로 나머지를 멈춰 주세요.')).toBeTruthy()
-    expect(within(incidentCard()).queryByRole('button')).toBeNull()
+    expect(within(incidentCard()).queryByRole('button', { name: /중지|무시/ })).toBeNull()
   })
 
   it('dismisses without a confirmation step', async () => {
