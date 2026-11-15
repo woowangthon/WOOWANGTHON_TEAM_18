@@ -66,10 +66,27 @@ type RowsProps<T> = {
 // 줄을 더하고 지우는 목록. env · secretKeys · links가 같은 모양을 쓴다.
 function Rows<T>({ legend, addLabel, rows, blank, onChange, disabled, error, hint, children }: RowsProps<T>) {
   const errorId = useId()
+  const legendId = useId()
   return (
-    <fieldset className="flex flex-col gap-2 sm:col-span-2" disabled={disabled} aria-describedby={describedBy(error ? errorId : undefined)}>
-      <legend className="text-sm font-bold">{legend}</legend>
-      {hint && <p className="text-xs text-muted">{hint}</p>}
+    <fieldset className="flex flex-col gap-2 sm:col-span-2" disabled={disabled} aria-labelledby={legendId} aria-describedby={describedBy(error ? errorId : undefined)}>
+      {/* 이름과 안내는 왼쪽, 추가 버튼은 같은 줄 오른쪽. legend는 줄 안에 넣을 수 없어 aria-labelledby로 이름을 준다. */}
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex flex-col gap-1">
+          <span id={legendId} className="text-sm font-bold">
+            {legend}
+          </span>
+          {hint && <p className="text-xs text-muted">{hint}</p>}
+        </div>
+        <Button
+          variant="outline"
+          className="shrink-0"
+          onClick={() => {
+            onChange([...rows, blank])
+          }}
+        >
+          {addLabel}
+        </Button>
+      </div>
       {rows.map((row, index) => (
         // 줄에는 고정된 id가 없어 위치를 key로 쓴다. 입력값은 모두 props로 오므로 줄을 지워도 어긋나지 않는다.
         <div key={index} className="flex flex-wrap items-start gap-2">
@@ -92,16 +109,6 @@ function Rows<T>({ legend, addLabel, rows, blank, onChange, disabled, error, hin
           {error}
         </span>
       )}
-      <div>
-        <Button
-          variant="outline"
-          onClick={() => {
-            onChange([...rows, blank])
-          }}
-        >
-          {addLabel}
-        </Button>
-      </div>
     </fieldset>
   )
 }
@@ -176,12 +183,18 @@ type ServiceProps = {
   dockerfiles: string[]
   issues: Map<string, string>
   disabled: boolean
+  // 사용자가 펼치거나 접은 선택. 없으면 첫 서비스만 펼친다. 오류가 있는 서비스는 선택과 상관없이 펼쳐 둔다.
+  expanded: boolean | undefined
+  onToggle: (open: boolean) => void
   onChange: (next: ServiceForm) => void
   onRemove: () => void
 }
 
-function ServiceFields({ service: s, index, names, dockerfiles, issues, disabled, onChange, onRemove }: ServiceProps) {
+function ServiceFields({ service: s, index, names, dockerfiles, issues, disabled, expanded, onToggle, onChange, onRemove }: ServiceProps) {
   const at = `services[${index}]`
+  // 오류가 난 칸이 접힌 곳에 숨지 않게 한다(저장을 눌러 오류가 생기면 그 서비스가 열린다).
+  const errorCount = [...issues.keys()].filter((path) => path.startsWith(`${at}.`)).length
+  const open = errorCount > 0 || (expanded ?? index === 0)
   const err = (path: string) => issues.get(`${at}.${path}`)
   const set = (patch: Partial<ServiceForm>) => {
     onChange({ ...s, ...patch })
@@ -193,77 +206,94 @@ function ServiceFields({ service: s, index, names, dockerfiles, issues, disabled
   const linkOptions = [pick('', '골라 주세요'), ...names.filter((n, i) => n !== '' && i !== index).map((n) => pick(n, n))]
 
   return (
-    <Card className="flex flex-col gap-4">
-      <div className="flex items-center justify-between gap-2">
-        <h3 className="text-lg">서비스 {index + 1}</h3>
-        <Button variant="outline" onClick={onRemove} disabled={disabled} aria-label={`서비스 ${index + 1} 빼기`}>
-          빼기
-        </Button>
-      </div>
-      <Group title="서비스 정보">
-        <Text label="이름" value={s.name} onChange={(name) => { set({ name }) }} error={err('name')} disabled={disabled} hint={`소문자로 시작, 최대 ${NAME_MAX}자. 클러스터 안의 이름이 돼요.`} />
-        <SelectField label="역할" value={s.role} options={ROLE_OPTIONS} onChange={(role) => { onChange(withRole(s, role)) }} error={err('role')} disabled={disabled} />
-        <Text label="폴더" value={s.dir} onChange={(dir) => { set({ dir }) }} error={err('dir')} disabled={disabled} mono hint="레포 안의 위치. 루트는 ." />
-      </Group>
-
-      <Group title="빌드 방법">
-        <SelectField label="Dockerfile" value={s.dockerfile} options={dockerfileOptions} onChange={(dockerfile) => { set({ dockerfile }) }} error={err('build.dockerfile')} disabled={disabled} />
-        <Text label="빌드 위치" value={s.context} onChange={(context) => { set({ context }) }} error={err('build.context')} disabled={disabled} mono hint="빌드를 시작할 레포 안의 폴더" />
-        {hasDockerfile ? (
-          <p className="text-sm text-muted sm:col-span-2">Dockerfile로 빌드하므로 프레임워크 · 설치 · 빌드 · 시작 칸은 쓰지 않아요.</p>
-        ) : (
-          <>
-            <SelectField label="프레임워크" value={s.framework} options={FRAMEWORK_OPTIONS} onChange={(framework) => { set({ framework }) }} error={err('build.framework')} hint={hintText(s.hints.framework)} disabled={disabled} />
-            <Text label="Node 버전" value={s.nodeVersion} onChange={(nodeVersion) => { set({ nodeVersion }) }} error={err('build.nodeVersion')} disabled={disabled} mono placeholder="22" hint={s.nodeVersionRaw ? `package.json의 engines.node: ${s.nodeVersionRaw}. 22 · 22.1 · 22.1.0 모양으로 적어 주세요.` : '22 · 22.1 · 22.1.0 모양으로 적어 주세요.'} />
-            <Text label="설치 명령" value={s.install} onChange={(install) => { set({ install }) }} error={err('build.install')} disabled={disabled} mono hint={hintText(s.hints.install)} />
-            <Text label="빌드 명령" value={s.build} onChange={(build) => { set({ build }) }} error={err('build.build')} disabled={disabled} mono hint={hintText(s.hints.build)} />
-            {isStatic ? (
-              <Text label="출력 폴더" value={s.outputDir} onChange={(outputDir) => { set({ outputDir }) }} error={err('build.outputDir')} disabled={disabled} mono hint={hintText(s.hints.outputDir)} />
-            ) : (
-              <Text label="시작 명령" value={s.start} onChange={(start) => { set({ start }) }} error={err('build.start')} disabled={disabled} mono hint={hintText(s.hints.start)} />
-            )}
-          </>
-        )}
-      </Group>
-
-      <Group title="실행 방법">
-        <SelectField
-          label="실행 방식"
-          value={s.kind}
-          options={KIND_OPTIONS}
-          onChange={(kind) => {
-            set({ kind: kind === 'static' ? 'static' : 'server' })
+    <Card className="relative">
+      {/* 빼기는 접혀 있어도 보이도록 details 밖에 두고, 머리줄 오른쪽에 겹쳐 놓는다. */}
+      <Button variant="outline" className="absolute top-4 right-4" onClick={onRemove} disabled={disabled} aria-label={`서비스 ${index + 1} 빼기`}>
+        빼기
+      </Button>
+      <details open={open} className="flex flex-col gap-4">
+        <summary
+          className="flex h-8 cursor-pointer list-none items-center gap-2 pr-16 [&::-webkit-details-marker]:hidden"
+          onClick={(event) => {
+            // 열림은 상태가 정한다(오류가 있으면 닫을 수 없다). 브라우저가 스스로 토글하지 않게 막는다.
+            event.preventDefault()
+            if (errorCount === 0) onToggle(!open)
           }}
-          error={err('runtime.kind')}
-          disabled={disabled}
-        />
-        <Text label="포트" value={isStatic ? String(STATIC_PORT) : s.port} onChange={(port) => { set({ port }) }} error={err('runtime.port')} disabled={disabled || isStatic} mono hint={portHint(s, isStatic, hasDockerfile)} />
-        <SelectField label="상태 확인 방식" value={s.healthType} options={HEALTH_OPTIONS} onChange={(type) => { set({ healthType: type === 'tcp' ? 'tcp' : 'http' }) }} error={err('runtime.health.type')} disabled={disabled} />
-        {s.healthType === 'http' && <Text label="상태 확인 경로" value={s.healthPath} onChange={(healthPath) => { set({ healthPath }) }} error={err('runtime.health.path')} disabled={disabled} mono />}
-        <Text label="시작 대기 시간(초)" value={s.timeout} onChange={(timeout) => { set({ timeout }) }} error={err('runtime.health.startupTimeoutSeconds')} disabled={disabled} mono hint={`${TIMEOUT_MIN}~${TIMEOUT_MAX}초`} />
-        <Text label="공개 경로" value={s.ingressPath} onChange={(ingressPath) => { set({ ingressPath }) }} error={err('runtime.ingressPath')} disabled={disabled} mono placeholder="/" hint="비우면 밖에서 접근할 수 없는 내부 전용이에요. 서비스끼리 겹칠 수 없어요." />
-        <p className="text-xs text-muted sm:col-span-2">경로 접두사 제거(stripPrefix)는 아직 지원하지 않아요.</p>
-      </Group>
+        >
+          <span aria-hidden="true" className={`inline-block text-muted transition-transform ${open ? 'rotate-90' : ''}`}>
+            ▸
+          </span>
+          <h3 className="text-lg">서비스 {index + 1}</h3>
+          {s.name.trim() !== '' && <span className="min-w-0 truncate font-mono text-sm text-muted">{s.name.trim()}</span>}
+          {errorCount > 0 && <span className="text-sm font-bold text-err">고칠 곳 {errorCount}개</span>}
+        </summary>
+        <div className="flex flex-col gap-4 pt-4">
+          <Group title="서비스 정보">
+            <Text label="이름" value={s.name} onChange={(name) => { set({ name }) }} error={err('name')} disabled={disabled} hint={`소문자로 시작, 최대 ${NAME_MAX}자. 클러스터 안의 이름이 돼요.`} />
+            <SelectField label="역할" value={s.role} options={ROLE_OPTIONS} onChange={(role) => { onChange(withRole(s, role)) }} error={err('role')} disabled={disabled} />
+            <Text label="폴더" value={s.dir} onChange={(dir) => { set({ dir }) }} error={err('dir')} disabled={disabled} mono hint="레포 안의 위치. 루트는 ." />
+          </Group>
 
-      <Group title="환경변수와 연결">
-        <EnvRows legend="빌드 환경변수" rows={s.buildEnv} path={`${at}.build.buildEnv`} issues={issues} disabled={disabled} hint="빌드 결과에 들어가는 공개 값이에요. 비밀값은 넣지 마세요." onChange={(buildEnv) => { set({ buildEnv }) }} />
-        {!isStatic && (
-          <>
-            <EnvRows legend="환경변수" rows={s.env} path={`${at}.runtime.env`} issues={issues} disabled={disabled} hint="공개 값만 적어요. 비밀값은 아래에 이름만 적고, 값은 다음 단계에서 넣어요." onChange={(env) => { set({ env }) }} />
-            <Rows legend="비밀값 이름" addLabel="비밀값 이름 추가" rows={s.secretKeys} blank="" onChange={(secretKeys) => { set({ secretKeys }) }} disabled={disabled} error={issues.get(`${at}.runtime.secretKeys`)}>
-              {(row, i, setRow) => <RowInput label={`비밀값 이름 ${i + 1}`} value={row} mono error={issues.get(`${at}.runtime.secretKeys[${i}]`)} onChange={setRow} />}
-            </Rows>
-            <Rows<LinkRow> legend="다른 서비스 연결" addLabel="연결 추가" rows={s.links} blank={{ env: '', service: '' }} onChange={(links) => { set({ links }) }} disabled={disabled} error={issues.get(`${at}.runtime.links`)} hint="다른 서비스의 주소를 이 환경변수로 받아요.">
-              {(row, i, setRow) => (
-                <>
-                  <RowInput label={`연결 환경변수 이름 ${i + 1}`} value={row.env} mono error={issues.get(`${at}.runtime.links[${i}].env`)} onChange={(env) => { setRow({ ...row, env }) }} />
-                  <SelectField label={`연결할 서비스 ${i + 1}`} value={row.service} options={linkOptions} error={issues.get(`${at}.runtime.links[${i}].service`)} onChange={(service) => { setRow({ ...row, service }) }} />
-                </>
-              )}
-            </Rows>
-          </>
-        )}
-      </Group>
+          <Group title="빌드 방법">
+            <SelectField label="Dockerfile" value={s.dockerfile} options={dockerfileOptions} onChange={(dockerfile) => { set({ dockerfile }) }} error={err('build.dockerfile')} disabled={disabled} />
+            <Text label="빌드 위치" value={s.context} onChange={(context) => { set({ context }) }} error={err('build.context')} disabled={disabled} mono hint="빌드를 시작할 레포 안의 폴더" />
+            {hasDockerfile ? (
+              <p className="text-sm text-muted sm:col-span-2">Dockerfile로 빌드하므로 프레임워크 · 설치 · 빌드 · 시작 칸은 쓰지 않아요.</p>
+            ) : (
+              <>
+                <SelectField label="프레임워크" value={s.framework} options={FRAMEWORK_OPTIONS} onChange={(framework) => { set({ framework }) }} error={err('build.framework')} hint={hintText(s.hints.framework)} disabled={disabled} />
+                <Text label="Node 버전" value={s.nodeVersion} onChange={(nodeVersion) => { set({ nodeVersion }) }} error={err('build.nodeVersion')} disabled={disabled} mono placeholder="22" hint={s.nodeVersionRaw ? `package.json의 engines.node: ${s.nodeVersionRaw}. 22 · 22.1 · 22.1.0 모양으로 적어 주세요.` : '22 · 22.1 · 22.1.0 모양으로 적어 주세요.'} />
+                <Text label="설치 명령" value={s.install} onChange={(install) => { set({ install }) }} error={err('build.install')} disabled={disabled} mono hint={hintText(s.hints.install)} />
+                <Text label="빌드 명령" value={s.build} onChange={(build) => { set({ build }) }} error={err('build.build')} disabled={disabled} mono hint={hintText(s.hints.build)} />
+                {isStatic ? (
+                  <Text label="출력 폴더" value={s.outputDir} onChange={(outputDir) => { set({ outputDir }) }} error={err('build.outputDir')} disabled={disabled} mono hint={hintText(s.hints.outputDir)} />
+                ) : (
+                  <Text label="시작 명령" value={s.start} onChange={(start) => { set({ start }) }} error={err('build.start')} disabled={disabled} mono hint={hintText(s.hints.start)} />
+                )}
+              </>
+            )}
+          </Group>
+
+          <Group title="실행 방법">
+            <SelectField
+              label="실행 방식"
+              value={s.kind}
+              options={KIND_OPTIONS}
+              onChange={(kind) => {
+                set({ kind: kind === 'static' ? 'static' : 'server' })
+              }}
+              error={err('runtime.kind')}
+              disabled={disabled}
+            />
+            <Text label="포트" value={isStatic ? String(STATIC_PORT) : s.port} onChange={(port) => { set({ port }) }} error={err('runtime.port')} disabled={disabled || isStatic} mono hint={portHint(s, isStatic, hasDockerfile)} />
+            <SelectField label="상태 확인 방식" value={s.healthType} options={HEALTH_OPTIONS} onChange={(type) => { set({ healthType: type === 'tcp' ? 'tcp' : 'http' }) }} error={err('runtime.health.type')} disabled={disabled} />
+            {s.healthType === 'http' && <Text label="상태 확인 경로" value={s.healthPath} onChange={(healthPath) => { set({ healthPath }) }} error={err('runtime.health.path')} disabled={disabled} mono />}
+            <Text label="시작 대기 시간(초)" value={s.timeout} onChange={(timeout) => { set({ timeout }) }} error={err('runtime.health.startupTimeoutSeconds')} disabled={disabled} mono hint={`${TIMEOUT_MIN}~${TIMEOUT_MAX}초`} />
+            <Text label="공개 경로" value={s.ingressPath} onChange={(ingressPath) => { set({ ingressPath }) }} error={err('runtime.ingressPath')} disabled={disabled} mono placeholder="/" hint="비우면 밖에서 접근할 수 없는 내부 전용이에요. 서비스끼리 겹칠 수 없어요." />
+            <p className="text-xs text-muted sm:col-span-2">경로 접두사 제거(stripPrefix)는 아직 지원하지 않아요.</p>
+          </Group>
+
+          <Group title="환경변수와 연결">
+            <EnvRows legend="빌드 환경변수" rows={s.buildEnv} path={`${at}.build.buildEnv`} issues={issues} disabled={disabled} hint="빌드 결과에 들어가는 공개 값이에요. 비밀값은 넣지 마세요." onChange={(buildEnv) => { set({ buildEnv }) }} />
+            {!isStatic && (
+              <>
+                <EnvRows legend="환경변수" rows={s.env} path={`${at}.runtime.env`} issues={issues} disabled={disabled} hint="공개 값만 적어요. 비밀값은 아래에 이름만 적고, 값은 다음 단계에서 넣어요." onChange={(env) => { set({ env }) }} />
+                <Rows legend="비밀값 이름" addLabel="비밀값 이름 추가" rows={s.secretKeys} blank="" onChange={(secretKeys) => { set({ secretKeys }) }} disabled={disabled} error={issues.get(`${at}.runtime.secretKeys`)}>
+                  {(row, i, setRow) => <RowInput label={`비밀값 이름 ${i + 1}`} value={row} mono error={issues.get(`${at}.runtime.secretKeys[${i}]`)} onChange={setRow} />}
+                </Rows>
+                <Rows<LinkRow> legend="다른 서비스 연결" addLabel="연결 추가" rows={s.links} blank={{ env: '', service: '' }} onChange={(links) => { set({ links }) }} disabled={disabled} error={issues.get(`${at}.runtime.links`)} hint="다른 서비스의 주소를 이 환경변수로 받아요.">
+                  {(row, i, setRow) => (
+                    <>
+                      <RowInput label={`연결 환경변수 이름 ${i + 1}`} value={row.env} mono error={issues.get(`${at}.runtime.links[${i}].env`)} onChange={(env) => { setRow({ ...row, env }) }} />
+                      <SelectField label={`연결할 서비스 ${i + 1}`} value={row.service} options={linkOptions} error={issues.get(`${at}.runtime.links[${i}].service`)} onChange={(service) => { setRow({ ...row, service }) }} />
+                    </>
+                  )}
+                </Rows>
+              </>
+            )}
+          </Group>
+        </div>
+      </details>
     </Card>
   )
 }
@@ -282,12 +312,16 @@ function SpecFormFields({ form, projects, dockerfiles, issues, disabled, onChang
   const unused = projects.filter((p) => !form.services.some((s) => s.dir === p.dir))
   // 추가할 폴더를 고르는 select의 값. 비어 있으면 빈 서비스를 더한다.
   const [addDir, setAddDir] = useState('')
+  // 사용자가 펼치거나 접은 서비스(id별). 정하지 않은 서비스는 첫 번째만 펼쳐 있다.
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const names = form.services.map((s) => s.name.trim())
 
   function addService() {
     const project = unused.find((p) => p.dir === addDir)
     const next = project ? serviceFromProject(project, dockerfiles) : blankService()
     onChange({ ...form, services: [...form.services, next] })
+    // 방금 더한 서비스는 바로 채울 수 있게 펼쳐 둔다.
+    setExpanded({ ...expanded, [next.id]: true })
     setAddDir('')
   }
 
@@ -302,25 +336,7 @@ function SpecFormFields({ form, projects, dockerfiles, issues, disabled, onChang
         </div>
       </div>
 
-      {form.services.map((service, index) => (
-        <section key={service.id} aria-label={`서비스 ${index + 1}`}>
-          <ServiceFields
-            service={service}
-            index={index}
-            names={names}
-            dockerfiles={dockerfiles}
-            issues={issues}
-            disabled={disabled}
-            onChange={(next) => {
-              onChange({ ...form, services: form.services.map((s, i) => (i === index ? next : s)) })
-            }}
-            onRemove={() => {
-              onChange({ ...form, services: form.services.filter((_, i) => i !== index) })
-            }}
-          />
-        </section>
-      ))}
-
+      {/* 서비스가 접히므로 추가 버튼은 목록 위에 둔다(길어도 찾기 쉽게). */}
       {form.services.length < MAX_SERVICES ? (
         <div className="flex flex-wrap items-end gap-2">
           {unused.length > 0 && (
@@ -339,6 +355,29 @@ function SpecFormFields({ form, projects, dockerfiles, issues, disabled, onChang
       ) : (
         <p className="text-sm text-muted">서비스는 최대 {MAX_SERVICES}개까지 둘 수 있어요.</p>
       )}
+
+      {form.services.map((service, index) => (
+        <section key={service.id} aria-label={`서비스 ${index + 1}`}>
+          <ServiceFields
+            service={service}
+            index={index}
+            names={names}
+            dockerfiles={dockerfiles}
+            issues={issues}
+            disabled={disabled}
+            expanded={expanded[service.id]}
+            onToggle={(open) => {
+              setExpanded({ ...expanded, [service.id]: open })
+            }}
+            onChange={(next) => {
+              onChange({ ...form, services: form.services.map((s, i) => (i === index ? next : s)) })
+            }}
+            onRemove={() => {
+              onChange({ ...form, services: form.services.filter((_, i) => i !== index) })
+            }}
+          />
+        </section>
+      ))}
     </div>
   )
 }
