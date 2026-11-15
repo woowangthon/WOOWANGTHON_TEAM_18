@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { slotsOf, slotTimeText, stateText, waitingText } from './metrics.ts'
+import { slotsOf, slotTimeText, stateText, stateVariant, waitingText } from './metrics.ts'
 
 it('spreads points over 61 one-minute slots and leaves the missing minutes null', () => {
   const end = 10_000
