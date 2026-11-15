@@ -19,7 +19,7 @@ const MAX_ENTRIES = 200
 
 // 학생 문제로 난 실패(티켓이 간 실패)의 코드. 그 밖의 코드는 플랫폼 문제라 설명하지 않는다(skipped).
 // AGENT_UNAVAILABLE은 AI 서버가 티켓을 받지 못한 실패라 넣지 않는다: 같은 AI 서버에 설명을 물어도 기다리기만 한다.
-const STUDENT_CODES = ['BUILD_FAILED', 'DEPLOY_FAILED', 'VERIFY_FAILED', 'AGENT_GAVE_UP']
+const STUDENT_CODES = ['BUILD_FAILED', 'DEPLOY_FAILED', 'VERIFY_FAILED', 'AGENT_GAVE_UP', 'AGENT_QUOTA_EXCEEDED']
 
 export interface Explanation {
   summary: string
@@ -228,7 +228,7 @@ export class DeployExplainer implements OnModuleInit {
     this.put(this.firstDeploys, deployId, firstDeploy)
   }
 
-  /** 새 티켓 없이 끝나는 실패(AGENT_GAVE_UP)에서 앞 티켓의 재료를 버린다: 이번 실패의 근거가 아니다. */
+  /** 새 티켓 없이 끝나는 실패(AGENT_GAVE_UP · AGENT_QUOTA_EXCEEDED)에서 앞 티켓의 재료를 버린다: 이번 실패의 근거가 아니다. */
   forgetTicket(deployId: string): void {
     this.materials.delete(deployId)
   }

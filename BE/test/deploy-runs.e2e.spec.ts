@@ -20,6 +20,7 @@ import { startApp } from './start-app.js'
 // vitest.config.ts가 넣은 서버의 해시 키.
 const HASH_KEY = process.env.SECRET_HASH_KEY ?? ''
 const REST = 'https://test.supabase.co/rest/v1/'
+const AUTH_USERS = 'https://test.supabase.co/auth/v1/admin/users/'
 const GOCD_URL = 'https://gocd.test/go/api/pipelines/student-deploy/schedule'
 const AI_URL = 'https://ai.test/agent/tickets'
 const CLOSE_URL = `${AI_URL}/t_stale/close`
@@ -40,7 +41,7 @@ let db: Record<string, Row[]>
 let gocdAnswer: () => Response
 let aiAnswer: () => Response
 // 저장소의 특정 테이블 · 메서드에 대신 돌려줄 답(없으면 가짜 DB가 답한다).
-let restOverride: ((table: string, method: string) => Response | undefined) | undefined
+let restOverride: ((table: string, method: string, url: URL) => Response | undefined) | undefined
 // 가짜 준비 확인(#82). 기본은 준비됨이고 슬롯은 a다.
 let prepare: (deployId: string) => Promise<unknown>
 // 가짜 클러스터(W7): 공간의 Deployment 이름(또는 읽기 오류)과, 0으로 내린 것 · 내리지 못하는 것.
@@ -58,6 +59,9 @@ let spaceCalls: { slug: string; gocdCallsBefore: number }[]
 let spaceFails: Error | undefined
 let app: INestApplication<App>
 let logError: MockInstance<Logger['error']>
+// 가짜 Supabase Auth 관리 API: 운영자(app_metadata.role = admin)인 사용자, 또는 그 API의 답.
+let admins: Set<string>
+let authAnswer: ((userId: string) => Response) | undefined
 // 학생 Discord 웹후크로 보낸 글.
 let discord: { url: string; content: string }[]
 
@@ -75,6 +79,8 @@ const matches = (row: Row, params: URLSearchParams) => {
     } else if (v.startsWith('lt.')) {
       // 시각 비교. PostgREST처럼 null은 어느 쪽에도 맞지 않는다.
       if (typeof row[k] !== 'string' || !(Date.parse(row[k]) < Date.parse(v.slice(3)))) return false
+    } else if (v.startsWith('gte.')) {
+      if (typeof row[k] !== 'string' || !(Date.parse(row[k]) >= Date.parse(v.slice(4)))) return false
     } else throw new Error(`unexpected filter ${k}=${v}`)
   }
   return true
@@ -85,7 +91,7 @@ function rest(url: URL, init: RequestInit | undefined): Response {
   const table = url.pathname.split('/').pop()!
   const rows = (db[table] ??= [])
   const method = init?.method ?? 'GET'
-  const forced = restOverride?.(table, method)
+  const forced = restOverride?.(table, method, url)
   if (forced) return forced
   const body = init?.body ? (JSON.parse(init.body as string) as Row | Row[]) : undefined
   if (method === 'GET') {
@@ -133,6 +139,10 @@ const fetchMock = vi.fn<typeof fetch>((input, init) => {
   const url = urlOf(input)
   if (url === JWKS_URL) return Promise.resolve(Response.json(keySet))
   if (url.startsWith(REST)) return Promise.resolve().then(() => rest(new URL(url), init))
+  if (url.startsWith(AUTH_USERS)) {
+    const id = decodeURIComponent(url.slice(AUTH_USERS.length))
+    return Promise.resolve(authAnswer?.(id) ?? Response.json({ id, app_metadata: admins.has(id) ? { provider: 'github', role: 'admin' } : { provider: 'github' } }))
+  }
   if (url === GOCD_URL) return Promise.resolve().then(() => gocdAnswer())
   if (url === AI_URL) return Promise.resolve().then(() => aiAnswer())
   if (url === CLOSE_URL) return Promise.resolve(new Response(null, { status: 204 }))
@@ -216,6 +226,8 @@ beforeEach(async () => {
   scaled = []
   scaleFails = {}
   discord = []
+  admins = new Set()
+  authAnswer = undefined
   fetchMock.mockClear()
   vi.stubGlobal('fetch', fetchMock)
   logError = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
@@ -1606,6 +1618,108 @@ describe('POST /api/pipeline/notify', () => {
         expect(callsTo(AI_URL)).toHaveLength(0)
         expect(closes()).toEqual([{ ticketId: 't_stale', commitSha: SHA, reason: 'stopped' }])
         expect(((await status(id)).body as StatusBody).failure?.code).toBe('AGENT_GAVE_UP')
+      })
+    })
+
+    describe('the per-user ticket cap (api.md 5: 6 tickets in 24 hours, none for an admin)', () => {
+      // 이 사용자가 앞서 끝낸 실행 기록. 티켓을 냈으면 ticket_id가 있고, agent_result.tickets가 그 실행이 낸 티켓 수다.
+      const pastRun = (over: Row = {}) => {
+        ;(db.deploy_runs ??= []).push({ deploy_id: randomUUID(), user_id: USER, slug: 'old-app', status: 'failed', ticket_id: 't_old', agent_result: { status: 'gave_up', tickets: 3 }, created_at: new Date().toISOString(), ...over })
+      }
+      const authCalls = () => fetchMock.mock.calls.filter(([u]) => urlOf(u).startsWith(AUTH_USERS))
+
+      it('ends as AGENT_QUOTA_EXCEEDED without a ticket once the user had 6 tickets in 24 hours', async () => {
+        pastRun()
+        pastRun()
+        const id = await reach('apply')
+        expect((await notify({ deployId: id, stage: 'apply', result: 'failed', failure: failure() })).body).toEqual({ ok: true, applied: true })
+        expect(run(id)).toMatchObject({ status: 'failed', ticket_id: null, failure: { code: 'AGENT_QUOTA_EXCEEDED', stage: 'apply', service: 'be' } })
+        expect(callsTo(AI_URL)).toHaveLength(0)
+        const body = (await status(id)).body as StatusBody
+        expect(body.failure?.code).toBe('AGENT_QUOTA_EXCEEDED')
+        expect(body.failure?.message).toContain('6번')
+      })
+
+      it('still sends a ticket at 5, and does not ask who the user is while under the caps', async () => {
+        pastRun()
+        pastRun({ agent_result: { status: 'gave_up', tickets: 2 } })
+        const id = await reach('apply')
+        await notify({ deployId: id, stage: 'apply', result: 'failed', failure: failure() })
+        expect(run(id).status).toBe('fixing')
+        expect(callsTo(AI_URL)).toHaveLength(1)
+        expect(authCalls()).toHaveLength(0)
+      })
+
+      it('counts a run with a ticket but no result yet as one, and a run without a ticket as none', async () => {
+        for (let i = 0; i < 5; i++) pastRun({ agent_result: null })
+        pastRun({ ticket_id: null, agent_result: null })
+        pastRun({ ticket_id: null, agent_result: null })
+        const id = await reach('apply')
+        await notify({ deployId: id, stage: 'apply', result: 'failed', failure: failure() })
+        expect(run(id).status).toBe('fixing')
+        pastRun({ agent_result: null })
+        const next = seedDeploy({ slug: 'third-app' })
+        prepare = (d) => Promise.resolve({ ...preparedFor(d), input: { ...preparedFor(d).input, spec: { ...preparedFor(d).input.spec, project: { slug: 'third-app', repo: 'student/my-app' } } } })
+        await start(next)
+        await notify({ deployId: next, stage: 'build', result: 'passed', images: { fe: IMAGE } })
+        for (const st of ['prepare', 'render', 'apply']) await notify({ deployId: next, stage: st, result: 'passed' })
+        await notify({ deployId: next, stage: 'verify', result: 'failed', failure: failure() })
+        // 5(결과 없는 티켓) + 1(위 fixing) + 1(새로 넣은 것) = 7 > 6
+        expect(run(next)).toMatchObject({ status: 'failed', failure: { code: 'AGENT_QUOTA_EXCEEDED' } })
+      })
+
+      it("does not count tickets older than 24 hours or another user's tickets", async () => {
+        pastRun({ created_at: new Date(Date.now() - 25 * 60 * 60_000).toISOString() })
+        pastRun({ created_at: new Date(Date.now() - 25 * 60 * 60_000).toISOString() })
+        pastRun({ user_id: OTHER })
+        pastRun({ user_id: OTHER })
+        const id = await reach('apply')
+        await notify({ deployId: id, stage: 'apply', result: 'failed', failure: failure() })
+        expect(run(id).status).toBe('fixing')
+      })
+
+      it('sends an admin a ticket past the per-user cap', async () => {
+        admins.add(USER)
+        pastRun()
+        pastRun()
+        pastRun()
+        const id = await reach('apply')
+        await notify({ deployId: id, stage: 'apply', result: 'failed', failure: failure() })
+        expect(run(id).status).toBe('fixing')
+        expect(callsTo(AI_URL)).toHaveLength(1)
+        expect(authCalls()).toHaveLength(1)
+      })
+
+      it('sends an admin a fourth ticket on the same run (no per-run cap either)', async () => {
+        admins.add(USER)
+        const id = await reach('verify')
+        Object.assign(run(id), { ticket_id: 't_stale', agent_result: { status: 'verified', summary: 'x', tickets: 3 } })
+        await notify({ deployId: id, stage: 'verify', result: 'failed', failure: failure() })
+        expect(run(id)).toMatchObject({ status: 'fixing', failure: { code: 'VERIFY_FAILED' } })
+        expect(callsTo(AI_URL)).toHaveLength(1)
+      })
+
+      it('ends as AGENT_UNAVAILABLE without a ticket when the tickets cannot be counted, so the queue does not wait for the run', async () => {
+        const id = await reach('apply')
+        restOverride = (table, method, url) => (table === 'deploy_runs' && method === 'GET' && url.searchParams.has('created_at') ? new Response('{}', { status: 503 }) : undefined)
+        expect((await notify({ deployId: id, stage: 'apply', result: 'failed', failure: failure() })).body).toEqual({ ok: true, applied: true })
+        expect(run(id)).toMatchObject({ status: 'failed', ticket_id: null, failure: { code: 'AGENT_UNAVAILABLE', stage: 'apply', service: 'be' } })
+        expect(callsTo(AI_URL)).toHaveLength(0)
+        expect(logError).toHaveBeenCalledWith(expect.stringContaining('could not count the tickets'))
+      })
+
+      it.each([
+        ['answers 500', () => new Response('{}', { status: 500 })],
+        ['answers something that is not JSON', () => new Response('<html>', { status: 200 })],
+      ])('treats the user as a student when the auth API %s, and logs it without the body', async (_, answer) => {
+        admins.add(USER)
+        authAnswer = answer
+        pastRun()
+        pastRun()
+        const id = await reach('apply')
+        await notify({ deployId: id, stage: 'apply', result: 'failed', failure: failure() })
+        expect(run(id)).toMatchObject({ status: 'failed', failure: { code: 'AGENT_QUOTA_EXCEEDED' } })
+        expect(logError).toHaveBeenCalledWith(expect.stringContaining('/auth/v1/admin/users'))
       })
     })
 

@@ -75,6 +75,8 @@ const matches = (row: Row, params: URLSearchParams) => {
     } else if (v.startsWith('lt.')) {
       // 시각 비교. PostgREST처럼 null은 어느 쪽에도 맞지 않는다.
       if (typeof row[k] !== 'string' || !(Date.parse(row[k]) < Date.parse(v.slice(3)))) return false
+    } else if (v.startsWith('gte.')) {
+      if (typeof row[k] !== 'string' || !(Date.parse(row[k]) >= Date.parse(v.slice(4)))) return false
     } else throw new Error(`unexpected filter ${k}=${v}`)
   }
   return true

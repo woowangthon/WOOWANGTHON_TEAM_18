@@ -262,7 +262,7 @@ AI 서버 (에이전트) → 플랫폼 서버 MCP 게이트웨이 → GoCD 서�
 
 | `status` | 필수 칸 | 플랫폼 서버가 하는 일 |
 |---|---|---|
-| `verified` | `specPatch` (재실행만 했으면 빈 배열) | `specPatch` 검증(이 티켓에서 같은 패치로 `run_deploy` → `run_verify` 통과) → 실행 기록 입력에 저장 → 배포 대기열에 다시 세움 → 차례에 고친 입력으로 `student-deploy`를 처음부터 다시 실행(Build는 재사용, Verify가 재확인) → Switch → W7. 다시 실패하면 새 티켓(실행 기록당 3개까지). [API 계약](api.md) "파이프라인 ↔ 플랫폼 서버" 5번 |
+| `verified` | `specPatch` (재실행만 했으면 빈 배열) | `specPatch` 검증(이 티켓에서 같은 패치로 `run_deploy` → `run_verify` 통과) → 실행 기록 입력에 저장 → 배포 대기열에 다시 세움 → 차례에 고친 입력으로 `student-deploy`를 처음부터 다시 실행(Build는 재사용, Verify가 재확인) → Switch → W7. 다시 실패하면 새 티켓(실행 기록당 3개, 사용자당 24시간 6개까지. 운영자는 상한 없음). [API 계약](api.md) "파이프라인 ↔ 플랫폼 서버" 5번 |
 | `pr_opened` | `pr` | 사용자 머지 대기. 머지되면 새 커밋으로 W0부터 |
 | `needs_user` | `userRequest` | 사용자에게 요청 |
 | `gave_up` | `summary` | 보고 |
@@ -400,7 +400,7 @@ PydanticAI에서 두 모델을 OpenAI 호환 provider로 붙이고, 추론 모�
 - 시험 실행은 게이트웨이 쪽(F11b: `run_build` · `run_render` · `run_deploy` · `run_verify`, `BE/src/gateway/trials.ts` · `tools.ts`)과 파이프라인 쪽의 Switch CLI `TRIAL_ID` 가드 · Build CLI `buildOverrides` 받기를 구현했다. 결과를 모아 보내는 `trial-report`, 입력 task의 시험 분기(`?counter`, `build-overrides.json`), 시험 파이프라인 정의(`Infra/gocd/student-trial.gocd.yaml`)도 구현했다. 운영 GoCD의 `student-trial`로 `run_render` · `run_deploy` · `run_verify`가 한 번씩 통과했다(2026-11-14 3차 리허설, [`ai-scope.md`](../ai-scope.md)). `run_build`와 시험이 실패하는 경로는 가짜 GoCD 응답으로만 시험했다. 시험 기록과 기다림은 플랫폼 서버 메모리에 있어, 서버가 다시 뜨면 기다리던 `run_*` 호출은 끊긴다(에이전트는 게이트웨이에 닿지 못한 것으로 본다). `name` · `slug`는 슬롯 · Secret 이름이 따라 바뀌어 시험할 수 없어 `PATCH_FORBIDDEN`이다. 빌드 값을 고친 서비스의 해시는 같은 commit의 GitHub 트리로 다시 계산한다(배포 입력을 만들 때와 같은 규칙, 가짜 응답으로만 시험했다). `verified` 뒤에는 고친 입력으로 배포 파이프라인을 처음부터 다시 실행한다(B2, 가짜 GoCD로만 자동 테스트했다).
 - 티켓 하나의 전체 시간은 시험 대기를 포함해 60분이 상한이다(에이전트 작업 15분은 대기를 뺀 시간). `build` 스테이지 티켓은 `run_build`로 고쳐 본다(통과한 이미지가 이 티켓의 시험 이미지가 되고 `build_cache`에도 남는다).
 - `student-trial` 하나를 모든 프로젝트가 같이 쓰고 리더 실행기는 하나(`Infra/executor/agent.yaml`의 `replicas: 1`)라 시험과 배포가 한 줄로 선다. 데모처럼 여럿이 동시에 쓸 때 시험 대기 30분 안에 드는지는 확인하지 않았다.
-- 티켓 한도(3개)는 실행 기록마다라 프로젝트 전체로는 한도가 없다(새 배포마다 새로 3개). 프로젝트 단위 한도는 별도 이슈로 논의한다.
+- 티켓 한도는 실행 기록당 3개와 사용자당 최근 24시간 6개(#145) 두 가지다. 넘으면 AI를 부르지 않고 마감하는데, 실패 코드는 한도마다 다르다: 실행 기록당 한도를 넘으면 `AGENT_GAVE_UP`, 사용자당 한도를 넘으면 `AGENT_QUOTA_EXCEEDED`다. 사용자의 티켓 수를 읽지 못하면 티켓 없이 `AGENT_UNAVAILABLE`로 마감한다. 운영자는 두 한도가 없다. 세는 방법과 한계는 [API 계약](api.md) "파이프라인 ↔ 플랫폼 서버" 5번이다.
 - 게이트웨이의 호출 횟수 · 작업 시간은 플랫폼 서버 메모리에서 센다: 전체 20회, 같은 호출 연속 2회, 도구별 횟수(§3 표, 지금 열린 `run_build` 2 · `run_render` 5 · `run_deploy` 2 · `run_verify` 3 · `edit_repo_file` 5 · `open_pr` 2), 작업 15분(첫 호출부터, 시험 대기는 진행 중인 것까지 뺀다), 티켓 전체 60분(대기 포함). 서버가 다시 뜨면 그 티켓은 처음부터 다시 세고, 티켓 시작은 저장된 만료 - 60분으로 보수적으로 잡아 남은 만료까지만 쓴다.
 - `read_repo`는 인증 없이 GitHub API를 부른다(서버 IP당 시간당 60번, 레포 소유 확인과 같이 쓴다). 한도에 닿으면 도구 오류로 끝난다.
 - 게이트웨이에 끝내 닿지 못하거나, AI 서버가 실행 중 예외로 멈추거나 다시 떠서 티켓을 잊으면 결과를 낼 길이 없다. 계약에 다른 길(콜백 · 재전송 요청)이 없어서, 플랫폼은 게이트웨이 토큰이 만료되고 2분 뒤 대기열 타이머(15초 간격)가 `failed`(`TIMED_OUT`, 실패했던 스테이지)로 마감하고 티켓을 `stopped`로 닫는다. AI 서버에는 로그만 남는다.
