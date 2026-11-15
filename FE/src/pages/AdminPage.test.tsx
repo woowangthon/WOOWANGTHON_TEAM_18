@@ -532,7 +532,7 @@ describe('운영 알림', () => {
     const alert = within(incidentCard())
     expect(alert.getByText('자동 중지')).toBeTruthy()
     expect(alert.getByText('자동으로 멈췄어요')).toBeTruthy()
-    expect(alert.queryByRole('button', { name: /중지|무시/ })).toBeNull()
+    expect(alert.queryByRole('button', { name: /(중지|무시)$/ })).toBeNull()
   })
 
   it('shows why it stopped and the last log lines it kept, as plain text', async () => {
@@ -560,7 +560,7 @@ describe('운영 알림', () => {
     for (const done of ['멈춤', '무시됨']) {
       const alert = within(screen.getByText(done, { selector: 'span' }).closest('li') as HTMLElement)
       expect(alert.getByText('처리됨')).toBeTruthy()
-      expect(alert.queryByRole('button', { name: /중지|무시/ })).toBeNull()
+      expect(alert.queryByRole('button', { name: /(중지|무시)$/ })).toBeNull()
     }
     expect(within(screen.getByText('멈춤', { selector: 'span' }).closest('li') as HTMLElement).getByText(/중지 ·/)).toBeTruthy()
   })
@@ -579,7 +579,7 @@ describe('운영 알림', () => {
   describe('숨기기', () => {
     const handled = (id: string, over: Partial<AdminIncident> = {}) =>
       incident({ id, title: `알림 ${id}`, action: 'auto_stopped', decidedAt: '2026-11-14T01:01:00.000Z', ...over })
-    const hideButton = (id: string) => within(card(`알림 ${id}`)).getByRole('button', { name: '알림 숨기기' })
+    const hideButton = (id: string) => within(card(`알림 ${id}`)).getByRole('button', { name: /숨기기$/ })
 
     beforeEach(() => {
       localStorage.clear()
@@ -604,7 +604,7 @@ describe('운영 알림', () => {
       localStorage.setItem('wcp.hiddenAdminIncidents', JSON.stringify(['p']))
       serve({ [INCIDENTS]: incidentsOf([incident({ id: 'p', title: '알림 p', action: 'pending' })]) })
       await show()
-      expect(within(card('알림 p')).queryByRole('button', { name: '알림 숨기기' })).toBeNull()
+      expect(within(card('알림 p')).queryByRole('button', { name: /숨기기$/ })).toBeNull()
       expect(screen.queryByRole('button', { name: /숨긴 알림/ })).toBeNull()
     })
 
@@ -620,7 +620,7 @@ describe('운영 알림', () => {
       fireEvent.click(screen.getByRole('button', { name: /다시 보이기/ }))
       expect(JSON.parse(localStorage.getItem('wcp.hiddenAdminIncidents') ?? '[]')).toEqual([])
       expect(screen.queryByRole('button', { name: /숨긴 알림/ })).toBeNull()
-      expect(within(card('알림 a')).getByRole('button', { name: '알림 숨기기' })).toBeTruthy()
+      expect(within(card('알림 a')).getByRole('button', { name: /숨기기$/ })).toBeTruthy()
     })
 
     it('keeps what another tab hid in the meantime and only the last 100', async () => {
@@ -668,7 +668,7 @@ describe('운영 알림', () => {
     expect(within(incidentCard()).getByText('처리됨')).toBeTruthy()
     expect(screen.getByText('일부 서비스만 멈췄어요')).toBeTruthy()
     expect(screen.getByText('아래 프로젝트 목록에서 강제 중지로 나머지를 멈춰 주세요.')).toBeTruthy()
-    expect(within(incidentCard()).queryByRole('button', { name: /중지|무시/ })).toBeNull()
+    expect(within(incidentCard()).queryByRole('button', { name: /(중지|무시)$/ })).toBeNull()
   })
 
   it('dismisses without a confirmation step', async () => {

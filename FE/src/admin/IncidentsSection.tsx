@@ -153,7 +153,7 @@ function IncidentCard({ incident, onChanged, onForbidden, onHide, onUnhide }: { 
     <li className="relative flex flex-col gap-3 rounded-md border border-line p-4">
       {/* 판단을 기다리는 알림은 숨길 수 없다(아무도 정하지 않게 되므로). */}
       {onHide && action !== 'pending' && (
-        <button type="button" aria-label="알림 숨기기" onClick={onHide} className="absolute top-2 right-2 rounded-md p-2 text-muted hover:text-fg">
+        <button type="button" aria-label={`${incident.slug} ${incident.title} 숨기기`} onClick={onHide} className="absolute top-2 right-2 rounded-md p-2 text-muted hover:text-fg">
           <CrossIcon />
         </button>
       )}
