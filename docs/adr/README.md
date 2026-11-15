@@ -17,7 +17,7 @@
 
 ## 스택 ADR을 쓸 때 같은 PR에서 할 일
 
-- 해당 스택 폴더의 `CLAUDE.md`([`FE/CLAUDE.md`](../../FE/CLAUDE.md), [`BE/CLAUDE.md`](../../BE/CLAUDE.md)) Commands 블록 채우기 (설치, 실행, lint, 테스트, 뮤테이션 테스트, 빌드). 테스트 라이브러리와 뮤테이션 도구도 스택과 함께 정하고, [`conventions.md`](../conventions.md) §6을 채운다.
+- 해당 스택 폴더의 `CLAUDE.md`([`FE/CLAUDE.md`](../../FE/CLAUDE.md), [`BE/CLAUDE.md`](../../BE/CLAUDE.md), [`AI/CLAUDE.md`](../../AI/CLAUDE.md), [`Infra/pipeline/CLAUDE.md`](../../Infra/pipeline/CLAUDE.md)) Commands 블록 채우기 (설치, 실행, lint, 테스트, 뮤테이션 테스트, 빌드). 테스트 라이브러리와 뮤테이션 도구도 스택과 함께 정하고, [`conventions.md`](../conventions.md) §6을 채운다.
 - [`system-definition.md`](../system-definition.md) §3 구성요소 표와 §6 갱신 ([`SRS.md`](../SRS.md) §2는 이 문서를 가리키는 포인터로 둔다)
 - [`ai-scope.md`](../ai-scope.md) 외부 기술 표에 선택한 프레임워크·모델 추가
-- **CI 작성** — 빌드·테스트 job, 문서 상대 링크 검사, 코드의 `MOCK(id)`·`SAMPLE(id)` ↔ `ai-scope.md` 대조, 배포 URL 업타임 cron(심사 종료까지, [`hackathon.md`](../hackathon.md)), 제출용 `submission` 태그 + main 해시 출력 (수동 실행)
+- **CI 작성** — 빌드·테스트 job, 문서 상대 링크 검사, 코드의 `MOCK(id)`·`SAMPLE(id)` ↔ `ai-scope.md` 대조, 배포 URL 업타임 cron(심사 종료까지, [`hackathon.md`](../hackathon.md)), 제출용 `submission` 태그 + main 해시 출력 (수동 실행). 지금 CI(`.github/workflows/`의 fe · be · ai · pipeline)는 빌드 · 테스트 job만 돈다. 문서 상대 링크 검사, `MOCK(id)` · `SAMPLE(id)` ↔ `ai-scope.md` 대조, 업타임 cron, `submission` 태그는 아직 CI에 없어 손으로 확인한다. 마커 대조는 양쪽을 본다: 코드의 마커마다 표에 행이 있고, 표의 행마다 코드에 마커가 있다([`hackathon.md`](../hackathon.md) 마감 직전 체크리스트)

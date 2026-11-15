@@ -1,6 +1,6 @@
 # ADR-016: AI 에이전트의 planning 외부 모델은 충북대 NOVA API Gateway의 gpt-6.1-sol이다
 
-- **상태**: 유효 (일부 대체: 로컬 모델과 나누는 방식 → 017)
+- **상태**: 유효 (일부 대체: 로컬 모델과 나누는 방식 → [017](017-planner-plans-local-executes.md))
 - **날짜**: 2026-11-13
 - **결정자**: 사용자 결정(2026-11-13)
 - **관련**: SRS `FR-075` · `FR-098` · `FR-102`, [ADR-001](001-stack-and-deployment.md)(LLM 업체 · 모델은 정하지 않았던 항목), [ADR-012](012-agent-acts-through-platform-gateway.md), [AI 에이전트 설계](../design/AIagent.md) §9, [`ai-scope.md`](../ai-scope.md)
@@ -37,3 +37,4 @@ planning 외부 모델은 충북대 생성형 AI 플랫폼 NOVA의 API Gateway�
 - `thinking_budget` · `thinking_level`은 Gemini 계열 전용이다.
 - 우리 AI 서버는 이 값들을 보내지 않는다(`AI/ai_server`에 `reasoning_effort` · `response_format` · `thinking_*` 없음). 에이전트 호출은 `tools`를 함께 보내므로 `reasoning_effort`를 주더라도 적용되지 않을 수 있다(문서에서 읽은 것을 바탕으로 한 추측, 미확인).
 - 결과의 "아직 확인하지 않았다"는 2026-11-13 기준이다. 이 모델은 2026-11-14 운영 리허설과 9건 실측에서 실제 티켓으로 불렸다([ADR-017](017-planner-plans-local-executes.md), [`ai-scope.md`](../ai-scope.md)).
+- 위의 "보내지 않는다"는 에이전트 호출에만 맞다. #232([ADR-018](018-student-deploy-explanation.md)) 뒤 배포 설명 호출(`AI/ai_server/agent/explain.py`)은 도구 없이 `response_format` json_schema(strict, PydanticAI `NativeOutput`)와 `reasoning_effort`(env `EXPLAIN_REASONING_EFFORT`, 기본 `medium`)를 보낸다. 에이전트 호출은 지금도 둘 다 보내지 않는다.

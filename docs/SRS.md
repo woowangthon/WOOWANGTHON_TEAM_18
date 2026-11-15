@@ -26,7 +26,7 @@ NFR 분류: `PER` 성능 · `SEC` 보안 · `REL` 신뢰성 · `USA` 사용성 �
 | 문제 | 근거 (숫자 · 인터뷰 · 기사 · 직접 관찰) | 출처 |
 | --- | --- | --- |
 | 클라우드 비용과 크레딧이 부담된다 | 응답 37명 중 29명(78%)이 비용을 걱정한다(복수 선택: "요금이 예상보다 많이 나올까 봐" 23명, "무료 플랜의 한도 · 기간이 끝나면 비용을 내야 해서" 18명). 바라는 도움 1위는 "클라우드 비용 관리 및 무료 배포 방법" 28명(76%) | 구글폼 설문조사(학과 대상, 2026-10-28~31, 응답 37명) |
-| 학교 컴퓨팅 자원이 남는다 | 실습실 PC는 하루 24시간 중 수업 시간(TBD시간)에만 쓰인다.<br>수업 중에도 개인 노트북 대신 실습실 PC를 쓰는 학생은 TBD%뿐이다. | 직접 체크 |
+| 학교 컴퓨팅 자원이 남는다 | 실습실 PC는 하루 24시간 중 수업 시간에만 쓰인다.<br>수업 중에도 개인 노트북 대신 실습실 PC를 쓰는 학생은 일부뿐이다. (시간 · 비율은 재지 않았다. 이번 MVP는 기자재로 빌린 PC 3대만 쓰므로 이 수치가 필요 없다) | 직접 체크 |
 | 프로젝트 과목은 배포에서 끝난다 | 결과물을 배포하는 데서 끝나고, 배포 이후의 운영은 다루지 않는다.<br>배포해 본 22명 중 지금도 운영 중인 사람은 7명(32%)이고, 9명은 "프로젝트 과목에서 배포 후 운영 종료"다. 걱정되는 점 1위는 "지속적인 유지보수 및 관리가 부담" 25명(68%) | 구글폼 설문조사(학과 대상, 2026-10-28~31, 응답 37명) |
 
 근거 출처는 [`ai-scope.md`](ai-scope.md) §4에도 올린다 (발표 부록).
@@ -119,7 +119,8 @@ flowchart LR
   ap -->|REST/JSON| be
   be --> db[(DB · 인증)]
   be --> ai[AI 서버]
-  ai -.-> llm[[추론 모델 API: 업체 · 모델 미정]]
+  ai --> llm[[추론 모델 API]]
+  ai --> slm[[로컬 모델: 리더 노드]]
   ai -->|도구 호출| be
   be --> build[빌드]
   build --> reg[(컨테이너 레지스트리)]
@@ -135,7 +136,7 @@ flowchart LR
 
 | 컴포넌트 | 책임 | 하지 않는 것 |
 | --- | --- | --- |
-| FE | 사용자 화면과 관리자 화면(User Page · Admin Page)을 그리고 BE의 REST API를 호출한다. 화면은 디자인 시스템(색 · 글꼴 토큰과 컴포넌트 6종, [`design/design-system.md`](design/design-system.md))으로 만든다 | AI 서버를 직접 호출하지 않는다 (BE를 거친다). 배포 · 검토 판단을 하지 않고, 결과를 보여주기만 한다 |
+| FE | 사용자 화면과 관리자 화면(User Page · Admin Page)을 그리고 BE의 REST API를 호출한다. 화면은 디자인 시스템(색 · 글꼴 토큰과 기본 컴포넌트(`FE/src/components/ui/`), [`design/design-system.md`](design/design-system.md))으로 만든다 | AI 서버를 직접 호출하지 않는다 (BE를 거친다). 배포 · 검토 판단을 하지 않고, 결과를 보여주기만 한다 |
 | BE | 요청 접수, 레포 설정 파일로 프레임워크를 판별해 배포 설정 초안 채우기, 보안 검사, 실패했을 때 문제 티켓 만들기, AI 에이전트 도구의 게이트웨이(횟수 제한 · live 슬롯 보호), 학생 비밀값을 클러스터에 비밀값으로 넣기, 배포 파이프라인 실행 요청, 조치 지시, 지표 조회, 스파이크 판정, 스파이크 때 로그 스냅샷 | 학생 코드를 실행하는 일, 매니페스트 적용(배포 파이프라인의 실행기가 한다), 로그인 · 가입(FE가 인증 서비스에 직접 한다, [`design/auth.md`](design/auth.md)) |
 | AI | 문제 티켓을 받아 원인을 찾고 대상 슬롯에서 고쳐 확인하는 AI 에이전트, 스파이크 알림 뒤 원인 설명 · 제안 | 공개 주소 전환, 비밀값 다루기, 학생 레포에 직접 push (게이트웨이에 그 도구가 없다). 클러스터 · 배포 도구의 자격 증명을 갖지 않는다 |
 
@@ -147,9 +148,9 @@ P0 경로에 필요한 것만 적는다. 전체 목록은 [`ai-scope.md`](ai-sco
 
 | 의존 | 용도 | 제약 (비용 · 속도 · 키 · 사용 한도) |
 | --- | --- | --- |
-| GitHub API | 레포 소유자 · 기본 브랜치 commit · 파일 목록 · `package.json` 읽기 | 인증 없이 부르면 서버 IP당 시간당 60회. 파일 내용을 읽는 주소는 응답에 한도 헤더가 없다 ([`design/auth.md`](design/auth.md)) |
+| GitHub API | 레포 소유자 · 기본 브랜치 commit · 파일 목록 · `package.json` 읽기 | 운영은 `GITHUB_TOKEN`을 붙여 시간당 5,000회이고, 토큰 없이 부르면 서버 IP당 시간당 60회. 파일 내용을 읽는 주소는 응답에 한도 헤더가 없다 ([`design/auth.md`](design/auth.md)) |
 | DB · 인증 (Supabase) | 로그인 · 가입 · GitHub 연동, 배포 입력 저장 | 내장 메일 서버는 팀 멤버 주소로만, 시간당 2통. 서버용 비밀키는 서버만 가진다 |
-| AI 모델 | AI 에이전트(UC-14)의 계획과 도구 고르기 | 추론 모델 API는 업체 · 모델 미정(AI 담당이 구해 온다). 자주 부르는 일은 리더 PC의 로컬 모델이 하고, API를 못 쓰면 계획도 로컬 모델이 한다 ([`design/deploy-workflow.md`](design/deploy-workflow.md) 7절) |
+| AI 모델 | AI 에이전트(UC-14)의 분류 · 계획과 도구 실행, 학생용 배포 설명(FR-105), 운영 알림 판단(FR-079) | 추론 모델 API는 충북대 NOVA API Gateway의 `gpt-6.1-sol`이다([ADR-016](adr/016-planner-model-nova-gateway.md)). 모든 티켓을 추론 모델이 분류 · 계획하고 리더 PC의 로컬 모델(Qwen3-8B)이 그 계획을 실행하며, API를 못 쓰면 분류 · 계획 · 실행을 모두 로컬 모델이 한다([ADR-017](adr/017-planner-plans-local-executes.md)). 배포 설명은 추론 모델만 쓰고([ADR-018](adr/018-student-deploy-explanation.md)), 운영 알림 판단은 로컬 모델에 먼저 묻고 실패하면 추론 모델에 묻는다(`AI/ai_server/agent/incident.py`) |
 | 빌드 | 확정한 commit으로 이미지 빌드 | 빌드 시간만큼 과금된다. 학생 코드를 실행하므로 격리한다. 배포 파이프라인의 빌드 단계가 클라우드 서버의 실행기에서 빌드 서비스를 부른다 |
 | 컨테이너 레지스트리 | 빌드 결과 이미지 보관 | 이미지를 공개로 두어 노드가 자격증명 없이 받는다 |
 | 배포 파이프라인 | 서비스를 클러스터에 적용하고 동작 확인 | 서버는 플랫폼 서버와 같은 클라우드 서버 한 대에 두고, 실행기는 리더 노드가 사설망으로 붙는다 |
@@ -170,9 +171,9 @@ FE가 BE를, BE가 AI를 기다리지 않도록 **요청·응답 모양을 먼�
 | Dockerfile 확인 | FE → BE | 레포 주소, Dockerfile이 있는 위치 목록 | FR-019 |
 | 배포 설정 초안 | FE → BE | 레포 주소와 commit, 프레임워크 · 명령 · 출력 폴더 등의 초안과 확인이 필요한 칸 | FR-022~FR-025 |
 | 배포 입력 저장 | FE → BE | 확정한 commit과 배포 설정, 저장한 배포 번호 | FR-026~FR-032 |
-| 비밀값 입력 | FE → BE | 비밀값 이름과 값 (값은 저장하지 않고 클러스터에만 쓴다) | FR-043~FR-048 — 계약 전 (api.md에 쓴 뒤 구현) |
-| 배포 상태 조회 | FE → BE | 배포 번호별 진행 상태와 결과 주소 | FR-059~FR-062 — 계약 전 (api.md에 쓴 뒤 구현) |
-| 문제 티켓 · 해결 결과 | BE ↔ AI | 문제 티켓, 에이전트의 도구 호출과 원본 결과, 해결 결과(해결됨 · PR 올림 · 사용자 조치 필요 · 해결 못 함) | FR-075~FR-077, FR-098~FR-102 — 계약 전 ([`design/AIagent.md`](design/AIagent.md)에 초안) |
+| 비밀값 입력 | FE → BE | 비밀값 이름과 값 (값은 저장하지 않고 클러스터에만 쓴다) | FR-043~FR-048 — 계약 · 구현됨 ([`design/api.md`](design/api.md) "비밀값") |
+| 배포 상태 조회 | FE → BE | 배포 번호별 진행 상태와 결과 주소 | FR-059~FR-062 — 계약 · 구현됨 ([`design/api.md`](design/api.md) "배포 시작 · 진행 상태") |
+| 문제 티켓 · 해결 결과 | BE ↔ AI | 문제 티켓, 에이전트의 도구 호출과 원본 결과, 해결 결과(해결됨 · PR 올림 · 사용자 조치 필요 · 해결 못 함) | FR-075~FR-077, FR-098~FR-102 — 계약 · 구현됨 ([`design/api.md`](design/api.md) "AI 에이전트", [`design/AIagent.md`](design/AIagent.md)) |
 
 공통 규칙:
 
@@ -186,17 +187,21 @@ FE가 BE를, BE가 AI를 기다리지 않도록 **요청·응답 모양을 먼�
 | --- | --- | --- |
 | 사용자 | 인증 서비스가 관리 (ID · 이메일 · GitHub 연동) | 로그인 계정. 관리자 여부는 사용자가 고칠 수 없는 서버 쪽 값으로 정한다 ([`design/auth.md`](design/auth.md)) |
 | `deploys` | `id` · `user_id` · `slug` · `repo` · `commit_sha` · `spec`(배포 설정) · `created_at` | 확정한 배포 입력. 행 하나가 배포 입력 하나이고 저장한 뒤에는 바꾸지 않는다. 쓰기는 플랫폼 서버만 하고, 학생은 자기 행만 읽는다 (`supabase/migrations`) |
-| 문제 티켓 | 예정 | UC-14의 문제 티켓과 해결 결과. 모양은 [`design/AIagent.md`](design/AIagent.md) 5 · 6절 |
-| `projects` · `deploy_state` · `build_cache` | `projects`: `slug` · `live_slot`(`a` / `b`). `deploy_state`: `slug` · `slot` · `deploy_id` · `input` · `manifest`. `build_cache`: `slug` · `service` · `build_input_hash` · `image` | 프로젝트의 live 슬롯, 슬롯별 배포 입력과 manifest, 같은 빌드 입력의 이미지 재사용 (`supabase/migrations`, [`design/deploy-handoff.md`](design/deploy-handoff.md)) |
-| 배포 진행 상태 | 예정 | UC-08의 단계별 진행 상태. 필드는 정해지지 않았다 |
+| 문제 티켓 | `deploy_runs`의 `ticket_id` · `agent_result` | UC-14의 문제 티켓과 해결 결과. 모양은 [`design/AIagent.md`](design/AIagent.md) 5 · 6절 |
+| `projects` · `deploy_state` · `build_cache` | `projects`: `slug` · `live_slot`(`a` / `b`) · `hidden_at`(운영자 정리, FR-104). `deploy_state`: `slug` · `slot` · `deploy_id` · `input` · `manifest`. `build_cache`: `slug` · `service` · `build_input_hash` · `image` | 프로젝트의 live 슬롯, 슬롯별 배포 입력과 manifest, 같은 빌드 입력의 이미지 재사용 (`supabase/migrations`, [`design/deploy-handoff.md`](design/deploy-handoff.md)) |
+| 배포 진행 상태 (`deploy_runs`) | `deploy_id` · `slug` · `target_slot` · `status`(`queued` · `running` · `fixing` · `needs_user` · `succeeded` · `failed`) · `stage` · `failure` | UC-08의 단계별 진행 상태. 배포 하나당 한 줄 (`supabase/migrations`) |
+| `deploy_secrets` | `slug` · `service` · `keys` · `status`(`writing` / `in`) · `digest` | 서비스별 비밀값 상태. 값은 두지 않고 key 이름과 해시만 둔다 (UC-06) |
+| `security_scans` | `repo` · `commit_sha` · `status` · `findings` · `error` | 레포 · commit마다 보안 검사 결과 한 줄. 비밀값 자체는 저장하지 않는다 (UC-10) |
+| `admin_actions` | `slug` · `action`(`stop`) · `actor_id` · `actor_email` · `created_at` | 운영자 강제 중지 기록 (UC-17) |
+| `incidents` · `user_webhooks` | `incidents`: `slug` · `alertname` · `action`(`auto_stopped` · `pending` · `stopped` · `dismissed`) · `ai` · `evidence`. `user_webhooks`: `user_id` · `url` | 운영 알림과 AI 판단, 학생의 Discord 알림 주소 (UC-15, [`design/incidents.md`](design/incidents.md)) |
 
 ### 2.6 배포
 
 | 컴포넌트 | 배포처 | URL | 환경 변수 |
 | --- | --- | --- | --- |
-| FE | [시스템 정의서 §3](system-definition.md#3-시스템-개요)의 User Page · Admin Page 행 | `https://app.stairnoworks.com` (예정. 배포처가 생긴 날 레코드를 붙인다, [ADR-013](adr/013-visitor-entry-cloudflare-tunnel.md)) | `VITE_SUPABASE_URL` · `VITE_SUPABASE_PUBLISHABLE_KEY` |
-| BE | [시스템 정의서 §3](system-definition.md#3-시스템-개요)의 플랫폼 서버 행 | 클라우드 서버(EC2)의 주소를 그대로 쓴다. 필요하면 `api.stairnoworks.com`을 붙인다 ([§7](#7-열린-질문)) | `PORT` · `CORS_ORIGINS` · `SUPABASE_URL` · `SUPABASE_PUBLISHABLE_KEY` · `SUPABASE_SECRET_KEY` |
-| AI | [시스템 정의서 §3](system-definition.md#3-시스템-개요)의 AI 서버 행 | 플랫폼 서버만 부른다 | `HOST` · `PORT` · `AGENT_API_TOKEN` · `GATEWAY_URL` |
+| FE | [시스템 정의서 §3](system-definition.md#3-시스템-개요)의 User Page · Admin Page 행 | `https://app.stairnoworks.com` ([ADR-013](adr/013-visitor-entry-cloudflare-tunnel.md), `Infra/aws/deploy-fe.sh`) | `VITE_SUPABASE_URL` · `VITE_SUPABASE_PUBLISHABLE_KEY` · `VITE_API_BASE_URL` |
+| BE | [시스템 정의서 §3](system-definition.md#3-시스템-개요)의 플랫폼 서버 행 | `https://api.stairnoworks.com` (클라우드 서버(EC2)의 아웃바운드 터널이 BE로 넘긴다, `Infra/aws/start-tunnel.sh`) | `PORT` · `CORS_ORIGINS` · `SUPABASE_URL` · `SUPABASE_PUBLISHABLE_KEY` · `SUPABASE_SECRET_KEY` · `SECRET_HASH_KEY` · `GOCD_URL` · `GOCD_TOKEN` · `GOCD_PIPELINE` · `GOCD_TRIAL_PIPELINE` · `PIPELINE_NOTIFY_TOKEN` · `AI_SERVER_URL` · `AGENT_API_TOKEN` · `BOT_GITHUB_TOKEN` · `GATEWAY_PORT` · `K8S_API_URL` · `K8S_TOKEN` · `K8S_CA_CERT` · `TRIVY_CACHE_DIR` · `CLUSTER_FULL_PERCENT` · `DISCORD_WEBHOOK_URL` · `GITHUB_TOKEN` · `DEPLOY_EXPLAIN_ENABLED` |
+| AI | [시스템 정의서 §3](system-definition.md#3-시스템-개요)의 AI 서버 행 | 플랫폼 서버만 부른다 | `HOST` · `PORT` · `AGENT_API_TOKEN` · `AGENT_MAX_RUNS` · `GATEWAY_URL` · `LOCAL_MODEL_URL` · `LOCAL_MODEL_NAME` · `LOCAL_MODEL_API_KEY` · `PLANNER_MODEL_URL` · `PLANNER_MODEL_NAME` · `PLANNER_MODEL_API_KEY` · `EXPLAIN_REASONING_EFFORT` |
 
 비밀값은 배포처 환경 변수에만 둔다. 여기에는 **변수 이름만** 적는다 (`.env.example`과 맞춘다). FE와 BE는 출처가 달라서, BE의 `CORS_ORIGINS`에 FE 주소를 넣는다.
 
@@ -207,7 +212,7 @@ FE가 BE를, BE가 AI를 기다리지 않도록 **요청·응답 모양을 먼�
 | 액터 | 정의 | 관련 UC |
 | --- | --- | --- |
 | 학생(배포자) | 자기 GitHub 레포를 배포하려는 로그인 사용자 | UC-01~04, 06, 08, 10, 13~16, 18, 20, 21 |
-| 운영자 | 클러스터 자원과 실행 중인 서비스를 보고, 서비스를 강제로 끌 수 있는 관리자 (단일 계정) | UC-17 |
+| 운영자 | 클러스터 자원과 실행 중인 서비스를 보고, 서비스를 강제로 끌 수 있는 관리자 (단일 계정) | UC-15, 17 |
 | 방문자 | 배포된 서비스를 보러 온 사용자. 로그인하지 않는다 | UC-09, 18 |
 | AI 서버 | 배포 실패를 고치는 AI 에이전트와 설명을 맡는 시스템 액터. 플랫폼 서버의 도구로만 대상 슬롯에서 조치하고, 공개 주소 전환 · 비밀값 · 학생 레포에는 직접 손대지 않는다 | UC-14, 15, 20, 21 |
 | 시스템 | 플랫폼 서버 · 빌드 · 배포 파이프라인 · 클러스터 | UC-07, 10, 13, 19 |
@@ -227,14 +232,14 @@ P0은 서비스 하나가 배포 한 번을 끝까지 지나(요청 → 설정 �
 | ~~UC-05~~ | ~~배포 전 AI 검토~~ (삭제: 2026-11-11 합의된 배포 워크플로우에 배포 전 AI 검토가 없다. AI는 실패했을 때 일한다, UC-14) | ~~학생, AI 서버~~ | — | — |
 | UC-06 | 비밀값 입력 (W3) | 학생 | P0 | 아니오 |
 | UC-07 | 빌드 · 배포 · 동작 확인 (W4~W6) | 시스템 | P0 | 아니오 |
-| UC-08 | 배포 진행 상태와 결과 주소 확인 (W7) | 학생 | P0 | 아니오 |
+| UC-08 | 배포 진행 상태와 결과 주소 확인 (W7) | 학생 | P0 | 예 |
 | UC-09 | 공개 주소로 접속 | 방문자 | P0 | 아니오 |
 | UC-10 | 보안 검사 (비밀값 · 의존성 취약점, 규칙 기반) | 시스템 | P0 | 아니오 |
 | ~~UC-11~~ | ~~운영자 승인 · 수정 요청 · 차단 (승인 큐)~~ (삭제: 2026-11-10 회의에서 운영자 검토를 두지 않기로 했다) | ~~운영자~~ | — | — |
 | ~~UC-12~~ | ~~수정 뒤 재검토 (라운드)~~ (삭제: 2026-11-11 라운드는 배포 전 AI 검토의 반복이었다. 고친 레포는 새 commit으로 다시 배포한다, UC-16) | ~~학생~~ | — | — |
 | UC-13 | Dockerfile이 없는 레포 배포 | 학생, 시스템 | P1 | 아니오 |
 | UC-14 | 배포 실패 원인 분석과 수정 (AI 에이전트) | AI 서버, 학생 | P0 | 예 |
-| UC-15 | 운영 지표 확인과 이상 알림의 AI 설명 | 학생 | P1 | 예 |
+| UC-15 | 운영 지표 확인과 이상 알림의 AI 설명 | 학생, 운영자 | P1 | 예 |
 | UC-16 | 학생 운영 제어 (재시작 · 중지/재개 · 삭제 · 새 버전) | 학생 | P1 | 아니오 |
 | UC-17 | 운영자 화면 (클러스터 자원 · 실행 중인 서비스 · 강제 중지) | 운영자 | P0 | 아니오 |
 | UC-18 | Playground 공개 목록 | 방문자, 학생 | P1 | 아니오 |
@@ -338,7 +343,7 @@ UC마다 아래 형식으로 쓴다. 문장은 짧게, 한 줄에 동작 하나.
   5. 확인을 통과하면 공개 주소를 새 서비스에 연결한다.
 - **대안·예외 흐름**:
   - E1. 빌드나 배포나 동작 확인이 실패하면 → 공개 주소가 가리키던 것을 그대로 두고 UC-14로 넘긴다. 플랫폼 문제(빌드 서비스 오류 등)는 AI에 넘기지 않고 학생에게 알린다.
-  - E2. 워커 노드에 학생 프로젝트를 놓을 자리가 없으면 → "배포 대기" 상태로 기다린다.
+  - E2. 워커 노드에 학생 프로젝트를 놓을 자리가 없으면 → 새 배포는 시작하지 않고 거절한다. 이미 대기열에 선 배포는 "배포 대기" 상태로 자리가 날 때까지 기다린다.
   - E3. 새 버전이 처음 배포가 아니면 → 새 버전은 동작 확인을 통과한 뒤에만 공개 주소에 연결한다.
 - **결과**: 서비스가 워커 노드에서 실행되고 공개 주소에 연결됐다.
 
@@ -417,11 +422,11 @@ UC마다 아래 형식으로 쓴다. 문장은 짧게, 한 줄에 동작 하나.
 
 #### UC-15 운영 지표 확인과 이상 알림의 AI 설명
 
-- **액터**: 학생
+- **액터**: 학생, 운영자
 - **흐름**:
   1. 시스템이 학생 서비스의 지표를 모은다.
-  2. 메모리 한도 초과 · 크래시 루프를 규칙이 판정하면 자동으로 중단 · 재시작한다.
-  3. 알림이 난 뒤에만 AI가 원인을 쉬운 말로 설명하고 다음 행동을 제안한다. 조치는 학생이 한다.
+  2. 크래시 루프는 진행 중인 배포가 없으면 규칙이 자동으로 멈춘다. 메모리 한도를 넘어 끝난 컨테이너는 쿠버네티스가 다시 시작하고, 반복되면 크래시 루프로 잡힌다.
+  3. 알림이 난 뒤에만 AI가 원인을 쉬운 말로 설명하고 다음 행동을 제안한다. 중지 · 무시는 운영자가 정한다 ([`design/incidents.md`](design/incidents.md)).
 
 #### UC-16 학생 운영 제어 (재시작 · 중지/재개 · 삭제 · 새 버전)
 
@@ -733,10 +738,11 @@ USA-01~03, PER-02, SEC-02는 FE 기반 작업(디자인 시스템 · 초기 셋�
 
 ## 7. 열린 질문
 
-결정이 필요한 것. 결정되면 이 표에서 지우고 본문이나 ADR에 반영한다. 개발 마감은 2026-11-15 18:00이다. 데모 경로에 닿는 것만 적었고, 나머지는 [시스템 정의서 §6](system-definition.md#열린-질문)에 있다.
+결정이 필요한 것. 결정되면 이 표에서 지우고 본문이나 ADR에 반영한다. 개발 마감은 [`hackathon.md`](hackathon.md#마감평가-버전)를 따른다. 데모 경로에 닿는 것만 적었고, 나머지는 [시스템 정의서 §6](system-definition.md#열린-질문)에 있다.
 
-| 질문 | 누가 정하나 | 기한 |
-| --- | --- | --- |
-| UC-14의 숫자 초기값(티켓당 도구 호출 횟수 · 시간 상한)과 수정 PR 범위, 첫 배포에서 머지 전에 대상 슬롯을 학생에게 보여 줄지 ([`design/deploy-workflow.md`](design/deploy-workflow.md) "정할 것" 2 · 5) | AI 담당 | |
-| BE를 EC2 주소로 바로 부르면, HTTPS인 FE(`app.`)가 `http://` 주소를 부르게 돼 브라우저가 막는다(혼합 콘텐츠). BE에 HTTPS를 붙이는 방법(`api.` 도메인 + 인증서 등) | 풀스택 | FE 배포 전 |
-| §1.1의 실습실 PC 사용률 (수업 시간, 실습실 PC를 쓰는 학생 비율) | 팀 (SRS 작성자) | |
+남은 열린 질문은 없다. 마지막까지 남았던 것은 이렇게 정리했다.
+
+| 질문 | 정리 |
+| --- | --- |
+| UC-14의 숫자 초기값과 수정 PR 범위 | 코드로 정해짐 ([`design/deploy-workflow.md`](design/deploy-workflow.md) "정할 것" 2 · 5) |
+| §1.1의 실습실 PC 사용률 | 필요 없음: 이번 MVP는 기자재로 빌린 PC 3대만 쓴다([§1.6](#16-범위-밖)). 재지 않았다 |

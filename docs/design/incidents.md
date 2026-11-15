@@ -24,7 +24,7 @@ Prometheus /api/v1/alerts ──(20초마다, 리더 API 서비스 프록시 GET
   └─ 사라진 경고 → resolved_at
 ```
 
-- 코드: `BE/src/incidents/`(감시기 `alert-watcher.ts`, 판단 요청 `incident-judge.ts`, Discord `discord.notifier.ts`, API `incidents.controller.ts`), `AI/ai_server/agent/incident.py`, 테이블 `supabase/migrations/20261114070000_create_incidents.sql`.
+- 코드: `BE/src/incidents/`(감시기 `alert-watcher.ts`, 판단 요청 `incident-judge.ts`, Discord `discord.notifier.ts`, API `incidents.controller.ts`), `AI/ai_server/agent/incident.py`, 테이블 `supabase/migrations/20261114070000_create_incidents.sql` · `20261115020000_add_incidents_evidence.sql`(`evidence` 열).
 - 경고 이름 → 화면 문구는 `BE/src/incidents/incident-text.ts`. 모르는 경고는 `클러스터 경고: <이름>`이다.
 
 ### 규칙

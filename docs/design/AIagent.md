@@ -1,6 +1,6 @@
 # AI 에이전트 — 설계
 
-- **상태**: 초안
+- **상태**: 구현됨 (2026-11-15)
 - **관련**: [배포 워크플로우](deploy-workflow.md) §6 · [배포 입력](deploy-handoff.md) · [ADR-009](../adr/009-deploy-runs-on-leader-gocd-agent.md) · [ADR-011](../adr/011-deploy-slots-a-b.md) · [ADR-012](../adr/012-agent-acts-through-platform-gateway.md) · [ADR-014](../adr/014-agent-trial-pipeline-and-rerun.md) (시험 전용 파이프라인 · verified 뒤 다시 실행) · [ADR-016](../adr/016-planner-model-nova-gateway.md) · [ADR-017](../adr/017-planner-plans-local-executes.md) (모델 · 계획과 실행 분리) · [ADR-002](../adr/002-bot-account-for-fix-prs.md) (봇 계정 수정 PR)
 
 ![AI 에이전트 흐름](../architecture/agent-flow.drawio.svg)
@@ -400,5 +400,5 @@ PydanticAI에서 두 모델을 OpenAI 호환 provider로 붙이고, 추론 모�
 - `student-trial` 하나를 모든 프로젝트가 같이 쓰고 리더 실행기는 하나(`Infra/executor/agent.yaml`의 `replicas: 1`)라 시험과 배포가 한 줄로 선다. 데모처럼 여럿이 동시에 쓸 때 시험 대기 30분 안에 드는지는 확인하지 않았다.
 - 티켓 한도는 실행 기록당 3개와 사용자당 최근 24시간 6개(#145) 두 가지다. 넘으면 AI를 부르지 않고 마감하는데, 실패 코드는 한도마다 다르다: 실행 기록당 한도를 넘으면 `AGENT_GAVE_UP`, 사용자당 한도를 넘으면 `AGENT_QUOTA_EXCEEDED`다. 사용자의 티켓 수를 읽지 못하면 티켓 없이 `AGENT_UNAVAILABLE`로 마감한다. 운영자는 두 한도가 없다. 세는 방법과 한계는 [API 계약](api.md) "파이프라인 ↔ 플랫폼 서버" 5번이다.
 - 게이트웨이의 호출 횟수 · 작업 시간은 플랫폼 서버 메모리에서 센다: 전체 20회, 같은 호출 연속 2회, 도구별 횟수(§3 표, 지금 열린 `run_build` 2 · `run_render` 5 · `run_deploy` 2 · `run_verify` 3 · `edit_repo_file` 5 · `open_pr` 2), 작업 15분(첫 호출부터, 시험 대기는 진행 중인 것까지 뺀다), 티켓 전체 60분(대기 포함). 서버가 다시 뜨면 그 티켓은 처음부터 다시 세고, 티켓 시작은 저장된 만료 - 60분으로 보수적으로 잡아 남은 만료까지만 쓴다.
-- `read_repo`는 인증 없이 GitHub API를 부른다(서버 IP당 시간당 60번, 레포 소유 확인과 같이 쓴다). 한도에 닿으면 도구 오류로 끝난다.
+- `read_repo`는 `GITHUB_TOKEN`으로 GitHub API를 부른다(있으면 시간당 5,000번, 비우면 인증 없이 서버 IP당 시간당 60번. 레포 소유 확인과 같이 쓴다). 한도에 닿으면 도구 오류로 끝난다.
 - 게이트웨이에 끝내 닿지 못하거나, AI 서버가 실행 중 예외로 멈추거나 다시 떠서 티켓을 잊으면 결과를 낼 길이 없다. 계약에 다른 길(콜백 · 재전송 요청)이 없어서, 플랫폼은 게이트웨이 토큰이 만료되고 2분 뒤 대기열 타이머(15초 간격)가 `failed`(`TIMED_OUT`, 실패했던 스테이지)로 마감하고 티켓을 `stopped`로 닫는다. AI 서버에는 로그만 남는다.

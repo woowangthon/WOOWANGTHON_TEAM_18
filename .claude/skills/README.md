@@ -16,8 +16,8 @@ Task files and ADRs are "copy a template, follow one rule" — [`tasks/README.md
 [`docs/adr/000-template.md`](../../docs/adr/000-template.md) plus the rules in [`CONTRIBUTING.md`](../../CONTRIBUTING.md) §1 are enough.
 Promote either to a skill only if the same mistake keeps recurring.
 
-Submission checks are not a skill either: they become CI once the stack is decided (checklist in [`docs/adr/README.md`](../../docs/adr/README.md)).
-Until then, the manual checklist is [`docs/hackathon.md`](../../docs/hackathon.md) §마감 직전 체크리스트.
+Submission checks are not a skill either. The link check and the `MOCK`/`SAMPLE` ↔ `ai-scope.md` check are not in CI yet (`.github/workflows/` runs only build and test jobs; planned checks in [`docs/adr/README.md`](../../docs/adr/README.md)).
+They are checked by hand with [`docs/hackathon.md`](../../docs/hackathon.md) §마감 직전 체크리스트.
 
 ## Optional external plugins
 

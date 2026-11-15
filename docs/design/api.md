@@ -79,7 +79,7 @@ FE 흐름은 ① `POST /api/repos/check`로 내 레포인지 확인 → 통과�
 
 FE 흐름은 ① `repos/check` → ② `repos/dockerfiles`와 이 API. 이 API도 직접 부를 수 있으므로 서버가 `repos/check`와 같은 소유 확인을 **먼저 다시 한다**(순서와 오류는 [`auth.md`](auth.md#github-연동과-레포-소유-확인)). 남의 레포는 파일 목록 조회까지 가지 않는다.
 
-배포 설정의 **초안**이다. 사용자가 웹에서 검토해 고치거나 그대로 확정하며, 확정한 값을 저장하는 API는 이 문서에 아직 없다(저장 위치가 정해지지 않았다). 초안은 같은 입력(레포 + commit. `commit`이 없으면 기본 브랜치 최신 상태)이면 같은 결과가 나오는 규칙 코드의 출력이라 저장하지 않고 호출할 때마다 계산한다. **README는 읽지 않고 LLM도 쓰지 않으며**, 학생 코드는 읽기만 하고 실행하지 않는다.
+배포 설정의 **초안**이다. 사용자가 웹에서 검토해 고치거나 그대로 확정하며, 확정한 값은 아래 `POST /api/deploys`로 저장한다. 초안은 같은 입력(레포 + commit. `commit`이 없으면 기본 브랜치 최신 상태)이면 같은 결과가 나오는 규칙 코드의 출력이라 저장하지 않고 호출할 때마다 계산한다. **README는 읽지 않고 LLM도 쓰지 않으며**, 학생 코드는 읽기만 하고 실행하지 않는다.
 
 읽는 것은 `commit`으로 지정한 commit(없으면 기본 브랜치 최신 상태, GitHub의 `HEAD`)에서 찾은 `package.json`(하위 폴더 포함, `node_modules/` 안은 제외)과, 그 폴더에서 가장 가까운 락 파일의 **이름**이다. 락 파일 내용은 읽지 않는다. FE는 `repos/check`가 돌려준 `commit`을 넘겨, 접수 뒤 사용자가 push해도 초안이 접수 때의 파일을 보게 한다([#41](https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/41) · [#60](https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/60)).
 
@@ -327,7 +327,7 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
 - `413 PAYLOAD_TOO_LARGE`: 요청 본문이 100KB를 넘는다
 - `401 AUTH_REQUIRED` · `401 INVALID_TOKEN`: 로그인 토큰 문제
 - `403 GITHUB_NOT_LINKED` · `403 REPO_NOT_OWNED` · `404 REPO_NOT_FOUND` · `422 REPO_NOT_PERSONAL`: `POST /api/repos/check`와 같다
-- `404 COMMIT_NOT_FOUND`: 그 레포에 없는 commit. 이번에는 "검사한 commit과 입력의 commit이 다르다"는 오류가 따로 없다. 서버가 아직 검사한 commit(#45 보안 검사 결과)을 기억하지 않아서이고, 보안 검사가 들어오면 그 commit과 다를 때의 오류를 이 문서에 더한다. FE는 `COMMIT_NOT_FOUND`를 받으면 `repos/check`부터 다시 하게 하면 된다
+- `404 COMMIT_NOT_FOUND`: 그 레포에 없는 commit. "검사한 commit과 입력의 commit이 다르다"는 오류는 따로 없다. 보안 검사(#45)는 저장한 뒤 저장한 commit을 검사하기 때문이다(아래 진행 상태의 `warnings`). FE는 `COMMIT_NOT_FOUND`를 받으면 `repos/check`부터 다시 하게 하면 된다
 - `409 SLUG_TAKEN`: 다른 사용자나 다른 레포가 쓰는 `slug`
 - `503 AUTH_UNAVAILABLE` · `503 GITHUB_UNAVAILABLE`: `repos/check`와 같다
 - `503 DATABASE_UNAVAILABLE`: 저장소(Supabase)에 닿지 못했거나 서버의 키가 거부당했다. 사용자 잘못이 아니므로 다시 시도하게 한다. 저장됐는지 알 수 없는 시간 초과면 같은 입력을 다시 보내도 된다(이미 저장됐다면 행이 하나 더 생길 뿐 같은 배포를 덮어쓰지 않는다)
@@ -412,7 +412,7 @@ FE가 select에 넣을 허용 값: `role` = `fe` · `be` · `ai`, `runtime.kind`
 
 **상태 값**
 
-`status`: `not_started`(저장만 했고 시작하지 않음) · `queued`(배포 대기: 시작했지만 차례가 오지 않음, FR-054) · `running` · `fixing`(문제 해결 중: 문제 티켓을 AI 서버가 받아 처리하는 중) · `needs_user`(사용자 조치 필요) · `succeeded` · `failed`. `not_started`만 실행 기록 행이 없는 상태다. `needs_user`는 AI 에이전트의 해결 결과를 받는 쪽(별도 이슈)이 정하므로 이 이슈의 코드는 내지 않는다. `queued`는 배포 대기열이 낸다([배포 워크플로우](deploy-workflow.md) "배포 대기열").
+`status`: `not_started`(저장만 했고 시작하지 않음) · `queued`(배포 대기: 시작했지만 차례가 오지 않음, FR-054) · `running` · `fixing`(문제 해결 중: 문제 티켓을 AI 서버가 받아 처리하는 중) · `needs_user`(사용자 조치 필요) · `succeeded` · `failed`. `not_started`만 실행 기록 행이 없는 상태다. `needs_user`는 AI 에이전트가 해결 결과 `pr_opened` · `needs_user`를 내면 게이트웨이(`submit_result`, 아래 "MCP 게이트웨이")가 정한다. `queued`는 배포 대기열이 낸다([배포 워크플로우](deploy-workflow.md) "배포 대기열").
 
 `stage`(지금 도는 파이프라인 스테이지): `build` · `prepare` · `render` · `apply` · `verify` · `switch`. 시작 전이거나 끝난 뒤(`succeeded`)는 `null`이다. 실패하면 실패한 스테이지가 남는다.
 
@@ -637,7 +637,7 @@ verified (submit_result)
 - **다른 티켓과 겹칠 때**: `student-trial`은 하나라서, 다른 티켓의 시험이 첫 스테이지를 아직 돌고 있으면 GoCD가 schedule을 `409`로 거절한다(배포 두 건이 동시에 고쳐질 때. 2026-11-15 운영 시험에서 뒤 티켓의 `run_verify`가 이 때문에 `PIPELINE_UNAVAILABLE`로 끝났다고 본다). BE는 `409`만 바쁨으로 보고 5초마다 다시 schedule한다. 최대 5분 또는 시험 deadline 중 이른 쪽까지 기다리고, 넘기면 지금처럼 `ok: false`, `PIPELINE_UNAVAILABLE`이다. 기다리는 사이 티켓이 끝나면 schedule하지 않고 `TICKET_CLOSED`다. 그 밖의 거절 · 연결 실패는 다시 하지 않는다.
 - **시간**: 게이트웨이 토큰의 만료(`gateway_expires_at`)는 `min(티켓 시작 + 60분, 티켓 시작 + 15분 + 누적 시험 대기)`이다. 시험 대기를 **시작할 때** BE가 먼저 `min(티켓 시작 + 60분, 지금 + 남은 15분 예산 + 이번 시험 대기 상한)`으로 늘리고(대기 중에 같은 티켓의 다른 도구 호출이 `TICKET_CLOSED`를 받지 않게), 대기를 마칠 때 위 식으로 다시 쓴다. 티켓 전체 상한 60분은 대기를 포함하고, 넘으면 다음 호출은 `TIME_LIMIT`다. 시험 하나의 대기는 30분과 그 상한까지 남은 시간 중 짧은 쪽에서 끝난다(끝나면 `TRIAL_TIMEOUT`).
 - **멈춘 실행 판정**: BE는 시험 대기를 시작할 때와 끝낼 때 실행 기록의 `updated_at`을 갱신한다. 새 배포를 시작할 때의 1시간 멈춤 판정(`POST /api/deploys/:id/start`의 `DEPLOY_IN_PROGRESS`)은 `fixing`이면서 `gateway_expires_at`이 아직 미래인 실행을 건너뛴다. 티켓 전체 상한(60분)이 지나면 `gateway_expires_at`도 지나므로, 그런 실행도 그 뒤에는 평소대로 판정된다(끝이 늘 있다).
-- **끝난 시험 정리**: `TRIAL_TIMEOUT` · `TIME_LIMIT` · 티켓 종료(결과 제출 · 종료 알림 · 만료) 때 결과가 아직 없는 시험이 있으면 BE가 그 `student-trial` 인스턴스(기록한 `counter`)를 읽어 진행 중인(또는 배정을 기다리는) 스테이지를 GoCD API로 한 번 취소한다(주기 조회가 아니다. GoCD의 취소 단위는 스테이지이고, 취소된 스테이지 뒤는 돌지 않는다. 정확한 경로 · 헤더는 구현 때 GoCD 26.1 문서로 확인한다). `counter`가 아직 없으면 그 인스턴스는 입력을 읽은 job이 없다: 나중에 입력을 읽으면 404라 슬롯을 건드리지 않고 끝난다.
+- **끝난 시험 정리**: `TRIAL_TIMEOUT` · `TIME_LIMIT` · 티켓 종료(결과 제출 · 종료 알림 · 만료) 때 결과가 아직 없는 시험이 있으면 BE가 그 `student-trial` 인스턴스(기록한 `counter`)를 읽어 진행 중인(또는 배정을 기다리는) 스테이지를 GoCD API로 한 번 취소한다(주기 조회가 아니다. GoCD의 취소 단위는 스테이지이고, 취소된 스테이지 뒤는 돌지 않는다. `POST /go/api/stages/<파이프라인>/<counter>/<스테이지>/<스테이지 counter>/cancel`, 헤더 `Accept: application/vnd.go.cd.v3+json` · `X-GoCD-Confirm: true`, `BE/src/deploys/pipeline.client.ts`). `counter`가 아직 없으면 그 인스턴스는 입력을 읽은 job이 없다: 나중에 입력을 읽으면 404라 슬롯을 건드리지 않고 끝난다.
 - **순서**: 다음 시험은 같은 프로젝트의 이전 시험 인스턴스가 끝났음(결과 도착, 취소 성공, 또는 입력을 읽은 job이 없음)을 확인한 뒤에만 schedule하고, `verified` 뒤 다시 실행(5번)은 그 확인 뒤에만 줄에 세운다. 확인하지 못하면 다음 시험은 `ok: false`와 `failure: { "stage": null, "code": "TRIAL_STILL_RUNNING", "message" }`로 답한다. 다시 실행은 잠시 기다렸다 한 번 더 확인하고, 그래도 못 하면 `failed`(플랫폼 문제 `TRIAL_STILL_RUNNING`)로 마감한다. 시험이 지우는 것은 대상 슬롯뿐이라(Prepare의 슬롯 비우기) 늦게 끝나는 시험도 공개 주소에는 영향이 없다. 취소가 Apply 도중이면 대상 슬롯이 반쯤 적용된 채 남지만, 다음 `run_deploy` · 다시 실행의 Prepare가 그 슬롯을 비우고 시작한다(`run_render` · `run_verify`에는 Prepare가 없어, 그 사이 `run_verify`는 반쯤 적용된 상태를 그대로 실패로 본다). 취소된 시험 빌드는 CodeBuild 빌드가 끝까지 돌 수 있지만 이미지를 쓰는 곳이 없어 영향이 없다(결과는 `applied: false`).
 
 **5. `verified` 뒤 다시 실행**: 에이전트가 `verified`를 내면 플랫폼이 **고친 입력으로 `student-deploy`를 처음부터 다시 실행**한다. 전환 전용 파이프라인은 두지 않고 1~3번의 모양은 그대로다. 결정은 [ADR-014](../adr/014-agent-trial-pipeline-and-rerun.md)다. BE는 아래를 구현했다(B2, `BE/src/gateway/tools.ts` `submitVerified` · `BE/src/deploys/deploy-runs.service.ts`). 빌드 경로 `specPatch`는 B3에서 받는다: 그 서비스의 이미지는 이 티켓의 `run_build`가 통과(또는 #149의 재사용)한 이미지다. 흐름은 4번 첫머리 그림과 같다: 공개 주소가 바뀌는 곳은 이 다시 실행의 Switch뿐이다.
@@ -835,6 +835,7 @@ type Incident = {
 | --- | --- | --- |
 | 플랫폼 → AI | 티켓 접수, 종료 알림 | AI 서버 `POST /agent/tickets` · `POST /agent/tickets/{ticketId}/close` |
 | AI → 플랫폼 | 도구 호출, 해결 결과 제출 | 플랫폼 서버 MCP 게이트웨이 (Streamable HTTP), 결과는 도구 `submit_result` |
+| 배포 스크립트 → AI | 헬스 체크 | AI 서버 `GET /health`(토큰 없음, 응답 `200` `{ "status": "ok" }`. `Infra/aws/deploy-ai.sh`가 부른다) |
 
 **토큰**
 
@@ -942,23 +943,3 @@ type Incident = {
 | `BOT_UNAVAILABLE` | `edit_repo_file` · `open_pr`: 봇 계정을 쓸 수 없음(토큰 없음 · fork 불가 · GitHub 오류). 에이전트는 `needs_user`로 안내한다 |
 | `INVALID_RESULT` | `submit_result`의 `result`가 §6 스키마와 다르거나 `commitSha`가 티켓과 다름 |
 | `TICKET_CLOSED` | 토큰이 무효 (종료 알림 · 결과 제출 · 시간 초과 뒤) |
-
-## <그룹명> (SRS §2.4)
-
-### `METHOD /path` — 한 줄 설명 (FR-NNN)
-
-요청:
-
-```json
-{}
-```
-
-응답 `200`:
-
-```json
-{}
-```
-
-오류: `400` 입력 오류 / `502` AI 호출 실패 — 오류 응답 모양은 SRS §2.4.
-
-<!-- 엔드포인트마다 위 블록을 복사 -->

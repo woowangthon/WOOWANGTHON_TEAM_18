@@ -19,5 +19,5 @@ Limit 90 s (2 s polls): default grace 30 s + kubelet/API. Past it: platform code
 
 ## Done when
 
-- [ ] `pnpm verify` in `Infra/pipeline/` passes — PASS from the test session
+- [x] `pnpm verify` in `Infra/pipeline/` passes — PASS from the test session (#162, 2026-11-12)
 - [ ] three services deploy on the leader without `FailedCreate` (needs the real cluster)

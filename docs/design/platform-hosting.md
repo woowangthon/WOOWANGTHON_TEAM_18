@@ -35,7 +35,7 @@
 | 빌드 값 | `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, `VITE_API_BASE_URL=https://api.stairnoworks.com`. 번들에 그대로 박히므로 공개 값만 넣는다 |
 | 올리기 | [`Infra/aws/deploy-fe.sh`](../../Infra/aws/deploy-fe.sh). 해시가 붙은 `assets/`는 오래 캐시하고 지우지 않으며, `index.html`은 캐시하지 않는다 |
 
-`VITE_API_BASE_URL`은 FE가 BE를 부를 때 앞에 붙이는 주소다. FE 코드에서 이 값을 읽게 하는 변경은 FE 쪽 별도 PR이다. 그 전에는 FE가 `/api`를 상대 경로로 불러 BE에 닿지 않는다.
+`VITE_API_BASE_URL`은 FE가 BE를 부를 때 앞에 붙이는 주소다. FE는 이 값을 읽는다(`FE/src/lib/api.ts`). 비워 두면 `/api`를 상대 경로로 불러 BE에 닿지 않는다.
 
 ### BE: EC2 + Cloudflare Tunnel
 
@@ -83,6 +83,7 @@ EC2 ── gocd-server (GoCD 26.1.0, JVM -Xmx1g, 8153은 Tailscale 주소에만 
 | `PIPELINE_NOTIFY_TOKEN` | 위 `/wcp/gocd/PIPELINE_NOTIFY_TOKEN`과 같은 값 |
 | `CLUSTER_FULL_PERCENT` | 선택(1–100, 없으면 80). 워커 노드의 CPU · 메모리 사용률 중 큰 값이 이 값 이상이면 새 배포를 거절하고(`409 CLUSTER_FULL`) 대기 중인 배포는 출발하지 않는다 |
 | `DISCORD_WEBHOOK_URL` | 선택. 운영자 Discord 채널의 웹후크(운영 알림, [`incidents.md`](incidents.md)). `https://discord.com/api/webhooks/<id>/<token>` 모양이 아니면 BE가 뜨지 않는다. 비우면 운영자 Discord로 보내지 않는다. **SecureString** |
+| `DEPLOY_EXPLAIN_ENABLED` | 선택(`true` · `false`, 없으면 꺼짐). 끝난 배포의 학생용 설명을 AI 서버에 묻는다([`deploy-explain.md`](deploy-explain.md)). 다른 값이면 BE가 뜨지 않는다 |
 | `GITHUB_TOKEN` | 선택이지만 운영에는 넣는다. BE가 `api.github.com`에 `Authorization: Bearer`로 붙이는 토큰. 운영은 봇 GitHub 계정(`wanggane-bot`)의 토큰을 쓴다(공개 레포만 읽으므로 권한 없는 fine-grained PAT여도 된다). 한도(시간당 5,000번)는 계정마다라 봇 계정의 다른 API 호출과 나눠 쓴다. 봇 토큰에 쓰기 권한(예: `write:packages`)이 있으면 BE 서버에서 새는 순간 그 권한도 함께 샌다. 마감 뒤 권한 없는 PAT로 바꾼다. 없으면 인증 없이 EC2 IP당 시간당 60번이라 모든 학생 배포가 그 60번을 나눠 쓴다(2026-11-14 실서비스에서 바닥나 배포 저장이 503으로 실패했다). 있으면 시간당 5,000번. 한도에 걸리면 `503 GITHUB_RATE_LIMITED`(`retryAt`)다. **SecureString** |
 
 **콘솔에서 만들 AWS 리소스** (서울 `ap-northeast-2`, 이름은 파이프라인이 그대로 쓴다):

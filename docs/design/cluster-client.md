@@ -1,6 +1,6 @@
 # 클러스터 호출 모듈 — 설계
 
-- **상태**: 초안 (2026-11-11, 이슈 [#111](https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/111). 실제 리더에서 확인함, 아래 "실제 리더 확인")
+- **상태**: 구현됨 (2026-11-11, 이슈 [#111](https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/111). 실제 리더에서 확인함, 아래 "실제 리더 확인")
 - **관련**: [space.md](space.md)(연결 설정 · 공간 만들기, #81), [cluster.md](cluster.md) §8(서버 권한과 응답 코드) · §12(비밀값), [deploy-workflow.md](deploy-workflow.md) W3, [ADR-004](../adr/004-server-cluster-link-tailscale.md) · [ADR-009](../adr/009-deploy-runs-on-leader-gocd-agent.md)
 
 ## 범위
@@ -15,18 +15,21 @@
 
 ### 내놓는 함수
 
-`K8sModule`이 서비스 셋을 내놓는다. 인자의 `slug` · `service`는 배포 입력 검증([api.md](api.md))을 통과한 값이어야 하고, 아니면 던진다(요청 경로에 들어가는 값이다). 공간 이름은 함수가 `proj-<slug>`로 만들기 때문에 `kube-system` 같은 다른 공간은 인자로 가리킬 수 없다.
+`K8sModule`이 서비스 다섯(`SpaceService` · `ClusterSecrets` · `ClusterReader` · `ClusterCapacity` · `DeploymentScaler`)을 내놓는다. 인자의 `slug` · `service`는 배포 입력 검증([api.md](api.md))을 통과한 값이어야 하고, 아니면 던진다(요청 경로에 들어가는 값이다). 공간 이름은 함수가 `proj-<slug>`로 만들기 때문에 `kube-system` 같은 다른 공간은 인자로 가리킬 수 없다.
 
 | 함수 | 하는 일 | 요청 |
 | --- | --- | --- |
 | `SpaceService.ensureSpace(slug)` | 공간 객체 여섯 만들기 ([space.md](space.md), 바뀌지 않음) | `POST` 여섯 |
 | `ClusterSecrets.write(slug, service, values)` | Secret `<service>-secrets`에 `values`(`{ key: 값 }`)를 넣는다. 이미 있으면 통째로 바꾼다 | `POST /api/v1/namespaces/proj-<slug>/secrets` → `409`면 `PUT /api/v1/namespaces/proj-<slug>/secrets/<service>-secrets` |
 | `ClusterReader.pods(slug)` | 공간의 Pod 목록 | `GET /api/v1/namespaces/proj-<slug>/pods` |
-| `ClusterReader.logs(slug, pod, { container, tailLines })` | Pod 로그의 끝부분(글) | `GET /api/v1/namespaces/proj-<slug>/pods/<pod>/log?tailLines=…&limitBytes=…` |
+| `ClusterReader.logs(slug, pod, { container, tailLines, previous, sinceSeconds })` | Pod 로그의 끝부분(글). `previous`면 직전 컨테이너의 로그, `sinceSeconds`면 그만큼 최근 줄만 | `GET /api/v1/namespaces/proj-<slug>/pods/<pod>/log?tailLines=…&limitBytes=…`(`&previous=true` · `&sinceSeconds=…`) |
 | `ClusterReader.deployments(slug)` | 공간의 Deployment 목록 | `GET /apis/apps/v1/namespaces/proj-<slug>/deployments` |
 | `ClusterReader.nodes()` | 노드 목록 | `GET /api/v1/nodes` |
+| `ClusterReader.nodeUsage()` | 노드의 지금 사용량(CPU · 메모리) | `GET /apis/metrics.k8s.io/v1beta1/nodes` |
 | `ClusterReader.podUsage(slug)` | 공간 Pod의 지금 사용량(컨테이너별 CPU · 메모리) | `GET /apis/metrics.k8s.io/v1beta1/namespaces/proj-<slug>/pods` |
 | `ClusterReader.podRangeSeries(slug, 'cpu' \| 'memory', { start, end, step })` | 공간 Pod별 시계열(Prometheus `query_range`). PromQL은 이 함수가 검증된 slug에서 만들고 부르는 쪽은 넘기지 못한다. `cpu`: `sum by (pod) (rate(container_cpu_usage_seconds_total{namespace="proj-<slug>",container!="",container!="POD"}[2m]))`, `memory`: `sum by (pod) (container_memory_working_set_bytes{…같은 선택…})`. 지표 이름 · 라벨은 실제 리더에서 확인하지 않았다(미검증) | `GET /api/v1/namespaces/monitoring/services/monitoring-prometheus:9090/proxy/api/v1/query_range?query=…&start=…&end=…&step=…` |
+| `ClusterReader.alerts()` | Prometheus가 평가 중인 경고 전부(`labels` · `state` · `activeAt` · `summary`, [incidents.md](incidents.md)) | `GET /api/v1/namespaces/monitoring/services/monitoring-prometheus:9090/proxy/api/v1/alerts` |
+| `ClusterReader.rawObjects(slug, 'pods' \| 'events' \| 'deployments', labelSelector?)` | AI 에이전트 게이트웨이의 관찰 도구용 원본 객체(`metadata.managedFields`와 적용 기록 주석만 뺀다, [api.md](api.md) "MCP 게이트웨이") | `GET /api/v1/namespaces/proj-<slug>/pods` · `…/events`, `GET /apis/apps/v1/namespaces/proj-<slug>/deployments`(`?labelSelector=…`) |
 
 ### 호출 도우미
 
@@ -70,11 +73,11 @@
 
 | 함수 | 돌려주는 것 |
 | --- | --- |
-| `pods` | `name`, `labels`, `phase`, `node`(놓인 노드), `ready`(컨테이너가 모두 준비됨), `restarts`(컨테이너 재시작 횟수의 합), `waiting`(기다리는 컨테이너 — init 컨테이너 포함 — 의 이유: `CrashLoopBackOff` · `ImagePullBackOff` 등, 없으면 `null`) |
+| `pods` | `name`, `labels`, `phase`, `node`(놓인 노드), `ready`(컨테이너가 모두 준비됨), `restarts`(컨테이너 재시작 횟수의 합), `waiting`(기다리는 컨테이너 — init 컨테이너 포함 — 의 이유: `CrashLoopBackOff` · `ImagePullBackOff` 등, 없으면 `null`), `lastExit`(직전에 끝난 컨테이너의 이유 · 종료 코드, 재시작한 적이 없으면 `null`) |
 | `deployments` | `name`, `labels`, `replicas`(원하는 수), `ready`, `updated`, `available` |
 | `nodes` | `name`, `ready`, `roles`(`node-role.kubernetes.io/<역할>` 라벨에서), `capacity` · `allocatable`(`cpu` · `memory` · `ephemeral-storage`, 쿠버네티스 수량 글 그대로) |
 | `nodeUsage` | `name`, `usage`(`cpu` · `memory`, `metrics.k8s.io`의 노드 사용량, 쿠버네티스 수량 글 그대로). 갓 뜬 노드는 첫 수집 전까지 목록에 없다 |
-| `logs` | 글. `tailLines` 기본 200(최대 2000), 응답은 256 KiB에서 자른다(요청 하나의 제한 시간 5초 안에 느린 구간으로도 받을 크기). 이어 받기(follow)는 없다 |
+| `logs` | 글. `tailLines` 기본 200(최대 2000), 응답은 256 KiB에서 자른다(요청 하나의 제한 시간 5초 안에 느린 구간으로도 받을 크기). `previous` · `sinceSeconds`를 줄 수 있다. 이어 받기(follow)는 없다 |
 
 - 목록은 한 번에 받는다(쪽 나눔 없음). 공간 하나의 Pod는 상한(ResourceQuota)으로 묶여 있고 노드는 셋이다.
 - 실제 사용량(CPU · 메모리): 노드는 `nodeUsage`로 읽는다(운영자 API #171, 아래 "실제 리더 확인"에는 아직 없다: 이 호출을 서버로 돌려 본 적은 없다). Pod 사용량은 `podUsage`로 읽는다(서비스별 지표 `BE/src/k8s/service-metrics.ts`가 쓴다). 권한은 #130에서 들어갔다([cluster.md](cluster.md) §8): `GET /apis/metrics.k8s.io/v1beta1/nodes`와 `/apis/metrics.k8s.io/v1beta1/namespaces/<공간>/pods`. 응답은 다른 목록처럼 `items` 배열이고, 항목의 `metadata.name`이 노드 · Pod 이름과 같다. 값은 쿠버네티스 수량 글이다(실제 리더 응답: 노드는 `usage`에 CPU `123018642n`(나노코어) · 메모리 `6838040Ki`, Pod는 `containers[].usage`에 같은 모양). 갓 뜬 Pod와 노드는 첫 수집(수십 초) 전까지 목록에 없으므로 없는 항목은 오류가 아니라 "아직 없음"이다. 디스크 사용량 · 지난 값은 Prometheus에 묻는다(2026-11-11부터 된다, [cluster.md](cluster.md) §10): `GET /api/v1/namespaces/monitoring/services/monitoring-prometheus:9090/proxy/api/v1/query?query=<PromQL>`. `GET`만 된다.
@@ -83,9 +86,9 @@
 
 | 없는 것 | 이유 |
 | --- | --- |
-| `PATCH` | 서버 계정에 Secret `patch` 권한이 없다. patch의 응답은 Secret 전체라, 빈 patch 하나로 값을 읽을 수 있기 때문이다(cluster.md §8). 다른 객체도 고치기 권한이 없다 |
+| Secret `PATCH` | 서버 계정에 Secret `patch` 권한이 없다. patch의 응답은 Secret 전체라, 빈 patch 하나로 값을 읽을 수 있기 때문이다(cluster.md §8). 다른 객체에 보내는 `PATCH`는 끄기(`DeploymentScaler.scaleToZero`)의 `deployments/<이름>/scale` 하나뿐이다 |
 | Secret 읽기 · 목록 · 삭제 | 권한이 없다(`403`). 어떤 key가 들어갔는지는 #43이 DB에 key 이름으로 남긴다 |
-| 조치(scale · 재시작), watch · 이벤트 읽기 | 끄기 · 재개(scale 0 · 1), 재시작(rollout restart), 이벤트 · Ingress 읽기 권한은 2026-11-11에 들어갔다([cluster.md](cluster.md) §8, #124 · #129). 부르는 코드는 끄기(`DeploymentScaler.scaleToZero`)뿐이고, 재개 · 재시작은 아직 없다 |
+| 조치(scale · 재시작), watch · 이벤트 읽기 | 끄기 · 재개(scale 0 · 1), 재시작(rollout restart), 이벤트 · Ingress 읽기 권한은 2026-11-11에 들어갔다([cluster.md](cluster.md) §8, #124 · #129). 부르는 코드는 끄기(`DeploymentScaler.scaleToZero`)와 이벤트 읽기(`rawObjects`)뿐이고, 재개 · 재시작 · watch는 아직 없다 |
 | 공간 삭제 | 서버 계정에 권한은 있지만 부르는 기능이 아직 없다 |
 | 다시 시도 | `POST`는 다시 보내도 되는지 모듈이 알 수 없다. 다시 부르는 것은 부르는 쪽이 정한다(`ensureSpace`와 `write`는 다시 불러도 같은 결과다) |
 
@@ -129,6 +132,6 @@
 - 서버가 만들지 않은 공간(예: 손으로 만든 `proj-demo` 말고 권한 연결이 없는 공간)은 읽지 못한다(`forbidden`).
 - 부르는 쪽이 잡는 `403` · `404`(아직 없는 공간, 사라진 Pod)도 모듈은 오류 수준으로 로그를 남긴다. 예상한 경우인지는 모듈이 알 수 없다. 자주 읽는 화면에서는 로그가 시끄러울 수 있다.
 - `422`의 로그에는 상태와 reason뿐이라 어느 검사 규칙이 거절했는지 남지 않는다(응답 `message`에 객체 값이 섞일 수 있어 싣지 않는다). 규칙 이름은 같은 요청을 운영자 계정으로 dry run 해서 본다.
-- 로그는 끝부분만 한 번 읽는다. 이어 받기와 지난 컨테이너(`previous`) 로그는 없다.
+- 로그는 끝부분만 한 번 읽는다. 이어 받기는 없다.
 - EC2에서 리더 API까지 닿는 길은 2026-11-12에 확인했다(토큰 없이 `401`). 서버를 EC2에 올린 뒤에는 이 모듈로 EC2에서 리더를 부른다(운영 배포가 학생 공간을 만든다, 2026-11-14 리허설). 처음 실제 리더 확인은 운영자 기기에서 했다.
 - 실제 리더에서 `PUT` 뒤 Secret의 key가 통째로 바뀌었는지는 보지 않았다(서버 계정은 읽지 못한다). 응답이 `200`인 것까지 확인했다.

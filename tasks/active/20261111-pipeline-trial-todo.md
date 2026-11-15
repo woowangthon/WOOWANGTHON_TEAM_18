@@ -25,5 +25,5 @@ Contract: `docs/design/api.md` "파이프라인 ↔ 플랫폼 서버" 4 (#147, A
 
 ## Done when
 
-- [ ] `pnpm verify` in `Infra/pipeline/` passes — PASS from the test session
-- [ ] hand-made mutants on the guard and the override mapping are killed or explained
+- [x] `pnpm verify` in `Infra/pipeline/` passes — PASS from the test session (#148, #158, 2026-11-12)
+- [x] hand-made mutants on the guard and the override mapping are killed or explained (#148, 2026-11-12)
