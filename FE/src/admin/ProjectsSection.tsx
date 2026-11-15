@@ -103,7 +103,7 @@ function ProjectsSection({ read, view, onView, onForbidden }: Props) {
     >
       {(data) => (
         <>
-          <ul className="flex flex-col gap-3">
+          <ul className="grid items-start gap-3 sm:grid-cols-2">
             {data.projects.map((project) => (
               <ProjectCard key={project.slug} project={project} onStopped={read.reload} onForbidden={onForbidden} />
             ))}

@@ -1,15 +1,17 @@
 import { expect, it } from 'vitest'
 import { cpuText, memoryText } from './format.ts'
 
-it('shows a small non-zero CPU figure to two decimals instead of 0', () => {
+it('shows a small non-zero CPU figure in whole millicores so axis ticks below 0.01 core differ', () => {
   expect(cpuText(40)).toBe('0.04코어')
-  expect(cpuText(5)).toBe('0.01코어')
-  expect(cpuText(99)).toBe('0.1코어')
+  expect(cpuText(25)).toBe('0.025코어')
+  expect(cpuText(99)).toBe('0.099코어')
+  expect(cpuText(2)).toBe('0.002코어')
+  expect(cpuText(4)).toBe('0.004코어')
+  expect(cpuText(2)).not.toBe(cpuText(4))
 })
 
-it('says "미만" for a non-zero figure that two decimals would still show as 0', () => {
-  expect(cpuText(3)).toBe('0.01코어 미만')
-  expect(cpuText(1)).toBe('0.01코어 미만')
+it('says "미만" for a non-zero figure under one millicore', () => {
+  expect(cpuText(0.4)).toBe('0.001코어 미만')
 })
 
 it('keeps exactly 0, 0.1 cores and above, and unreadable values as before', () => {

@@ -57,3 +57,10 @@ it('names a slot by the same arithmetic slotsOf uses: the last slot is the end t
   expect(slotTimeText(series, 60)).toBe(clock(series.endT))
   expect(slotTimeText(series, 0)).toBe(clock(series.endT - 3600))
 })
+
+it('colours a stopped service red, a starting one warn and a running one ok', () => {
+  expect(stateVariant('stopped')).toBe('err')
+  expect(stateVariant('starting')).toBe('warn')
+  expect(stateVariant('running')).toBe('ok')
+  expect(stateVariant('whatever')).toBe('neutral')
+})

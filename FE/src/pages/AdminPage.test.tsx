@@ -194,6 +194,17 @@ it('shows each project with its services, pods, owner and an https address as a 
   expect(project.getByText(/Pending · 준비 안 됨 · 노드 worker-1 · 재시작 2회/)).toBeTruthy()
 })
 
+it('folds each project card with repo, owner and address in view, and shows a stopped project in red', async () => {
+  await show()
+  const detailsOf = (slug: string) => card(slug).querySelector('details') as HTMLDetailsElement
+  expect(detailsOf('old-app').open).toBe(false)
+  expect(within(card('old-app')).getByText('아직 없음')).toBeTruthy()
+  expect(within(card('old-app')).getByText('중지됨').className).toContain('text-err')
+  fireEvent.click(within(card('old-app')).getByText('자세히 보기'))
+  await advance(0)
+  expect(detailsOf('old-app').open).toBe(true)
+})
+
 it('shows each service with its restarts and current usage, and says so when there is no usage yet', async () => {
   await show()
   const project = within(card('my-app'))
@@ -574,6 +585,17 @@ describe('운영 알림', () => {
     expect(screen.getByText('AI 판단을 받지 못했어요')).toBeTruthy()
     const skipped = within(screen.getByText('건너뜀', { selector: 'span' }).closest('li') as HTMLElement)
     expect(skipped.queryByText(/AI/)).toBeNull()
+  })
+
+  it('starts a pending alert open and handled ones folded, and opens a folded one with its toggle', async () => {
+    serve({ [INCIDENTS]: incidentsOf([incident({ id: 'p', title: '대기중', action: 'pending' }), incident({ id: 'h', title: '자동멈춤', action: 'auto_stopped' })]) })
+    await show()
+    const open = (name: string) => (screen.getByText(name, { selector: 'span' }).closest('details') as HTMLDetailsElement).open
+    expect(open('대기중')).toBe(true)
+    expect(open('자동멈춤')).toBe(false)
+    fireEvent.click(within(card('자동멈춤')).getByText('자세히 보기'))
+    await advance(0)
+    expect(open('자동멈춤')).toBe(true)
   })
 
   describe('숨기기', () => {
