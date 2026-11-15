@@ -2,6 +2,7 @@ import { useState } from 'react'
 import NoticeBanner from '../components/NoticeBanner.tsx'
 import { CrossIcon } from '../components/ui/Icons.tsx'
 import { useDeploys } from '../deploy/useDeploys.ts'
+import { addClosed, readClosed } from '../lib/closedIds.ts'
 import Evidence from './Evidence.tsx'
 import { isOpen, isStopped } from './types.ts'
 import type { Incident } from './types.ts'
@@ -9,21 +10,6 @@ import { useIncidents } from './useIncidents.ts'
 
 // 학생이 닫은 알림 id. 이 브라우저에만 남는다(저장소를 못 쓰면 이번 화면에서만 닫힌다).
 const CLOSED_KEY = 'wcp.closedIncidents'
-const readClosed = (): string[] => {
-  try {
-    const v: unknown = JSON.parse(localStorage.getItem(CLOSED_KEY) ?? '[]')
-    return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
-  } catch {
-    return []
-  }
-}
-const saveClosed = (ids: string[]) => {
-  try {
-    localStorage.setItem(CLOSED_KEY, JSON.stringify(ids.slice(-100)))
-  } catch {
-    // 저장하지 못해도 이번 화면에서는 닫혀 있다.
-  }
-}
 
 function IncidentBanner({ incident, onClose }: { incident: Incident; onClose: () => void }) {
   const stopped = isStopped(incident)
@@ -46,17 +32,14 @@ function IncidentBanner({ incident, onClose }: { incident: Incident; onClose: ()
 // 내 프로젝트의 운영 알림. 멈춘 서비스(오류)와 운영자의 판단을 기다리는 알림(경고)을 보인다. 처리 끝난 알림(무시)과 내가 닫은 알림은 보이지 않는다.
 // slug가 있으면 그 프로젝트의 것만, 없으면 모두 보인다.
 function IncidentList({ slug }: { slug: string | undefined }) {
-  const [closed, setClosed] = useState(readClosed)
+  const [closed, setClosed] = useState(() => readClosed(CLOSED_KEY))
   const shown = useIncidents().filter(
     (incident) =>
       (slug === undefined || incident.slug === slug) && (isStopped(incident) || isOpen(incident)) && !closed.includes(incident.id),
   )
   if (shown.length === 0) return null
   const close = (id: string) => {
-    // 다른 탭이 그 사이 저장한 것도 합친다(덮어쓰지 않게).
-    const next = [...new Set([...readClosed(), ...closed, id])]
-    saveClosed(next)
-    setClosed(next)
+    setClosed(addClosed(CLOSED_KEY, closed, id))
   }
   return (
     <>
