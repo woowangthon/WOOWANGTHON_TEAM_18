@@ -135,3 +135,8 @@
     animation: none;
   }
 }
+
+/* 접기 영역(summary)의 기본 삼각형을 Safari에서도 지운다. 펴고 접는 안내는 글자로 한다. */
+summary::-webkit-details-marker {
+  display: none;
+}
