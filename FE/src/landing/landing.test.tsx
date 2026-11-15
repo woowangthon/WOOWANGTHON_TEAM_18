@@ -168,6 +168,22 @@ it('shows the real survey numbers with their source, without the interest block 
   expect(screen.getAllByRole('progressbar', { name: /명 중 \d+명$/ })).toHaveLength(5)
 })
 
+it('proposes idle classroom PCs to the school with the real hours, their source, the caveat and the PC spec', () => {
+  const { container } = renderLanding({ status: 'signedOut', expired: false })
+  const section = within(container.querySelector('#school') as HTMLElement)
+  expect(section.getByRole('heading', { name: '강의실 PC가 쉬는 시간, 학생의 클라우드로' })).toBeTruthy()
+  expect(section.getByText('출처: PC가 있는 강의실 4곳의 수업 시간표 · 2026-1 · 2026-2학기 · 평일 24시간 기준')).toBeTruthy()
+  expect(section.getByText(/이론치예요/)).toBeTruthy()
+  expect(section.getAllByText('주 480시간 중 수업 46시간 · 비어 있음 90%')).toHaveLength(2)
+  expect(section.getAllByRole('progressbar', { name: /주 480시간 중 434시간 비어 있음$/ })).toHaveLength(2)
+  expect(section.getByText('Intel i7-13700K (16코어 24스레드)')).toBeTruthy()
+  expect(section.getByText('125GiB')).toBeTruthy()
+  expect(section.getByText(/학교에서 빌린 PC 3대의 사양이에요/)).toBeTruthy()
+  // 학생용 사용 방법 다음, 마지막 시작하기 앞에 둔다.
+  const ids = [...container.querySelectorAll('section[id]')].map((el) => el.id)
+  expect(ids.slice(-2)).toEqual(['how', 'school'])
+})
+
 it('closes with a call to action: start and login when signed out, dashboard when signed in', () => {
   const { unmount } = renderLanding({ status: 'signedOut', expired: false })
   expect(screen.getByRole('heading', { name: '첫 배포, 지금 해 보세요' })).toBeTruthy()
@@ -237,13 +253,14 @@ it('keeps the section links out of the top bar and in a floating menu, the same 
   for (const state of [{ status: 'signedOut', expired: false }, { status: 'signedIn', session: sessionWith() }] as AuthState[]) {
     const { unmount } = renderLanding(state)
     const bar = screen.getByRole('banner')
-    expect(within(bar).queryByRole('link', { name: /설문|기능 소개|지원 범위|사용 방법/ })).toBeNull()
+    expect(within(bar).queryByRole('link', { name: /설문|기능 소개|지원 범위|사용 방법|학교에 제안/ })).toBeNull()
     const menu = within(screen.getByRole('navigation', { name: '페이지 바로가기' }))
     expect(menu.getAllByRole('link').map((a) => [a.textContent, a.getAttribute('href')])).toEqual([
       ['설문', '#survey'],
       ['기능 소개', '#showcase'],
       ['지원 범위', '#types'],
       ['사용 방법', '#how'],
+      ['학교에 제안', '#school'],
     ])
     unmount()
   }

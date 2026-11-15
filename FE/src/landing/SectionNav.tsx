@@ -3,6 +3,7 @@ const SECTIONS = [
   { href: '#showcase', label: '기능 소개' },
   { href: '#types', label: '지원 범위' },
   { href: '#how', label: '사용 방법' },
+  { href: '#school', label: '학교에 제안' },
 ]
 
 // 랜딩의 구역으로 건너뛰는 메뉴. 상단 바에서 빼서, 로그인 상태에 따라 바뀌는 버튼과 섞이지 않게 한다.

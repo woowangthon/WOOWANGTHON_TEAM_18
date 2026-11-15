@@ -9,6 +9,7 @@ import ProjectTypes from '../landing/ProjectTypes.tsx'
 import Showcase from '../landing/Showcase.tsx'
 import SectionNav from '../landing/SectionNav.tsx'
 import SiteFooter from '../components/SiteFooter.tsx'
+import School from '../landing/School.tsx'
 import Survey from '../landing/Survey.tsx'
 
 const outlineLinkClass =
@@ -103,6 +104,8 @@ function LandingPage() {
             </ol>
           </div>
         </section>
+
+        <School />
 
 
         <section className="border-t border-line bg-surface">
