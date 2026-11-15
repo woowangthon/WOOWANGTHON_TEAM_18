@@ -376,11 +376,11 @@ AI가 하는 일 · 사람이 결정하는 일은 [`SRS.md`](SRS.md) §1.3과 [`
 | 3 | ~~스파이크 판정 기술~~ → 2026-11-14 정함: 리더 Prometheus의 경고를 플랫폼 서버가 20초마다 읽고, 규칙 코드가 재시작 반복만 바로 멈추며 나머지는 AI가 원인 · 위험 · 권고를 판단한다([운영 알림 설계](design/incidents.md), [ADR-006](adr/006-metrics-on-leader-prometheus.md)). 로그는 스파이크 때 스냅샷만 남기고(2026-11-09) 리더 보관은 하지 않는다 | 정함 | 팀 |
 | 4 | ~~외부 LLM 업체 · 모델~~ → 2026-11-13 정함: 충북대 NOVA API Gateway의 `gpt-6.1-sol`([ADR-016](adr/016-planner-model-nova-gateway.md), [`ai-scope.md`](ai-scope.md)). 리더의 로컬 모델(Qwen3-8B-AWQ)은 추론 모델이 세운 계획을 실행한다([ADR-017](adr/017-planner-plans-local-executes.md)) | 정함 | 팀 |
 | 5 | ~~도메인: 연결 범위, 구매 담당 · 비용, 프로젝트별 와일드카드 HTTPS~~ → 2026-11-10 정함: 구축 담당이 가진 `stairnoworks.com`(비용 없음)에 학생 서비스 `<slug>.` 와 플랫폼 `app.` · `api.`를 둔다. 와일드카드 HTTPS는 Cloudflare 무료 인증서 ([ADR-013](adr/013-visitor-entry-cloudflare-tunnel.md)) | 정함 | 인프라 |
-| 6 | 비용 추정: AWS 요금표의 갱신 주기 · 담당, 요금표 × 사용량 곱셈을 코드로 하고 AI는 설명만 할지 (오차 검증 방법) | 열린 질문 | 팀 |
+| 6 | 비용 추정: AWS 요금표의 갱신 주기 · 담당, 요금표 × 사용량 곱셈을 코드로 하고 AI는 설명만 할지 (오차 검증 방법). 비용 추정(SRS UC-20, P1)은 이번 마감에 만들지 않았다 | MVP 밖 | 팀 |
 | 7 | ~~봇 PR이 만든 `Dockerfile`의 안전성 검증 방법~~ 해당 없음: AI가 `Dockerfile`을 만들지 않고 플랫폼 기본 `Dockerfile`로 빌드한다([배포 입력](design/deploy-handoff.md), 2026-11-10) | 정해짐 | AI 담당 |
 | 8 | 리더로 옮길 때 올라가는 AWS · Supabase · 봇 키의 권한 범위와 보관 방식 (최소 권한 IAM, k3s Secret 암호화). 플랫폼을 옮기면 심사 기간 URL이 리더 PC · 동아리방 네트워크 · 터널에 의존한다 | 열린 질문 | 팀 |
 | 9 | ~~FE → BE 호출 주소~~ → 2026-11-11 정함: FE는 `app.stairnoworks.com`(S3 + CloudFront), BE는 `api.stairnoworks.com`이다. 출처가 달라 환경변수 + CORS 허용 목록으로 연다. HTTPS인 FE가 `http://` BE를 부르면 브라우저가 막으므로 BE의 HTTPS는 EC2의 Cloudflare Tunnel이 맡는다([플랫폼 FE · BE 배포](design/platform-hosting.md) 결정 표, [ADR-013](adr/013-visitor-entry-cloudflare-tunnel.md)) | 정함 | 풀스택 |
-| 10 | 학생 서비스(웹+서버)의 웹 → 서버 호출 주소: 한 호스트에서 `/`는 웹, `/api`는 서버로 경로 라우팅할지, 서버 주소를 환경변수로 주입할지. 주소는 프로젝트마다 하나(`<slug>.stairnoworks.com`, 2026-11-10 연결)다 | 열린 질문 | 풀스택 |
+| 10 | ~~학생 서비스(웹+서버)의 웹 → 서버 호출 주소: 한 호스트에서 `/`는 웹, `/api`는 서버로 경로 라우팅할지, 서버 주소를 환경변수로 주입할지~~ → 정함: 한 호스트(`<slug>.stairnoworks.com`)에서 서비스마다 공개 경로(`ingressPath`, 예: 웹 `/`, 서버 `/api`)로 나눈다([배포 입력](design/deploy-handoff.md)) | 정함 | 풀스택 |
 | 11 | 나중 확장: 플랫폼이 띄우는 학생 DB(MySQL 애드온 · 볼륨 복제), 학생 DB 주소만 허용하는 egress, 리소스 크기 프리셋(S/M/L)의 값 | MVP 밖 | 팀 |
 | 12 | ~~메시지 큐가 들어오기 전의 배포 기록: 재시도 · 재처리 기록을 어디에 둘지~~ → 정함: Supabase `deploy_runs` 테이블에 배포 하나당 한 줄을 두고 파이프라인 알림마다 바꾼다([배포 워크플로우](design/deploy-workflow.md) §1 · §6, `supabase/migrations/20261111000000_create_deploy_runs.sql`) | 정함 | 풀스택 |
 | 13 | ~~배포 실행기 도구: GoCD 대신 ArgoCD를 쓸지, GoCD 서버를 플랫폼 서버와 같은 EC2에 둘 때 생기는 문제~~ → 정함: GoCD. GoCD 서버와 빌드를 부르는 실행기는 플랫폼 서버와 같은 EC2(메모리 8GB)에 두고, 빌드 단계가 그 실행기에서 CodeBuild를 부른다. 같은 EC2에 둘 때의 조건(JVM 힙 제한, CodeBuild 권한은 실행기 컨테이너에만)은 [배포 워크플로우](design/deploy-workflow.md) 8절 | 정함 | AI 담당 |
