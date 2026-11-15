@@ -28,6 +28,7 @@ import {
   type Stage,
   type StepKey,
   type StepState,
+  type StoredFailure,
   ticketCount,
   USER_TICKET_WINDOW_MS,
   toAgent,
@@ -272,14 +273,17 @@ export class DeployRunsService {
     // 티켓 상한(api.md 5번): 다시 실행이 또 실패했는데 이 실행 기록이 이미 상한만큼 냈거나(AGENT_GAVE_UP), 이 사용자가 최근 24시간에
     // 사용자 상한만큼 냈다(AGENT_QUOTA_EXCEEDED). 새 티켓 없이 마감한다. 운영자는 두 상한 모두 없다. 운영자 확인은 상한에 걸릴 때만 부른다.
     const overRun = ticketCount(run) > MAX_TICKETS
-    const overUser = !overRun && (await this.store.ticketsSince(run.user_id, new Date(Date.now() - USER_TICKET_WINDOW_MS))) >= MAX_USER_TICKETS
+    let overUser: boolean
+    try {
+      overUser = !overRun && (await this.store.ticketsSince(run.user_id, new Date(Date.now() - USER_TICKET_WINDOW_MS))) >= MAX_USER_TICKETS
+    } catch {
+      // 상한을 확인하지 못했다. 티켓을 내지 않고(상한을 건너뛰지 않는다), 던지지도 않는다: 던지면 실행이 running에 남아
+      // 대기열이 QUEUE_STALE_MS 동안 다음 배포를 출발시키지 못한다. 티켓을 보내지 못한 때와 같은 코드로 마감한다.
+      this.logger.error(`could not count the tickets of the owner of ${run.deploy_id}; ending without a ticket`)
+      return this.endWithoutTicket(run, where, stored, 'AGENT_UNAVAILABLE')
+    }
     if ((overRun || overUser) && !(await this.store.isAdmin(run.user_id))) {
-      // 학생용 설명이 앞 티켓의 오류 · 로그를 이번 실패의 근거로 쓰지 않게 한다.
-      this.explainer.forgetTicket(run.deploy_id)
-      const done = await this.store.updateRun(run.deploy_id, where, { status: 'failed', failure: { ...stored, code: overRun ? 'AGENT_GAVE_UP' : 'AGENT_QUOTA_EXCEEDED' } })
-      if (done) await this.slots.afterFailure(run, notice.stage)
-      if (done && run.ticket_id) await this.agent.close(run.ticket_id, commitOf(run), 'stopped')
-      return done
+      return this.endWithoutTicket(run, where, stored, overRun ? 'AGENT_GAVE_UP' : 'AGENT_QUOTA_EXCEEDED')
     }
 
     // 티켓을 보내기 전에 상태를 먼저 바꾼다: 같은 알림이 겹쳐 와도 하나만 통과해 티켓이 두 번 가지 않는다.
@@ -309,6 +313,16 @@ export class DeployRunsService {
       if (done) await this.slots.afterFailure(run, notice.stage)
     }
     return true
+  }
+
+  /** 티켓으로 갈 실패를 새 티켓 없이 `failed`로 마감한다. 앞 티켓이 있으면 멈추라고 알린다. */
+  private async endWithoutTicket(run: DeployRunRow, where: { status: 'running'; stage: Stage }, stored: StoredFailure, code: string): Promise<boolean> {
+    // 학생용 설명이 앞 티켓의 오류 · 로그를 이번 실패의 근거로 쓰지 않게 한다.
+    this.explainer.forgetTicket(run.deploy_id)
+    const done = await this.store.updateRun(run.deploy_id, where, { status: 'failed', failure: { ...stored, code } })
+    if (done) await this.slots.afterFailure(run, where.stage)
+    if (done && run.ticket_id) await this.agent.close(run.ticket_id, commitOf(run), 'stopped')
+    return done
   }
 
   /**

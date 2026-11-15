@@ -41,7 +41,7 @@ let db: Record<string, Row[]>
 let gocdAnswer: () => Response
 let aiAnswer: () => Response
 // 저장소의 특정 테이블 · 메서드에 대신 돌려줄 답(없으면 가짜 DB가 답한다).
-let restOverride: ((table: string, method: string) => Response | undefined) | undefined
+let restOverride: ((table: string, method: string, url: URL) => Response | undefined) | undefined
 // 가짜 준비 확인(#82). 기본은 준비됨이고 슬롯은 a다.
 let prepare: (deployId: string) => Promise<unknown>
 // 가짜 클러스터(W7): 공간의 Deployment 이름(또는 읽기 오류)과, 0으로 내린 것 · 내리지 못하는 것.
@@ -91,7 +91,7 @@ function rest(url: URL, init: RequestInit | undefined): Response {
   const table = url.pathname.split('/').pop()!
   const rows = (db[table] ??= [])
   const method = init?.method ?? 'GET'
-  const forced = restOverride?.(table, method)
+  const forced = restOverride?.(table, method, url)
   if (forced) return forced
   const body = init?.body ? (JSON.parse(init.body as string) as Row | Row[]) : undefined
   if (method === 'GET') {
@@ -1697,6 +1697,15 @@ describe('POST /api/pipeline/notify', () => {
         await notify({ deployId: id, stage: 'verify', result: 'failed', failure: failure() })
         expect(run(id)).toMatchObject({ status: 'fixing', failure: { code: 'VERIFY_FAILED' } })
         expect(callsTo(AI_URL)).toHaveLength(1)
+      })
+
+      it('ends as AGENT_UNAVAILABLE without a ticket when the tickets cannot be counted, so the queue does not wait for the run', async () => {
+        const id = await reach('apply')
+        restOverride = (table, method, url) => (table === 'deploy_runs' && method === 'GET' && url.searchParams.has('created_at') ? new Response('{}', { status: 503 }) : undefined)
+        expect((await notify({ deployId: id, stage: 'apply', result: 'failed', failure: failure() })).body).toEqual({ ok: true, applied: true })
+        expect(run(id)).toMatchObject({ status: 'failed', ticket_id: null, failure: { code: 'AGENT_UNAVAILABLE', stage: 'apply', service: 'be' } })
+        expect(callsTo(AI_URL)).toHaveLength(0)
+        expect(logError).toHaveBeenCalledWith(expect.stringContaining('could not count the tickets'))
       })
 
       it.each([
