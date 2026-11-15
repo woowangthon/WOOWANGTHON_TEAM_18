@@ -55,7 +55,7 @@ function ProjectTypes() {
           <ul className="m-0 grid list-none gap-4 p-0 md:grid-cols-3">
             <li className="flex flex-col gap-1">
               <p className="font-bold">Dockerfile이 있으면</p>
-              <p className="text-sm text-muted">컨테이너로 빌드되는 언어라면 올릴 수 있어요. 예를 들면 Node.js, Python, Java, Go가 있어요. 시험해 본 목록은 아니에요.</p>
+              <p className="text-sm text-muted">컨테이너로 빌드되는 언어라면 올릴 수 있어요. 예를 들면 Node.js, Python, Java, Go가 있어요.</p>
             </li>
             <li className="flex flex-col gap-1">
               <p className="font-bold">Dockerfile이 없으면</p>

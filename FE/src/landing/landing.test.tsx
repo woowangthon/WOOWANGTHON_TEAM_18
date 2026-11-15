@@ -148,10 +148,10 @@ it('explains each service type in plain words with examples and what you get', (
   expect(screen.getByText('웹 주소와 API 경로')).toBeTruthy()
 })
 
-it('says only React (Vite) and Next.js work without a Dockerfile, and does not claim a tested language list', () => {
+it('says only React (Vite) and Next.js work without a Dockerfile', () => {
   renderLanding({ status: 'signedOut', expired: false })
   expect(screen.getByText(/React\(Vite\)와 Next\.js를 올릴 수 있어요/)).toBeTruthy()
-  expect(screen.getByText(/시험해 본 목록은 아니에요/)).toBeTruthy()
+  expect(screen.queryByText(/시험해 본 목록은 아니에요/)).toBeNull()
 })
 
 it('shows the real survey numbers with their source, without the interest block or per-row answers', () => {
