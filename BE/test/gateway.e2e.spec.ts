@@ -271,7 +271,8 @@ describe('MCP gateway', () => {
     const client = await connect()
     expect((await call(client, 'submit_result', { result: result({ status, ...extra }) })).structuredContent).toEqual({ accepted: true })
     expect(run.status).toBe('needs_user')
-    expect(scaled).toEqual([])
+    // 티켓이 닫혀 더 읽을 에이전트가 없다. 실패한 대상 슬롯(b)만 내려 운영 알림이 계속 나지 않게 한다. live였던 슬롯 a는 그대로다.
+    expect(scaled.sort()).toEqual(['be-b', 'fe-b'])
     expect(run.agent_result).toMatchObject({ status, ...extra })
     expect(run.gateway_token_hash).toBeNull()
     await client.close()
