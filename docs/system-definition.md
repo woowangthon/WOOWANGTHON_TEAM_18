@@ -33,8 +33,6 @@ SRS §2 *시스템 구성*은 이 문서를 가리키는 포인터다. 구조 �
 
 ![시스템 아키텍처 — 개요](architecture/overview.drawio.svg)
 
-> **주의**: 이 그림은 ADR-016 · 017 이전 내용("LLM (업체 · 모델 미정)", "리더의 로컬 모델 (후순위)", "AI 검토 요청")이 남아 있다. 다시 그리는 중이다([#230](https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/230)). 아래 표와 ADR이 현재 기준이다.
-
 ### 구성요소와 책임
 
 | 구성요소 | 기술 | 상태 | 하는 일 | 하지 않는 것 |
@@ -126,13 +124,11 @@ Kafka는 **"사용자가 맡긴 배포본이 시스템 오류로 사라지지 �
 
 ### 4.1 user1 배포자 흐름
 
-도식: [`deploy-workflow.drawio.svg`](architecture/deploy-workflow.drawio.svg), 단계별 설계는 [배포 워크플로우](design/deploy-workflow.md). [`user1-deployer.drawio.svg`](architecture/user1-deployer.drawio.svg)는 2026-11-10 이전 흐름(AI 검토 → 운영자 승인 → 라운드, DB 없음 / MySQL, 롤백)이라 다시 그려야 한다([#230](https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/230)).
+도식: [`deploy-workflow.drawio.svg`](architecture/deploy-workflow.drawio.svg), 단계별 설계는 [배포 워크플로우](design/deploy-workflow.md). 학생 쪽에서 본 배포 과정은 [`user1-deployer.drawio.svg`](architecture/user1-deployer.drawio.svg)다.
 
 학생이 이메일 · 비밀번호로 로그인하고 프로필에서 GitHub 계정을 한 번 연동한 뒤 User Page의 **배포 페이지**에서 자기 공개 GitHub 레포를 넣고 배포 설정을 확정하면, 플랫폼 서버가 정해진 단계(W0~W7)를 코드로 진행하는 과정이다. 빌드 · 배포 · 동작 확인 · 전환은 배포 파이프라인을 한 번 실행해 처리하고, 중간에 실패했을 때만 AI 에이전트가 고친다. **배포 전 AI 검토와 운영자 승인은 없다** (운영자 승인: 2026-11-10 회의, AI 검토: 합의된 배포 워크플로우). 코드 빌드는 격리된 빌드 단계에서 돌고, 학교 PC의 클러스터는 **실행만** 한다. 배포가 끝나면 학생은 모니터링 · 운영 페이지([§4.2](#42-user1-모니터링-흐름))로 넘어가고, 새 버전도 이 흐름을 처음부터 다시 탄다.
 
 ![배포 워크플로우](architecture/deploy-workflow.drawio.svg)
-
-> **주의**: 이 그림은 ADR-009 · 011 · 014 이전 내용("rollback 모드", "시험 배포 · 되돌리기", "README 정규식 → 로컬 LLM")이 남아 있다. 다시 그리는 중이다([#230](https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/230)). 아래 단계 설명과 ADR이 현재 기준이다.
 
 1. 학생이 로그인하고(GitHub 계정은 프로필에서 미리 연동해 둔다), User Page의 배포 페이지에서 공개 GitHub URL을 입력한다.
 2. **W0 접수 · 사전 검사**: 플랫폼 서버가 레포가 공개된 개인 레포이고 연동한 GitHub 계정이 소유자인지 대조하고(아니면 거부한다. GitHub를 연동하지 않았으면 제출할 수 없다. MVP는 공개 개인 레포만 지원), 기본 브랜치의 최신 commit을 배포할 commit으로 확정한다. `.env`가 올라와 있으면 빌드에서 빼고 경고한다.
@@ -191,8 +187,6 @@ Kafka는 **"사용자가 맡긴 배포본이 시스템 오류로 사라지지 �
 
 ![user1 · 모니터링 · 운영 흐름](architecture/user1-monitoring.drawio.svg)
 
-> **주의**: 이 그림은 ADR-011 · 016 이전 내용("새 라운드 AI 검토 → 승인 → 빌드 → 롤링 업데이트", "운영자 승인", "LLM (업체 · 모델 미정)")이 남아 있다. 다시 그리는 중이다([#230](https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/230)). 아래 본문과 ADR이 현재 기준이다.
-
 1. 지표 수집이 워커 · 학생 서비스 Pod의 지표를 모으고, 플랫폼 서버가 사설망으로 조회한다. 로그는 스파이크 판정 순간 플랫폼 서버가 스냅샷으로 남긴다(상시 로그 저장소는 없다).
 2. 플랫폼 서버가 프로젝트 단위로 스파이크를 판정한다. 규칙은 **두 개**(메모리 한도 초과 · 크래시 루프)뿐이다. 재시작 반복(크래시 루프)은 **규칙(코드)이 자동으로** 중지한다(진행 중 배포가 없을 때). 메모리 한도 초과는 쿠버네티스가 다시 시작하고, 반복되면 재시작 반복으로 잡힌다.
 3. 스파이크 알림이 난 뒤에만 플랫폼 서버가 AI 서버를 불러 원인을 설명하고 다음 행동을 **제안**하게 한다 (상시 분석은 없다). AI는 조치하지 않는다. 제안은 모니터링 · 운영 페이지의 버튼으로 나타나고, 누르는 것은 학생이다.
@@ -241,8 +235,6 @@ Kafka는 **"사용자가 맡긴 배포본이 시스템 오류로 사라지지 �
 운영자(admin)가 Admin Page에서 앞 단계에 흩어진 기록을 **프로젝트별로 한 곳에서** 보고 조치하는 과정이다. 코어는 **프로젝트 허브(실행 중인 서비스) · 인프라 현황(클러스터 자원) · 강제 중지**이고(2026-11-10 회의. 운영자는 배포를 미리 승인하지 않는다), 스파이크 판정 · AI 해석 · 제안([§4.2](#42-user1-모니터링-흐름))도 코어다. 강제 조치 · 알림함 · 사용자 관리 · Playground 관리는 부가 기능(우선순위가 뒤)이다. 승인 큐는 새 버전(이미지 갱신) 요청도 받는다.
 
 ![user2 · 운영자 흐름](architecture/user2-operator.drawio.svg)
-
-> **주의**: 이 그림은 ADR-016 이전 내용("LLM (업체 · 모델 미정)")이 남아 있다. 다시 그리는 중이다([#230](https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/230)). 아래 본문과 ADR이 현재 기준이다.
 
 1. 지표 수집이 노드 · Pod · 네트워크 · 공개 진입 지표를 모은다 — 노드 CPU · 메모리 · 디스크 · NIC · 온도, Pod 상태 · 재시작, 노드 간 지연 · 손실, 터널 · Ingress 요청 · 지연 · 에러 (수집기 구성은 [§5.2](#52-클러스터-구성--외부-연동)).
 2. 플랫폼 서버가 사설망으로 지표를 조회하고, 로그는 스파이크 때 남긴 스냅샷을 읽는다.
@@ -338,8 +330,6 @@ AI가 하는 일 · 사람이 결정하는 일은 [`SRS.md`](SRS.md) §1.3과 [`
 도식: [`cluster.drawio.svg`](architecture/cluster.drawio.svg)
 
 ![클러스터 구성 · 외부 연동](architecture/cluster.drawio.svg)
-
-> **주의**: 이 그림은 ADR-017 이전 내용("리더의 로컬 모델은 후순위", "AI 검토 · 해석")이 남아 있다. 다시 그리는 중이다([#230](https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/230)). 아래 본문과 ADR이 현재 기준이다.
 
 | 노드 | 구성 |
 | --- | --- |

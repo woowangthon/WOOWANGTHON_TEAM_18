@@ -5,8 +5,6 @@
 
 ![AI 에이전트 흐름](../architecture/agent-flow.drawio.svg)
 
-> **주의**: 이 그림은 ADR-014 · ADR-017 이전 내용(시험 파이프라인의 "옵션: Switch 건너뜀", "② 못 맞추면 LLM", "verified → 재확인 → Switch · W7")이 남아 있다. 다시 그리는 중이다([#230](https://github.com/woowangthon/WOOWANGTHON_TEAM_18/issues/230)). 아래 본문과 ADR이 현재 기준이다.
-
 ## 범위
 
 - **한다**: 문제 티켓을 받아 원인을 분류하고, MCP 게이트웨이의 도구로 대상 슬롯에서 Build · Render · Deploy · Verify를 실행 · 관찰하며 고친 뒤, 해결 결과를 플랫폼 서버에 돌려준다.
