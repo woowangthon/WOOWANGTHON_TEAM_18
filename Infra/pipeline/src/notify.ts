@@ -32,7 +32,7 @@ export type NoticeBody =
 
 // BE가 플랫폼 문제 코드로 받는 모양(`^[A-Za-z][A-Za-z0-9_]{2,63}$`)과, BE가 스스로 정하는 코드(파이프라인이 보내면 AI를 건너뛰게 되어 거절한다).
 export const PLATFORM_CODE = /^[A-Za-z][A-Za-z0-9_]{2,63}$/
-export const BE_OWN_CODES = ['BUILD_FAILED', 'DEPLOY_FAILED', 'VERIFY_FAILED', 'SWITCH_FAILED', 'AGENT_UNAVAILABLE', 'AGENT_GAVE_UP', 'TIMED_OUT']
+export const BE_OWN_CODES = ['BUILD_FAILED', 'DEPLOY_FAILED', 'VERIFY_FAILED', 'SWITCH_FAILED', 'AGENT_UNAVAILABLE', 'AGENT_GAVE_UP', 'AGENT_QUOTA_EXCEEDED', 'TIMED_OUT']
 /** 쓸 수 없는 코드의 대신. `null`로 보내면 학생 문제로 읽혀 AI 에이전트에 넘어가므로 플랫폼 문제로 남겨 둔다(원래 코드는 message에 있다). */
 export const FALLBACK_CODE = 'PIPELINE_FAILED'
 
