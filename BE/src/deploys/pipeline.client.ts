@@ -8,6 +8,16 @@ const HISTORY_PAGE = 20
 
 const unavailable = () => new ServiceUnavailableException({ code: 'PIPELINE_UNAVAILABLE', message: 'Could not start the deploy pipeline' })
 
+/**
+ * GoCD가 409로 거절했다: 같은 파이프라인의 앞 인스턴스가 첫 스테이지를 아직 돌고 있어 새 인스턴스를 받지 않는다(다른 티켓의 시험이 도는 중).
+ * 밖으로는 그대로 503 PIPELINE_UNAVAILABLE이고, 시험(`GatewayTrials`)만 이걸 보고 잠시 뒤 다시 실행한다.
+ */
+export class PipelineBusyException extends ServiceUnavailableException {
+  constructor() {
+    super({ code: 'PIPELINE_UNAVAILABLE', message: 'Could not start the deploy pipeline' })
+  }
+}
+
 /** 시험 실행이 돌릴 스테이지(api.md "파이프라인 ↔ 플랫폼 서버" 4번 `TRIAL_STAGES`). */
 export type TrialStages = 'build' | 'render' | 'prepare,render,apply' | 'verify'
 
@@ -96,6 +106,10 @@ export class PipelineClient {
         update_materials_before_scheduling: true,
       })
       await res.arrayBuffer() // 연결을 풀로 돌려보낸다. 본문은 쓰지 않고 로그에도 싣지 않는다.
+      if (res.status === 409) {
+        this.logger.warn(`GoCD schedule of ${pipeline} answered 409 (an earlier instance is still in progress)`)
+        throw new PipelineBusyException()
+      }
       if (!res.ok) {
         this.logger.error(`GoCD schedule answered ${res.status}`)
         throw unavailable()
