@@ -2,6 +2,7 @@ import { useState } from 'react'
 import NoticeBanner from '../components/NoticeBanner.tsx'
 import { Badge } from '../components/ui/Badge.tsx'
 import { Button } from '../components/ui/Button.tsx'
+import { Collapse } from '../components/ui/Collapse.tsx'
 import { ApiError, apiFetch } from '../lib/api.ts'
 import { cpuText, memoryText } from '../lib/format.ts'
 import { clusterAlert } from './clusterAlert.tsx'
@@ -21,7 +22,7 @@ function StateBadge({ state }: { state: ReturnType<typeof stateOf> }) {
     case 'running':
       return <Badge variant="ok">실행 중</Badge>
     case 'stopped':
-      return <Badge variant="neutral">중지됨</Badge>
+      return <Badge variant="err">중지됨</Badge>
     case 'none':
       return <Badge variant="neutral">공간 없음</Badge>
     case 'unknown':
@@ -254,35 +255,44 @@ function StopProblem({ error }: { error: unknown }) {
 function ProjectCard({ project, onStopped, onForbidden }: { project: AdminProject } & StopHandlers) {
   const state = stateOf(project)
   return (
-    <li className="flex flex-col gap-3 rounded-md border border-line p-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="font-mono font-bold">{project.slug}</span>
-        <StateBadge state={state} />
-        {project.liveSlot && <Badge variant="info">라이브 슬롯 {project.liveSlot}</Badge>}
-      </div>
-      <dl className="flex flex-col gap-1 text-sm">
-        <Row label="레포">
-          <span className="font-mono break-all">{project.repo}</span>
-        </Row>
-        <Row label="소유자">
-          <span className="font-mono break-all">{project.ownerId}</span>
-        </Row>
-        <Row label="주소">
-          {project.url?.startsWith('https://') ? (
-            <a href={project.url} target="_blank" rel="noopener noreferrer" className="font-mono break-all text-accent-text underline">
-              {project.url}
-            </a>
-          ) : (
-            '아직 없음'
-          )}
-        </Row>
+    <li className="rounded-md border border-line p-4">
+      {/* 접은 채로는 레포 · 소유자 · 주소만 보인다. 서비스 · Pod · 사용량과 중지 · 정리 버튼은 펴면 나온다. */}
+      <Collapse
+        summary={
+          <>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-mono font-bold">{project.slug}</span>
+              <StateBadge state={state} />
+              {project.liveSlot && <Badge variant="info">라이브 슬롯 {project.liveSlot}</Badge>}
+            </div>
+            <dl className="flex flex-col gap-1 text-sm">
+              <Row label="레포">
+                <span className="font-mono break-all">{project.repo}</span>
+              </Row>
+              <Row label="소유자">
+                <span className="font-mono break-all">{project.ownerId}</span>
+              </Row>
+              <Row label="주소">
+                {project.url?.startsWith('https://') ? (
+                  <a href={project.url} target="_blank" rel="noopener noreferrer" className="font-mono break-all text-accent-text underline">
+                    {project.url}
+                  </a>
+                ) : (
+                  '아직 없음'
+                )}
+              </Row>
+            </dl>
+          </>
+        }
+      >
         {project.lastStop && (
-          <Row label="마지막 중지">
-            {timeText(project.lastStop.at)} · <span className="break-all">{project.lastStop.by}</span>
-          </Row>
+          <dl className="text-sm">
+            <Row label="마지막 중지">
+              {timeText(project.lastStop.at)} · <span className="break-all">{project.lastStop.by}</span>
+            </Row>
+          </dl>
         )}
-      </dl>
-      {project.clusterError && clusterAlert(project.clusterError, '이 프로젝트만 읽지 못했어요.')}
+        {project.clusterError && clusterAlert(project.clusterError, '이 프로젝트만 읽지 못했어요.')}
       {project.services.length > 0 && (
         <ul className="flex flex-col gap-2">
           {project.services.map((service) => (
@@ -312,6 +322,7 @@ function ProjectCard({ project, onStopped, onForbidden }: { project: AdminProjec
       )}
       <StopPanel slug={project.slug} running={state === 'running'} onStopped={onStopped} onForbidden={onForbidden} />
       {(state === 'stopped' || state === 'none') && <HidePanel slug={project.slug} onStopped={onStopped} onForbidden={onForbidden} />}
+      </Collapse>
     </li>
   )
 }

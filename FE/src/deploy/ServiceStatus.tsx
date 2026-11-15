@@ -2,6 +2,7 @@ import { Link } from 'react-router'
 import { Alert } from '../components/ui/Alert.tsx'
 import { Badge } from '../components/ui/Badge.tsx'
 import { Card } from '../components/ui/Card.tsx'
+import { Collapse } from '../components/ui/Collapse.tsx'
 import { Skeleton } from '../components/ui/Skeleton.tsx'
 import { LineChart } from '../components/ui/LineChart.tsx'
 import { ApiError } from '../lib/api.ts'
@@ -33,12 +34,17 @@ function ServiceRow({ service, series }: { service: MetricsService; series: Seri
   // 칸의 시각(이 브라우저의 시간대). 가로축 눈금과 말풍선이 쓴다.
   const xAt = (i: number) => (series ? slotTimeText(series, i) : '')
   return (
-    <div className="flex flex-col gap-2 border-t border-line pt-4 first:border-t-0 first:pt-0">
+    <div className="border-t border-line pt-4 first:border-t-0 first:pt-0">
+      <Collapse
+        defaultOpen
+        summary={
       <div className="flex flex-wrap items-center gap-2">
         <h3 className="font-mono text-base">{service.name}</h3>
         <Badge variant={stateVariant(service.state)}>{stateText(service.state)}</Badge>
         {service.state === 'starting' && <span className="text-sm text-muted">{waitingText(service.waiting)}</span>}
       </div>
+        }
+      >
       <p className="text-sm">
         다시 시작된 횟수 <span className="font-mono">{service.restarts}</span>번 <span className="text-muted">(지금 실행 이후)</span>
       </p>
@@ -49,6 +55,7 @@ function ServiceRow({ service, series }: { service: MetricsService; series: Seri
           <LineChart values={slots('memoryBytes')} label={`${service.name} 메모리 사용량(최근 1시간)`} format={memoryText} emptyText={NOT_COLLECTED} xAt={xAt} />
         </div>
       )}
+      </Collapse>
     </div>
   )
 }

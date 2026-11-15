@@ -606,7 +606,9 @@ it('lists the evidence only when there is some, skipping empty entries', async (
     progressOf('failed', 'deploy', { agent: agentOf({ evidence: [{ ref: 'Dockerfile:3', text: 'EXPOSE가 없어요' }, { ref: null, text: null }] }) }),
   )
   await show()
-  expect(agentCard().getByText('근거')).toBeTruthy()
+  expect(agentCard().getByText('근거 1개')).toBeTruthy()
+  // 접어 둔 채 시작한다. 펴야 근거가 보인다.
+  expect(agentCard().getByText('근거 1개').closest('details')?.open).toBe(false)
   expect(agentCard().getAllByRole('listitem')).toHaveLength(1)
   expect(agentCard().getByText('Dockerfile:3')).toBeTruthy()
 })

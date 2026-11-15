@@ -1,5 +1,6 @@
 import { Link } from 'react-router'
 import { Card } from '../components/ui/Card.tsx'
+import { Collapse } from '../components/ui/Collapse.tsx'
 import type { AgentResult } from './progress.ts'
 
 // 모르는 status는 결과를 냈다고만 말한다(그리지 못하는 값이 없게).
@@ -67,8 +68,8 @@ function AgentSection({ agent, deployId }: { agent: AgentResult; deployId: strin
         </div>
       )}
       {items.length > 0 && (
-        <div className="flex flex-col gap-1">
-          <p className="text-muted">근거</p>
+        // 근거(도구를 부른 기록 등)는 접어 둔다. 결과 · PR · 다음에 할 일은 늘 보인다.
+        <Collapse summary={<p className="text-muted">근거 {items.length}개</p>}>
           <ul className="list-disc pl-5">
             {items.map((item, index) => (
               <li key={index}>
@@ -78,7 +79,7 @@ function AgentSection({ agent, deployId }: { agent: AgentResult; deployId: strin
               </li>
             ))}
           </ul>
-        </div>
+        </Collapse>
       )}
     </Card>
   )

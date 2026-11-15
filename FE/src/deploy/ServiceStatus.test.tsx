@@ -1,4 +1,4 @@
-import { act, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { ApiError } from '../lib/api.ts'
@@ -96,7 +96,7 @@ it('shows a running service with its restarts since now, current use and two gra
   expect(card().getByText(/다시 시작된 횟수/).textContent).toBe('다시 시작된 횟수 0번 (지금 실행 이후)')
   expect(card().getByText('0.04코어')).toBeTruthy()
   expect(card().getByText('70MiB')).toBeTruthy()
-  expect(card().getByRole('img', { name: /^fe CPU 사용량\(최근 1시간\): 최저 0.04코어 · 최고 0.04코어 · 지금 0.04코어$/ })).toBeTruthy()
+  expect(card().getByRole('img', { name: /^fe CPU 사용량\(최근 1시간\): 최저 0.038코어 · 최고 0.041코어 · 지금 0.041코어$/ })).toBeTruthy()
   expect(card().getByRole('img', { name: /^fe 메모리 사용량\(최근 1시간\)/ })).toBeTruthy()
 })
 
@@ -230,4 +230,15 @@ it('draws the graphs with a time axis from the server end time and a value axis 
   // 가로축은 시각(HH:mm) 눈금, 세로축은 코어 단위 눈금이다.
   expect(cpu.textContent).toMatch(/\d{2}:\d{2}/)
   expect(cpu.textContent).toContain('코어')
+})
+
+it('folds one service away with its toggle and opens it again, without touching the other', async () => {
+  api.apiFetch.mockResolvedValue(liveWith([fe, { ...fe, name: 'be', deployment: 'be-a' }]))
+  await show()
+  const details = card().getAllByText('접기').map((el) => el.closest('details') as HTMLDetailsElement)
+  expect(details.map((d) => d.open)).toEqual([true, true])
+  fireEvent.click(card().getAllByText('접기')[0])
+  await advance(0)
+  expect(card().getAllByText('자세히 보기')).toHaveLength(1)
+  expect(card().getAllByText('접기')).toHaveLength(1)
 })
