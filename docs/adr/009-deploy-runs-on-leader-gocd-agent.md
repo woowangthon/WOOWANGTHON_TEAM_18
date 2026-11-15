@@ -37,8 +37,13 @@ ADR-004는 플랫폼 서버가 사설망으로 리더의 쿠버네티스 API를 
 
 - 결정의 "실행기는 있는지만 확인한다"는 지금 하지 않는다. 실행기 계정에는 Secret 읽기 권한이 없어 필요한 key가 들어갔는지 보지 못한다(`Infra/pipeline/src/prepare.ts`, [`cluster.md`](../design/cluster.md) §8). 그 확인은 플랫폼 서버가 배포를 시작할 때 DB의 key 기록으로 하고, 빠졌으면 `409 NOT_READY`로 막는다(`BE/src/deploys/deploy-readiness.service.ts`).
 - 결정의 "실행기(GoCD Agent)는 리더에서 돌고"는 Build 스테이지를 뺀 나머지(Prepare · Render · Apply · Verify · Switch)에 맞다. Build는 EC2의 AWS 실행기(이름표 `aws`)가 CodeBuild를 불러 한다(`Infra/gocd/compose.yaml`, [배포 워크플로우](../design/deploy-workflow.md) §2). CodeBuild 권한이 이 실행기 컨테이너에만 있는 것은 같은 EC2에 둘 때의 조건이다.
-- 대안표 · 다시 볼 조건의 "AI 담당의 ArgoCD 검토"는 끝났고 결론은 GoCD 유지다([시스템 정의서](../system-definition.md) §6 열린 질문 13번 "정함: GoCD"). 지금 구조와 비교한 요지:
+- 대안표 · 다시 볼 조건의 "AI 담당의 ArgoCD 검토"는 끝났고 결론은 GoCD 유지다([시스템 정의서](../system-definition.md) §6 열린 질문 13번 "정함: GoCD"). 우리 목적에 GoCD가 맞는 이유:
+  1. 배포 시작: 학생은 매니페스트를 쓰지 않고 레포와 폼만 넣는다. 플랫폼이 버튼 한 번에 commit 하나를 빌드 · 배포하는 흐름이라, git에 둔 상태를 따라가는 ArgoCD(GitOps)보다 한 번 실행되는 파이프라인이 맞다.
+  2. 공개 전 확인: 깨진 앱을 공개하지 않는 것이 목표다. 빌드 → 배포 → HTTP 확인 → 전환을 순서대로 두고 확인에 실패하면 전환하지 않는 흐름이 GoCD의 기본 모델이다. ArgoCD는 리소스 상태(health)가 기본이라 따로 붙여야 한다.
+  3. AI 수정 시험: 같은 단계를 재사용해 Switch만 뺀 파이프라인(`student-trial`)으로 공개 없이 시험한다.
+  4. 자원: GoCD 서버는 EC2에 두고 리더에는 실행기 하나만 둔다. ArgoCD는 컨트롤러 · repo-server · redis를 이미 etcd · 모니터링 · GPU 모델이 있는 리더에 올려야 한다.
 
+  ArgoCD의 장점(상태가 바뀌면 자동으로 되돌리기, git 이력으로 롤백)은 운영자가 오래 관리하는 서비스에서 크고, 학생이 한 번씩 배포하는 지금 목적에서는 우선순위가 낮다. 비교 요지:
   | 항목 | GoCD (지금) | ArgoCD로 바꾸면 |
   | --- | --- | --- |
   | 매니페스트 | Render 스테이지가 배포마다 spec과 이미지 digest로 만들어 바로 적용한다 | 만든 매니페스트를 배포용 git 레포에 commit해야 한다. 플랫폼 서버에 git 쓰기 경로가 하나 더 생긴다 |
